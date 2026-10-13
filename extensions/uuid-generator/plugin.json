@@ -1,0 +1,10 @@
+{
+  "id": "uuid-generator",
+  "name": "UUID生成器",
+  "version": "1.2.0",
+  "description": "UUID 生成器，支持 v1/v4/v7 随机与时间戳算法、多种格式化标准、单条与批量生成、一键复制，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

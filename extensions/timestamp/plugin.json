@@ -1,0 +1,10 @@
+{
+  "id": "timestamp",
+  "name": "时间戳转换助手",
+  "version": "1.0.0",
+  "description": "秒与毫秒时间戳双向转换、多时区对照与友好相对时间显示，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

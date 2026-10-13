@@ -1,0 +1,10 @@
+{
+  "id": "world-clock",
+  "name": "全球世界时钟",
+  "version": "1.0.0",
+  "description": "全球主流城市时区即时换算、当前时间对比与时区偏移量计算，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

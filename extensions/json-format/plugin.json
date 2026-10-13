@@ -1,0 +1,10 @@
+{
+  "id": "json-format",
+  "name": "JSON 格式化与类型推导",
+  "version": "1.0.0",
+  "description": "JSON 语法校验、美化缩进排版、一键压缩单行与 TypeScript Interface 自动类型推导，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

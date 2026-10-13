@@ -1,0 +1,10 @@
+{
+  "id": "crypto-tool",
+  "name": "加解密与散列助手",
+  "version": "1.0.0",
+  "description": "散列与对称加解密：MD5、SHA1、SHA256、SHA512、Base64 编解码、AES 加解密，实时计算多哈希对比",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard", "crypto"]
+}

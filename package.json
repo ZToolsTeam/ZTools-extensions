@@ -1,0 +1,16 @@
+{
+  "name": "@ztools/extensions",
+  "version": "1.0.0",
+  "description": "ZTools 官方开源插件与生态扩展大仓 | Raycast 声明式 UI 标准、一键脚手架与 GitOps 自动化分发",
+  "private": false,
+  "license": "MIT",
+  "scripts": {
+    "create-plugin": "node scripts/create-plugin.mjs",
+    "test": "node scripts/scan-plugin-security.mjs extensions",
+    "scan": "node scripts/scan-plugin-security.mjs extensions"
+  },
+  "devDependencies": {
+    "@ztools/raycast-compat": "^1.0.0",
+    "@ztools/ztools-plugins-spec": "^1.0.0"
+  }
+}

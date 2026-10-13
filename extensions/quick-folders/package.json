@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-quick-folders",
+  "version": "1.0.0",
+  "description": "Windows 高频系统目录与常用文件夹快速直达",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "workspace:*"
+  }
+}

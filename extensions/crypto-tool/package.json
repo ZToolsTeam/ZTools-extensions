@@ -1,0 +1,18 @@
+{
+  "name": "crypto-tool",
+  "version": "1.0.0",
+  "description": "散列与对称加解密：MD5、SHA1、SHA256、SHA512、Base64 编解码、AES 加解密，实时计算多哈希对比",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "google-auth",
+  "name": "2FA 动态口令验证器",
+  "version": "1.0.0",
+  "description": "2FA TOTP 双因素认证口令生成器，支持30秒倒计时刷新、多账号添加与一键复制",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard", "crypto"]
+}

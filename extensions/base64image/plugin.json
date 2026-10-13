@@ -1,0 +1,10 @@
+{
+  "id": "base64image",
+  "name": "Base64 图片编解码助手",
+  "version": "1.0.0",
+  "description": "Base64 图片编解码：将 Data URL / Base64 字符串解析出图片元数据 MimeType、文件大小、预览与复制标准 Markdown/HTML/纯文本，支持将文本或 SVG 转换为 Base64",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

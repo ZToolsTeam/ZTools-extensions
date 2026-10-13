@@ -1,0 +1,12 @@
+{
+  "id": "kill-process",
+  "name": "进程管理急救箱",
+  "version": "1.0.0",
+  "description": "高资源消耗进程秒级检索、CPU/内存降序与一键终止",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "color-picker",
+  "version": "1.0.0",
+  "description": "HEX/RGB/HSL/CMYK 双向换算与 WCAG 对比度",
+  "type": "module",
+  "main": "dist/index.js",
+  "dependencies": {
+    "@ztools/raycast-compat": "^1.0.0"
+  }
+}

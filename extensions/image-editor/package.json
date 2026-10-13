@@ -1,0 +1,17 @@
+{
+  "name": "image-editor",
+  "version": "1.0.0",
+  "description": "图片轻量编辑与批注助手，支持尺寸缩放、旋转翻转与防伪水印文字生成，纯声明式零CSS架构",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "memo",
+  "name": "便签备忘录",
+  "description": "极客全键盘便签速记、灵感记录与搜索管理",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "productivity",
+  "permissions": []
+}

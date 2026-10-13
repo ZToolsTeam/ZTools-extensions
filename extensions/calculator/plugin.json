@@ -1,0 +1,10 @@
+{
+  "id": "calculator",
+  "name": "极简即时计算器",
+  "version": "1.0.0",
+  "description": "极简即时计算器，支持算式实时求值、常用数学函数与历史记录，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

@@ -1,0 +1,11 @@
+{
+  "id": "browser-bookmarks",
+  "name": "浏览器书签",
+  "description": "Chrome / Edge 浏览器书签全键盘极速秒搜与打开",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "browser",
+  "permissions": ["fs", "shell"]
+}

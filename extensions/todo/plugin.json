@@ -1,0 +1,10 @@
+{
+  "id": "todo",
+  "name": "极简待办清单",
+  "version": "1.0.0",
+  "description": "极速记录个人待办、状态过滤、优先级标记与 LocalStorage 本地持久化，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

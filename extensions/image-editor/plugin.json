@@ -1,0 +1,10 @@
+{
+  "id": "image-editor",
+  "name": "图片轻量编辑与批注",
+  "version": "1.0.0",
+  "description": "图片轻量编辑与批注助手，支持尺寸缩放、旋转翻转与防伪水印文字生成，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

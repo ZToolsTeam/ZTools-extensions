@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-hosts",
+  "version": "1.0.0",
+  "description": "系统 Hosts 切换与规则管理",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "workspace:*"
+  }
+}

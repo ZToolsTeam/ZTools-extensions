@@ -1,0 +1,11 @@
+{
+  "id": "hosts",
+  "name": "Hosts 管理器",
+  "description": "系统 Hosts 规则解析、极速切换与分组管理",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": ["fs"]
+}

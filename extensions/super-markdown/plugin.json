@@ -1,0 +1,10 @@
+{
+  "id": "super-markdown",
+  "name": "Markdown 即时阅读与大纲笔记",
+  "version": "1.0.0",
+  "description": "Markdown 即时阅读与大纲笔记：Markdown 源码预览、大纲提取、字符数统计、格式清洗，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

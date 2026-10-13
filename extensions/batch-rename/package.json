@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-batch-rename",
+  "version": "1.0.0",
+  "description": "文件与文件夹批量重命名工具",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "workspace:*"
+  }
+}

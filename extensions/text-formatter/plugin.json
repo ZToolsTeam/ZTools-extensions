@@ -1,0 +1,10 @@
+{
+  "id": "text-formatter",
+  "name": "文本排版与格式化助手",
+  "version": "1.0.0",
+  "description": "多维度文本排版与格式化：支持大小写转换、全半角互转、标点中英文切换、Markdown自动排版、去除首尾/全部空白与空行，一键复制",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

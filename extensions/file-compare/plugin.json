@@ -1,0 +1,10 @@
+{
+  "id": "file-compare",
+  "name": "文本与代码差异对比",
+  "version": "1.0.0",
+  "description": "输入两段文本，计算行级/词级差异，声明式双栏展示与高亮，支持复制差异报告",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": ["clipboard"]
+}

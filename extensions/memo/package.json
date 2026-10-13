@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-memo",
+  "version": "1.0.0",
+  "description": "极简便签速记与备忘录管理",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "workspace:*"
+  }
+}

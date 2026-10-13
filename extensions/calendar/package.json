@@ -1,0 +1,18 @@
+{
+  "name": "calendar",
+  "version": "1.0.0",
+  "description": "万年历与节气助手：公历农历互查、二十四节气、法定节假日休假安排与传统老黄历宜忌查询",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/raycast-compat": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

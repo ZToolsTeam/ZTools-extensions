@@ -1,0 +1,11 @@
+{
+  "id": "batch-text-convert",
+  "name": "编码转换",
+  "description": "UTF-8、GBK、Unicode 与 ASCII 字符编码即时互转",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "developer",
+  "permissions": ["fs"]
+}

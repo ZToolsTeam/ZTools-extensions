@@ -1,0 +1,11 @@
+{
+  "id": "browser-history",
+  "name": "浏览器历史记录",
+  "description": "Chrome / Edge 浏览器历史记录全键盘极速秒搜与直达",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "browser",
+  "permissions": ["fs", "shell"]
+}
