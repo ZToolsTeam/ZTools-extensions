@@ -8,7 +8,7 @@ import {
   useState,
   showToast,
   Toast
-} from '@ztools/raycast-compat'
+} from '@ztools/declarative-ui'
 import {
   getRescueActions,
   getFullRescueScript,

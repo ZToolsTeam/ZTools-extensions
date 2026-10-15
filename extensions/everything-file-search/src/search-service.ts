@@ -51,13 +51,13 @@ export const SAMPLE_FILES: FileRecord[] = [
     pinyin: "ztools architecture"
   },
   {
-    name: "raycast-windows-deep-reverse-analysis.md",
-    path: "E:\\csdwork3\\git\\ZTools\\docs\\raycast-windows-deep-reverse-analysis.md",
+    name: "ztools-architecture-analysis.md",
+    path: "E:\\csdwork3\\git\\ZTools\\docs\\ztools-architecture-analysis.md",
     isDir: false,
     size: 25451,
     mtime: Date.now() - 3600000 * 5,
     acronym: "rwdra",
-    pinyin: "raycast windows"
+    pinyin: "ztools architecture"
   },
   {
     name: "Development-Plan-2026.pdf",

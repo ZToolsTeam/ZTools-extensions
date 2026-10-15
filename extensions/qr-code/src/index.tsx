@@ -11,7 +11,7 @@ import React, {
   Clipboard,
   useNavigation,
   useState
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import { generateQrSvg, type QrErrorCorrectionLevel } from "./qr-generator.js";
 
 export * from "./qr-generator.js";
@@ -34,8 +34,8 @@ const INITIAL_ITEMS: QrItem[] = [
   },
   {
     id: "qr-2",
-    title: "Raycast API 规范",
-    content: "https://developers.raycast.com",
+    title: "ZTools 声明式规范",
+    content: "https://ztools.cn/docs",
     level: "H",
     createdAt: new Date().toLocaleTimeString()
   }

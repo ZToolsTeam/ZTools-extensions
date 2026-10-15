@@ -9,7 +9,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@ztools/raycast-compat": "^1.0.0"
+    "@ztools/declarative-ui": "^1.0.0"
   },
   "devDependencies": {
     "typescript": "^5.8.0"

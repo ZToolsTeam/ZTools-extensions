@@ -100,7 +100,7 @@ export function getSampleClipboardEntries(): ClipboardEntry[] {
   return [
     {
       id: 'clip-pin-1',
-      text: 'https://github.com/raycast/extensions',
+      text: 'https://github.com/codingmuse/ZTools-extensions',
       type: 'url',
       length: 37,
       createTime: now - 10000,
@@ -108,7 +108,7 @@ export function getSampleClipboardEntries(): ClipboardEntry[] {
     },
     {
       id: 'clip-2',
-      text: 'npm --prefix packages/raycast-compat run test',
+      text: 'npm --prefix packages/declarative-ui run test',
       type: 'code',
       length: 45,
       createTime: now - 60000,

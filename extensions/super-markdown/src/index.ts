@@ -10,7 +10,7 @@ import {
   Clipboard,
   useState,
   useNavigation
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import {
   extractOutline,
   calculateMarkdownStats,

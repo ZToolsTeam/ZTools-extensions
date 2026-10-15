@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/raycast-compat";
+import { renderDeclarativeRoot } from "@ztools/declarative-ui";
 import { parseTimeInput, formatDateTime, getRelativeTime } from "../dist/logic.js";
 import TimestampCommand from "../dist/index.js";
 

@@ -8,6 +8,6 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@ztools/raycast-compat": "workspace:*"
+    "@ztools/declarative-ui": "workspace:*"
   }
 }

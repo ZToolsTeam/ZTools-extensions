@@ -1,4 +1,4 @@
-import React from "@ztools/raycast-compat";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -9,8 +9,8 @@ import {
   showToast,
   Toast,
   useNavigation
-} from "@ztools/raycast-compat";
-import { useState, useEffect } from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
+import { useState, useEffect } from "@ztools/declarative-ui";
 import {
   parseColor,
   generateColorSwatchSvg,

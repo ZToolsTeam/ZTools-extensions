@@ -10,7 +10,7 @@ import {
   Clipboard,
   useNavigation,
   useState
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import {
   parseImageMetadata,
   convertImageFormat,

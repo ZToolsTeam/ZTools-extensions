@@ -103,8 +103,8 @@ export function getFallbackBookmarks(): BookmarkItem[] {
     },
     {
       id: 'fb-2',
-      title: 'Raycast: A collection of powerful productivity tools',
-      url: 'https://raycast.com',
+      title: 'ZTools: 现代化桌面效率中枢',
+      url: 'https://ztools.cn',
       folder: '效率工具',
       browser: 'Edge'
     },

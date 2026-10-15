@@ -11,7 +11,7 @@ import {
   useNavigation,
   useState,
   useEffect
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import {
   createAccount,
   generateTOTP,

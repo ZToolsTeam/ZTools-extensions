@@ -5,6 +5,6 @@
   "type": "module",
   "main": "dist/index.js",
   "dependencies": {
-    "@ztools/raycast-compat": "^1.0.0"
+    "@ztools/declarative-ui": "^1.0.0"
   }
 }

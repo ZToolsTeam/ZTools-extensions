@@ -10,7 +10,7 @@ import {
 } from '../dist/logic.js'
 
 test('ClipboardManager 内容类型智能探测测试', () => {
-  assert.equal(detectContentType('https://raycast.com'), 'url')
+  assert.equal(detectContentType('https://ztools.cn'), 'url')
   assert.equal(detectContentType('http://localhost:3000/api'), 'url')
   assert.equal(detectContentType('{"key": "value"}'), 'json')
   assert.equal(detectContentType('[1, 2, 3]'), 'json')

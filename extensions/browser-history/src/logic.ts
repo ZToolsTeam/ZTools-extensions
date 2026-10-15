@@ -43,8 +43,8 @@ export function getSampleHistoryItems(): HistoryItem[] {
     },
     {
       id: 'h-2',
-      title: 'Raycast API Reference: Declarative UI Components',
-      url: 'https://developers.raycast.com/api-reference',
+      title: 'ZTools API Reference: Declarative UI Components',
+      url: 'https://ztools.cn/docs/api',
       visitTime: now - 25 * 60 * 1000,
       timeAgo: '25 分钟前',
       browser: 'Edge'

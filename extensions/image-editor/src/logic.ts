@@ -99,7 +99,7 @@ const BLUEPRINT_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 
   
   <rect x="360" y="140" width="180" height="220" rx="12" fill="#1e293b" stroke="#a855f7" stroke-width="2"/>
   <text x="450" y="175" font-family="system-ui, sans-serif" font-size="16" font-weight="bold" fill="#a855f7" text-anchor="middle">声明式运行时</text>
-  <text x="450" y="210" font-family="monospace" font-size="13" fill="#94a3b8" text-anchor="middle">Raycast Compat</text>
+  <text x="450" y="210" font-family="monospace" font-size="13" fill="#94a3b8" text-anchor="middle">Declarative Components</text>
 
   <path d="M540 250 L640 250" stroke="#a855f7" stroke-width="3" stroke-dasharray="6 4"/>
 

@@ -12,8 +12,8 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "paths": {
-      "@ztools/raycast-compat": [
-        "../../packages/raycast-compat/dist/index.d.ts"
+      "@ztools/declarative-ui": [
+        "../../packages/declarative-ui/dist/index.d.ts"
       ]
     }
   },

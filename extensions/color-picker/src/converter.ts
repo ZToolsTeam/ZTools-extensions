@@ -1,4 +1,4 @@
-import { LocalStorage } from "@ztools/raycast-compat";
+import { LocalStorage } from "@ztools/declarative-ui";
 
 export interface RGB {
   r: number;

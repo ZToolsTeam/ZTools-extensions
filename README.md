@@ -47,7 +47,7 @@ git push origin feat/my-tool
 
 ---
 
-## 🎨 核心规范（Raycast 声明式 UI 对齐）
+## 🎨 核心规范（纯声明式 UI 规范）
 
 - **彻底封杀原生 DOM/CSS 自由发挥**：严禁直接操作 HTML DOM，严禁手写自定义 CSS；
 - **纯语义化组件**：统一使用 `<List>`, `<Detail>`, `<Form>`, `<ActionPanel>`, `<Action>`，由宿主统一样式与主题呈现；

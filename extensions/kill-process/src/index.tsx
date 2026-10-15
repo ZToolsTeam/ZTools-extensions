@@ -1,4 +1,4 @@
-import React from "@ztools/raycast-compat";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -10,8 +10,8 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "@ztools/raycast-compat";
-import { useState } from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
+import { useState } from "@ztools/declarative-ui";
 import {
   ProcessInfo,
   SAMPLE_PROCESSES,

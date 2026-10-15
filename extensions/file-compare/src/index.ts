@@ -10,7 +10,7 @@ import {
   Toast,
   Clipboard,
   useState
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import {
   computeDiff,
   generateUnifiedDiff,

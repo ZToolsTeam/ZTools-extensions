@@ -10,7 +10,7 @@ import React, {
   Clipboard,
   useNavigation,
   useState
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import { validateJson, formatJson, minifyJson, jsonToTsInterface } from "./logic.js";
 
 export * from "./logic.js";
@@ -19,7 +19,7 @@ const DEFAULT_SAMPLE_JSON = JSON.stringify(
   {
     name: "ZTools Platform",
     version: "1.0.0",
-    features: ["Declarative UI", "Raycast Compat", "Fluent Styling"],
+    features: ["Declarative UI", "Declarative Components", "Fluent Styling"],
     author: {
       team: "ZTools Core",
       verified: true

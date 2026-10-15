@@ -1,4 +1,4 @@
-import { LocalStorage } from "@ztools/raycast-compat";
+import { LocalStorage } from "@ztools/declarative-ui";
 const PALETTE_STORAGE_KEY = "color_picker_palette";
 // 规范化 Hex 字符串
 export function normalizeHex(hex) {

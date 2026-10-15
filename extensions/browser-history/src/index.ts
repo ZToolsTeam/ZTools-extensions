@@ -9,7 +9,7 @@ import {
   useEffect,
   showToast,
   Toast
-} from '@ztools/raycast-compat'
+} from '@ztools/declarative-ui'
 import {
   getSampleHistoryItems,
   formatTimeAgo,
@@ -65,7 +65,7 @@ export default function BrowserHistoryCommand() {
 
   return List({
     isLoading: loading,
-    searchBarPlaceholder: '搜索历史记录 (如 github, raycast, electron)...',
+    searchBarPlaceholder: '搜索历史记录 (如 github, ztools, electron)...',
     onSearchTextChange: setSearchText,
     children: [
       List.Section({

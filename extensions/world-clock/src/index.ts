@@ -9,7 +9,7 @@ import {
   Clipboard,
   useState,
   useEffect
-} from "@ztools/raycast-compat";
+} from "@ztools/declarative-ui";
 import { CITY_DB, type CityDef } from "./cities.js";
 import {
   formatTime,
