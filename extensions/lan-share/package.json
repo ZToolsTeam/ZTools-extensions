@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-lan-share",
+  "version": "1.0.0",
+  "description": "一键在本地局域网开启高性能 HTTP 文件/目录传输服务，支持手机扫码直连下载与双向快传",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/lan-share.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "batch-audio",
+  "name": "批量音频处理",
+  "description": "支持 MP3/FLAC/WAV/AAC/OGG 批量格式转换、EBU R128 响度均衡、静音裁剪、淡入淡出与多轨合并",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "图像媒体",
+    "办公效率"
+  ],
+  "permissions": [
+    "fs",
+    "audio"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

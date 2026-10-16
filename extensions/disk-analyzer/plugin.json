@@ -1,0 +1,32 @@
+{
+  "id": "disk-analyzer",
+  "name": "磁盘空间透视分析器",
+  "description": "极速扫描磁盘分区空间分布，按目录层级、文件扩展名与超大文件排行可视化定位空间占用元凶",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-screenshot",
+  "version": "1.0.0",
+  "description": "支持跨多显示器窗口自动识别、像素级选区微调、箭头/马赛克/文字标注与屏幕置顶悬浮贴图 (Pin)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/screenshot.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

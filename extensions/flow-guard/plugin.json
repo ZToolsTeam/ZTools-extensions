@@ -1,0 +1,33 @@
+{
+  "id": "flow-guard",
+  "name": "网络流量实时监控与防火墙",
+  "description": "按进程实时监控上传/下载带宽速率、活跃 TCP/UDP 远端连接，支持一键阻断偷跑流量进程与上传限速",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "网络工具"
+  ],
+  "permissions": [
+    "network",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

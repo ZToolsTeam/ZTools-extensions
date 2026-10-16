@@ -1,0 +1,33 @@
+{
+  "id": "batch-video",
+  "name": "批量视频处理",
+  "description": "支持 H.264/HEVC 批量视频压缩、分辨率缩放、画幅裁剪、加水印、GIF 动图转换与倍速处理",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "图像媒体",
+    "办公效率"
+  ],
+  "permissions": [
+    "fs",
+    "video"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

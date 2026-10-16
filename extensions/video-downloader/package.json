@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-video-downloader",
+  "version": "1.0.0",
+  "description": "支持主流视频网站流媒体地址解析、4K/1080P 多清晰度选择、纯音频提取、字幕下载与自动混流合并",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/video-downloader.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

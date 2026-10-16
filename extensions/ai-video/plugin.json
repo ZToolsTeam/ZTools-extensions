@@ -1,0 +1,34 @@
+{
+  "id": "ai-video",
+  "name": "AI 视频超分增强",
+  "description": "基于硬件加速与 FFmpeg 管线的 AI 视频超分辨率画质增强、补帧与老片修复工作台",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "图像媒体",
+    "AI工具"
+  ],
+  "permissions": [
+    "fs",
+    "video",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

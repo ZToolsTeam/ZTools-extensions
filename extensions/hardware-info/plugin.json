@@ -1,0 +1,31 @@
+{
+  "id": "hardware-info",
+  "name": "电脑硬件信息与温度监控",
+  "description": "深度检测 CPU、主板、内存 SPD、显卡、NVMe 磁盘 SMART 健康度，并实时读取硬件传感器温度与负载",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

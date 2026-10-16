@@ -1,0 +1,32 @@
+{
+  "id": "mover",
+  "name": "C盘大文件无损搬家",
+  "description": "扫描 C 盘 AppData、ProgramData、文档与下载目录中的超大应用数据，通过 NTFS 符号链接 (Junction) 无损迁移至其他分区",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

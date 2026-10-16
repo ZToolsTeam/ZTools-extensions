@@ -1,0 +1,31 @@
+{
+  "id": "pdf",
+  "name": "PDF 全能转换与合并工具箱",
+  "description": "本地高速处理 PDF 转 Word/Excel/PPT/长图/纯文本，以及 Office 文档转 PDF、多 PDF 合并与页面提取",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公效率"
+  ],
+  "permissions": [
+    "fs"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "id": "ocr",
+  "name": "离线图片文字识别 (OCR)",
+  "description": "基于本地 PaddleOCR 引擎的高精度中英日韩多语种文字提取、截图即识与表格排版结构化识别工具",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公效率",
+    "AI工具"
+  ],
+  "permissions": [
+    "fs",
+    "clipboard",
+    "screen"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

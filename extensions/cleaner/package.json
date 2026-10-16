@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-cleaner",
+  "version": "1.0.0",
+  "description": "智能扫描系统临时文件、Windows 更新残留、浏览器缓存、崩溃转储与日志碎片，安全释放磁盘空间",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/cleaner.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

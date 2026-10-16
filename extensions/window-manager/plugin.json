@@ -1,0 +1,33 @@
+{
+  "id": "window-manager",
+  "name": "窗口句柄与置顶分屏管理器",
+  "description": "基于 Win32 原生窗口 API 枚举全部活动桌面窗口，支持一键窗口置顶 (Always on Top)、透明度调节、尺寸锁定与极速分屏贴靠",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "办公效率"
+  ],
+  "permissions": [
+    "system",
+    "screen"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

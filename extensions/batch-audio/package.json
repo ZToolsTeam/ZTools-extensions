@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-batch-audio",
+  "version": "1.0.0",
+  "description": "支持 MP3/FLAC/WAV/AAC/OGG 批量格式转换、EBU R128 响度均衡、静音裁剪、淡入淡出与多轨合并",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/batch-audio.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

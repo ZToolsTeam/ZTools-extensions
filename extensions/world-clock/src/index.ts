@@ -37,6 +37,9 @@ export default function WorldClockCommand() {
     const timer = setInterval(() => {
       setNow(new Date());
     }, 1000);
+    if (typeof (timer as any)?.unref === "function") {
+      (timer as any).unref();
+    }
     return () => clearInterval(timer);
   }, []);
 

@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-system-backup",
+  "version": "1.0.0",
+  "description": "支持关键工作目录、开发环境配置、浏览器书签与注册表关键项的增量多版本压缩快照备份与一键校验还原",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/system-backup.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

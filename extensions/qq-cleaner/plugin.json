@@ -1,0 +1,31 @@
+{
+  "id": "qq-cleaner",
+  "name": "QQ 专项深度清理",
+  "description": "智能识别腾讯 QQ / NTQQ 本地账号目录，安全清理群聊图片缓存、过期视频、表情包碎片与升级包残留",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

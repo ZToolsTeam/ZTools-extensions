@@ -20,7 +20,7 @@ declare const ztools: any
 
 export default function NetworkAdapterCommand() {
   const [searchText, setSearchText] = useState('')
-  const [adapters, setAdapters] = useState<AdapterInfo[]>([])
+  const [adapters, setAdapters] = useState<AdapterInfo[]>(getSampleAdapters())
   const [loading, setLoading] = useState(true)
 
   async function loadAdapters() {

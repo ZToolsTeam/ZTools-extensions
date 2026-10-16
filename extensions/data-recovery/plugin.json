@@ -1,0 +1,32 @@
+{
+  "id": "data-recovery",
+  "name": "误删数据恢复向导",
+  "description": "基于底层扇区与 NTFS MFT/FAT 文件分配表扫描技术，深度找回误清空回收站或格式化丢失的文档与照片",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

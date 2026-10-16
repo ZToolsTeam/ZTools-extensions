@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-hardware-info",
+  "version": "1.0.0",
+  "description": "深度检测 CPU、主板、内存 SPD、显卡、NVMe 磁盘 SMART 健康度，并实时读取硬件传感器温度与负载",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/hardware-info.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

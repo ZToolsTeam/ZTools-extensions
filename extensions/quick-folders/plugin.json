@@ -7,5 +7,22 @@
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": "system",
-  "permissions": ["shell"]
+  "permissions": [
+    "shell"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
 }

@@ -1,9 +1,37 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createRequire } from 'node:module'
 import {
   parseIpconfigAll,
   getSampleAdapters
 } from '../dist/logic.js'
+
+const require = createRequire(import.meta.url)
+const Command = require('../dist/index.js').default
+
+test('NetworkAdapter 声明式视图渲染与 Shell 故障注入测试', async () => {
+  // 注入模拟宿主故障 (shell.exec 抛出异常)
+  globalThis.ztools = {
+    shell: {
+      exec: async () => {
+        throw new Error('SHELL_EXEC_TIMEOUT_OR_CRASH')
+      }
+    }
+  }
+  try {
+    const view = Command()
+    assert.ok(view, '应返回声明式视图描述符')
+    assert.equal(view.type, 'List')
+    const section = view.children[0]
+    assert.equal(section.type, 'List.Section')
+    assert.ok(section.children.length >= 3, '故障回退下仍应渲染预设网卡列表项')
+    const firstItem = section.children[0]
+    assert.equal(firstItem.type, 'List.Item')
+    assert.ok(firstItem.props.actions, '每个列表项必须挂载 ActionPanel')
+  } finally {
+    delete globalThis.ztools
+  }
+})
 
 test('NetworkAdapter 集成解析测试 - 中文 ipconfig 输出', () => {
   const sample = `

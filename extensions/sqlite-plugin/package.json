@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-sqlite-plugin",
+  "version": "1.0.0",
+  "description": "基于只读事务与 NOMUTEX 安全模式的本地 SQLite 数据库表结构查看、索引分析与受控 SELECT 查询工具",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/sqlite-plugin.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

@@ -6,5 +6,23 @@
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "permissions": ["clipboard", "network"]
+  "permissions": [
+    "clipboard",
+    "network"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
 }
