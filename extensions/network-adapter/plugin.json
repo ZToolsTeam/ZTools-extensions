@@ -2,7 +2,7 @@
   "id": "network-adapter",
   "name": "网络适配器",
   "description": "本机各网卡 IPv4/IPv6、子网掩码、网关与 MAC 地址查询",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

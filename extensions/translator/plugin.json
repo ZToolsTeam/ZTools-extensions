@@ -1,7 +1,7 @@
 {
   "id": "translator",
   "name": "多语言即时翻译",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "多语种即时互译、字典词义解析、发音音标与翻译历史记录，纯声明式零CSS架构",
   "author": "ZTools Team",
   "entry": "dist/index.js",

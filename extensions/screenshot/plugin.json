@@ -2,7 +2,7 @@
   "id": "screenshot",
   "name": "多屏区域截图与悬浮贴图",
   "description": "支持跨多显示器窗口自动识别、像素级选区微调、箭头/马赛克/文字标注与屏幕置顶悬浮贴图 (Pin)",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

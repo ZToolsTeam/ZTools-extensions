@@ -2,7 +2,7 @@
   "id": "video-downloader",
   "name": "流媒体音视频嗅探下载器",
   "description": "支持主流视频网站流媒体地址解析、4K/1080P 多清晰度选择、纯音频提取、字幕下载与自动混流合并",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

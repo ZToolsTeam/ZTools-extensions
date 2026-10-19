@@ -3,109 +3,207 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   Clipboard,
   useState,
+  useEffect,
   showToast,
   Toast
-} from '@ztools/declarative-ui'
+} from "@ztools/declarative-ui"
 import {
-  DLL_PLUGIN_NAME,
-  getCapabilityItems,
-  filterCapabilityItems,
-  invokeNativeCapability,
-  type CapabilityActionItem
-} from './logic'
+  type LanShareItem,
+  type LanShareFilterMode,
+  formatBytes,
+  fetchLanShareSnapshot,
+  toggleFileShare,
+  openSharedFileLocation,
+  filterLanShareItems
+} from './logic.js'
 
-export default function LanShareCommand() {
+export * from './logic.js'
+
+function renderSharePreviewMarkdown(item: LanShareItem): string {
+  const sizeLine =
+    item.category === 'files'
+      ? `- **文件体积**: \`${formatBytes(item.sizeBytes)}\`\n- **本地路径**: \`${item.filePath}\``
+      : item.category === 'clipboard'
+      ? `- **文本长度**: \`${item.sizeBytes} 字符\`\n- **同步内容**: \`${item.textPreview || item.subtitle}\``
+      : `- **服务模式**: \`HTTP 零配置局域网双向快传\``
+
+  return `# ${item.title}
+
+![扫码直连下载](${item.qrCodeDataUri})
+
+### 局域网直连访问地址
+\`\`\`text
+${item.shareUrl}
+\`\`\`
+
+---
+
+### 传输状态与连接规格
+- **共享状态**: \`${item.isShared ? '正在共享 (手机同一 Wi-Fi 扫码即下)' : '已暂停共享'}\`
+- **累计下载次数**: \`${item.downloadCount} 次\`
+${sizeLine}
+`
+}
+
+export function LanShareCommand() {
   const [searchText, setSearchText] = useState('')
-  const [items] = useState<CapabilityActionItem[]>(getCapabilityItems())
-  const [lastStatus, setLastStatus] = useState<Record<string, string>>({})
+  const [filterMode, setFilterMode] = useState<LanShareFilterMode>('all')
+  const [items, setItems] = useState<LanShareItem[]>([])
+  const [portalUrl, setPortalUrl] = useState('http://192.168.1.108:18580')
+  const [totalSharedBytes, setTotalSharedBytes] = useState(0)
+  const [isLoading, setIsLoading] = useState(true)
 
-  async function handleExecute(item: CapabilityActionItem) {
-    showToast({
-      style: Toast.Style.Animated,
-      title: `正在执行: ${item.title}`,
-      message: `${DLL_PLUGIN_NAME}.${item.method}`
-    })
-
+  async function refreshShareList(showNotice = false) {
+    if (showNotice) setIsLoading(true)
     try {
-      const res = await invokeNativeCapability(item.method, item.params)
-      if (!res.ok) {
-        setLastStatus(prev => ({ ...prev, [item.id]: '执行失败' }))
+      const snap = await fetchLanShareSnapshot()
+      setItems(snap.items)
+      setPortalUrl(snap.portalUrl)
+      setTotalSharedBytes(snap.totalSharedBytes)
+      if (showNotice) {
         showToast({
-          style: Toast.Style.Failure,
-          title: '执行被拒绝或失败',
-          message: res.error || '未知错误'
+          style: Toast.Style.Success,
+          title: '局域网共享列表已刷新',
+          message: `内网地址: ${snap.portalUrl} · 共 ${snap.sharedCount} 项就绪`
         })
-        return res
       }
-      setLastStatus(prev => ({ ...prev, [item.id]: res.fromFallback ? '已就绪(离线预览)' : '执行成功' }))
-      showToast({
-        style: Toast.Style.Success,
-        title: `已完成: ${item.title}`,
-        message: `${DLL_PLUGIN_NAME}.${item.method}`
-      })
-      return res
-    } catch (err) {
-      setLastStatus(prev => ({ ...prev, [item.id]: '异常拦截' }))
-      showToast({
-        style: Toast.Style.Failure,
-        title: '调用异常',
-        message: err instanceof Error ? err.message : String(err)
-      })
-      throw err
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  const filtered = filterCapabilityItems(items, searchText)
+  useEffect(() => {
+    void refreshShareList(false)
+  }, [])
+
+  async function handleToggleShare(item: LanShareItem) {
+    const nextState = !item.isShared
+    const res = await toggleFileShare(item.id, nextState)
+    if (res.ok) {
+      setItems((prev) =>
+        prev.map((cur) => (cur.id === item.id ? { ...cur, isShared: nextState } : cur))
+      )
+      showToast({
+        style: Toast.Style.Success,
+        title: res.message,
+        message: item.shareUrl
+      })
+    }
+  }
+
+  const filtered = filterLanShareItems(items, searchText, filterMode)
+  const sharedCount = items.filter((i) => i.isShared).length
 
   return List({
-    searchBarPlaceholder: "搜索局域网极速文件共享功能或底层指令 (LanSharePlugin)...",
+    navigationTitle: '局域网免密快传与扫码投送',
+    searchBarPlaceholder: '搜索局域网共享文件、剪贴板投送或内网直连 URL...',
     onSearchTextChange: setSearchText,
+    isShowingDetail: true,
+    isLoading,
+    searchBarAccessory: List.Dropdown({
+      tooltip: '筛选局域网共享内容类型',
+      value: filterMode,
+      onChange: (val: string) => setFilterMode(val as LanShareFilterMode),
+      children: [
+        List.Dropdown.Item({ title: '全部共享项 (All Shared Items)', value: 'all' }),
+        List.Dropdown.Item({ title: '剪贴板文本投送 (Clipboard Sync)', value: 'clipboard' }),
+        List.Dropdown.Item({ title: '桌面与下载目录文件 (Local Files)', value: 'files' })
+      ]
+    }),
+    filterBar: {
+      summaryText: `本机内网直连: ${portalUrl} · 共享就绪 ${sharedCount} 项 (${formatBytes(totalSharedBytes)}) · 手机同一 Wi-Fi 扫码即下`,
+      actions: [
+        {
+          id: 'copy-portal',
+          label: '复制内网主页地址',
+          title: '复制内网主页地址',
+          style: 'secondary',
+          onAction: async () => {
+            await Clipboard.copy(portalUrl)
+            showToast({
+              style: Toast.Style.Success,
+              title: '已复制内网访问地址',
+              message: portalUrl
+            })
+          }
+        },
+        {
+          id: 'refresh-lan',
+          label: '刷新共享列表',
+          title: '刷新共享列表',
+          style: 'secondary',
+          onAction: () => void refreshShareList(true)
+        }
+      ]
+    },
     children: [
       List.Section({
-        title: `局域网极速文件共享 (${filtered.length}/${items.length})`,
-        children: filtered.map(item =>
+        title: `局域网直连与扫码投送列表 (${filtered.length})`,
+        children: filtered.map((item) =>
           List.Item({
             id: item.id,
             title: item.title,
             subtitle: item.subtitle,
-            icon: {
-              source: Icon.Bolt,
-              tintColor: Color.Blue
-            },
+            icon:
+              item.category === 'portal'
+                ? Icon.Wifi
+                : item.category === 'clipboard'
+                ? Icon.Clipboard
+                : Icon.Document,
             accessories: [
+              { tag: { value: item.categoryLabel } },
               {
-                tag: {
-                  value: lastStatus[item.id] || item.tag,
-                  color: lastStatus[item.id] === '执行失败' || lastStatus[item.id] === '异常拦截'
-                    ? Color.Red
-                    : Color.Green
-                }
+                text:
+                  item.category === 'files'
+                    ? formatBytes(item.sizeBytes)
+                    : item.isShared
+                    ? '扫码直连'
+                    : '已暂停'
               }
             ],
+            detail: List.Item.Detail({
+              markdown: renderSharePreviewMarkdown(item)
+            }),
             actions: ActionPanel({
               title: item.title,
               children: [
                 Action({
-                  title: '立即执行此项操作',
-                  icon: Icon.Play,
-                  onAction: () => handleExecute(item)
-                }),
-                Action({
-                  title: '复制原生调用指令签名',
+                  title: '复制局域网直连下载 URL',
                   icon: Icon.Clipboard,
-                  shortcut: { modifiers: ['ctrl'], key: 'c' },
-                  onAction: () => {
-                    const payload = JSON.stringify({ plugin: DLL_PLUGIN_NAME, method: item.method, params: item.params })
-                    Clipboard.copy(payload)
+                  onAction: async () => {
+                    await Clipboard.copy(item.shareUrl)
                     showToast({
                       style: Toast.Style.Success,
-                      title: '已复制调用签名',
-                      message: `${DLL_PLUGIN_NAME}.${item.method}`
+                      title: '已复制内网直连链接',
+                      message: item.shareUrl
                     })
                   }
+                }),
+                Action({
+                  title: item.isShared ? '暂停该项局域网共享' : '开启该项局域网共享',
+                  icon: item.isShared ? Icon.Stop : Icon.Checkmark,
+                  shortcut: { modifiers: ['ctrl'], key: 'return' },
+                  onAction: () => handleToggleShare(item)
+                }),
+                ...(item.filePath
+                  ? [
+                      Action({
+                        title: '在资源管理器中定位文件',
+                        icon: Icon.Folder,
+                        shortcut: { modifiers: ['ctrl'], key: 'o' },
+                        onAction: () => {
+                          void openSharedFileLocation(item.filePath)
+                        }
+                      })
+                    ]
+                  : []),
+                Action({
+                  title: '刷新共享列表',
+                  icon: Icon.ArrowClockwise,
+                  shortcut: { modifiers: ['ctrl'], key: 'r' },
+                  onAction: () => refreshShareList(true)
                 })
               ]
             })
@@ -115,3 +213,5 @@ export default function LanShareCommand() {
     ]
   })
 }
+
+export default LanShareCommand

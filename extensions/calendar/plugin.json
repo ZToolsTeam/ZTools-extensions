@@ -1,7 +1,7 @@
 {
   "id": "calendar",
   "name": "万年历与节气助手",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "万年历与节气：公历、农历、24节气、节假日、天干地支生肖查询，纯声明式零CSS架构",
   "author": "ZTools Team",
   "entry": "dist/index.js",

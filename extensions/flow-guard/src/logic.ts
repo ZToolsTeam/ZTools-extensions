@@ -1,12 +1,14 @@
 /**
- * 进程网络活动与端口连接监控业务逻辑层 (FlowGuard Logic)
- * 真实聚合 process_list_ports (TCP/UDP 端口与远端连接) 与 process_list (进程路径/内存/CPU)
+ * 网络流量监控、进程连接审计与防火墙卫士 (FlowGuard 2.0 Logic)
+ * 1:1 复刻 DLLPlugins/flow-guard (FlowGuardPlugin.h)
+ * 真实聚合 process_list_ports (TCP/UDP 五元组套接字) 与 process_list (进程路径/内存/CPU)
  */
 
 import {
   callHostTransport,
+  isRealElectronHost,
   showRealItemInFolder
-} from '../../shared/native-ipc'
+} from "./native-ipc.js"
 
 export interface CapabilityActionItem {
   id: string
@@ -26,6 +28,8 @@ export interface NativeInvocationResult {
   fromFallback?: boolean
 }
 
+export type RemoteIpScope = 'public' | 'lan' | 'loopback' | 'listening'
+
 export interface PortEndpointItem {
   protocol: string
   localAddress: string
@@ -35,6 +39,7 @@ export interface PortEndpointItem {
   state: string
   pid: number
   processName: string
+  remoteScope?: RemoteIpScope
 }
 
 export interface ProcessNetworkGroup {
@@ -47,6 +52,9 @@ export interface ProcessNetworkGroup {
   udpCount: number
   establishedCount: number
   listeningCount: number
+  publicCount: number
+  lanCount: number
+  loopbackCount: number
   endpoints: PortEndpointItem[]
   isProtected: boolean
 }
@@ -57,11 +65,58 @@ export interface FlowGuardSnapshot {
   totalEstablished: number
   totalListening: number
   totalUdp: number
+  totalPublic: number
+  totalLan: number
+  totalLoopback: number
 }
 
 export const DLL_PLUGIN_NAME = 'FlowGuardPlugin'
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('^(?:System|svchost\\.exe|lsass\\.exe|dns\\.exe|csrss\\.exe|services\\.exe)$', 'i')
 export const FORBIDDEN_REASON = '核心系统网络服务受保护，禁止断网拦截以防系统断联'
+
+/**
+ * 识别远端地址所属网络域（公网外联 / 局域网 / 本机回环 / 监听）
+ */
+export function classifyRemoteIpScope(remoteAddress: string, state: string, protocol: string): RemoteIpScope {
+  const addr = String(remoteAddress || '').trim().toLowerCase()
+  const st = String(state || '').trim().toUpperCase()
+  if (
+    st === 'LISTENING' ||
+    st === 'LISTEN' ||
+    !addr ||
+    addr === '*' ||
+    addr === '0.0.0.0' ||
+    addr === '::' ||
+    addr === '[::]'
+  ) {
+    return 'listening'
+  }
+  if (
+    addr === '127.0.0.1' ||
+    addr.startsWith('127.') ||
+    addr === '::1' ||
+    addr === '[::1]' ||
+    addr === 'localhost'
+  ) {
+    return 'loopback'
+  }
+  if (
+    addr.startsWith('10.') ||
+    addr.startsWith('192.168.') ||
+    addr.startsWith('169.254.') ||
+    addr.startsWith('fe80:') ||
+    addr.startsWith('[fe80:') ||
+    addr.startsWith('fc00:') ||
+    addr.startsWith('fd00:') ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(addr)
+  ) {
+    return 'lan'
+  }
+  if (protocol.toUpperCase() === 'UDP' && (addr === '*:*' || addr === '0.0.0.0')) {
+    return 'listening'
+  }
+  return 'public'
+}
 
 const PRESET_ITEMS: CapabilityActionItem[] = [
   {
@@ -95,6 +150,75 @@ const PRESET_ITEMS: CapabilityActionItem[] = [
     tag: '连接审计',
     method: 'GetProcessConnections',
     params: {}
+  }
+]
+
+const FALLBACK_ENDPOINTS: PortEndpointItem[] = [
+  {
+    protocol: 'TCP',
+    localAddress: '192.168.1.108',
+    localPort: 54312,
+    remoteAddress: '142.250.190.46',
+    remotePort: 443,
+    state: 'ESTABLISHED',
+    pid: 14208,
+    processName: 'chrome.exe',
+    remoteScope: 'public'
+  },
+  {
+    protocol: 'TCP',
+    localAddress: '192.168.1.108',
+    localPort: 54318,
+    remoteAddress: '20.205.243.166',
+    remotePort: 443,
+    state: 'ESTABLISHED',
+    pid: 19844,
+    processName: 'Code.exe',
+    remoteScope: 'public'
+  },
+  {
+    protocol: 'TCP',
+    localAddress: '192.168.1.108',
+    localPort: 51820,
+    remoteAddress: '192.168.1.1',
+    remotePort: 53,
+    state: 'ESTABLISHED',
+    pid: 1044,
+    processName: 'svchost.exe',
+    remoteScope: 'lan'
+  },
+  {
+    protocol: 'TCP',
+    localAddress: '127.0.0.1',
+    localPort: 18580,
+    remoteAddress: '0.0.0.0',
+    remotePort: 0,
+    state: 'LISTENING',
+    pid: 22104,
+    processName: 'ZTools.exe',
+    remoteScope: 'listening'
+  },
+  {
+    protocol: 'TCP',
+    localAddress: '0.0.0.0',
+    localPort: 3000,
+    remoteAddress: '0.0.0.0',
+    remotePort: 0,
+    state: 'LISTENING',
+    pid: 28440,
+    processName: 'node.exe',
+    remoteScope: 'listening'
+  },
+  {
+    protocol: 'UDP',
+    localAddress: '127.0.0.1',
+    localPort: 5353,
+    remoteAddress: '127.0.0.1',
+    remotePort: 5353,
+    state: 'BOUND',
+    pid: 22104,
+    processName: 'ZTools.exe',
+    remoteScope: 'loopback'
   }
 ]
 
@@ -223,7 +347,7 @@ export async function invokeNativeCapability(
 }
 
 /**
- * 采集本机真实活动网络连接与端口占用画像
+ * 采集本机真实活动网络连接与五元组端口画像
  */
 export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGuardSnapshot> {
   const [portsRes, procsRes] = await Promise.all([
@@ -247,12 +371,20 @@ export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGu
     }
   }
 
-  const rawPorts = portsRes.ok && Array.isArray(portsRes.data) ? portsRes.data : []
+  const rawPorts =
+    portsRes.ok && Array.isArray(portsRes.data)
+      ? portsRes.data
+      : !hostOverride && !isRealElectronHost()
+      ? FALLBACK_ENDPOINTS
+      : []
   const groupMap = new Map<number, ProcessNetworkGroup>()
 
   let totalEstablished = 0
   let totalListening = 0
   let totalUdp = 0
+  let totalPublic = 0
+  let totalLan = 0
+  let totalLoopback = 0
 
   for (const ep of rawPorts) {
     const pid = Number(ep.pid || 0)
@@ -261,10 +393,15 @@ export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGu
     const processName = rawName.endsWith('.exe') || rawName === 'System' ? rawName : `${rawName}.exe`
     const proto = String(ep.protocol || 'TCP').toUpperCase()
     const state = String(ep.state || '').toUpperCase()
+    const remoteAddress = String(ep.remoteAddress || '*')
+    const remoteScope = classifyRemoteIpScope(remoteAddress, state, proto)
 
     if (proto === 'UDP') totalUdp += 1
     if (state === 'ESTABLISHED') totalEstablished += 1
-    if (state === 'LISTENING') totalListening += 1
+    if (state === 'LISTENING' || state === 'LISTEN') totalListening += 1
+    if (remoteScope === 'public') totalPublic += 1
+    else if (remoteScope === 'lan') totalLan += 1
+    else if (remoteScope === 'loopback') totalLoopback += 1
 
     let group = groupMap.get(pid)
     if (!group) {
@@ -278,6 +415,9 @@ export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGu
         udpCount: 0,
         establishedCount: 0,
         listeningCount: 0,
+        publicCount: 0,
+        lanCount: 0,
+        loopbackCount: 0,
         endpoints: [],
         isProtected: pid <= 4 || FORBIDDEN_TARGET_PATTERN.test(processName) || FORBIDDEN_TARGET_PATTERN.test(rawName)
       }
@@ -290,21 +430,26 @@ export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGu
       group.tcpCount += 1
     }
     if (state === 'ESTABLISHED') group.establishedCount += 1
-    if (state === 'LISTENING') group.listeningCount += 1
+    if (state === 'LISTENING' || state === 'LISTEN') group.listeningCount += 1
+    if (remoteScope === 'public') group.publicCount += 1
+    else if (remoteScope === 'lan') group.lanCount += 1
+    else if (remoteScope === 'loopback') group.loopbackCount += 1
 
     group.endpoints.push({
       protocol: proto,
       localAddress: String(ep.localAddress || '0.0.0.0'),
       localPort: Number(ep.localPort || 0),
-      remoteAddress: String(ep.remoteAddress || '*'),
+      remoteAddress,
       remotePort: Number(ep.remotePort || 0),
       state: state || (proto === 'UDP' ? 'BOUND' : 'ACTIVE'),
       pid,
-      processName
+      processName,
+      remoteScope
     })
   }
 
   const groups = Array.from(groupMap.values()).sort((a, b) => {
+    if (b.publicCount !== a.publicCount) return b.publicCount - a.publicCount
     if (b.establishedCount !== a.establishedCount) return b.establishedCount - a.establishedCount
     return b.endpoints.length - a.endpoints.length
   })
@@ -314,13 +459,13 @@ export async function fetchFlowGuardSnapshot(hostOverride?: any): Promise<FlowGu
     totalEndpoints: rawPorts.length,
     totalEstablished,
     totalListening,
-    totalUdp
+    totalUdp,
+    totalPublic,
+    totalLan,
+    totalLoopback
   }
 }
 
-/**
- * 阻断/终止异常联网进程（受系统网络核心服务白名单保护）
- */
 export async function terminateNetworkProcess(
   pid: number,
   processName: string,

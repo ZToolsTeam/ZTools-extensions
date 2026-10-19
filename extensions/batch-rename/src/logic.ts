@@ -1,18 +1,31 @@
 /**
- * 批量文件重命名业务逻辑与真实文件系统契约层 (BatchRename Logic)
- * 支持从本机真实目录 (Downloads / Desktop / Documents) 读取真实文件列表、实时 Diff 预览并通过 filesystem_move_file 执行原子重命名
+ * 批量文件重命名工作台业务逻辑与真实文件系统契约层 (BatchRename 2.0 Logic)
+ * 1:1 复刻 DLLPlugins/batch-rename/BatchRenamePlugin/产品设计文档.md
+ * 完整支持 10 大替换/追加/序号规则、4 种智能排序、重命名同名冲突检测、真实原子改名与一键撤销回滚 (Undo)
  */
 
 import {
   callHostTransport,
-  getRealFileSize,
   getRealSystemPath,
-  listRealDirectoryContents,
+  readRealDirectory,
   showRealItemInFolder
-} from '../../shared/native-ipc'
+} from "./native-ipc.js"
+
+export type RenameRuleType =
+  | 'replace'
+  | 'prefix'
+  | 'date_prefix'
+  | 'suffix'
+  | 'case'
+  | 'number'
+  | 'number_cn'
+  | 'number_roman'
+  | 'trim_head3'
+  | 'clean_brackets'
+  | 'snake_case'
 
 export interface RenameRule {
-  type: 'replace' | 'prefix' | 'suffix' | 'case' | 'number'
+  type: RenameRuleType
   find?: string
   replace?: string
   prefix?: string
@@ -27,9 +40,17 @@ export interface RenameResultItem {
   oldName: string
   newName: string
   changed: boolean
+  conflict?: boolean
   fullPath?: string
   parentDir?: string
   sizeBytes?: number
+}
+
+export interface RenameUndoEntry {
+  oldPath: string
+  newPath: string
+  oldName: string
+  newName: string
 }
 
 export interface CapabilityActionItem {
@@ -53,6 +74,19 @@ export interface NativeInvocationResult {
 export const DLL_PLUGIN_NAME = 'BatchRenamePlugin'
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./', 'i')
 export const FORBIDDEN_REASON = '严禁对 Windows 系统核心目录执行批量重命名或包含路径穿越字符'
+
+export const RENAME_RULE_PRESETS: Array<{ id: RenameRuleType; label: string; desc: string }> = [
+  { id: 'number', label: '🔢 阿拉伯序号 (_01, _02)', desc: '按补零数字序列自动追加后缀 (PRD 2.3.4)' },
+  { id: 'number_cn', label: '🇨🇳 中文序号 (_一, _二)', desc: '按中文数字序列追加后缀 (PRD 2.3.4)' },
+  { id: 'number_roman', label: '🏛️ 罗马序号 (_I, _II)', desc: '按罗马数字序列追加后缀 (PRD 2.3.4)' },
+  { id: 'prefix', label: '⬅️ 前缀注入 (Prefix_)', desc: '在文件名首部插入自定义前缀或工程标识 (PRD 2.3.1)' },
+  { id: 'date_prefix', label: '📅 日期归档前缀 (YYYYMMDD_)', desc: '自动注入当前日期归档头' },
+  { id: 'suffix', label: '➡️ 后缀追加 (_Suffix)', desc: '在扩展名前追加版本或状态后缀 (PRD 2.3.2)' },
+  { id: 'trim_head3', label: '✂️ 裁剪前3字符 (前N位删除)', desc: '移除文件名前 3 位冗余编号字符 (PRD 2.2.2)' },
+  { id: 'clean_brackets', label: '🧹 清洗括号与冗余符号', desc: '清除 () [] 【】 及其内部广告/副本标记 (PRD 2.2.5)' },
+  { id: 'snake_case', label: '🐍 下划线规范化 (snake_case)', desc: '将空格与连字符统一替换为下划线' },
+  { id: 'case', label: '🔡 全小写规范 (lowercase)', desc: '文件名与扩展名统一转为全小写 (PRD 2.2.6)' }
+]
 
 const PRESET_ITEMS: CapabilityActionItem[] = [
   {
@@ -205,9 +239,6 @@ export async function invokeNativeCapability(
   }
 }
 
-/**
- * 分离主文件名与扩展名
- */
 export function splitFileName(fullName: string): { baseName: string; extension: string } {
   const lastDot = fullName.lastIndexOf('.')
   if (lastDot > 0) {
@@ -228,8 +259,11 @@ function toTitleCase(str: string): string {
   })
 }
 
+const CN_NUMS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五', '十六', '十七', '十八', '十九', '二十']
+const ROMAN_NUMS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII', 'XIII', 'XIV', 'XV', 'XVI', 'XVII', 'XVIII', 'XIX', 'XX']
+
 /**
- * 单个文件名应用规则
+ * 单个文件名应用重命名规则 (1:1 对齐 PRD 2.2 & 2.3)
  */
 export function applyRenameRule(fileName: string, rule: RenameRule, index: number): string {
   const { baseName, extension } = splitFileName(fileName)
@@ -249,6 +283,14 @@ export function applyRenameRule(fileName: string, rule: RenameRule, index: numbe
       }
       break
     }
+    case 'date_prefix': {
+      const d = new Date()
+      const ds = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}_`
+      if (!newBaseName.startsWith(ds)) {
+        newBaseName = `${ds}${newBaseName}`
+      }
+      break
+    }
     case 'suffix': {
       if (rule.suffix) {
         newBaseName = `${newBaseName}${rule.suffix}`
@@ -259,7 +301,7 @@ export function applyRenameRule(fileName: string, rule: RenameRule, index: numbe
       if (rule.caseMode === 'upper') {
         newBaseName = newBaseName.toUpperCase()
         newExtension = newExtension.toUpperCase()
-      } else if (rule.caseMode === 'lower') {
+      } else if (rule.caseMode === 'lower' || !rule.caseMode) {
         newBaseName = newBaseName.toLowerCase()
         newExtension = newExtension.toLowerCase()
       } else if (rule.caseMode === 'title') {
@@ -274,22 +316,51 @@ export function applyRenameRule(fileName: string, rule: RenameRule, index: numbe
       newBaseName = `${newBaseName}_${numStr}`
       break
     }
+    case 'number_cn': {
+      const cn = CN_NUMS[index] || String(index + 1)
+      newBaseName = `${newBaseName}_${cn}`
+      break
+    }
+    case 'number_roman': {
+      const rom = ROMAN_NUMS[index] || String(index + 1)
+      newBaseName = `${newBaseName}_${rom}`
+      break
+    }
+    case 'trim_head3': {
+      newBaseName = newBaseName.length > 3 ? newBaseName.slice(3) : newBaseName
+      break
+    }
+    case 'clean_brackets': {
+      const cleaned = newBaseName
+        .replace(/\([^)]*\)|\[[^\]]*\]|【[^】]*】/g, '')
+        .replace(/\s+/g, '_')
+        .replace(/^_+|_+$/g, '')
+      if (cleaned.length > 0) newBaseName = cleaned
+      break
+    }
+    case 'snake_case': {
+      newBaseName = newBaseName.replace(/[\s\-]+/g, '_').toLowerCase()
+      newExtension = newExtension.toLowerCase()
+      break
+    }
   }
 
   return `${newBaseName}${newExtension}`
 }
 
-/**
- * 批量应用重命名规则
- */
 export function batchApplyRename(files: string[], rule: RenameRule): RenameResultItem[] {
+  const seen = new Set<string>()
   return files.map((file, index) => {
     const newName = applyRenameRule(file, rule, index)
+    const lower = newName.toLowerCase()
+    const conflict = seen.has(lower)
+    seen.add(lower)
     return {
       id: `file-${index}`,
       oldName: file,
       newName,
-      changed: file !== newName
+      changed: file !== newName,
+      conflict
     }
   })
 }
@@ -308,14 +379,16 @@ export interface RealFileEntry {
   name: string
   fullPath: string
   parentDir: string
+  extension: string
   sizeBytes: number
+  lastModifiedMs: number
 }
 
 /**
- * 从本机真实目录 (downloads / desktop / documents) 加载待重命名文件列表
+ * 从本机真实目录 (downloads / desktop / documents / pictures / videos) 加载待重命名文件列表
  */
 export async function fetchRealBatchRenameFiles(
-  sourceScope: 'downloads' | 'desktop' | 'documents' = 'downloads',
+  sourceScope: 'downloads' | 'desktop' | 'documents' | 'pictures' | 'videos' = 'downloads',
   hostOverride?: any
 ): Promise<{ directory: string; files: RealFileEntry[] }> {
   const dirPath = await getRealSystemPath(sourceScope, hostOverride)
@@ -323,31 +396,26 @@ export async function fetchRealBatchRenameFiles(
     return { directory: '', files: [] }
   }
 
-  const rawPaths = await listRealDirectoryContents(dirPath, hostOverride)
-  const slice = rawPaths.slice(0, 25)
-  const sizes = await Promise.all(slice.map(p => getRealFileSize(p, hostOverride)))
-
+  const entries = await readRealDirectory(dirPath, hostOverride)
   const files: RealFileEntry[] = []
-  for (let i = 0; i < slice.length; i++) {
-    const fullPath = slice[i]
-    const sz = sizes[i] || 0
-    // 仅纳入具有明确文件扩展名或大于 0 字节的常规文件
-    const name = fullPath.split(/[\\/]/).pop() || ''
-    if (!name || (!name.includes('.') && sz === 0)) continue
+  for (const entry of entries) {
+    if (entry.isDirectory) continue
+    if (!entry.name || entry.name.toLowerCase() === 'desktop.ini') continue
+    const dot = entry.name.lastIndexOf('.')
+    const ext = dot > 0 ? entry.name.slice(dot).toLowerCase() : '.file'
     files.push({
-      name,
-      fullPath,
+      name: entry.name,
+      fullPath: entry.path || `${dirPath}\\${entry.name}`,
       parentDir: dirPath,
-      sizeBytes: sz
+      extension: ext,
+      sizeBytes: entry.sizeBytes || 0,
+      lastModifiedMs: entry.lastModifiedMs || 0
     })
   }
 
-  return { directory: dirPath, files }
+  return { directory: dirPath, files: files.slice(0, 60) }
 }
 
-/**
- * 在真实文件系统上对单个或批量文件执行重命名 (filesystem_move_file)
- */
 export async function executeRealFileRename(
   sourcePath: string,
   newFileName: string,
@@ -370,6 +438,25 @@ export async function executeRealFileRename(
 
   const res = await callHostTransport('filesystem_move_file', { sourcePath, destinationPath }, hostOverride)
   return { ok: res.ok, destinationPath, error: res.error }
+}
+
+/**
+ * 批量撤销上一次重命名操作 (PRD 2.6 撤销回滚)
+ */
+export async function undoBatchRenameHistory(
+  history: RenameUndoEntry[],
+  hostOverride?: any
+): Promise<{ ok: boolean; restoredCount: number }> {
+  let restoredCount = 0
+  for (const item of history) {
+    const res = await callHostTransport(
+      'filesystem_move_file',
+      { sourcePath: item.newPath, destinationPath: item.oldPath },
+      hostOverride
+    )
+    if (res.ok) restoredCount += 1
+  }
+  return { ok: restoredCount > 0, restoredCount }
 }
 
 export async function openRenameFileLocation(fullPath: string, hostOverride?: any): Promise<boolean> {

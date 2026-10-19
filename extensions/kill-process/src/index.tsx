@@ -9,16 +9,15 @@ import {
   showToast,
   Toast,
   Clipboard,
-  useNavigation,
-  useState,
-  useEffect
+  useNavigation
 } from "@ztools/declarative-ui";
+import { useState, useEffect } from "@ztools/declarative-ui";
+import { isRealElectronHost } from "./native-ipc.js";
 import {
   ProcessInfo,
   ProcessSortBy,
   KillMode,
   SAMPLE_PROCESSES,
-  isRealElectronHost,
   fetchRealProcesses,
   filterAndSortProcesses,
   isSystemCriticalProcess,
@@ -40,10 +39,11 @@ export function ProcessDetailView({
   onKilled?: (pid: number) => void;
 }) {
   const { pop } = useNavigation();
-  const isCritical = process.isSystemCritical || isSystemCriticalProcess(process.name);
-  const gracefulCmd = getKillCommandLine(process.pid, "graceful");
-  const forceCmd = getKillCommandLine(process.pid, "force");
-  const treeCmd = getKillCommandLine(process.pid, "tree");
+  const isCritical = process.isSystemCritical || isSystemCriticalProcess(process.name) || isSystemCriticalProcess(process.pid);
+  const isPosixPath = process.path?.startsWith("/") ? true : undefined;
+  const gracefulCmd = getKillCommandLine(process.pid, "graceful", isPosixPath);
+  const forceCmd = getKillCommandLine(process.pid, "force", isPosixPath);
+  const treeCmd = getKillCommandLine(process.pid, "tree", isPosixPath);
 
   const markdown = `
 # 进程详情: ${process.name} (PID: ${process.pid})
@@ -52,7 +52,7 @@ export function ProcessDetailView({
 
 ${
   isCritical
-    ? `> ⚠️ **系统关键高危进程**: 该进程属于 Windows 核心子系统。若强行终结可能导致系统假死、桌面崩溃重启或蓝屏宕机 (BSOD)！\n`
+    ? `> ⚠️ **系统关键高危进程**: 该进程属于系统核心守护子系统 (Windows Kernel / macOS launchd & WindowServer)。若强行终结可能导致系统假死、桌面崩溃重启或内核宕机！\n`
     : ""
 }
 
@@ -79,7 +79,7 @@ ${gracefulCmd}
 # 强制终结指令 (Kill -9)
 ${forceCmd}
 
-# 级联终结进程树指令 (/T)
+# 级联终结进程树指令 (/T / pkill -P)
 ${treeCmd}
 \`\`\`
   `;
@@ -180,10 +180,14 @@ ${treeCmd}
  * 系统级进程管理急救箱主命令
  */
 export default function KillProcessCommand() {
-  const [processes, setProcesses] = useState<ProcessInfo[]>(SAMPLE_PROCESSES);
+  const [processes, setProcesses] = useState<ProcessInfo[]>(() =>
+    isRealElectronHost() ? [] : SAMPLE_PROCESSES
+  );
+  const [isLoading, setIsLoading] = useState<boolean>(() => isRealElectronHost());
   const [sortBy, setSortBy] = useState<ProcessSortBy>("memory");
   const [searchText, setSearchText] = useState("");
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const { push } = useNavigation();
 
   useEffect(() => {
@@ -204,10 +208,12 @@ export default function KillProcessCommand() {
       inFlight = true;
       try {
         const list = await fetchRealProcesses();
-        if (active && list.length > 0) {
+        if (active && (list.length > 0 || isRealElectronHost())) {
           setProcesses(list);
+          setIsLoading(false);
         }
       } finally {
+        if (active) setIsLoading(false);
         inFlight = false;
       }
     };
@@ -233,6 +239,9 @@ export default function KillProcessCommand() {
   }, [autoRefresh]);
 
   const sortedList = filterAndSortProcesses(processes, searchText, sortBy);
+  const activeProcess =
+    sortedList.find((p) => `proc_${p.pid}` === selectedId || String(p.pid) === selectedId) ||
+    sortedList[0];
 
   const handleKill = async (proc: ProcessInfo, mode: KillMode = "force") => {
     const isCritical = proc.isSystemCritical || isSystemCriticalProcess(proc.name);
@@ -247,7 +256,7 @@ export default function KillProcessCommand() {
 
     const res = await terminateProcess(proc, mode, false);
     if (res.success) {
-      setProcesses((prev) => prev.filter((p) => p.pid !== proc.pid));
+      setProcesses(prev => prev.filter(p => p.pid !== proc.pid));
       await showToast(Toast.Style.Success, res.message, `已释放 ${proc.memoryMB.toFixed(1)} MB 内存`);
     } else {
       await showToast(Toast.Style.Failure, "终止失败", res.message);
@@ -279,20 +288,43 @@ export default function KillProcessCommand() {
 
   return (
     <List
+      isLoading={isLoading}
       navigationTitle="进程管理急救箱"
       searchBarPlaceholder="搜索进程名、PID、拼音 (如 guge / weiruan / ziyuan) 或可执行路径..."
       searchText={searchText}
       onSearchTextChange={setSearchText}
+      onSelectionChange={setSelectedId}
+      filterBar={{
+        summaryText: `实时活动进程 ${sortedList.length} 个 · 物理内存合计 ${(totalMemory / 1024).toFixed(2)} GB · ${autoRefresh ? "2s 自动监控中" : "已暂停监控"}`,
+        actions: [
+          {
+            id: "toggle-auto-refresh",
+            label: autoRefresh ? "暂停自动刷新" : "开启自动刷新",
+            style: "secondary",
+            onAction: () => {
+              setAutoRefresh(prev => !prev);
+            }
+          },
+          {
+            id: "refresh-proc",
+            label: "立即刷新",
+            style: "secondary",
+            onAction: () => {
+              void handleRefresh();
+            }
+          }
+        ]
+      }}
       searchBarAccessory={
         <List.Dropdown
           tooltip="排序指标"
           value={sortBy}
-          onChange={(newVal) => setSortBy(newVal as ProcessSortBy)}
+          onChange={newVal => setSortBy(newVal as ProcessSortBy)}
         >
-          <List.Dropdown.Item title="按物理内存占用降序 (Memory)" value="memory" />
+          <List.Dropdown.Item title="按内存占用降序 (Memory)" value="memory" />
           <List.Dropdown.Item title="按 CPU 占用率降序 (CPU)" value="cpu" />
-          <List.Dropdown.Item title="按进程名称字母排序 (Name)" value="name" />
-          <List.Dropdown.Item title="按 PID 编号升序 (PID)" value="pid" />
+          <List.Dropdown.Item title="按进程名称排序 (Name)" value="name" />
+          <List.Dropdown.Item title="按 PID 升序 (PID)" value="pid" />
         </List.Dropdown>
       }
       actions={
@@ -306,17 +338,13 @@ export default function KillProcessCommand() {
             title={autoRefresh ? "暂停 2s 自动刷新" : "恢复 2s 自动刷新"}
             icon={autoRefresh ? Icon.Clock : Icon.Bolt}
             shortcut={{ modifiers: ["ctrl", "shift"], key: "r" }}
-            onAction={() => setAutoRefresh((prev) => !prev)}
+            onAction={() => setAutoRefresh(prev => !prev)}
           />
         </ActionPanel>
       }
     >
-      <List.Section
-        title={`活动进程列表 (${sortedList.length}) — 累计消耗 ${(
-          totalMemory / 1024
-        ).toFixed(2)} GB 物理内存`}
-      >
-        {sortedList.map((proc) => {
+      <List.Section title={`活动进程 (${sortedList.length})`}>
+        {sortedList.map(proc => {
           const isHighCpu = proc.cpuPercent >= 15;
           const isHighMem = proc.memoryMB >= 1000;
           const isCritical = proc.isSystemCritical || isSystemCriticalProcess(proc.name);
@@ -329,33 +357,30 @@ export default function KillProcessCommand() {
               subtitle={`${proc.memoryMB.toFixed(1)} MB • CPU ${proc.cpuPercent.toFixed(1)}% • ${proc.threads} 线程 • ${proc.arch || "x64"}`}
               icon={isCritical ? Icon.Shield : isHighCpu ? Icon.ExclamationMark : Icon.Terminal}
               accessories={[
-                ...(isCritical ? [{ text: "系统关键", icon: Icon.Shield }] : []),
-                ...(isHighMem ? [{ text: "高内存", tag: "high-mem" }] : []),
-                ...(isHighCpu ? [{ text: "高 CPU", tag: "high-cpu" }] : []),
+                ...(isCritical ? [{ tag: { value: "系统关键", color: Color.Blue } }] : []),
+                ...(isHighMem ? [{ tag: { value: "高内存", color: Color.Orange } }] : []),
+                ...(isHighCpu ? [{ tag: { value: "高 CPU", color: Color.Red } }] : []),
                 { text: `${proc.memoryMB.toFixed(0)} MB` },
                 { text: `CPU ${proc.cpuPercent.toFixed(1)}%` }
               ]}
               actions={
                 <ActionPanel title={`${proc.name} (PID: ${proc.pid})`}>
                   <Action
-                    title="一键强制结束进程"
-                    icon={Icon.Trash}
-                    onAction={() => handleKill(proc, "force")}
-                  />
-                  <Action
                     title="优雅终结进程 (Kill Process)"
                     icon={Icon.Trash}
                     onAction={() => handleKill(proc, "graceful")}
                   />
                   <Action
-                    title="强制终止 (Force Kill -9)"
+                    title="一键强制结束进程"
                     icon={Icon.XMarkCircle}
+                    style={Action.Style.Destructive}
                     shortcut={{ modifiers: ["ctrl"], key: "return" }}
                     onAction={() => handleKill(proc, "force")}
                   />
                   <Action
                     title="终结进程树 (Kill Process Tree)"
                     icon={Icon.Trash}
+                    style={Action.Style.Destructive}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}
                     onAction={() => handleKill(proc, "tree")}
                   />
@@ -366,7 +391,7 @@ export default function KillProcessCommand() {
                     target={
                       <ProcessDetailView
                         process={proc}
-                        onKilled={(pid) => setProcesses((prev) => prev.filter((p) => p.pid !== pid))}
+                        onKilled={pid => setProcesses(prev => prev.filter(p => p.pid !== pid))}
                       />
                     }
                   />

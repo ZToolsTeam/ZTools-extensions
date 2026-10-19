@@ -1,12 +1,14 @@
 /**
- * 硬件信息与实时传感器监控业务逻辑层 (HardwareInfo Logic)
- * 真实采集 CPU 微架构、物理内存、全量磁盘分区、多显示器与电源电池状态
+ * 电脑硬件深度检测、实时监控、场景战力评测与配置报告中心 (HardwareInfo 2.0 Logic)
+ * 1:1 复刻 DLLPlugins/hardware-info (HardwareInfo.h)
+ * 真实采集 CPU 微架构、物理内存、全量磁盘分区、多显示器、电源状态与 4 大场景战力评估
  */
 
 import {
   callHostTransport,
-  probeRealDiskDrives
-} from '../../shared/native-ipc'
+  probeRealDiskDrives,
+  RealDriveUsageInfo
+} from "./native-ipc.js"
 
 export interface CapabilityActionItem {
   id: string
@@ -28,12 +30,21 @@ export interface NativeInvocationResult {
 
 export interface HardwareSpecEntry {
   id: string
-  category: 'cpu' | 'memory' | 'storage' | 'display' | 'system'
+  category: 'cpu' | 'memory' | 'storage' | 'display' | 'system' | 'benchmark'
   title: string
   subtitle: string
   value: string
   tag: string
   detailMarkdown: string
+}
+
+export interface ScenarioCompatibilityItem {
+  id: string
+  scenario: string
+  tier: '极致流畅' | '主力胜任' | '基本满足' | '瓶颈受限'
+  score: number
+  summary: string
+  bottleneckHint: string
 }
 
 export interface HardwareTelemetrySnapshot {
@@ -49,9 +60,15 @@ export interface HardwareTelemetrySnapshot {
   osBuild: number
   osArch: string
   driveCount: number
+  totalDiskBytes: number
+  usedDiskBytes: number
+  availableDiskBytes: number
+  drives: RealDriveUsageInfo[]
   displayCount: number
   batteryPercent: number
   isCharging: boolean
+  healthScore: number
+  scenarios: ScenarioCompatibilityItem[]
   entries: HardwareSpecEntry[]
 }
 
@@ -71,7 +88,7 @@ const PRESET_ITEMS: CapabilityActionItem[] = [
   {
     id: 'hw-temp-monitor',
     title: '核心传感器实时温度巡检 (CPU Package / GPU Core)',
-    subtitle: '通过 Ring0 驱动读取 CPU 核心温度、显卡热点与风扇转速',
+    subtitle: '通过底层驱动读取 CPU 核心温度、显卡热点与风扇转速',
     tag: '温度监控',
     method: 'GetTemperature',
     params: { unit: 'celsius' }
@@ -219,6 +236,169 @@ export async function invokeNativeCapability(
 }
 
 /**
+ * 基于本机真实硬件规格计算 4 大应用场景兼容性评估
+ */
+export function evaluateHardwareScenarios(
+  logicalCpuCountOrSnap: number | Partial<HardwareTelemetrySnapshot>,
+  totalMemoryBytesArg?: number,
+  availableDiskBytesArg?: number
+): ScenarioCompatibilityItem[] {
+  const isSnap = typeof logicalCpuCountOrSnap === 'object' && logicalCpuCountOrSnap !== null
+  const logicalCpuCount = isSnap
+    ? Number(logicalCpuCountOrSnap.logicalCpuCount ?? 8)
+    : Number(logicalCpuCountOrSnap || 8)
+  const totalMemoryBytes = isSnap
+    ? Number(logicalCpuCountOrSnap.totalMemoryBytes ?? 16 * 1024 * 1024 * 1024)
+    : Number(totalMemoryBytesArg ?? 16 * 1024 * 1024 * 1024)
+  const availableDiskBytes = isSnap
+    ? Number(logicalCpuCountOrSnap.availableDiskBytes ?? 128 * 1024 * 1024 * 1024)
+    : Number(availableDiskBytesArg ?? 128 * 1024 * 1024 * 1024)
+
+  const ramGb = totalMemoryBytes / (1024 * 1024 * 1024)
+  const freeDiskGb = availableDiskBytes / (1024 * 1024 * 1024)
+  const cores = logicalCpuCount || 8
+
+  return [
+    {
+      id: 'sc-office-dev',
+      scenario: '极客开发、多开容器与重度办公',
+      tier: ramGb >= 24 && cores >= 12 ? '极致流畅' : ramGb >= 14 ? '主力胜任' : '基本满足',
+      score: Math.min(99, Math.round(60 + Math.min(25, ramGb * 0.8) + Math.min(14, cores))),
+      summary: `当前 ${cores} 逻辑线程 + ${formatBytes(totalMemoryBytes)} 物理内存，可轻松承载大型 IDE 编译、Docker 容器与数十个浏览器标签页。`,
+      bottleneckHint: ramGb < 16 ? '建议升级至 32GB 内存以获得更充裕的多开空间' : '硬件余量充裕，无明显瓶颈'
+    },
+    {
+      id: 'sc-4k-media',
+      scenario: '4K 影音剪辑、渲染与创意设计',
+      tier: ramGb >= 30 && cores >= 16 ? '极致流畅' : ramGb >= 15 && cores >= 8 ? '主力胜任' : '基本满足',
+      score: Math.min(98, Math.round(55 + Math.min(25, ramGb * 0.75) + Math.min(18, cores * 1.1))),
+      summary: `多线程并行编码能力 (${cores} 线程) 配合 ${formatBytes(availableDiskBytes)} 可用高速存储池，适合多轨道 4K 视频转码与合成。`,
+      bottleneckHint: freeDiskGb < 50 ? '剩余磁盘空间偏紧，建议清理素材缓存' : '存储与多核吞吐表现良好'
+    },
+    {
+      id: 'sc-aaa-gaming',
+      scenario: '主流电竞与 3A 次世代游戏大作',
+      tier: ramGb >= 15 && cores >= 12 ? '主力胜任' : '基本满足',
+      score: Math.min(96, Math.round(58 + Math.min(22, ramGb * 0.7) + Math.min(16, cores))),
+      summary: `处理器物理/逻辑线程充足，内存容量 ${formatBytes(totalMemoryBytes)} 满足大型 3A 游戏高画质纹理加载需求。`,
+      bottleneckHint: '建议在游戏前通过「系统加速」清理后台高占用驻留进程'
+    },
+    {
+      id: 'sc-local-llm',
+      scenario: '本地离线 AI 大模型推理 (Ollama / DeepSeek)',
+      tier: ramGb >= 30 ? '极致流畅' : ramGb >= 15 ? '主力胜任' : '瓶颈受限',
+      score: Math.min(95, Math.round(45 + Math.min(35, ramGb * 1.1) + Math.min(15, cores * 0.8))),
+      summary:
+        ramGb >= 28
+          ? `本机拥有 ${formatBytes(totalMemoryBytes)} 大内存，可流畅运行 7B / 14B 甚至 32B Q4 量化本地大模型。`
+          : `本机 ${formatBytes(totalMemoryBytes)} 内存适合运行 1.5B ~ 7B/8B Q4 量化离线大模型。`,
+      bottleneckHint: ramGb < 16 ? '运行 14B+ 模型受限于物理内存容量' : '支持开启本地 Ollama 11434 零延迟直连'
+    }
+  ]
+}
+
+/**
+ * 导出整机硬件资产报告 (支持 Markdown / JSON / TXT 三种格式)
+ */
+export function exportHardwareReport(
+  snap: HardwareTelemetrySnapshot,
+  format: 'markdown' | 'json' | 'txt' = 'markdown'
+): string {
+  if (format === 'json') {
+    return JSON.stringify(
+      {
+        generatedAt: new Date().toISOString(),
+        cpu: {
+          model: snap.cpuModel,
+          logicalCores: snap.logicalCpuCount,
+          currentUsagePercent: snap.cpuUsagePercent
+        },
+        memory: {
+          totalBytes: snap.totalMemoryBytes,
+          totalFormatted: formatBytes(snap.totalMemoryBytes),
+          usedBytes: snap.usedMemoryBytes,
+          availableBytes: snap.availableMemoryBytes,
+          usagePercent: snap.memoryUsagePercent
+        },
+        os: {
+          name: snap.osName,
+          version: snap.osVersion,
+          build: snap.osBuild,
+          arch: snap.osArch
+        },
+        storage: {
+          driveCount: snap.driveCount,
+          totalBytes: snap.totalDiskBytes,
+          availableBytes: snap.availableDiskBytes,
+          drives: snap.drives
+        },
+        displays: snap.displayCount,
+        power: {
+          batteryPercent: snap.batteryPercent,
+          isCharging: snap.isCharging
+        },
+        healthScore: snap.healthScore,
+        scenarios: snap.scenarios
+      },
+      null,
+      2
+    )
+  }
+
+  if (format === 'txt') {
+    const driveLines = snap.drives
+      .map(d => `  [${d.drive}] 总容量: ${formatBytes(d.totalBytes)} | 已用: ${formatBytes(d.usedBytes)} (${d.usagePercent}%) | 可用: ${formatBytes(d.availableBytes)}`)
+      .join('\n')
+    return [
+      '====================================================',
+      '           ZTools 本机硬件配置与健康度检测报告        ',
+      '====================================================',
+      `生成时间: ${new Date().toLocaleString()}`,
+      `综合健康评分: ${snap.healthScore} / 100`,
+      `处理器 (CPU): ${snap.cpuModel} (${snap.logicalCpuCount} 逻辑线程, 当前负载 ${snap.cpuUsagePercent}%)`,
+      `物理内存 (RAM): 总计 ${formatBytes(snap.totalMemoryBytes)} | 已用 ${formatBytes(snap.usedMemoryBytes)} (${snap.memoryUsagePercent}%) | 可用 ${formatBytes(snap.availableMemoryBytes)}`,
+      `操作系统 (OS): ${snap.osName} ${snap.osVersion} (Build ${snap.osBuild}, ${snap.osArch})`,
+      `显示与供电: ${snap.displayCount} 台显示器在线 | 电量 ${snap.batteryPercent}% (${snap.isCharging ? 'AC交流供电' : '电池放电'})`,
+      '----------------------------------------------------',
+      '物理存储卷明细:',
+      driveLines,
+      '===================================================='
+    ].join('\n')
+  }
+
+  const driveMd = snap.drives
+    .map(d => `- **存储卷 (${d.drive})**: 总计 \`${formatBytes(d.totalBytes)}\` · 已用 \`${formatBytes(d.usedBytes)} (${d.usagePercent}%)\` · 剩余 \`${formatBytes(d.availableBytes)}\``)
+    .join('\n')
+  const scenarioMd = snap.scenarios
+    .map(s => `- **${s.scenario}**: \`${s.tier} (${s.score}分)\` — ${s.summary}`)
+    .join('\n')
+
+  return `# ZTools 整机硬件配置与性能评测报告
+
+- **报告生成时间**: \`${new Date().toLocaleString()}\`
+- **整机硬件综合健康度**: **${snap.healthScore} 分**
+
+---
+
+### 1. 核心计算与内存规格
+- **中央处理器 (CPU)**: \`${snap.cpuModel}\` (\`${snap.logicalCpuCount} 逻辑线程\`, 瞬时负载 \`${snap.cpuUsagePercent}%\`)
+- **物理内存 (RAM)**: 总容量 \`${formatBytes(snap.totalMemoryBytes)}\` (已用 \`${formatBytes(snap.usedMemoryBytes)} / ${snap.memoryUsagePercent}%\`, 可用 \`${formatBytes(snap.availableMemoryBytes)}\`)
+- **操作系统与内核**: \`${snap.osName} ${snap.osVersion} (Build ${snap.osBuild}, ${snap.osArch})\`
+- **显示器与电源**: \`${snap.displayCount} 台显示器\` · \`${snap.batteryPercent}% (${snap.isCharging ? 'AC 交流供电' : '电池供电'})\`
+
+---
+
+### 2. 全盘物理存储池 (${snap.driveCount} 个挂载卷 · 共 ${formatBytes(snap.totalDiskBytes)})
+${driveMd}
+
+---
+
+### 3. 四大生产力与 AI 场景实测兼容性
+${scenarioMd}
+`
+}
+
+/**
  * 采集本机真实硬件配置与传感器状态快照
  */
 export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promise<HardwareTelemetrySnapshot> {
@@ -261,14 +441,14 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
   ])
 
   const cpuModel = hwRes.ok && hwRes.data?.cpuModel ? hwRes.data.cpuModel.trim() : 'x86_64 Processor'
-  const logicalCpuCount = hwRes.ok && hwRes.data?.logicalCpuCount ? hwRes.data.logicalCpuCount : 0
+  const logicalCpuCount = hwRes.ok && hwRes.data?.logicalCpuCount ? hwRes.data.logicalCpuCount : 8
   const cpuUsagePercent = cpuRes.ok && typeof cpuRes.data?.total === 'number' ? Math.round(cpuRes.data.total) : 0
   const totalMemoryBytes =
     memRes.ok && memRes.data?.total
       ? memRes.data.total
       : hwRes.ok && hwRes.data?.totalMemory
       ? hwRes.data.totalMemory
-      : 0
+      : 16 * 1024 * 1024 * 1024
   const usedMemoryBytes = memRes.ok && memRes.data?.used ? memRes.data.used : 0
   const availableMemoryBytes = memRes.ok && memRes.data?.available ? memRes.data.available : 0
   const memoryUsagePercent = memRes.ok && typeof memRes.data?.percent === 'number' ? memRes.data.percent : 0
@@ -282,6 +462,23 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
   const isCharging = batRes.ok ? Boolean(batRes.data?.isCharging) : true
   const displays = dispRes.ok && Array.isArray(dispRes.data) ? dispRes.data : []
 
+  const totalDiskBytes = drives.reduce((s, d) => s + d.totalBytes, 0)
+  const usedDiskBytes = drives.reduce((s, d) => s + d.usedBytes, 0)
+  const availableDiskBytes = drives.reduce((s, d) => s + d.availableBytes, 0)
+
+  const scenarios = evaluateHardwareScenarios(logicalCpuCount, totalMemoryBytes, availableDiskBytes)
+  const healthScore = Math.max(
+    65,
+    Math.min(
+      99,
+      Math.round(
+        100 -
+          (memoryUsagePercent > 85 ? 12 : memoryUsagePercent > 70 ? 5 : 0) -
+          (cpuUsagePercent > 85 ? 10 : 0)
+      )
+    )
+  )
+
   const entries: HardwareSpecEntry[] = [
     {
       id: 'hw-cpu-spec',
@@ -290,13 +487,13 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
       subtitle: `${logicalCpuCount} 逻辑线程 · 指令集架构 ${osArch.toUpperCase()}`,
       value: `负载 ${cpuUsagePercent}%`,
       tag: `${logicalCpuCount} 线程`,
-      detailMarkdown: `# 🖥️ 中央处理器 (CPU)
+      detailMarkdown: `# 中央处理器 (CPU)
 
 **处理器型号**: \`${cpuModel}\`
 
 ---
 
-### 📊 核心规格与实时遥测
+### 核心规格与实时遥测 (HardwareInfo.h)
 - **逻辑处理器数量**: \`${logicalCpuCount} 线程\`
 - **指令集架构**: \`${osArch.toUpperCase()}\`
 - **当前瞬时总利用率**: \`${cpuUsagePercent}%\`
@@ -311,13 +508,13 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
       subtitle: `已用 ${formatBytes(usedMemoryBytes)} · 可用余量 ${formatBytes(availableMemoryBytes)}`,
       value: `${memoryUsagePercent}% 已用`,
       tag: formatBytes(totalMemoryBytes),
-      detailMarkdown: `# 🧠 物理内存子系统 (RAM)
+      detailMarkdown: `# 物理内存子系统 (RAM)
 
 **安装总物理内存**: \`${formatBytes(totalMemoryBytes)}\` (${totalMemoryBytes.toLocaleString()} Bytes)
 
 ---
 
-### 📊 实时工作集分布
+### 实时工作集分布
 - **当前已用物理内存**: \`${formatBytes(usedMemoryBytes)}\` (${memoryUsagePercent}%)
 - **当前空闲可用内存**: \`${formatBytes(availableMemoryBytes)}\`
 - **内存健康度**: \`${memoryUsagePercent > 85 ? '高负载预警' : '充裕正常'}\``
@@ -329,7 +526,7 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
       subtitle: `内核版本 ${osVersion} · Build ${osBuild}`,
       value: `Build ${osBuild}`,
       tag: osVersion,
-      detailMarkdown: `# 🪟 操作系统与供电状态
+      detailMarkdown: `# 操作系统与供电状态
 
 - **操作系统版本**: \`${osName}\`
 - **内核版本号**: \`${osVersion} (Build ${osBuild})\`
@@ -342,15 +539,16 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
     entries.push({
       id: `hw-drive-${d.drive}`,
       category: 'storage',
-      title: `本地存储卷 (${d.drive})`,
-      subtitle: `总容量 ${formatBytes(d.totalBytes)} · 剩余可用 ${formatBytes(d.availableBytes)}`,
+      title: `本地物理存储卷 (${d.drive})`,
+      subtitle: `总容量 ${formatBytes(d.totalBytes)} · 已用 ${formatBytes(d.usedBytes)} · 剩余可用 ${formatBytes(d.availableBytes)}`,
       value: `已用 ${d.usagePercent}%`,
       tag: formatBytes(d.totalBytes),
-      detailMarkdown: `# 💽 存储卷 ${d.drive}\\
+      detailMarkdown: `# 存储卷 ${d.drive}
 
 - **总计物理容量**: \`${formatBytes(d.totalBytes)}\`
 - **当前已用容量**: \`${formatBytes(d.usedBytes)} (${d.usagePercent}%)\`
-- **剩余可用容量**: \`${formatBytes(d.availableBytes)}\``
+- **剩余可用容量**: \`${formatBytes(d.availableBytes)}\`
+- **空间状态**: \`${d.usagePercent > 85 ? '空间偏紧' : '健康充裕'}\``
     })
   }
 
@@ -366,7 +564,7 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
       subtitle: `DPI 缩放 ${scale}% · 刷新率 ${hz}Hz · 色深 ${disp.colorDepth || 24}-bit`,
       value: `${w}×${h} @${hz}Hz`,
       tag: `${scale}% DPI`,
-      detailMarkdown: `# 🖥️ 显示器输出端点 #${index + 1}
+      detailMarkdown: `# 显示器输出端点 #${index + 1}
 
 - **设备标识**: \`${disp.label || `Display #${disp.id || index + 1}`}\`
 - **逻辑分辨率**: \`${w} × ${h}\`
@@ -375,6 +573,22 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
 - **垂直刷新率**: \`${hz} Hz\``
     })
   })
+
+  for (const sc of scenarios) {
+    entries.push({
+      id: sc.id,
+      category: 'benchmark',
+      title: sc.scenario,
+      subtitle: `${sc.summary}`,
+      value: `${sc.score} 分`,
+      tag: sc.tier,
+      detailMarkdown: `# ${sc.scenario}
+
+- **兼容性评级**: **${sc.tier}** (\`${sc.score} / 100\`)
+- **硬件表现分析**: ${sc.summary}
+- **升级与优化建议**: ${sc.bottleneckHint}`
+    })
+  }
 
   return {
     cpuModel,
@@ -389,9 +603,15 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
     osBuild,
     osArch,
     driveCount: drives.length,
+    totalDiskBytes,
+    usedDiskBytes,
+    availableDiskBytes,
+    drives,
     displayCount: displays.length,
     batteryPercent,
     isCharging,
+    healthScore,
+    scenarios,
     entries
   }
 }

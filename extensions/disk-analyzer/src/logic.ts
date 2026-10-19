@@ -15,7 +15,7 @@ import {
   showRealItemInFolder,
   trashRealItem,
   openRealPath
-} from '../shared/native-ipc.js'
+} from "./native-ipc.js"
 
 export interface CapabilityActionItem {
   id: string
@@ -196,6 +196,13 @@ export interface DiskAnalysisSnapshot {
   files: DiskFileEntry[]
   extStats: DiskExtStat[]
   groupStats: DiskGroupStat[]
+  topDirectories?: Array<{
+    name: string
+    path: string
+    drive: string
+    sizeBytes: number
+    fileCount: number
+  }>
   totalCapacityBytes: number
   totalUsedBytes: number
   totalAvailableBytes: number
@@ -398,7 +405,7 @@ export function classifyFileExtension(filePath: string): {
   const ext = dotIdx > 0 ? name.slice(dotIdx).toLowerCase() : '(无扩展名)'
 
   let groupId: OfficialFileTypeGroupId = 99
-  if (/\.(?:mp4|mkv|mov|avi|flv|webm|wmv|ts|m4v|rmvb|mpg|mpeg|3gp)$/i.test(ext)) {
+  if (/\.(?:mp4|mkv|mov|avi|flv|webm|wmv|mts|m2ts|m4v|rmvb|mpg|mpeg|3gp)$/i.test(ext)) {
     groupId = 1
   } else if (/\.(?:mp3|flac|wav|aac|ogg|wma|m4a|opus|ape|mid)$/i.test(ext)) {
     groupId = 2
@@ -569,51 +576,67 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     })
   }
 
-  // 2A. 兼容常规/测试目录扫描链路
-  for (const dir of scanDirs) {
-    const entries = await listRealDirectoryContents(dir, hostOverride)
-    const slice = entries.slice(0, 24)
-    const sizes = await Promise.all(slice.map(p => getRealFileSize(p, hostOverride)))
+  const supportsDeepScan =
+    (!hostOverride && isRealElectronHost()) ||
+    typeof hostOverride?.system_search_files === 'function'
 
-    for (let i = 0; i < slice.length; i++) {
-      addFileEntry(slice[i], sizes[i] || 0)
-    }
-  }
+  const topDirectories: Array<{
+    name: string
+    path: string
+    drive: string
+    sizeBytes: number
+    fileCount: number
+  }> = []
+  const seenDirs = new Set<string>()
 
-  // 2B. 在真实 Electron 宿主中，并发调用 dir: 深度目录树扫描 + MFT 10 大分类全盘探针
-  if (!hostOverride && isRealElectronHost()) {
-    const dirScans = await Promise.all(scanDirs.map(d => scanRealDirectoryTree(d, 80)))
+  if (supportsDeepScan) {
+    // 在真实 Electron 宿主或支持 dir: 深度扫描的环境中，直接并发调用 dir: 深度目录树扫描（基于本机真实挂载盘符与系统用户目录，严禁硬编码路径）
+    const driveRoots = !hostOverride
+      ? rawDrives.map(d => (d.drive.startsWith('/') ? d.drive : `${d.drive}\\`))
+      : []
+    const realTargetDirs = Array.from(new Set([...scanDirs, ...driveRoots])).filter(Boolean)
+
+    const dirScans = await Promise.all(
+      realTargetDirs.map(d => scanRealDirectoryTree(d, 100, hostOverride))
+    )
     for (const res of dirScans) {
+      if (Array.isArray(res.subdirs)) {
+        for (const sub of res.subdirs) {
+          if (!sub.path || sub.totalBytes <= 0) continue
+          const normSub = sub.path.replace(/\//g, '\\').toLowerCase()
+          if (seenDirs.has(normSub)) continue
+          seenDirs.add(normSub)
+          const cleanSub = sub.path.replace(/\//g, '\\')
+          topDirectories.push({
+            name: sub.name || cleanSub.split('\\').pop() || cleanSub,
+            path: cleanSub,
+            drive: extractDrivePrefix(cleanSub),
+            sizeBytes: sub.totalBytes,
+            fileCount: sub.fileCount || 0
+          })
+        }
+      }
       for (const f of res.files) {
         if (!f.isDir && f.size > 0) {
           addFileEntry(f.path, f.size, f.mtime)
         }
       }
     }
+  } else {
+    // 兼容单元测试与自定义 hostOverride 目录扫描链路
+    for (const dir of scanDirs) {
+      const entries = await listRealDirectoryContents(dir, hostOverride)
+      const slice = entries.slice(0, 24)
+      const sizes = await Promise.all(slice.map(p => getRealFileSize(p, hostOverride)))
 
-    // 针对 10 大官方分类进行 MFT 全盘采样检索，覆盖 C:/ D:/ E:/ F:/ 各分区真实文件
-    const mftQueries = [
-      '.mp4', '.mkv', '.mov',
-      '.mp3', '.wav', '.flac',
-      '.png', '.jpg', '.webp',
-      '.pdf', '.docx', '.xlsx',
-      '.zip', '.7z', '.rar',
-      '.exe', '.msi',
-      '.ts', '.js', '.json',
-      '.dll', '.log', '.dmp', '.pdb',
-      '.db', '.asar', '.pak', '.bin'
-    ]
-    const mftBatches = await Promise.all(mftQueries.map(q => searchRealIndexedFiles(q, 30)))
-    for (const batch of mftBatches) {
-      for (const f of batch) {
-        if (!f.isDir && f.size > 0) {
-          addFileEntry(f.path, f.size, f.mtime)
-        }
+      for (let i = 0; i < slice.length; i++) {
+        addFileEntry(slice[i], sizes[i] || 0)
       }
     }
   }
 
   files.sort((a, b) => b.sizeBytes - a.sizeBytes)
+  topDirectories.sort((a, b) => b.sizeBytes - a.sizeBytes)
   const extStats = computeExtStats(files)
   const groupStats = computeGroupStats(files)
 
@@ -626,6 +649,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     files,
     extStats,
     groupStats,
+    topDirectories,
     totalCapacityBytes,
     totalUsedBytes,
     totalAvailableBytes

@@ -3,146 +3,182 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   Clipboard,
   useState,
   useEffect,
   showToast,
   Toast
-} from '@ztools/declarative-ui'
+} from "@ztools/declarative-ui"
 import {
-  parseIpconfigAll,
-  getSampleAdapters,
-  type AdapterInfo
-} from './logic'
+  type NetworkAdapterItem,
+  type AdapterFilterMode,
+  fetchNetworkAdapters,
+  flushDnsCache,
+  copyAdapterInfo,
+  filterNetworkAdapters
+} from './logic.js'
 
-declare const ztools: any
+export * from './logic.js'
 
-export default function NetworkAdapterCommand() {
+export function NetworkAdapterCommand() {
   const [searchText, setSearchText] = useState('')
-  const [adapters, setAdapters] = useState<AdapterInfo[]>(getSampleAdapters())
-  const [loading, setLoading] = useState(true)
+  const [filterMode, setFilterMode] = useState<AdapterFilterMode>('all')
+  const [adapters, setAdapters] = useState<NetworkAdapterItem[]>([])
+  const [primaryIpv4, setPrimaryIpv4] = useState('192.168.1.108')
+  const [primaryGateway, setPrimaryGateway] = useState('192.168.1.1')
+  const [primaryDns, setPrimaryDns] = useState('223.5.5.5')
+  const [isLoading, setIsLoading] = useState(true)
 
-  async function loadAdapters() {
-    setLoading(true)
+  async function refreshAdapters(showNotice = false) {
+    if (showNotice) setIsLoading(true)
     try {
-      let output = ''
-      if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.exec) {
-        try {
-          const res = await ztools.shell.exec('ipconfig /all')
-          output = typeof res === 'string' ? res : res.stdout || ''
-        } catch {
-          // 回退
-        }
+      const snap = await fetchNetworkAdapters()
+      setAdapters(snap.adapters)
+      setPrimaryIpv4(snap.primaryIpv4)
+      setPrimaryGateway(snap.primaryGateway)
+      setPrimaryDns(snap.primaryDns)
+      if (showNotice) {
+        showToast({
+          style: Toast.Style.Success,
+          title: '本机网卡状态已刷新',
+          message: `共 ${snap.adapters.length} 个接口 · 主 IPv4: ${snap.primaryIpv4}`
+        })
       }
-      if (!output) {
-        setAdapters(getSampleAdapters())
-      } else {
-        const parsed = parseIpconfigAll(output)
-        setAdapters(parsed.length > 0 ? parsed : getSampleAdapters())
-      }
-    } catch (err) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '获取网络配置失败',
-        message: String(err)
-      })
     } finally {
-      setLoading(false)
+      setIsLoading(false)
     }
   }
 
   useEffect(() => {
-    loadAdapters()
+    void refreshAdapters(false)
   }, [])
 
-  const query = searchText.trim().toLowerCase()
-  const filtered = adapters.filter(a => {
-    if (!query) return true
-    return (
-      a.name.toLowerCase().includes(query) ||
-      a.description.toLowerCase().includes(query) ||
-      a.ipv4.toLowerCase().includes(query) ||
-      a.mac.toLowerCase().includes(query)
-    )
-  })
+  async function handleFlushDns() {
+    const res = await flushDnsCache()
+    showToast({
+      style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
+      title: res.ok ? 'DNS 缓存已刷新' : 'DNS 刷新失败',
+      message: res.message
+    })
+  }
+
+  const filtered = filterNetworkAdapters(adapters, searchText, filterMode)
+  const maxSpeed = Math.max(1000, ...adapters.map((a) => a.speedMbps || 1000))
 
   return List({
-    isLoading: loading,
-    searchBarPlaceholder: '搜索网卡名称、IP 地址或 MAC (如 wlan, 192.168)...',
+    navigationTitle: '网络接口与网卡配置',
+    searchBarPlaceholder: '搜索网卡名称、IPv4/IPv6 地址、MAC 物理地址、DNS 或芯片型号...',
     onSearchTextChange: setSearchText,
+    isShowingDetail: false,
+    isLoading,
+    searchBarAccessory: List.Dropdown({
+      tooltip: '按网卡类型筛选',
+      value: filterMode,
+      onChange: (val: string) => setFilterMode(val as AdapterFilterMode),
+      children: [
+        List.Dropdown.Item({ title: '全部网络接口 (All Interfaces)', value: 'all' }),
+        List.Dropdown.Item({ title: '物理网卡 (Physical Ethernet & WLAN)', value: 'physical' }),
+        List.Dropdown.Item({ title: '虚拟与隧道网卡 (WSL / TUN / VMware)', value: 'virtual' }),
+        List.Dropdown.Item({ title: '仅已连接接口 (Connected Only)', value: 'connected' })
+      ]
+    }),
+    filterBar: {
+      summaryText: `活动接口 ${adapters.filter((a) => a.status === 'up').length}/${adapters.length} 个 · 主 IPv4: ${primaryIpv4} · 默认网关: ${primaryGateway} · 首选 DNS: ${primaryDns}`,
+      actions: [
+        {
+          id: 'refresh-nic',
+          label: '刷新网卡',
+          title: '刷新网卡',
+          style: 'secondary',
+          onAction: () => void refreshAdapters(true)
+        },
+        {
+          id: 'flush-dns',
+          label: '刷新DNS缓存',
+          title: '刷新DNS缓存',
+          style: 'secondary',
+          onAction: () => void handleFlushDns()
+        }
+      ]
+    },
     children: [
       List.Section({
-        title: `网络适配器 (${filtered.length}/${adapters.length})`,
-        children: filtered.map(item =>
-          List.Item({
+        title: `本机网络接口列表 (${filtered.length})`,
+        children: filtered.map((item) => {
+          const speedRatio = Math.min(100, Math.max(8, Math.round((item.speedMbps / maxSpeed) * 100)))
+          const dnsText = item.dnsServers.length > 0 ? item.dnsServers.join(', ') : '自动'
+
+          return List.Item({
             id: item.id,
-            title: item.name,
-            subtitle: `IP: ${item.ipv4} | 网关: ${item.gateway} | MAC: ${item.mac}`,
-            icon: {
-              source: Icon.Wifi,
-              tintColor: item.status === 'connected' ? Color.Green : Color.SecondaryText
-            },
+            title: `${item.name} (${item.ipv4 || item.ipv6 || '未分配 IP'})`,
+            subtitle: `MAC: ${item.mac} · 掩码: ${item.netmask} · 网关: ${item.gateway || '无'} · DNS: ${dnsText} · ${item.description}`,
+            icon: item.category === 'physical' ? Icon.Wifi : Icon.Globe,
             accessories: [
-              {
-                tag: {
-                  value: item.status === 'connected' ? '已连接' : '已断开',
-                  color: item.status === 'connected' ? Color.Green : Color.SecondaryText
-                }
-              }
+              { progress: { value: speedRatio } },
+              { tag: { value: item.typeLabel } },
+              { text: `${item.speedMbps >= 1000 ? `${(item.speedMbps / 1000).toFixed(1)} Gbps` : `${item.speedMbps} Mbps`} · ${item.status === 'up' ? '已连接' : '已断开'}` }
             ],
             actions: ActionPanel({
-              title: item.name,
+              title: `${item.name} (${item.ipv4})`,
               children: [
                 Action({
-                  title: '复制 IPv4 地址',
+                  title: `复制 IPv4 地址 (${item.ipv4})`,
                   icon: Icon.Clipboard,
-                  onAction: () => {
-                    Clipboard.copy(item.ipv4)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制 IPv4',
-                      message: item.ipv4
-                    })
+                  onAction: async () => {
+                    const ip = copyAdapterInfo(item, 'ipv4')
+                    await Clipboard.copy(ip)
+                    showToast({ style: Toast.Style.Success, title: '已复制 IPv4 地址', message: ip })
                   }
                 }),
                 Action({
-                  title: '复制 MAC 物理地址',
-                  icon: Icon.Clipboard,
-                  shortcut: { modifiers: ['ctrl'], key: 'm' },
-                  onAction: () => {
-                    Clipboard.copy(item.mac)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制 MAC 地址',
-                      message: item.mac
-                    })
+                  title: `复制 MAC 物理地址 (${item.mac})`,
+                  icon: Icon.Key,
+                  shortcut: { modifiers: ['ctrl'], key: 'return' },
+                  onAction: async () => {
+                    const mac = copyAdapterInfo(item, 'mac')
+                    await Clipboard.copy(mac)
+                    showToast({ style: Toast.Style.Success, title: '已复制 MAC 地址', message: mac })
                   }
                 }),
                 Action({
-                  title: '复制默认网关',
-                  icon: Icon.Clipboard,
-                  shortcut: { modifiers: ['ctrl'], key: 'g' },
-                  onAction: () => {
-                    Clipboard.copy(item.gateway)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制网关',
-                      message: item.gateway
-                    })
-                  }
-                }),
-                Action({
-                  title: '刷新网络配置',
+                  title: '刷新 DNS 解析缓存 (ipconfig /flushdns)',
                   icon: Icon.ArrowClockwise,
+                  shortcut: { modifiers: ['ctrl'], key: 'd' },
+                  onAction: () => handleFlushDns()
+                }),
+                Action({
+                  title: '复制完整网卡配置 JSON',
+                  icon: Icon.Code,
+                  shortcut: { modifiers: ['ctrl', 'shift'], key: 'c' },
+                  onAction: async () => {
+                    const json = copyAdapterInfo(item, 'json')
+                    await Clipboard.copy(json)
+                    showToast({ style: Toast.Style.Success, title: '已复制网卡 JSON 配置', message: item.name })
+                  }
+                }),
+                Action({
+                  title: '复制单行网络摘要',
+                  icon: Icon.Document,
+                  shortcut: { modifiers: ['ctrl'], key: 'c' },
+                  onAction: async () => {
+                    const summary = copyAdapterInfo(item, 'summary')
+                    await Clipboard.copy(summary)
+                    showToast({ style: Toast.Style.Success, title: '已复制网卡摘要', message: summary })
+                  }
+                }),
+                Action({
+                  title: '刷新网卡状态',
+                  icon: Icon.Repeat,
                   shortcut: { modifiers: ['ctrl'], key: 'r' },
-                  onAction: loadAdapters
+                  onAction: () => refreshAdapters(true)
                 })
               ]
             })
           })
-        )
+        })
       })
     ]
   })
 }
+
+export default NetworkAdapterCommand

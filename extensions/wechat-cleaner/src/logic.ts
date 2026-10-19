@@ -17,7 +17,7 @@ import {
   showRealItemInFolder,
   trashRealItem,
   openRealPath
-} from '../shared/native-ipc.js'
+} from "./native-ipc.js"
 
 export interface CapabilityActionItem {
   id: string
@@ -60,6 +60,7 @@ export interface WechatCleanCategoryItem {
   color: string
   category: 'cache' | 'media' | 'files' | 'logs' | 'protected'
   riskLevel: 'safe' | 'recommended' | 'caution' | 'protected'
+  safetyLevel?: 'safe' | 'recommended' | 'caution' | 'protected'
   targetDir: string
   existsOnDisk: boolean
   fileCount: number
@@ -120,9 +121,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 107,
     id: 'wx-owner-107-sns-web',
-    name: '🌐 朋友圈与公众号网页缓存 (Owner #107)',
+    name: '朋友圈与公众号网页缓存 (Owner #107)',
     shortName: '朋友圈/网页缓存',
-    color: '#10b981',
+    color: '#64748b',
     category: 'cache',
     riskLevel: 'safe',
     defaultChecked: true,
@@ -131,9 +132,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 115,
     id: 'wx-owner-115-xplugin',
-    name: '🧩 小程序与跨端引擎组件包 (Owner #115)',
+    name: '小程序与跨端引擎组件包 (Owner #115)',
     shortName: '小程序/XPlugin',
-    color: '#3b82f6',
+    color: '#64748b',
     category: 'cache',
     riskLevel: 'recommended',
     defaultChecked: true,
@@ -142,9 +143,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 113,
     id: 'wx-owner-113-xlog',
-    name: '📝 微信运行跟踪与输入法日志 (Owner #113)',
+    name: '微信运行跟踪与输入法日志 (Owner #113)',
     shortName: '运行跟踪日志 (.xlog)',
-    color: '#06b6d4',
+    color: '#64748b',
     category: 'logs',
     riskLevel: 'safe',
     defaultChecked: true,
@@ -153,9 +154,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 112,
     id: 'wx-owner-112-crash',
-    name: '💥 崩溃转储与诊断快照 (Owner #112)',
+    name: '崩溃转储与诊断快照 (Owner #112)',
     shortName: '崩溃转储 (.dmp)',
-    color: '#f59e0b',
+    color: '#64748b',
     category: 'logs',
     riskLevel: 'safe',
     defaultChecked: true,
@@ -164,9 +165,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 111,
     id: 'wx-owner-111-emoticon',
-    name: '😀 表情包与动态贴纸缓存 (Owner #111)',
+    name: '表情包与动态贴纸缓存 (Owner #111)',
     shortName: '表情包与资源缓存',
-    color: '#a855f7',
+    color: '#64748b',
     category: 'media',
     riskLevel: 'safe',
     defaultChecked: true,
@@ -175,9 +176,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 114,
     id: 'wx-owner-114-update',
-    name: '📦 版本升级补丁与公共宿主缓存 (Owner #114)',
+    name: '版本升级补丁与公共宿主缓存 (Owner #114)',
     shortName: '升级补丁/WMPF',
-    color: '#ec4899',
+    color: '#64748b',
     category: 'cache',
     riskLevel: 'safe',
     defaultChecked: true,
@@ -186,9 +187,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 109,
     id: 'wx-owner-109-video-voice',
-    name: '🎬 聊天视频与语音媒体文件 (Owner #109)',
+    name: '聊天视频与语音媒体文件 (Owner #109)',
     shortName: '聊天视频/语音',
-    color: '#8b5cf6',
+    color: '#64748b',
     category: 'media',
     riskLevel: 'recommended',
     defaultChecked: true,
@@ -197,9 +198,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 108,
     id: 'wx-owner-108-chat-images',
-    name: '🖼️ 聊天加密图片与缩略图附件 (Owner #108)',
+    name: '聊天加密图片与缩略图附件 (Owner #108)',
     shortName: '聊天加密图片 (.dat)',
-    color: '#f97316',
+    color: '#64748b',
     category: 'media',
     riskLevel: 'caution',
     defaultChecked: false,
@@ -208,9 +209,9 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 110,
     id: 'wx-owner-110-recv-files',
-    name: '📂 聊天接收与自动下载文档 (Owner #110)',
+    name: '聊天接收与自动下载文档 (Owner #110)',
     shortName: '聊天接收文件',
-    color: '#ef4444',
+    color: '#64748b',
     category: 'files',
     riskLevel: 'caution',
     defaultChecked: false,
@@ -219,7 +220,7 @@ export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
   {
     ownerId: 999,
     id: 'wx-owner-999-protected-db',
-    name: '🔒 核心聊天文字与联系人数据库保护区 (db_storage)',
+    name: '核心聊天文字与联系人数据库保护区 (db_storage)',
     shortName: '核心聊天数据库 (受保护)',
     color: '#64748b',
     category: 'protected',
@@ -522,16 +523,18 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
 
   // 1. 先探测本机微信号账号目录 (如 liaoguobo_7f67 等)
   const detectedAccountSet = new Set<string>()
-  for (const root of candidateRoots.slice(0, 2)) {
-    const subDirs = await listRealDirectoryContents(root, hostOverride)
-    for (const sub of subDirs) {
-      const name = sub.split(/[\\/]/).pop() || ''
-      if (
-        name &&
-        !name.includes('.') &&
-        !/^(?:All Users|all_users|Applet|WMPF|Backup|config)$/i.test(name)
-      ) {
-        detectedAccountSet.add(name)
+  if (hostOverride || !isRealElectronHost()) {
+    for (const root of candidateRoots.slice(0, 2)) {
+      const subDirs = await listRealDirectoryContents(root, hostOverride)
+      for (const sub of subDirs) {
+        const name = sub.split(/[\\/]/).pop() || ''
+        if (
+          name &&
+          !name.includes('.') &&
+          !/^(?:All Users|all_users|Applet|WMPF|Backup|config)$/i.test(name)
+        ) {
+          detectedAccountSet.add(name)
+        }
       }
     }
   }
@@ -590,11 +593,14 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
     })
   }
 
-  // 2A. 真实 Electron 宿主环境：执行深度目录树扫描 (dir:) + MFT 专项扩展检索
+  // 2A. 真实 Electron 宿主环境或支持 dir: 深度扫描的测试环境：执行深度目录树扫描 (dir:)
   // 同时跟踪各分类的真实全量文件数与真实全量字节数（即使 Top 样本只取前 200 个）
   const extraOwnerTotals = new Map<WechatOwnerId, { extraFiles: number; extraBytes: number; targetDir?: string }>()
+  const supportsDeepScan =
+    (!hostOverride && isRealElectronHost()) ||
+    typeof hostOverride?.system_search_files === 'function'
 
-  if (!hostOverride && isRealElectronHost()) {
+  if (supportsDeepScan) {
     const deepTargets: Array<{ dir: string; defaultOwner?: WechatOwnerId }> = [
       ...(documentsDir
         ? [
@@ -611,18 +617,37 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
             { dir: `${appDataDir}\\Tencent\\xwechat\\net`, defaultOwner: 114 as WechatOwnerId }
           ]
         : []),
-      { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\radium', defaultOwner: 107 as WechatOwnerId },
-      { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\xplugin', defaultOwner: 115 as WechatOwnerId },
-      { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\log', defaultOwner: 113 as WechatOwnerId },
-      { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\crashinfo', defaultOwner: 112 as WechatOwnerId },
-      { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\net', defaultOwner: 114 as WechatOwnerId },
+      ...(!hostOverride
+        ? [
+            { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\radium', defaultOwner: 107 as WechatOwnerId },
+            { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\xplugin', defaultOwner: 115 as WechatOwnerId },
+            { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\log', defaultOwner: 113 as WechatOwnerId },
+            { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\crashinfo', defaultOwner: 112 as WechatOwnerId },
+            { dir: 'D:\\Local\\Roaming\\Tencent\\xwechat\\net', defaultOwner: 114 as WechatOwnerId }
+          ]
+        : []),
       ...(localLowAppData
         ? [{ dir: `${localLowAppData}\\TENCENT\\WeType`, defaultOwner: 113 as WechatOwnerId }]
         : [])
     ]
 
     const seenSubdirTotals = new Set<string>()
-    const scanResults = await Promise.all(deepTargets.map(t => scanRealDirectoryTree(t.dir, 150)))
+    const scanResults = await Promise.all(deepTargets.map(t => scanRealDirectoryTree(t.dir, 150, hostOverride)))
+
+    // 先从 xwechat_files / WeChat Files 子目录提取本机微信号账号目录 (如 liaoguobo_7f67)
+    for (let i = 0; i < Math.min(2, deepTargets.length); i++) {
+      const res = scanResults[i]
+      if (!res) continue
+      for (const sub of res.subdirs) {
+        if (
+          sub.name &&
+          !sub.name.includes('.') &&
+          !/^(?:All Users|all_users|Applet|WMPF|Backup|config)$/i.test(sub.name)
+        ) {
+          detectedAccountSet.add(sub.name)
+        }
+      }
+    }
 
     for (let i = 0; i < deepTargets.length; i++) {
       const target = deepTargets[i]
@@ -633,7 +658,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
       if (target.dir.toLowerCase().endsWith('\\radium')) {
         for (const sub of res.subdirs) {
           if (sub.name.toLowerCase() === 'users') {
-            const usersScan = await scanRealDirectoryTree(sub.path, 40)
+            const usersScan = await scanRealDirectoryTree(sub.path, 40, hostOverride)
             for (const u of usersScan.subdirs) {
               if (/^[0-9a-f]{16,64}$/i.test(u.name)) {
                 const hash = u.name.toLowerCase()
@@ -673,30 +698,6 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
           cur.extraBytes += Math.max(0, res.totalBytes - sampledBytes)
           cur.targetDir = target.dir
           extraOwnerTotals.set(target.defaultOwner, cur)
-        }
-      }
-    }
-
-    // 补充 MFT 索引检索 (确保即便主进程尚未重启也能通过 MFT 扫出全部 xwechat_files 与 WeType 真实文件)
-    const mftQueries = [
-      'xwechat_files',
-      'liaoguobo',
-      'WeChatAppEx',
-      '.xlog',
-      'emoticon',
-      'db_storage',
-      'WeType',
-      'RadiumWMPF'
-    ]
-    const mftBatches = await Promise.all(mftQueries.map(q => searchRealIndexedFiles(q, 80)))
-    for (const batch of mftBatches) {
-      for (const f of batch) {
-        if (
-          !f.isDir &&
-          f.size > 0 &&
-          /(?:xwechat|wechat|tencent|wetype)/i.test(f.path)
-        ) {
-          registerScannedFile(f.path, f.size, f.mtime)
         }
       }
     }
@@ -748,6 +749,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
       color: rule.color,
       category: rule.category,
       riskLevel: rule.riskLevel,
+      safetyLevel: rule.riskLevel,
       targetDir: defaultDir,
       existsOnDisk: fileCount > 0,
       fileCount,
@@ -833,7 +835,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
  * 执行微信缓存安全清理（严格拦截聊天数据库文件，走真实回收站移除）
  */
 export async function executeWechatCleanup(
-  categories: WechatCleanCategoryItem[],
+  categoriesOrPaths: WechatCleanCategoryItem[] | string[],
   hostOverride?: any,
   explicitFilePaths?: string[]
 ): Promise<{
@@ -842,14 +844,25 @@ export async function executeWechatCleanup(
   freedBytes: number
   skippedProtected: number
   deletedPaths: string[]
+  skippedPaths: string[]
   error?: string
 }> {
   let deletedCount = 0
   let freedBytes = 0
   let skippedProtected = 0
   const deletedPaths: string[] = []
+  const skippedPaths: string[] = []
 
-  if (Array.isArray(explicitFilePaths) && explicitFilePaths.length > 0) {
+  const directStringPaths =
+    Array.isArray(categoriesOrPaths) && categoriesOrPaths.length > 0 && typeof categoriesOrPaths[0] === 'string'
+      ? (categoriesOrPaths as string[])
+      : explicitFilePaths
+  const categories =
+    Array.isArray(categoriesOrPaths) && (categoriesOrPaths.length === 0 || typeof categoriesOrPaths[0] !== 'string')
+      ? (categoriesOrPaths as WechatCleanCategoryItem[])
+      : []
+
+  if (Array.isArray(directStringPaths) && directStringPaths.length > 0) {
     const fileSizeLookup = new Map<string, number>()
     for (const cat of categories) {
       for (const f of cat.files || []) {
@@ -860,9 +873,10 @@ export async function executeWechatCleanup(
       }
     }
 
-    for (const targetPath of explicitFilePaths) {
+    for (const targetPath of directStringPaths) {
       if (FORBIDDEN_TARGET_PATTERN.test(targetPath) || targetPath.toLowerCase().includes('\\db_storage\\')) {
         skippedProtected += 1
+        skippedPaths.push(targetPath)
         continue
       }
       const res = await trashRealItem(targetPath, hostOverride)
@@ -878,19 +892,21 @@ export async function executeWechatCleanup(
       deletedCount,
       freedBytes,
       skippedProtected,
-      deletedPaths
+      deletedPaths,
+      skippedPaths
     }
   }
 
   const selected = categories.filter(c => c.checked && c.ownerId !== 999 && c.sampleFiles.length > 0)
   if (selected.length === 0) {
-    return { ok: true, deletedCount: 0, freedBytes: 0, skippedProtected: 0, deletedPaths: [] }
+    return { ok: true, deletedCount: 0, freedBytes: 0, skippedProtected: 0, deletedPaths: [], skippedPaths: [] }
   }
 
   for (const cat of selected) {
     for (const sample of cat.sampleFiles) {
       if (FORBIDDEN_TARGET_PATTERN.test(sample.path) || sample.path.toLowerCase().includes('\\db_storage\\')) {
         skippedProtected += 1
+        skippedPaths.push(sample.path)
         continue
       }
       const res = await trashRealItem(sample.path, hostOverride)
@@ -907,7 +923,8 @@ export async function executeWechatCleanup(
     deletedCount,
     freedBytes,
     skippedProtected,
-    deletedPaths
+    deletedPaths,
+    skippedPaths
   }
 }
 

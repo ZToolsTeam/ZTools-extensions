@@ -1,7 +1,7 @@
 {
   "id": "color-picker",
   "name": "调色板与色彩转换器",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "HEX/RGB/HSL/CMYK 双向换算与 WCAG 对比度",
   "author": "ZTools Team",
   "entry": "dist/index.js",

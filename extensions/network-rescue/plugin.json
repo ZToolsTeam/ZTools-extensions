@@ -2,7 +2,7 @@
   "id": "network-rescue",
   "name": "网络急救箱",
   "description": "Windows 网络故障排查、DNS 缓存刷新与 Winsock 一键急救重置",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

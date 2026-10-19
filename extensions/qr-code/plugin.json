@@ -1,7 +1,7 @@
 {
   "id": "qr-code",
   "name": "二维码生成器",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "离线极速二维码生成器，支持自定义纠错等级、SVG/DataURL 导出与历史记录，纯声明式零CSS架构",
   "author": "ZTools Team",
   "entry": "dist/index.js",

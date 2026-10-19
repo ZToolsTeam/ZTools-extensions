@@ -51,13 +51,13 @@ export const SAMPLE_FILES = [
         pinyin: "ztools architecture"
     },
     {
-        name: "ztools-architecture-analysis.md",
-        path: "E:\\csdwork3\\git\\ZTools\\docs\\ztools-architecture-analysis.md",
+        name: "raycast-windows-deep-reverse-analysis.md",
+        path: "E:\\csdwork3\\git\\ZTools\\docs\\raycast-windows-deep-reverse-analysis.md",
         isDir: false,
         size: 25451,
         mtime: Date.now() - 3600000 * 5,
         acronym: "rwdra",
-        pinyin: "ztools architecture"
+        pinyin: "raycast windows"
     },
     {
         name: "Development-Plan-2026.pdf",

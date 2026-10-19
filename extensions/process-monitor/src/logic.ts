@@ -1,112 +1,8 @@
-let ipcReqSeq = 1
-
-function nextMessageId(prefix = 'ipc'): string {
-  ipcReqSeq = (ipcReqSeq + 1) % 1_000_000
-  return `${prefix}_${Date.now()}_${ipcReqSeq}`
-}
-
-export function isRealElectronHost(hostOverride?: unknown): boolean {
-  if (hostOverride) return false
-  if (typeof window === 'undefined') return false
-  const w = window as any
-  return Boolean(
-    w.__ztoolsElectron?.transport?.methods ||
-      w.ztools?.transport?.call ||
-      w.ztools?.transport?.methods
-  )
-}
-
-function unwrapTransportResponse(raw: any): { ok: boolean; data?: any; error?: string } {
-  if (raw === null || raw === undefined) {
-    return { ok: false, error: 'EMPTY_IPC_RESPONSE' }
-  }
-  if (typeof raw !== 'object') {
-    return { ok: true, data: raw }
-  }
-  if (raw.success === false) {
-    const errObj = raw.error
-    const errMsg =
-      typeof errObj === 'object' && errObj !== null
-        ? String(errObj.message || errObj.code || JSON.stringify(errObj))
-        : String(errObj || 'IPC 调用返回失败')
-    return { ok: false, error: errMsg }
-  }
-  const firstLayer = 'data' in raw && raw.data !== undefined ? raw.data : raw
-  if (firstLayer && typeof firstLayer === 'object' && !Array.isArray(firstLayer)) {
-    if (firstLayer.success === false) {
-      const errObj = firstLayer.error
-      const errMsg =
-        typeof errObj === 'object' && errObj !== null
-          ? String(errObj.message || errObj.code || JSON.stringify(errObj))
-          : String(errObj || 'IPC 内部调用失败')
-      return { ok: false, error: errMsg }
-    }
-    if ('data' in firstLayer && firstLayer.data !== undefined) {
-      return { ok: true, data: firstLayer.data }
-    }
-  }
-  return { ok: true, data: firstLayer }
-}
-
-export async function callHostTransport<T = any>(
-  method: string,
-  params: Record<string, unknown> = {},
-  hostOverride?: any
-): Promise<{ ok: boolean; data?: T; error?: string }> {
-  if (hostOverride) {
-    if (typeof hostOverride[method] === 'function') {
-      try {
-        const res = await hostOverride[method](params)
-        return unwrapTransportResponse(res) as { ok: boolean; data?: T; error?: string }
-      } catch (err: any) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    }
-    if (typeof hostOverride?.transport?.call === 'function') {
-      try {
-        const res = await hostOverride.transport.call(method, params)
-        return unwrapTransportResponse(res) as { ok: boolean; data?: T; error?: string }
-      } catch (err: any) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
-      }
-    }
-  }
-
-  if (typeof window === 'undefined') {
-    return { ok: false, error: 'NO_WINDOW_ENV' }
-  }
-
-  const w = window as any
-  const methods = w.__ztoolsElectron?.transport?.methods || w.ztools?.transport?.methods
-  const fn = methods?.[method]
-
-  if (typeof fn === 'function') {
-    try {
-      const messageId = nextMessageId(method.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 24))
-      const raw = await fn({ messageId, params })
-      return unwrapTransportResponse(raw) as { ok: boolean; data?: T; error?: string }
-    } catch (err: any) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  if (typeof w.ztools?.transport?.call === 'function') {
-    try {
-      const raw = await w.ztools.transport.call(method, params)
-      return unwrapTransportResponse(raw) as { ok: boolean; data?: T; error?: string }
-    } catch (err: any) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  }
-
-  return { ok: false, error: `METHOD_NOT_AVAILABLE: ${method}` }
-}
-
-export async function showRealItemInFolder(fullPath: string, host?: any): Promise<boolean> {
-  if (!fullPath || typeof fullPath !== 'string' || !fullPath.trim()) return false
-  const res = await callHostTransport('shell_show_item_in_folder', { fullPath: fullPath.trim() }, host)
-  return res.ok
-}
+import {
+  callHostTransport,
+  isRealElectronHost,
+  showRealItemInFolder
+} from "./native-ipc.js"
 
 export interface CapabilityActionItem {
   id: string
@@ -363,6 +259,7 @@ export async function invokeNativeCapability(
     }
   }
 
+  // 通过 Electron Preload Transport 调用 dllplugin_call (对接宿主 ProcessService / NativeHost)
   const hasTransportBridge =
     isRealElectronHost(hostBridge) ||
     typeof hostBridge?.dllplugin_call === 'function' ||
@@ -683,6 +580,7 @@ export function getMockServicesByPID(pid: number): ProcessServiceInfo[] {
 }
 
 export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
+  // 1. 优先通过 ProcessMonitorPlugin (GetProcessList) 获取完整字段快照（含真实 CPU%、路径、线程数、PPID、命令行）
   try {
     const res = await invokeNativeCapability('GetProcessList', { includeCommandLine: true }, host)
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
@@ -699,6 +597,7 @@ export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
     console.warn('[process-monitor] GetProcessList fallback:', err)
   }
 
+  // 2. 兼容通过 Preload Transport 调用 process_list 获取进程列表
   if (host || isRealElectronHost(host)) {
     const ipcRes = await callHostTransport<Array<any>>('process_list', {}, host)
     if (ipcRes.ok && Array.isArray(ipcRes.data) && ipcRes.data.length > 0) {
@@ -713,6 +612,7 @@ export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
 }
 
 export async function fetchSystemInfo(host?: any): Promise<SystemInfoData> {
+  // 1. 优先通过 ProcessMonitorPlugin (GetSystemInfo) 获取完整系统负载摘要
   try {
     const res = await invokeNativeCapability('GetSystemInfo', {}, host)
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
@@ -740,6 +640,7 @@ export async function fetchSystemInfo(host?: any): Promise<SystemInfoData> {
     console.warn('[process-monitor] GetSystemInfo fallback:', err)
   }
 
+  // 2. 兼容通过 system_get_memory_usage / system_get_hardware_summary / system_get_cpu_usage 获取
   if (host || isRealElectronHost(host)) {
     const [memRes, hwRes, cpuRes] = await Promise.all([
       callHostTransport<{ total: number; used: number; available: number; percent: number }>(
@@ -919,6 +820,7 @@ export async function terminateProcess(
       if (res.ok) {
         return { ok: true, mode }
       }
+      // 若 DLL 调用返回错误，尝试 process_kill (针对当前窗口自己启动的子进程)
       const killRes = await callHostTransport('process_kill', { pid, force: mode !== 'graceful' }, host)
       if (killRes.ok) {
         return { ok: true, mode }
@@ -1018,6 +920,7 @@ export function filterProcesses(
     if (sortBy === 'pid') {
       return a.pid - b.pid
     }
+    // 默认: cpu 优先，次选内存降序
     if (Math.abs(b.cpuPercent - a.cpuPercent) >= 0.1) {
       return b.cpuPercent - a.cpuPercent
     }

@@ -10,18 +10,24 @@ import {
   showToast,
   Toast,
   MetricGrid,
+  FilterBar,
   SegmentedControl
-} from '@ztools/declarative-ui'
+} from "@ztools/declarative-ui"
 import {
   HardwareSpecEntry,
   HardwareTelemetrySnapshot,
   formatBytes,
-  fetchHardwareTelemetrySnapshot
-} from './logic'
+  fetchHardwareTelemetrySnapshot,
+  exportHardwareReport
+} from './logic.js'
+
+export * from './logic.js'
+
+type HardwareDropdownFilter = 'all' | 'cpu-mem' | 'storage' | 'display' | 'benchmark' | 'report'
 
 export default function HardwareInfoCommand() {
   const [searchText, setSearchText] = useState('')
-  const [tab, setTab] = useState<'all' | 'cpu' | 'memory' | 'storage' | 'display'>('all')
+  const [dropdownFilter, setDropdownFilter] = useState<HardwareDropdownFilter>('all')
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
@@ -33,8 +39,8 @@ export default function HardwareInfoCommand() {
       if (showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '本机硬件遥测已刷新',
-          message: `${snap.cpuModel} · 内存 ${snap.memoryUsagePercent}%`
+          title: '本机硬件传感器遥测已刷新',
+          message: `${snap.cpuModel} · 内存 ${snap.memoryUsagePercent}% · 存储池 ${formatBytes(snap.totalDiskBytes)}`
         })
       }
     } finally {
@@ -43,13 +49,29 @@ export default function HardwareInfoCommand() {
   }
 
   useEffect(() => {
-    refreshTelemetry(false)
+    void refreshTelemetry(false)
   }, [])
+
+  async function handleCopyReport(format: 'markdown' | 'json' | 'txt') {
+    if (!snapshot) return
+    const content = exportHardwareReport(snapshot, format)
+    await Clipboard.copy(content)
+    showToast({
+      style: Toast.Style.Success,
+      title: `已导出 ${format.toUpperCase()} 硬件配置报告至剪贴板`,
+      message: `${snapshot.cpuModel} · ${formatBytes(snapshot.totalMemoryBytes)} RAM`
+    })
+  }
 
   const entries: HardwareSpecEntry[] = snapshot?.entries || []
   const q = searchText.trim().toLowerCase()
-  const filtered = entries.filter(e => {
-    if (tab !== 'all' && e.category !== tab) return false
+  const filtered = entries.filter((e) => {
+    if (dropdownFilter === 'cpu-mem' && e.category !== 'cpu' && e.category !== 'memory' && e.category !== 'system') {
+      return false
+    }
+    if (dropdownFilter === 'storage' && e.category !== 'storage') return false
+    if (dropdownFilter === 'display' && e.category !== 'display') return false
+    if (dropdownFilter === 'benchmark' && e.category !== 'benchmark') return false
     if (!q) return true
     return (
       e.title.toLowerCase().includes(q) ||
@@ -63,12 +85,28 @@ export default function HardwareInfoCommand() {
   const memPct = snapshot?.memoryUsagePercent || 0
   const totalMem = snapshot?.totalMemoryBytes || 0
   const usedMem = snapshot?.usedMemoryBytes || 0
+  const totalDisk = snapshot?.totalDiskBytes || 0
+  const availDisk = snapshot?.availableDiskBytes || 0
+  const drives = snapshot?.drives || []
 
   return List({
-    searchBarPlaceholder: '搜索本机 CPU 型号、内存、磁盘分区、显示器分辨率或系统版本...',
+    searchBarPlaceholder: '搜索本机 CPU 型号、内存、磁盘分区、显示器分辨率、AI 大模型兼容性或导出报告...',
     onSearchTextChange: setSearchText,
     isShowingDetail: true,
     isLoading,
+    searchBarAccessory: List.Dropdown({
+      tooltip: '切换硬件模块或导出报告',
+      value: dropdownFilter,
+      onChange: (val: string) => setDropdownFilter(val as HardwareDropdownFilter),
+      children: [
+        List.Dropdown.Item({ title: '全部硬件模块 (All Modules)', value: 'all' }),
+        List.Dropdown.Item({ title: '处理器与内存 (CPU & RAM)', value: 'cpu-mem' }),
+        List.Dropdown.Item({ title: '磁盘存储卷 (Storage Volumes)', value: 'storage' }),
+        List.Dropdown.Item({ title: '显卡与显示器 (Display & GPU)', value: 'display' }),
+        List.Dropdown.Item({ title: '4大场景性能评测 (Benchmarks)', value: 'benchmark' }),
+        List.Dropdown.Item({ title: '导出硬件报告 (Export Report)', value: 'report' })
+      ]
+    }),
     metricGrid: MetricGrid({
       columns: 4,
       items: [
@@ -76,13 +114,13 @@ export default function HardwareInfoCommand() {
           id: 'hw-m-cpu',
           label: '处理器实时利用率',
           value: `${cpuPct}%`,
-          subValue: snapshot ? `${snapshot.logicalCpuCount} 逻辑核心` : '采集中...',
+          subValue: snapshot ? `${snapshot.logicalCpuCount} 逻辑线程 · 评分 ${snapshot.healthScore}` : '采集中...',
           progress: cpuPct,
           status: cpuPct > 85 ? 'danger' : cpuPct > 60 ? 'warning' : 'success'
         },
         {
           id: 'hw-m-mem',
-          label: '物理内存占用',
+          label: '物理内存工作集',
           value: `${memPct}%`,
           subValue: `${formatBytes(usedMem)} / ${formatBytes(totalMem)}`,
           progress: memPct,
@@ -90,90 +128,205 @@ export default function HardwareInfoCommand() {
         },
         {
           id: 'hw-m-drives',
-          label: '本机挂载存储卷',
-          value: `${snapshot?.driveCount || 0} 块`,
-          subValue: 'NTFS 硬件分区在线',
+          label: '全盘存储池汇总',
+          value: formatBytes(totalDisk),
+          subValue: `${drives.length} 个分区 · 可用 ${formatBytes(availDisk)}`,
           status: 'normal'
         },
         {
           id: 'hw-m-disp',
-          label: '显示输出与电源',
-          value: `${snapshot?.displayCount || 1} 屏`,
-          subValue: snapshot?.isCharging ? `⚡ 交流供电 (${snapshot.batteryPercent}%)` : `🔋 电池 (${snapshot?.batteryPercent || 100}%)`,
+          label: '多屏显示与供电',
+          value: `${snapshot?.displayCount || 1} 台显示器`,
+          subValue: snapshot?.isCharging
+            ? `AC 交流供电 (${snapshot.batteryPercent}%)`
+            : `电池供电 (${snapshot?.batteryPercent || 100}%)`,
           status: 'success'
         }
       ]
     }),
-    segmentedControl: SegmentedControl({
-      value: tab,
-      onChange: v => setTab(v as any),
-      options: [
-        { value: 'all', label: '整机硬件总览', badge: entries.length },
-        { value: 'cpu', label: '处理器', badge: entries.filter(e => e.category === 'cpu').length },
-        { value: 'memory', label: '物理内存', badge: entries.filter(e => e.category === 'memory').length },
-        { value: 'storage', label: '磁盘存储', badge: entries.filter(e => e.category === 'storage').length },
-        { value: 'display', label: '显示器', badge: entries.filter(e => e.category === 'display').length }
+    filterBar: FilterBar({
+      wizardSteps: [
+        { step: 1, label: '1. CPU/RAM 内核遥测', status: 'done' },
+        { step: 2, label: '2. 全盘分区与多屏测绘', status: 'done' },
+        { step: 3, label: '3. 生产力与AI战力评估', status: 'active' },
+        { step: 4, label: '4. 多格式资产报告导出', status: 'pending' }
+      ],
+      summaryText: snapshot
+        ? `整机健康度 ${snapshot.healthScore} 分 · 处理器 ${snapshot.logicalCpuCount} 线程 · 物理内存 ${formatBytes(totalMem)} · 存储池 ${formatBytes(totalDisk)}`
+        : '硬件传感器采集中...',
+      groups: [
+        {
+          id: 'hw-module',
+          label: '硬件模块',
+          value: dropdownFilter,
+          onChange: (v) => setDropdownFilter(v as HardwareDropdownFilter),
+          options: [
+            { value: 'all', label: '全部模块', badge: entries.length },
+            { value: 'cpu-mem', label: '处理器与内存' },
+            { value: 'storage', label: '磁盘存储卷' },
+            { value: 'display', label: '显示器与显卡' },
+            { value: 'benchmark', label: '4大场景性能评测' }
+          ]
+        }
+      ],
+      actions: [
+        {
+          id: 'refresh-hw',
+          label: '刷新传感器',
+          title: '刷新传感器',
+          style: 'secondary',
+          onAction: () => void refreshTelemetry(true)
+        },
+        {
+          id: 'export-md',
+          label: '复制Markdown报告',
+          title: '复制Markdown报告',
+          style: 'secondary',
+          onAction: () => void handleCopyReport('markdown')
+        }
       ]
     }),
-    children: [
-      List.Section({
-        title: `本机真实硬件与传感器规格清单 (${filtered.length})`,
-        children: filtered.map(item =>
-          List.Item({
-            id: item.id,
-            title: item.title,
-            subtitle: item.subtitle,
-            icon: {
-              source:
-                item.category === 'cpu'
-                  ? Icon.Bolt
-                  : item.category === 'memory'
-                  ? Icon.Gear
-                  : item.category === 'storage'
-                  ? Icon.HardDrive
-                  : item.category === 'display'
-                  ? Icon.Monitor
-                  : Icon.Desktop,
-              tintColor: Color.Blue
-            },
-            accessories: [
-              { tag: { value: item.tag, color: Color.SecondaryText } },
-              { text: item.value }
-            ],
-            detail: List.Item.Detail({
-              markdown: item.detailMarkdown
-            }),
-            actions: ActionPanel({
-              title: item.title,
+    segmentedControl: SegmentedControl({
+      value: dropdownFilter,
+      onChange: (v) => setDropdownFilter(v as HardwareDropdownFilter),
+      options: [
+        { value: 'all', label: '整机硬件全景', badge: entries.length },
+        { value: 'storage', label: '磁盘存储卷', badge: drives.length },
+        { value: 'benchmark', label: '4大场景性能评测', badge: 4 },
+        { value: 'report', label: '导出硬件报告', badge: 3 }
+      ]
+    }),
+    children:
+      dropdownFilter === 'report' && snapshot
+        ? [
+            List.Section({
+              title: '多格式整机硬件配置与健康度报告导出',
               children: [
-                Action({
-                  title: '刷新硬件传感器遥测',
-                  icon: Icon.ArrowClockwise,
-                  onAction: () => refreshTelemetry(true)
-                }),
-                Action({
-                  title: '复制当前硬件规格摘要',
-                  icon: Icon.Clipboard,
-                  onAction: async () => {
-                    const text = `${item.title} | ${item.subtitle} | ${item.value}`
-                    await Clipboard.copy(text)
-                    showToast({ style: Toast.Style.Success, title: '已复制硬件规格', message: item.title })
-                  }
-                }),
-                Action({
-                  title: '复制整机完整配置报告',
+                List.Item({
+                  id: 'report-md',
+                  title: '导出 Markdown 格式整机硬件评测报告',
+                  subtitle: '适合粘贴至 GitHub Issue、Notion、Obsidian 或技术文档',
                   icon: Icon.Document,
-                  onAction: async () => {
-                    const report = entries.map(e => `- ${e.title}: ${e.subtitle} (${e.value})`).join('\n')
-                    await Clipboard.copy(report)
-                    showToast({ style: Toast.Style.Success, title: '已复制整机配置报告' })
-                  }
+                  accessories: [{ tag: { value: 'Markdown' } }],
+                  detail: List.Item.Detail({
+                    markdown: exportHardwareReport(snapshot, 'markdown')
+                  }),
+                  actions: ActionPanel({
+                    title: 'Markdown 报告',
+                    children: [
+                      Action({
+                        title: '复制 Markdown 硬件报告到剪贴板',
+                        icon: Icon.Clipboard,
+                        onAction: () => handleCopyReport('markdown')
+                      })
+                    ]
+                  })
+                }),
+                List.Item({
+                  id: 'report-json',
+                  title: '导出 JSON 结构化硬件资产清单',
+                  subtitle: '适合企业 IT 资产盘点、自动化运维脚本与 API 对接',
+                  icon: Icon.Terminal,
+                  accessories: [{ tag: { value: 'JSON Schema' } }],
+                  detail: List.Item.Detail({
+                    markdown: '```json\n' + exportHardwareReport(snapshot, 'json') + '\n```'
+                  }),
+                  actions: ActionPanel({
+                    title: 'JSON 资产清单',
+                    children: [
+                      Action({
+                        title: '复制 JSON 硬件清单到剪贴板',
+                        icon: Icon.Clipboard,
+                        onAction: () => handleCopyReport('json')
+                      })
+                    ]
+                  })
+                }),
+                List.Item({
+                  id: 'report-txt',
+                  title: '导出纯文本 (TXT) 极简配置单',
+                  subtitle: '适合直接发送至即时通讯窗口快速分享本机配置',
+                  icon: Icon.Clipboard,
+                  accessories: [{ tag: { value: 'Plain Text' } }],
+                  detail: List.Item.Detail({
+                    markdown: '```text\n' + exportHardwareReport(snapshot, 'txt') + '\n```'
+                  }),
+                  actions: ActionPanel({
+                    title: '纯文本配置单',
+                    children: [
+                      Action({
+                        title: '复制纯文本配置单到剪贴板',
+                        icon: Icon.Clipboard,
+                        onAction: () => handleCopyReport('txt')
+                      })
+                    ]
+                  })
                 })
               ]
             })
-          })
-        )
-      })
-    ]
+          ]
+        : [
+            List.Section({
+              title: `本机真实硬件与传感器规格清单 (${filtered.length})`,
+              children: filtered.map((item) =>
+                List.Item({
+                  id: item.id,
+                  title: item.title,
+                  subtitle: item.subtitle,
+                  icon:
+                    item.category === 'cpu'
+                      ? Icon.Bolt
+                      : item.category === 'memory'
+                      ? Icon.Gear
+                      : item.category === 'storage'
+                      ? Icon.HardDrive
+                      : item.category === 'display'
+                      ? Icon.Monitor
+                      : item.category === 'benchmark'
+                      ? Icon.Star
+                      : Icon.Desktop,
+                  accessories: [
+                    { tag: { value: item.tag } },
+                    { text: item.value }
+                  ],
+                  detail: List.Item.Detail({
+                    markdown: item.detailMarkdown
+                  }),
+                  actions: ActionPanel({
+                    title: item.title,
+                    children: [
+                      Action({
+                        title: '复制 Markdown 整机硬件报告',
+                        icon: Icon.Document,
+                        onAction: () => handleCopyReport('markdown')
+                      }),
+                      Action({
+                        title: '复制 JSON 结构化资产清单',
+                        icon: Icon.Terminal,
+                        shortcut: { modifiers: ['ctrl'], key: 'return' },
+                        onAction: () => handleCopyReport('json')
+                      }),
+                      Action({
+                        title: '复制当前硬件规格摘要',
+                        icon: Icon.Clipboard,
+                        shortcut: { modifiers: ['ctrl'], key: 'c' },
+                        onAction: async () => {
+                          const text = `${item.title} | ${item.subtitle} | ${item.value}`
+                          await Clipboard.copy(text)
+                          showToast({ style: Toast.Style.Success, title: '已复制硬件规格', message: item.title })
+                        }
+                      }),
+                      Action({
+                        title: '刷新硬件传感器遥测',
+                        icon: Icon.ArrowClockwise,
+                        shortcut: { modifiers: ['ctrl'], key: 'r' },
+                        onAction: () => refreshTelemetry(true)
+                      })
+                    ]
+                  })
+                })
+              )
+            })
+          ]
   })
 }
