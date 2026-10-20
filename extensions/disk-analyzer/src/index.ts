@@ -10,7 +10,7 @@ import {
   showToast,
   Toast,
   confirmAlert
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   DiskDriveItem,
   DiskFileEntry,
@@ -29,6 +29,11 @@ import {
   openDiskFileDefault,
   isRealElectronHost
 } from './logic.js'
+
+/** 分区根目录：Windows 盘符补反斜杠（C: → C:\\），macOS 挂载点本身就是路径（/） */
+function driveRoot(drive: string): string {
+  return drive.startsWith('/') ? drive : `${drive}\\`
+}
 
 export default function DiskAnalyzerCommand() {
   const [searchText, setSearchText] = useState('')
@@ -316,7 +321,7 @@ export default function DiskAnalyzerCommand() {
 
     return `# ${d.label}
 
-**挂载盘符**: \`${d.drive}\\ \` · **文件系统**: \`${d.fileSystem}\`
+**挂载盘符**: \`${driveRoot(d.drive)}\` · **文件系统**: \`${d.fileSystem}\`
 
 ---
 
@@ -381,7 +386,7 @@ ${extRows}
 - **实际占用大小**: \`${formatBytes(f.sizeBytes)}\` (\`${f.sizeBytes.toLocaleString()} Bytes\`)
 - **官方 10 大分类**: **${f.groupName}** (\`Group #${f.groupId}\`)
 - **文件扩展名**: \`${f.extension}\`
-- **所在物理分区**: \`${f.drive}\\ \`
+- **所在物理分区**: \`${driveRoot(f.drive)}\`
 - **所属父目录**: \`${f.parentDir}\`
 - **最后修改时间**: \`${formatDateTime(f.mtime)}\`
 - **清理勾选状态**: ${f.isProtected ? '系统保护目录文件 (禁止清理)' : isChecked ? '已加入待清理队列' : '未勾选'}
@@ -657,7 +662,7 @@ ${extRows}
                     title: '在资源管理器中打开此分区',
                     icon: Icon.Folder,
                     onAction: () => {
-                      openDiskItemLocation(`${d.drive}\\`)
+                      openDiskItemLocation(driveRoot(d.drive))
                     }
                   })
                 ]

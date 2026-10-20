@@ -10,7 +10,7 @@ import {
   showRealItemInFolder,
   formatBytes,
   invokeDllPluginCapability
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
 export { formatBytes }
 

@@ -11,7 +11,7 @@ import {
   showToast,
   Toast,
   confirmAlert
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   DLL_PLUGIN_NAME,
   type ProcessItem,
@@ -36,7 +36,7 @@ import {
   filterProcesses
 } from './logic.js'
 
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

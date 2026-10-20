@@ -9,7 +9,7 @@ import {
   showToast,
   Toast,
   FilterBar
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   INITIAL_OCR_QUEUE_ITEMS,
   OCR_LANGUAGE_MODELS,
@@ -21,7 +21,7 @@ import {
   formatBytes,
   openOcrFileLocation
 } from './logic.js'
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

@@ -5,10 +5,10 @@ import {
   WindowRect,
   WindowActionResult
 } from "./types.js";
-import { LocalStorage } from "../../api/storage.js";
-import { getDeclarativeBridge } from "../../api/bridge.js";
-import { showHUD } from "../../api/hud.js";
-import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
+import { LocalStorage } from "@ztools/declarative-ui";
+import { getDeclarativeBridge } from "@ztools/declarative-ui";
+import { showHUD } from "@ztools/declarative-ui";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 
 export const DEFAULT_WINDOW_PREFERENCES: WindowManagementPreferences = {
   innerGap: 0,

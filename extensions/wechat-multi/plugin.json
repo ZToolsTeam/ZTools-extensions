@@ -2,7 +2,7 @@
   "id": "wechat-multi",
   "name": "微信多开与账号管理助手",
   "description": "通过底层互斥体安全脱钩实现微信 PC 版无限多开，支持多账号实例状态监控、备注管理与一键聚焦切换窗口",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -20,12 +20,6 @@
     {
       "id": "windows-electron-any",
       "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
-    {
-      "id": "macos-electron-any",
-      "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }

@@ -20,9 +20,9 @@ import {
   showRealItemInFolder,
   trashRealItem,
   openRealPath
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
-export { formatBytes, isRealElectronHost } from '../shared/native-ipc.js'
+export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string

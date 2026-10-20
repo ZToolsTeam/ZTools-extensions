@@ -2,7 +2,7 @@
   "id": "quick-folders",
   "name": "常用文件夹",
   "description": "Windows 核心系统目录与高频文件夹秒级直达",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

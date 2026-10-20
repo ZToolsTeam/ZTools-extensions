@@ -12,9 +12,9 @@ import {
   isRealElectronHost,
   readRealDirectory,
   showRealItemInFolder
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
-export { formatBytes } from '../shared/native-ipc.js'
+export { formatBytes } from './native-ipc.js'
 
 export type RenameRuleType =
   | 'replace'

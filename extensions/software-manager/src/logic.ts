@@ -14,7 +14,7 @@ import {
   readRealDirectory,
   scanRealDirectoryTree,
   showRealItemInFolder
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
 export type SoftwareSmartCategoryId =
   | 'dev_geek'

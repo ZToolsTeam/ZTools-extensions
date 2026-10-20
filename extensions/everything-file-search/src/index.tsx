@@ -1,4 +1,4 @@
-import React from "../../index.js";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -10,8 +10,8 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "../../index.js";
-import { useState, useEffect } from "../../runtime/hooks.js";
+} from "@ztools/declarative-ui";
+import { useState, useEffect } from "@ztools/declarative-ui";
 import {
   FileRecord,
   SortOption,
@@ -28,7 +28,6 @@ import {
   searchLocalFiles,
   getFileQuickLook,
   calculateFileSha256,
-  calculateFileMd5,
   openFile,
   openWith,
   revealFile,
@@ -36,7 +35,7 @@ import {
   copyFileToClipboard,
   quickLookFile
 } from "./search-service.js";
-import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 
 export * from "./types.js";
 export * from "./search-service.js";
@@ -383,15 +382,6 @@ export default function EverythingFileSearchCommand() {
     }
   };
 
-  const handleCalculateMd5 = async (file: FileRecord) => {
-    try {
-      const hash = await calculateFileMd5(file.path);
-      await Clipboard.copy(hash);
-      await showToast(Toast.Style.Success, `已复制 MD5: ${hash}`);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, `计算 MD5 失败: ${err.message || String(err)}`);
-    }
-  };
 
   return (
     <List
@@ -659,11 +649,6 @@ ${
                     icon={Icon.Lock}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "h" }}
                     onAction={() => handleCalculateSha256(file)}
-                  />
-                  <Action
-                    title="计算并复制 MD5"
-                    icon={Icon.Lock}
-                    onAction={() => handleCalculateMd5(file)}
                   />
                 </ActionPanel.Section>
 

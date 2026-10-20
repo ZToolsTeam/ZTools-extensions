@@ -12,9 +12,9 @@ import {
   openRealPath,
   scanRealDirectoryTree,
   showRealItemInFolder
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
-export { formatBytes } from '../shared/native-ipc.js'
+export { formatBytes } from './native-ipc.js'
 
 export type PdfToolCategory = 'pdf_to_other' | 'other_to_pdf' | 'pdf_ops'
 

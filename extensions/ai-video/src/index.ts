@@ -10,7 +10,7 @@ import {
   Toast,
   confirmAlert,
   FilterBar
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   AI_VIDEO_MODELS,
   INITIAL_AI_VIDEO_FILES,
@@ -21,7 +21,7 @@ import {
   openAiVideoLocation,
   runAiVideoBatch
 } from './logic.js'
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

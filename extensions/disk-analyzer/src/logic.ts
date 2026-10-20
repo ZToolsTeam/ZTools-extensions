@@ -17,9 +17,9 @@ import {
   showRealItemInFolder,
   trashRealItem,
   openRealPath
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
-export { formatBytes, isRealElectronHost } from '../shared/native-ipc.js'
+export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string
@@ -465,7 +465,22 @@ export function computeGroupStats(files: DiskFileEntry[]): DiskGroupStat[] {
   return result.sort((a, b) => b.totalSizeBytes - a.totalSizeBytes)
 }
 
+/** macOS / Linux 的路径以 / 开头，保持原样；Windows 路径统一成反斜杠。宿主的定位、删除接口都要用本机原生路径 */
+function toNativePath(filePath: string): string {
+  const raw = String(filePath || '')
+  return raw.startsWith('/') ? raw : raw.replace(/\//g, '\\')
+}
+
+function splitNativePath(nativePath: string): { name: string; parentDir: string } {
+  const lastSep = Math.max(nativePath.lastIndexOf('/'), nativePath.lastIndexOf('\\'))
+  return {
+    name: lastSep >= 0 ? nativePath.slice(lastSep + 1) : nativePath,
+    parentDir: lastSep > 0 ? nativePath.slice(0, lastSep) : nativePath
+  }
+}
+
 function extractDrivePrefix(filePath: string): string {
+  if (String(filePath || '').startsWith('/')) return '/'
   const m = String(filePath || '').match(/^([A-Za-z]:)/)
   return m ? m[1].toUpperCase() : 'C:'
 }
@@ -478,8 +493,8 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   const rawDrives = await probeRealDiskDrives(['C', 'D', 'E', 'F', 'G'], hostOverride)
   const drives: DiskDriveItem[] = rawDrives.map(d => ({
     drive: d.drive,
-    label: d.drive === 'C:' ? '系统主分区 (C:)' : `本地数据卷 (${d.drive})`,
-    fileSystem: 'NTFS',
+    label: d.drive === 'C:' ? '系统主分区 (C:)' : d.drive === '/' ? '启动磁盘 (/)' : `本地数据卷 (${d.drive})`,
+    fileSystem: '未知',
     totalBytes: d.totalBytes,
     usedBytes: d.usedBytes,
     availableBytes: d.availableBytes,
@@ -502,14 +517,12 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
 
   const addFileEntry = (fullPath: string, sizeBytes: number, mtime = 0) => {
     if (!fullPath || sizeBytes <= 0) return
-    const normKey = fullPath.replace(/\//g, '\\').toLowerCase()
+    const cleanPath = toNativePath(fullPath)
+    const normKey = cleanPath.toLowerCase()
     if (seenPaths.has(normKey)) return
     seenPaths.add(normKey)
 
-    const cleanPath = fullPath.replace(/\//g, '\\')
-    const lastSep = cleanPath.lastIndexOf('\\')
-    const name = lastSep >= 0 ? cleanPath.slice(lastSep + 1) : cleanPath
-    const parentDir = lastSep > 0 ? cleanPath.slice(0, lastSep) : cleanPath
+    const { name, parentDir } = splitNativePath(cleanPath)
     const cls = classifyFileExtension(name)
     files.push({
       id: `file-${files.length}-${name}`,
@@ -555,12 +568,12 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
       if (Array.isArray(res.subdirs)) {
         for (const sub of res.subdirs) {
           if (!sub.path || sub.totalBytes <= 0) continue
-          const normSub = sub.path.replace(/\//g, '\\').toLowerCase()
+          const cleanSub = toNativePath(sub.path)
+          const normSub = cleanSub.toLowerCase()
           if (seenDirs.has(normSub)) continue
           seenDirs.add(normSub)
-          const cleanSub = sub.path.replace(/\//g, '\\')
           topDirectories.push({
-            name: sub.name || cleanSub.split('\\').pop() || cleanSub,
+            name: sub.name || splitNativePath(cleanSub).name || cleanSub,
             path: cleanSub,
             drive: extractDrivePrefix(cleanSub),
             sizeBytes: sub.totalBytes,

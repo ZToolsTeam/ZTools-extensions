@@ -104,6 +104,50 @@ export function sanitizeStoredMemos(raw: unknown): MemoItem[] {
   return out
 }
 
+/** 已合并进便签的旧插件「轻量便签记事」(notes) 写在浏览器 localStorage 里的键 */
+export const LEGACY_NOTES_LOCALSTORAGE_KEY = 'raycast_ztools-raycast-notes-v1'
+
+/** 旧 notes 插件自带的 3 条示例笔记，迁移时不带过来 */
+const LEGACY_NOTES_SAMPLE_IDS = new Set(['note-1', 'note-2', 'note-3'])
+
+/**
+ * 读取旧「轻量便签记事」(notes) 插件的笔记并转换成便签；读不到、已损坏或只有示例数据时返回空数组。
+ * 旧插件把 JSON 字符串再序列化了一次存储，这里两种写法都兼容。
+ */
+export function readLegacyNotes(storage: { getItem(key: string): string | null } | undefined = (globalThis as any).localStorage): MemoItem[] {
+  try {
+    const raw = storage?.getItem(LEGACY_NOTES_LOCALSTORAGE_KEY)
+    if (!raw) return []
+    let parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+    if (!Array.isArray(parsed)) return []
+    const out: MemoItem[] = []
+    const seen = new Set<string>()
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const n = item as Record<string, unknown>
+      if (typeof n.id !== 'string' || LEGACY_NOTES_SAMPLE_IDS.has(n.id)) continue
+      if (typeof n.title !== 'string' || typeof n.content !== 'string') continue
+      const id = `notes-${n.id}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      const createTime = typeof n.createdAt === 'number' ? n.createdAt : 0
+      const tags = Array.isArray(n.tags) ? n.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '') : []
+      out.push({
+        id,
+        title: n.title,
+        content: n.content,
+        tag: tags.join(' '),
+        createTime,
+        updateTime: typeof n.updatedAt === 'number' ? n.updatedAt : createTime
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
 /**
  * 读取旧版存在浏览器 localStorage 的便签（过滤掉示例数据）；读不到或已损坏时返回空数组
  */

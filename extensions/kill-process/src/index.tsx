@@ -1,4 +1,4 @@
-import React from "../../index.js";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -10,9 +10,9 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "../../index.js";
-import { useState, useEffect } from "../../runtime/hooks.js";
-import { isRealElectronHost } from "../shared/native-ipc.js";
+} from "@ztools/declarative-ui";
+import { useState, useEffect } from "@ztools/declarative-ui";
+import { isRealElectronHost } from "./native-ipc.js";
 import {
   ProcessInfo,
   ProcessSortBy,

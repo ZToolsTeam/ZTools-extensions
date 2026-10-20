@@ -3,7 +3,7 @@
  * 探测以太网 Ethernet、WLAN Wi-Fi、Loopback 回环与虚拟隧道网卡 (VMware / WSL / Clash TUN)
  */
 
-import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from '../shared/native-ipc.js'
+import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string

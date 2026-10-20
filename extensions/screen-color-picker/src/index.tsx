@@ -1,4 +1,4 @@
-import React from "../../index.js";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -10,8 +10,8 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "../../index.js";
-import { useState, useEffect } from "../../runtime/hooks.js";
+} from "@ztools/declarative-ui";
+import { useState, useEffect } from "@ztools/declarative-ui";
 import {
   parseColor,
   convertColor,

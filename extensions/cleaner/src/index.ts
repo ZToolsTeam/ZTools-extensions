@@ -14,7 +14,7 @@ import {
   DistributionBar,
   FilterBar,
   SegmentedControl
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   CLEAN_CLASSES,
   CleanGroupItem,
@@ -28,7 +28,7 @@ import {
   emptyRecycleBin,
   filterCleanGroups
 } from './logic.js'
-import { isRealElectronHost, showRealItemInFolder } from '../shared/native-ipc.js'
+import { isRealElectronHost, showRealItemInFolder } from './native-ipc.js'
 
 export default function CleanerCommand() {
   const inRealHost = isRealElectronHost()

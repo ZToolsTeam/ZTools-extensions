@@ -110,3 +110,63 @@ export function getDefaultFolders(envOverrides?: Record<string, string>): Folder
     }
   ]
 }
+
+/** 宿主 system_get_path 读到的当前用户真实目录（读不到的项为空字符串） */
+export interface HostFolderPaths {
+  home: string
+  desktop: string
+  downloads: string
+  documents: string
+  pictures: string
+  videos: string
+  music: string
+  appData: string
+  temp: string
+}
+
+function joinPath(base: string, child: string, windows: boolean): string {
+  const sep = windows ? '\\' : '/'
+  return base.replace(/[\\/]+$/, '') + sep + child
+}
+
+/**
+ * 按当前系统生成常用目录：个人目录一律用宿主读到的真实路径（支持被重定向到 OneDrive 等位置的目录），
+ * 系统目录按 Windows / macOS 各自的约定生成。宿主没读到主目录时返回空列表，由界面提示读取失败。
+ */
+export function buildFolders(paths: HostFolderPaths): FolderItem[] {
+  const home = String(paths?.home || '').trim()
+  if (!home) return []
+  const windows = !home.startsWith('/')
+  const pick = (value: string, child: string) => String(value || '').trim() || joinPath(home, child, windows)
+
+  const personal: FolderItem[] = [
+    { id: 'desktop', name: '桌面 (Desktop)', path: pick(paths.desktop, 'Desktop'), category: 'personal', description: '个人桌面文件与工作区' },
+    { id: 'downloads', name: '下载 (Downloads)', path: pick(paths.downloads, 'Downloads'), category: 'personal', description: '浏览器与网络文件默认下载目录' },
+    { id: 'documents', name: '文档 (Documents)', path: pick(paths.documents, 'Documents'), category: 'personal', description: '个人文档、工程与应用数据' },
+    { id: 'pictures', name: '图片 (Pictures)', path: pick(paths.pictures, 'Pictures'), category: 'personal', description: '照片与屏幕截图保存目录' },
+    { id: 'videos', name: windows ? '视频 (Videos)' : '影片 (Movies)', path: pick(paths.videos, windows ? 'Videos' : 'Movies'), category: 'personal', description: '视频与录屏文件' },
+    { id: 'music', name: '音乐 (Music)', path: pick(paths.music, 'Music'), category: 'personal', description: '音乐与音频文件' },
+    { id: 'userprofile', name: '用户主目录 (Home)', path: home, category: 'personal', description: '当前系统登录用户根目录' }
+  ]
+
+  if (windows) {
+    const drive = /^[A-Za-z]:/.test(home) ? home.slice(0, 2).toUpperCase() : 'C:'
+    const localAppData = joinPath(home, 'AppData\\Local', true)
+    return [
+      ...personal,
+      { id: 'appdata-roaming', name: 'AppData Roaming', path: pick(paths.appData, 'AppData\\Roaming'), category: 'system', description: '应用程序漫游配置与核心数据' },
+      { id: 'appdata-local', name: 'AppData Local', path: localAppData, category: 'system', description: '应用程序本地缓存与运行时数据' },
+      { id: 'system-drive', name: `系统盘 (${drive})`, path: `${drive}\\`, category: 'system', description: 'Windows 系统安装驱动器' },
+      { id: 'temp', name: '临时文件夹 (Temp)', path: String(paths.temp || '').trim() || joinPath(localAppData, 'Temp', true), category: 'temp', description: '系统与应用临时文件存放目录' }
+    ]
+  }
+
+  return [
+    ...personal,
+    { id: 'applications', name: '应用程序 (Applications)', path: '/Applications', category: 'system', description: '系统安装的应用程序' },
+    { id: 'app-support', name: 'Application Support', path: pick(paths.appData, 'Library/Application Support'), category: 'system', description: '应用程序配置与数据' },
+    { id: 'library', name: '资源库 (Library)', path: joinPath(home, 'Library', false), category: 'system', description: '当前用户的偏好设置、缓存与日志' },
+    { id: 'caches', name: '缓存 (Caches)', path: joinPath(home, 'Library/Caches', false), category: 'temp', description: '应用程序缓存文件' },
+    { id: 'temp', name: '临时文件夹 (Temp)', path: String(paths.temp || '').trim() || '/tmp', category: 'temp', description: '系统与应用临时文件存放目录' }
+  ]
+}

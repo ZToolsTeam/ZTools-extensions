@@ -8,8 +8,8 @@
  * 4. 零彩色 Emoji 与去彩虹化：100% 单色 SVG 图标、单色中性灰进度条与标签
  */
 
-import { Action, ActionPanel, Icon, List, useEffect, useState } from "../../index.js";
-import { isRealElectronHost } from "../shared/native-ipc.js";
+import { Action, ActionPanel, Icon, List, useEffect, useState } from "@ztools/declarative-ui";
+import { isRealElectronHost } from "./native-ipc.js";
 import {
   BACKUP_CATEGORIES,
   BACKUP_PROFILES,

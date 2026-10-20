@@ -25,5 +25,7 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "revoked": true,
+  "revokedReason": "功能尚未完成，已停止分发；保留下架记录以通知现有安装。"
 }

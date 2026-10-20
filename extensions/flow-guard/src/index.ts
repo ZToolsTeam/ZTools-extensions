@@ -10,7 +10,7 @@ import {
   showToast,
   Toast,
   confirmAlert
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   ProcessNetworkGroup,
   FORBIDDEN_REASON,

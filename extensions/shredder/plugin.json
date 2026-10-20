@@ -2,7 +2,7 @@
   "id": "shredder",
   "name": "文件解锁与强力粉碎机",
   "description": "强制解除进程文件句柄占用锁，采用 DoD 5220.22-M 多轮随机覆写算法彻底粉碎敏感机密文件，防止数据恢复",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -19,12 +19,6 @@
     {
       "id": "windows-electron-any",
       "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
-    {
-      "id": "macos-electron-any",
-      "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }

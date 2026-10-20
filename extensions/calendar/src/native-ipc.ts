@@ -730,8 +730,8 @@ export interface DllCapabilityResponse<T = any> {
   data: T | null
   message?: string
   error?: string
-  pluginName?: string
-  method?: string
+  pluginName: string
+  method: string
   fromFallback?: boolean
 }
 
@@ -1084,7 +1084,7 @@ const CAPABILITY_TO_PLUGIN_MAP: Record<string, { plugin: string; func: string }>
   'backup.createSnapshotArchive': { plugin: 'SystemBackupPlugin', func: 'createSnapshotArchive' },
   'backup.restoreSnapshotArchive': { plugin: 'SystemBackupPlugin', func: 'restoreSnapshotArchive' },
   'backup.scanSnapshots': { plugin: 'SystemBackupPlugin', func: 'scanSnapshots' },
-  'sqlite.execute': { plugin: 'SqlitePlugin', func: 'executeQuery' },
+  'sqlite.execute': { plugin: 'SqlitePlugin', func: 'execute' },
   'sqlite.query': { plugin: 'SqlitePlugin', func: 'executeQuery' },
   'sqlite.inspectWorkspace': { plugin: 'SqlitePlugin', func: 'inspectWorkspace' }
 }
@@ -1382,7 +1382,8 @@ export function computeRealSha256Hex(input: string | Uint8Array): string {
 }
 
 /**
- * 读取本地文件真实字节并计算标准 SHA-256（优先走宿主 filesearch_sha256 / FileComparePlugin，回退读取真实文件内容计算）
+ * 读取本地文件真实字节并计算标准 SHA-256：宿主 filesearch_sha256（只接受 path 字段）优先，Windows 上再试 FileComparePlugin。
+ * 都拿不到时返回空字符串，由调用方提示失败；不再把文件按 UTF-8 文本读出来再算（二进制文件会算出错误的值）。
  */
 export async function computeRealFileSha256(
   filePath: string,
@@ -1391,7 +1392,7 @@ export async function computeRealFileSha256(
   if (!filePath || !filePath.trim()) return ''
   const target = filePath.trim()
 
-  const shaRes = await callHostTransport<any>('filesearch_sha256', { filePath: target, path: target }, hostOverride)
+  const shaRes = await callHostTransport<any>('filesearch_sha256', { path: target }, hostOverride)
   if (shaRes.ok && shaRes.data) {
     const hash = typeof shaRes.data === 'string' ? shaRes.data : String(shaRes.data?.sha256 || shaRes.data?.hash || '')
     if (/^[0-9a-f]{64}$/i.test(hash)) return hash.toLowerCase()
@@ -1401,21 +1402,6 @@ export async function computeRealFileSha256(
   if (dllRes.ok && dllRes.data) {
     const hash = typeof dllRes.data === 'string' ? dllRes.data : String(dllRes.data?.sha256 || dllRes.data?.hash || '')
     if (/^[0-9a-f]{64}$/i.test(hash)) return hash.toLowerCase()
-  }
-
-  const readRes = await callHostTransport<any>(
-    'filesystem_read_file',
-    { path: target, encoding: 'utf8' },
-    hostOverride
-  )
-  if (readRes.ok && readRes.data !== undefined && readRes.data !== null) {
-    const content =
-      typeof readRes.data === 'string'
-        ? readRes.data
-        : typeof readRes.data?.content === 'string'
-        ? readRes.data.content
-        : JSON.stringify(readRes.data)
-    return computeRealSha256Hex(content)
   }
 
   return ''
@@ -1456,7 +1442,7 @@ export async function showRealToast(
   style: 'success' | 'failure' | 'info' = 'info'
 ): Promise<void> {
   try {
-    const { showToast, Toast } = await import('../../api/toast.js')
+    const { showToast, Toast } = await import('@ztools/declarative-ui')
     await showToast({
       title,
       style:
@@ -1470,4 +1456,3 @@ export async function showRealToast(
     // ignore
   }
 }
-

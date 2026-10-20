@@ -8,8 +8,8 @@
  * 4. 系统保护安全锁：C:\Windows\System32 等核心目录强制设置 checkable: false 与 lockedReason，零彩色 Emoji
  */
 
-import { Action, ActionPanel, Icon, List, useEffect, useState } from "../../index.js";
-import { isRealElectronHost } from "../shared/native-ipc.js";
+import { Action, ActionPanel, Icon, List, useEffect, useState } from "@ztools/declarative-ui";
+import { isRealElectronHost } from "./native-ipc.js";
 import {
   MOVER_CATEGORIES,
   createInitialMoverSnapshot,

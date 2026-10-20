@@ -11,7 +11,7 @@ import {
   Toast,
   confirmAlert,
   FilterBar
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   AUDIO_WORKSHOP_MODES,
   CapabilityActionItem,
@@ -21,7 +21,7 @@ import {
   invokeNativeCapability,
   openAudioFileLocation
 } from './logic.js'
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

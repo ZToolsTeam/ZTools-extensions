@@ -1,12 +1,12 @@
-import { LocalStorage } from "../../api/storage.js";
-import { getDeclarativeBridge } from "../../api/bridge.js";
-import { Clipboard } from "../../api/clipboard.js";
+import { LocalStorage } from "@ztools/declarative-ui";
+import { getDeclarativeBridge } from "@ztools/declarative-ui";
+import { Clipboard } from "@ztools/declarative-ui";
 import {
   callHostTransport,
   isRealElectronHost,
   readRealClipboardText,
   writeRealClipboardText
-} from "../shared/native-ipc.js";
+} from "./native-ipc.js";
 import {
   ClipboardItem,
   ClipboardFilterOptions,

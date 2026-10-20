@@ -2,7 +2,7 @@
   "id": "process-monitor",
   "name": "系统进程与服务深度监控",
   "description": "实时枚举系统进程树、CPU/内存占用、签名状态与关联 Windows 服务，支持定位文件与强制结束异常进程",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

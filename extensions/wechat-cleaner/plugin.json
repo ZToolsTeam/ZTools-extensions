@@ -2,7 +2,7 @@
   "id": "wechat-cleaner",
   "name": "微信专项深度清理",
   "description": "深度扫描微信 PC 版 FileStorage 目录下的群聊缓存、朋友圈图片视频、自动下载重复文件与旧版本残留，保护核心聊天记录",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -18,12 +18,6 @@
     {
       "id": "windows-electron-any",
       "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
-    {
-      "id": "macos-electron-any",
-      "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }

@@ -73,15 +73,15 @@ test('kill-process 真实宿主快照桥接、三种终结模式与系统进程�
   // 3. 验证三种终结模式 (force / tree / graceful)
   const okForce = await mod.terminateProcess({ pid: 31337, name: 'geek-worker.exe' }, 'force', false, mockHost)
   assert.equal(okForce.success, true)
-  assert.equal(okForce.command, 'taskkill /F /PID 31337')
+  assert.equal(okForce.command, mod.getKillCommandLine(31337, 'force'), '命令行按当前系统生成')
 
   const okTree = await mod.terminateProcess({ pid: 31337, name: 'geek-worker.exe' }, 'tree', false, mockHost)
   assert.equal(okTree.success, true)
-  assert.equal(okTree.command, 'taskkill /F /T /PID 31337')
+  assert.equal(okTree.command, mod.getKillCommandLine(31337, 'tree'), '命令行按当前系统生成')
 
   const okGraceful = await mod.terminateProcess({ pid: 31337, name: 'geek-worker.exe' }, 'graceful', false, mockHost)
   assert.equal(okGraceful.success, true)
-  assert.equal(okGraceful.command, 'taskkill /PID 31337')
+  assert.equal(okGraceful.command, mod.getKillCommandLine(31337, 'graceful'), '命令行按当前系统生成')
 
   // 4. 故障注入：宿主拒绝终止进程 (ACCESS_DENIED)
   const denied = await mod.terminateProcess({ pid: 99999, name: 'locked.exe' }, 'force', false, mockHost)
@@ -101,3 +101,12 @@ test('kill-process 真实宿主快照桥接、三种终结模式与系统进程�
   assert.equal(fallbackProcs.length, mod.SAMPLE_PROCESSES.length)
 })
 
+
+test('kill-process 终止命令行：Windows 与 macOS 两套写法', () => {
+  assert.equal(mod.getKillCommandLine(31337, 'force', false), 'taskkill /F /PID 31337')
+  assert.equal(mod.getKillCommandLine(31337, 'tree', false), 'taskkill /F /T /PID 31337')
+  assert.equal(mod.getKillCommandLine(31337, 'graceful', false), 'taskkill /PID 31337')
+  assert.equal(mod.getKillCommandLine(31337, 'force', true), 'kill -9 31337')
+  assert.equal(mod.getKillCommandLine(31337, 'tree', true), 'pkill -9 -P 31337')
+  assert.equal(mod.getKillCommandLine(31337, 'graceful', true), 'kill -15 31337')
+})
