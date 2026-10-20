@@ -1,8 +1,19 @@
-# ZTools Extensions (插件生态大仓)
+<p align="center">
+  <img src="assets/ztools-logo.png" width="96" alt="ZTools Logo">
+</p>
 
-> 欢迎来到 **ZTools** 官方开源扩展生态大仓！在这里，你可以为 Windows & macOS 双端效率工具 ZTools 贡献你的奇思妙想。
+<h1 align="center">ZTools Extensions</h1>
 
----
+<p align="center">ZTools 官方插件与开发工具</p>
+
+<p align="center">
+  <a href="https://www.ztools.cn">官网</a> ·
+  <a href="https://www.ztools.cn/download.html">下载 ZTools</a> ·
+  <a href="https://github.com/ZToolsTeam/ZTools">主程序</a> ·
+  <a href="https://github.com/ZToolsTeam/ZTools/issues">问题反馈</a>
+</p>
+
+为 Windows 与 macOS 上的 ZTools 开发插件。通过声明式 UI 编写界面，使用统一的主题、组件与键盘交互；每个插件支持的平台以其清单为准。
 
 ## 5 分钟贡献你的首款插件
 
@@ -37,7 +48,7 @@ node scripts/build-declarative.mjs my-tool   # 从 src/ 编译到 dist/
 npm test   # 本地运行与 CI 相同的合并前检查（只检查你改动的插件）
 ```
 
-提交 PR 后，CI 会对改动涉及的插件做以下检查，全部通过且经官方人工审核合并后，插件自动发布到插件市场：
+提交 PR 后，CI 会对改动涉及的插件做以下检查。检查通过后由维护者审核、合并并安排发布：
 
 1. 目录名必须与 `plugin.json` 的 `id` 一致，且全仓库不能重复；
 2. 从 `src/` 源码编译（不接受提交的编译产物，`dist/` 不进仓库）；
@@ -78,11 +89,11 @@ npm test   # 本地运行与 CI 相同的合并前检查（只检查你改动的
 | 中文数字与金额转换 | `chinese-number-converter` | 1.0.0 |
 | 剪贴板历史 | `clipboard-manager` | 2.0.1 |
 | 颜色转换 | `color-picker` | 2.0.0 |
-| 加解密与散列 | `crypto-tool` | 1.0.0 |
+| 加解密与散列 | `crypto-tool` | 1.0.1 |
 | 磁盘空间透视分析器 | `disk-analyzer` | 2.0.1 |
 | Everything 文件秒搜 | `everything-file-search` | 2.0.1 |
 | 文本对比 | `file-compare` | 2.0.0 |
-| 2FA 验证码 | `google-auth` | 1.0.0 |
+| 2FA 验证码 | `google-auth` | 1.0.1 |
 | 电脑硬件信息与温度监控 | `hardware-info` | 2.0.1 |
 | JSON 格式化 | `json-format` | 2.0.0 |
 | 便签 | `memo` | 1.0.1 |
@@ -97,10 +108,6 @@ npm test   # 本地运行与 CI 相同的合并前检查（只检查你改动的
 | 单位换算器 | `unit-converter` | 1.0.0 |
 | UUID生成器 | `uuid-generator` | 1.2.0 |
 | 全球世界时钟 | `world-clock` | 1.0.0 |
-
-### 仅 macOS（0）
-
-暂无。
 
 ### 仅 Windows（30）
 
@@ -140,7 +147,6 @@ npm test   # 本地运行与 CI 相同的合并前检查（只检查你改动的
 | 窗口句柄与置顶分屏管理器 | `window-manager` | 2.0.1 |
 
 
-
 ## 目录结构
 
 ```
@@ -161,11 +167,3 @@ scripts/                         脚手架、构建、安全扫描、合并前�
 ## 开源协议
 
 本项目遵循 [MIT License](LICENSE)。
-
-## 发布配置
-
-仓库管理员先创建仅允许 main 分支的 plugins-cdn Environment，配置 OSS_ACCESS_KEY_ID、OSS_ACCESS_KEY_SECRET、OSS_BUCKET、OSS_REGION、CDN_ACCESS_KEY_ID、CDN_ACCESS_KEY_SECRET 六项 Secrets。
-
-自动发布由仓库变量 PLUGIN_CDN_ENABLED 控制：未配置或为 false 时合并只做检查，不上传 CDN；配置好凭证并完成发布验收后设为 true。手动运行“插件发布”默认演练（dry_run=true），只构建、扫描和生成上传计划；实际发布须显式选择 dry_run=false。
-
-main 分支必须通过 verify-plugins 检查后才能合并。未完成插件不发布；旧插件下架保留 plugin.json 并设置 revoked 与 revokedReason，避免已安装用户收不到下架通知。
