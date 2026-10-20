@@ -1,67 +1,39 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import { parseTimeInput, formatDateTime, getRelativeTime } from "../dist/logic.js";
-import TimestampCommand from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHost, mount } from '../../shared/test-harness.mjs'
+import TimestampCommand from '../dist/index.js'
+import { parseTimeInput } from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("timestamp 范例插件集成测试", () => {
-  test("1. plugin.json 清单结构合规性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+test('秒、毫秒时间戳与 ISO 日期互转结果一致', () => {
+  const s = parseTimeInput('1700000000')
+  const ms = parseTimeInput('1700000000000')
+  const iso = parseTimeInput('2023-11-14T22:13:20Z')
+  for (const r of [s, ms, iso]) {
+    assert.equal(r.valid, true)
+    assert.equal(r.unixSeconds, 1700000000)
+    assert.equal(r.unixMilliseconds, 1700000000000)
+    assert.equal(r.utcIso, '2023-11-14T22:13:20.000Z')
+  }
+})
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "timestamp");
-    assert.equal(manifest.name, "时间戳转换助手");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard"]);
+test('[边界] 非法内容、超长数字给出错误；空输入表示当前时间', () => {
+  for (const bad of ['abc', '17000000000000000', '2023-13-45', '2023-02-30', '2023-02-28 25:00:00', '2023-01-01 12:60']) {
+    assert.equal(parseTimeInput(bad).valid, false, bad)
+  }
+  // 只写日期时按本地零点，而不是 UTC 零点
+  const d = parseTimeInput('2024-02-29')
+  assert.equal(d.localDateTime, '2024-02-29 00:00:00')
+  assert.equal(parseTimeInput('2024年2月29日 8:05').localDateTime, '2024-02-29 08:05:00')
+  const now = new Date('2026-10-19T04:00:00Z')
+  assert.equal(parseTimeInput('', now).unixSeconds, Math.floor(now.getTime() / 1000))
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)));
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)));
-  });
-
-  test("2. 时间戳与日期解析核心逻辑", () => {
-    // 10 位时间戳解析
-    const res10 = parseTimeInput("1609459200"); // 2021-01-01 00:00:00 UTC
-    assert.equal(res10.valid, true);
-    assert.equal(res10.unixSeconds, 1609459200);
-    assert.equal(res10.unixMilliseconds, 1609459200000);
-
-    // 13 位毫秒时间戳解析
-    const res13 = parseTimeInput("1609459200000");
-    assert.equal(res13.valid, true);
-    assert.equal(res13.unixSeconds, 1609459200);
-
-    // 日期字符串解析
-    const resDate = parseTimeInput("2024-01-01 12:00:00");
-    assert.equal(resDate.valid, true);
-
-    // 相对时间计算
-    const now = new Date("2024-01-01 12:00:00");
-    const past = new Date("2024-01-01 11:59:58");
-    assert.equal(getRelativeTime(past, now), "刚刚");
-
-    // 异常输入优雅降级
-    const resInvalid = parseTimeInput("not-a-date-string-xyz");
-    assert.equal(resInvalid.valid, false);
-    assert.ok(resInvalid.error);
-  });
-
-  test("3. 声明式 UI 挂载与列表渲染", () => {
-    const root = renderDeclarativeRoot(TimestampCommand);
-    const desc = root.getLatest();
-
-    assert.ok(desc);
-    assert.equal(desc.type, "List");
-    assert.equal(desc.props.navigationTitle, "时间戳转换助手");
-    assert.ok(desc.children.length > 0);
-
-    root.unmount();
-  });
-});
+test('界面：输入时间戳后可复制毫秒值', async () => {
+  const view = await mount(TimestampCommand)
+  await view.search('1700000000')
+  await view.run(view.item('item-ms'), '复制毫秒级时间戳')
+  assert.equal(host.clipboard.text, '1700000000000')
+})

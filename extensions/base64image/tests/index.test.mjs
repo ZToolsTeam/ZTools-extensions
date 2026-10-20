@@ -1,154 +1,85 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import {
-  parseBase64Image,
-  encodeSvgOrTextToBase64,
-  formatFileSize,
-  detectImageFormat,
-  SAMPLE_PNG_DATA_URI,
-  SAMPLE_SVG,
-  MAXIMUM_BASE64_BYTES
-} from "../dist/logic.js";
-import Base64ImageCommand from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHost, mount } from '../../shared/test-harness.mjs'
+import Base64ImageCommand from '../dist/index.js'
+import { parseBase64Image, encodeSvgOrTextToBase64 } from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("base64image 插件端到端集成测试与健壮性验证", () => {
-  test("1. plugin.json 清单结构合规性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "base64image");
-    assert.equal(manifest.name, "Base64 图片编解码助手");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard"]);
+test('选择图片文件：读取后生成 Data URL，并能一键复制', async () => {
+  host.ipc.window_show_open_dialog = async () => ({ canceled: false, filePath: '/Users/me/截图 1.png' })
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 70 })
+  host.ipc.filesystem_read_file = async (p) => {
+    assert.equal(p.encoding, 'base64')
+    return { success: true, content: PNG_B64, size: 70 }
+  }
+  const view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-pick'), '选择图片文件…')
+  const dataUri = view.item('export-datauri')
+  assert.equal(dataUri.props.subtitle.startsWith('data:image/png;base64,iVBOR'), true)
+  await view.run(dataUri, '复制 Data URL')
+  assert.equal(host.clipboard.text, `data:image/png;base64,${PNG_B64}`)
+  // 右侧预览显示真实图片
+  assert.ok(JSON.stringify(dataUri.props.detail).includes(`![preview](data:image/png;base64,${PNG_B64})`))
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)));
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)));
-  });
+test('粘贴截图：剪贴板图片直接转换；剪贴板没有图片时读取文字', async () => {
+  host.ipc.clipboard_read_image = async () => ({ success: true, image: `data:image/png;base64,${PNG_B64}`, useTempFile: false })
+  let view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-paste'), '粘贴剪贴板图片或文字')
+  assert.ok(view.items().some((i) => i.props.id === 'export-datauri'))
+  view.unmount()
 
-  test("2. 标准 PNG Data URI 解码与元数据提取", () => {
-    const res = parseBase64Image(SAMPLE_PNG_DATA_URI);
-    assert.equal(res.valid, true);
-    assert.equal(res.format, "png");
-    assert.equal(res.mimeType, "image/png");
-    assert.ok(res.byteLength > 0);
-    assert.ok(res.dataUri.startsWith("data:image/png;base64,"));
-    assert.ok(res.markdown.startsWith("![image](data:image/png;base64,"));
-    assert.ok(res.html.includes('<img src="data:image/png;base64,'));
-    assert.ok(res.cssBackground.includes("background-image: url('data:image/png;base64,"));
-  });
+  host.ipc.clipboard_read_image = async () => ({ success: true, image: '', useTempFile: false })
+  host.clipboard.text = `data:image/png;base64,${PNG_B64}`
+  view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-paste'), '粘贴剪贴板图片或文字')
+  assert.equal(view.tree().props.searchText, host.clipboard.text)
+})
 
-  test("3. 纯 Base64 (无 Data URI 前缀) 解析", () => {
-    const rawBase64 = SAMPLE_PNG_DATA_URI.replace(/^data:image\/png;base64,/, "");
-    const res = parseBase64Image(rawBase64);
-    assert.equal(res.valid, true);
-    assert.equal(res.format, "png");
-    assert.equal(res.mimeType, "image/png");
-  });
+test('[边界] 大截图走临时文件读取；超过 10 MB 的图片拒绝并提示', async () => {
+  host.ipc.clipboard_read_image = async () => ({ success: true, useTempFile: true, tempFile: '/cache/clip.png', size: 600 * 1024 })
+  host.ipc.filesystem_read_file = async (p) => (assert.equal(p.path, '/cache/clip.png'), { success: true, content: PNG_B64 })
+  let view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-paste'), '粘贴剪贴板图片或文字')
+  assert.ok(view.items().some((i) => i.props.id === 'export-datauri'))
+  view.unmount()
 
-  test("4. 多图片格式魔数检测 (PNG, JPG, GIF, WebP, SVG)", () => {
-    // PNG signature
-    assert.equal(
-      detectImageFormat(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])),
-      "png"
-    );
+  host.ipc.window_show_open_dialog = async () => ({ canceled: false, filePath: '/big.png' })
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 11 * 1024 * 1024 })
+  host.ipc.filesystem_read_file = async () => assert.fail('超大文件不应被读取')
+  view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-pick'), '选择图片文件…')
+  assert.match(String(host.lastToast().message || host.lastToast().title), /10 MB/)
+})
 
-    // JPG signature
-    assert.equal(
-      detectImageFormat(new Uint8Array([255, 216, 255, 224, 0, 16])),
-      "jpg"
-    );
+test('[故障注入] 用户取消选择不报错；读文件失败、不是图片都给出提示', async () => {
+  host.ipc.window_show_open_dialog = async () => ({ canceled: true })
+  let view = await mount(Base64ImageCommand)
+  await view.run(view.item('start-pick'), '选择图片文件…')
+  assert.equal(host.toasts.length, 0)
 
-    // GIF signature
-    const gifBytes = new Uint8Array([71, 73, 70, 56, 57, 97]); // GIF89a
-    assert.equal(detectImageFormat(gifBytes), "gif");
+  host.ipc.window_show_open_dialog = async () => ({ canceled: false, filePath: '/x.png' })
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 10 })
+  host.ipc.filesystem_read_file = async () => { throw Object.assign(new Error('路径未由当前窗口授权'), { code: 'PERMISSION_DENIED' }) }
+  await view.run(view.item('start-pick'), '选择图片文件…')
+  assert.match(String(host.lastToast().title), /读取图片失败/)
 
-    // WebP signature
-    const webpBytes = new Uint8Array([
-      82, 73, 70, 70, 0, 0, 0, 0, 87, 69, 66, 80
-    ]); // RIFF....WEBP
-    assert.equal(detectImageFormat(webpBytes), "webp");
+  host.ipc.filesystem_read_file = async () => ({ success: true, content: Buffer.from('not an image').toString('base64') })
+  await view.run(view.item('start-pick'), '选择图片文件…')
+  assert.match(String(host.lastToast().title), /不是支持的图片/)
+})
 
-    // SVG
-    const svgBytes = new TextEncoder().encode(SAMPLE_SVG);
-    assert.equal(detectImageFormat(svgBytes), "svg");
-  });
-
-  test("5. SVG 源码及普通文本转 Base64 编码", () => {
-    // SVG 编码
-    const svgRes = encodeSvgOrTextToBase64(SAMPLE_SVG);
-    assert.equal(svgRes.valid, true);
-    assert.equal(svgRes.format, "svg");
-    assert.equal(svgRes.mimeType, "image/svg+xml");
-    assert.ok(svgRes.dataUri.startsWith("data:image/svg+xml;base64,"));
-    assert.ok(svgRes.markdown.startsWith("![svg]("));
-
-    // 普通文本编码
-    const textRes = encodeSvgOrTextToBase64("Hello ZTools 2026");
-    assert.equal(textRes.valid, true);
-    assert.equal(textRes.mimeType, "text/plain");
-    assert.ok(textRes.dataUri.startsWith("data:text/plain;base64,"));
-  });
-
-  test("6. 边界与破坏性异常测试", () => {
-    // 空输入
-    const emptyRes = parseBase64Image("");
-    assert.equal(emptyRes.valid, false);
-    assert.ok(emptyRes.error);
-
-    const emptyEncode = encodeSvgOrTextToBase64("");
-    assert.equal(emptyEncode.valid, false);
-    assert.ok(emptyEncode.error);
-
-    // 非 ASCII 字符注入 Base64
-    const nonAscii = parseBase64Image("data:image/png;base64,中文非法字符");
-    assert.equal(nonAscii.valid, false);
-    assert.ok(nonAscii.error);
-
-    // 非法 Base64 编码 (字符或填充错误)
-    const malformedBase64 = parseBase64Image("%%%===notbase64");
-    assert.equal(malformedBase64.valid, false);
-    assert.ok(malformedBase64.error);
-
-    // 未知/不支持的二进制数据
-    const randomBytesBase64 = "dGVzdC1yYW5kb20tZGF0YS1ub3QtaW1hZ2U="; // "test-random-data-not-image"
-    const unknownRes = parseBase64Image(randomBytesBase64);
-    assert.equal(unknownRes.valid, false);
-    assert.ok(unknownRes.error.includes("仅支持"));
-
-    // 超限测试 (超长保护)
-    const hugeFake = "a".repeat(MAXIMUM_BASE64_BYTES + 10);
-    const hugeRes = parseBase64Image(hugeFake);
-    assert.equal(hugeRes.valid, false);
-    assert.ok(hugeRes.error.includes("16MiB"));
-
-    // 格式化文件体积测试
-    assert.equal(formatFileSize(500), "500 B");
-    assert.equal(formatFileSize(2048), "2.0 KB");
-    assert.equal(formatFileSize(1048576 * 2.5), "2.50 MB");
-  });
-
-  test("7. 声明式 UI 挂载与动态状态流转", () => {
-    const root = renderDeclarativeRoot(Base64ImageCommand);
-    const desc = root.getLatest();
-
-    assert.ok(desc, "必须生成根视图描述符");
-    assert.equal(desc.type, "List");
-    assert.equal(desc.props.navigationTitle, "Base64 图片编解码助手");
-    assert.ok(desc.children.length > 0);
-
-    // 检查根 actions 包含示例加载操作
-    assert.ok(desc.props.actions);
-    assert.equal(desc.props.actions.type, "ActionPanel");
-
-    root.unmount();
-  });
-});
+test('解析：识别格式与大小，拒绝非法与超大输入', () => {
+  const ok = parseBase64Image(`data:image/png;base64,${PNG_B64}`)
+  assert.equal(ok.valid, true)
+  assert.equal(ok.format, 'png')
+  for (const bad of ['', 'data:text/plain;base64,AAAA', '!!!!', Buffer.from('hello').toString('base64'), '中文']) {
+    assert.equal(parseBase64Image(bad).valid, false, bad)
+  }
+  assert.equal(parseBase64Image('A'.repeat(16 * 1024 * 1024 + 4)).valid, false)
+  assert.equal(encodeSvgOrTextToBase64('<svg xmlns="http://www.w3.org/2000/svg"/>').mimeType, 'image/svg+xml')
+})

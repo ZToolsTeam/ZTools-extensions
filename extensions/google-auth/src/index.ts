@@ -10,7 +10,9 @@ import {
   Clipboard,
   useNavigation,
   useState,
-  useEffect
+  useEffect,
+  LocalStorage,
+  confirmAlert
 } from "@ztools/declarative-ui";
 import {
   createAccount,
@@ -19,7 +21,8 @@ import {
   getRemainingSeconds,
   filterAccounts,
   parseOTPAuthURL,
-  DEFAULT_ACCOUNTS,
+  sanitizeStoredAccounts,
+  ACCOUNTS_STORAGE_KEY,
   type AuthAccount,
   type OTPAlgorithm
 } from "./logic.js";
@@ -27,7 +30,7 @@ import {
 /**
  * 添加 2FA 账号表单视图
  */
-export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAccount) => void }) {
+export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAccount) => Promise<boolean> }) {
   const { pop } = useNavigation();
   const [name, setName] = useState("");
   const [issuer, setIssuer] = useState("");
@@ -93,7 +96,7 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
         algorithm: accountAlgo
       });
 
-      onCreated(newAccount);
+      if (!(await onCreated(newAccount))) return;
       await showToast(Toast.Style.Success, `已成功添加账号 ${newAccount.name}`);
       pop();
     } catch (err: any) {
@@ -189,10 +192,29 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
  * 2FA 动态口令验证器主入口
  */
 export default function GoogleAuthCommand() {
-  const [accounts, setAccounts] = useState<AuthAccount[]>(DEFAULT_ACCOUNTS);
+  const [accounts, setAccounts] = useState<AuthAccount[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [tick, setTick] = useState(0);
   const { push } = useNavigation();
+
+  // 首次打开时从宿主插件存储读回账号
+  useEffect(() => {
+    let cancelled = false;
+    LocalStorage.getItem(ACCOUNTS_STORAGE_KEY)
+      .then((raw) => {
+        if (!cancelled) setAccounts(sanitizeStoredAccounts(raw));
+      })
+      .catch((err: any) => {
+        showToast(Toast.Style.Failure, "读取已保存的账号失败", err?.message || String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // 1 秒心跳定时器刷新倒计时与动态口令
   useEffect(() => {
@@ -204,19 +226,37 @@ export default function GoogleAuthCommand() {
 
   const filtered = filterAccounts(accounts, searchQuery);
 
+  // 先写入存储再更新界面：写入失败时界面保持原样，避免用户以为已保存
+  const persist = async (next: AuthAccount[]): Promise<boolean> => {
+    try {
+      await LocalStorage.setItem(ACCOUNTS_STORAGE_KEY, next);
+      setAccounts(next);
+      return true;
+    } catch (err: any) {
+      await showToast(Toast.Style.Failure, "保存失败", err?.message || String(err));
+      return false;
+    }
+  };
+
   const handleOpenAddForm = () => {
     push(() =>
       CreateAccountForm({
-        onCreated: (item) => {
-          setAccounts((prev) => [item, ...prev]);
-        }
+        onCreated: (item) => persist([item, ...accounts])
       })
     );
   };
 
   const handleDeleteAccount = async (id: string, name: string) => {
-    setAccounts((prev) => prev.filter((acc) => acc.id !== id));
-    await showToast(Toast.Style.Success, `已删除账号 ${name}`);
+    const confirmed = await confirmAlert({
+      title: `删除账号「${name}」？`,
+      message: "删除后密钥无法找回。请先确认该账号已在其他验证器中备份，或已关闭两步验证。",
+      primaryAction: { title: "删除", style: "destructive" },
+      dismissAction: { title: "取消" }
+    });
+    if (!confirmed) return;
+    if (await persist(accounts.filter((acc) => acc.id !== id))) {
+      await showToast(Toast.Style.Success, `已删除账号 ${name}`);
+    }
   };
 
   const handleCopyCode = async (code: string, name: string) => {
@@ -251,7 +291,8 @@ export default function GoogleAuthCommand() {
         filtered.length > 0
           ? filtered.map((account) => {
               const remaining = getRemainingSeconds(account.period);
-              let token = "000000";
+              let token = "";
+              let tokenError = "";
               try {
                 token = generateTOTP(account.secret, {
                   period: account.period,
@@ -259,18 +300,18 @@ export default function GoogleAuthCommand() {
                   algorithm: account.algorithm
                 });
               } catch (err: any) {
-                token = "ERR";
+                tokenError = err?.message || "密钥无效";
               }
-              const displayToken = formatToken(token);
+              const displayToken = tokenError ? "密钥无效" : formatToken(token);
 
               return List.Item({
                 id: account.id,
                 title: `${account.name}  —  ${displayToken}`,
-                subtitle: account.issuer ? `[${account.issuer}]` : undefined,
+                subtitle: tokenError || account.issuer || undefined,
                 icon: Icon.Shield,
                 accessories: [
                   {
-                    text: `${remaining}s 刷新`
+                    text: `${remaining} 秒后刷新`
                   },
                   {
                     text: `${account.algorithm} • ${account.digits}位`
@@ -308,8 +349,8 @@ export default function GoogleAuthCommand() {
           : [
               List.Item({
                 id: "empty-auth",
-                title: "未找到匹配的 2FA 账号",
-                subtitle: "按回车或点此添加新的 2FA 认证账号",
+                title: !loaded ? "正在读取已保存的账号…" : accounts.length === 0 ? "还没有 2FA 账号" : "未找到匹配的 2FA 账号",
+                subtitle: accounts.length === 0 ? "按回车添加第一个账号，可直接粘贴 otpauth:// 链接" : "换个关键词，或按回车添加新账号",
                 icon: Icon.Document,
                 actions: ActionPanel({ title: "操作" }, [
                   Action({

@@ -1,4 +1,4 @@
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   Detail,
@@ -9,8 +9,8 @@ import {
   Color,
   showHUD,
   useNavigation
-} from "@ztools/declarative-ui";
-import { useState, useEffect } from "@ztools/declarative-ui";
+} from "../../index.js";
+import { useState, useEffect } from "../../runtime/hooks.js";
 import {
   WindowActionDefinition,
   WindowManagementPreferences

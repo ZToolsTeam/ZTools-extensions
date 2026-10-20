@@ -1,12 +1,12 @@
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   ActionPanel,
   Action,
   Icon,
   Color
-} from "@ztools/declarative-ui";
-import { useState, useMemo } from "@ztools/declarative-ui";
+} from "../../index.js";
+import { useState, useMemo } from "../../runtime/hooks.js";
 import {
   SYSTEM_ACTIONS,
   SystemActionItem,

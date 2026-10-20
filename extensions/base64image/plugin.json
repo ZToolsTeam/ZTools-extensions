@@ -1,8 +1,8 @@
 {
   "id": "base64image",
-  "name": "Base64 图片编解码助手",
+  "name": "Base64 图片转换",
   "version": "1.0.0",
-  "description": "Base64 图片编解码：将 Data URL / Base64 字符串解析出图片元数据 MimeType、文件大小、预览与复制标准 Markdown/HTML/纯文本，支持将文本或 SVG 转换为 Base64",
+  "description": "图片文件或截图转 Base64 / Data URL，也能把 Base64 还原成图片预览",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -23,5 +23,16 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "base64",
+    "图片",
+    "image",
+    "datauri",
+    "编码",
+    "解码"
+  ],
+  "category": [
+    "开发工具"
+  ]
 }

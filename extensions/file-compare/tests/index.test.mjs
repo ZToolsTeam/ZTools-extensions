@@ -1,100 +1,70 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import {
-  computeDiff,
-  generateUnifiedDiff,
-  generateMarkdownReport,
-  computeWordDiff,
-  splitLines,
-  SAMPLE_LEFT,
-  SAMPLE_RIGHT,
-  DEFAULT_DIFF_OPTIONS
-} from "../dist/logic.js";
-import FileCompareCommand from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
+import FileCompareCommand from '../dist/index.js'
+import { diffText, formatUnifiedDiff, splitLines, MAX_DIFF_LINES } from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("file-compare 声明式差异对比插件集成测试", () => {
-  test("1. plugin.json 结构与规范合规性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 patch 正确应用', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-diff-'))
+  const rnd = (n) => Array.from({ length: n }, () => 'abcde'[Math.floor(Math.random() * 5)]).join('\n')
+  try {
+    for (let t = 0; t < 120; t++) {
+      const A = rnd(Math.floor(Math.random() * 30))
+      const B = rnd(Math.floor(Math.random() * 30))
+      const r = diffText(A, B)
+      assert.equal(r.lines.filter((l) => l.op !== 'remove').map((l) => l.text).join('\n'), splitLines(B).join('\n'))
+      fs.writeFileSync(path.join(dir, 'a'), A ? A + '\n' : '')
+      fs.writeFileSync(path.join(dir, 'b'), B ? B + '\n' : '')
+      let out = ''
+      try { execFileSync('diff', [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { out = String(e.stdout) }
+      assert.equal(r.added + r.removed, out.split('\n').filter((l) => /^[<>] /.test(l)).length)
+      if (!r.identical) {
+        fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b') + '\n')
+        execFileSync('patch', ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
+        assert.equal(fs.readFileSync(path.join(dir, 'o'), 'utf8'), fs.readFileSync(path.join(dir, 'b'), 'utf8'))
+      }
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "file-compare");
-    assert.equal(manifest.name, "文本与代码差异对比");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard"]);
+test('[边界] 换行符差异、忽略空白、空文本、超大文本', () => {
+  assert.equal(diffText('x\r\ny', 'x\ny').identical, true)
+  assert.equal(diffText('a  b', 'a b', { ignoreWhitespace: true }).identical, true)
+  assert.equal(diffText('', '').identical, true)
+  assert.equal(diffText('', 'a').added, 1)
+  assert.throws(() => diffText('x\n'.repeat(MAX_DIFF_LINES + 1), 'y'), /行/)
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)));
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)));
-  });
+test('界面：空状态无示例数据；填写两段文本后列出差异并可复制报告', async () => {
+  const view = await mount(FileCompareCommand)
+  assert.equal(view.items()[0].props.id, 'start-edit')
+  await view.run(view.item('start-edit'), '编辑两段文本…')
+  const form = await mountPushed(host)
+  await form.fill('left', 'a\nb\nc')
+  await form.fill('right', 'a\nB\nc')
+  await form.run(null, '开始对比')
+  await tick()
+  const hunk = view.item('hunk-0')
+  assert.match(hunk.props.subtitle, /删除 1 行，新增 1 行/)
+  await view.run(hunk, '复制差异报告')
+  assert.equal(host.clipboard.text, '--- 左侧\n+++ 右侧\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c')
+})
 
-  test("2. 文本差异算法核心逻辑 (行级 & 词级)", () => {
-    // 空文本边界处理
-    const resEmpty = computeDiff("", "");
-    assert.equal(resEmpty.hasDifferences, false);
-    assert.equal(resEmpty.lines.length, 0);
-    assert.equal(resEmpty.stats.similarity, 100);
-
-    // 完全相同文本
-    const resIdentical = computeDiff("line 1\nline 2", "line 1\nline 2");
-    assert.equal(resIdentical.hasDifferences, false);
-    assert.equal(resIdentical.stats.equal, 2);
-    assert.equal(resIdentical.stats.added, 0);
-    assert.equal(resIdentical.stats.removed, 0);
-
-    // 增删改混合对比
-    const left = "apple\nbanana\norange";
-    const right = "apple\nblueberry\norange\nwatermelon";
-    const res = computeDiff(left, right);
-
-    assert.equal(res.hasDifferences, true);
-    assert.equal(res.stats.added, 1); // watermelon
-    assert.equal(res.stats.modified, 1); // banana -> blueberry
-    assert.equal(res.stats.equal, 2); // apple, orange
-
-    // 词级差异计算验证
-    const wordDiff = computeWordDiff("const x = 10;", "const x = 20;", DEFAULT_DIFF_OPTIONS);
-    assert.ok(wordDiff.some((w) => w.type === "removed" && w.text === "10"));
-    assert.ok(wordDiff.some((w) => w.type === "added" && w.text === "20"));
-
-    // 选项验证：忽略空白与大小写
-    const resWs = computeDiff("  const a = 1;  ", "const a=1;", { ignoreWhitespace: true });
-    assert.equal(resWs.hasDifferences, false);
-
-    const resCase = computeDiff("HELLO WORLD", "hello world", { ignoreCase: true });
-    assert.equal(resCase.hasDifferences, false);
-  });
-
-  test("3. Unified Diff 补丁与 Markdown 报告输出", () => {
-    const patch = generateUnifiedDiff("hello\nworld", "hello\nearth");
-    assert.ok(patch.includes("--- original.txt"));
-    assert.ok(patch.includes("+++ modified.txt"));
-    assert.ok(patch.includes("-world"));
-    assert.ok(patch.includes("+earth"));
-
-    const diffResult = computeDiff(SAMPLE_LEFT, SAMPLE_RIGHT);
-    const report = generateMarkdownReport(diffResult);
-    assert.ok(report.includes("# 📋 文本与代码差异对比分析报告"));
-    assert.ok(report.includes("```diff"));
-    assert.ok(report.includes("相似度"));
-  });
-
-  test("4. 声明式 UI 挂载与交互树渲染", () => {
-    const root = renderDeclarativeRoot(FileCompareCommand);
-    const desc = root.getLatest();
-
-    assert.ok(desc);
-    assert.equal(desc.type, "List");
-    assert.equal(desc.props.navigationTitle, "文本与代码差异对比");
-    assert.ok(desc.children.length > 0);
-
-    root.unmount();
-  });
-});
+test('[故障注入] 选择的文件不是 UTF-8 文本时提示，不显示乱码对比', async () => {
+  host.ipc.window_show_open_dialog = async () => ({ canceled: false, filePath: '/bin.dat' })
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 10 })
+  host.ipc.filesystem_read_file = async () => { throw Object.assign(new Error('The encoded data was not valid for encoding utf-8'), { code: 'FILE_ERROR' }) }
+  const view = await mount(FileCompareCommand)
+  await view.run(view.item('start-file'), '选择文件作为左侧…')
+  assert.match(String(host.lastToast().message), /UTF-8/)
+  assert.equal(view.items()[0].props.id, 'start-edit')
+})

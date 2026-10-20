@@ -1,4 +1,4 @@
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   Detail,
@@ -11,13 +11,13 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "@ztools/declarative-ui";
-import { useState, useEffect } from "@ztools/declarative-ui";
+} from "../../index.js";
+import { useState, useEffect } from "../../runtime/hooks.js";
 import {
   isRealElectronHost,
   showRealItemInFolder,
   writeRealClipboardText
-} from "./native-ipc.js";
+} from "../shared/native-ipc.js";
 import {
   ClipboardItem,
   ClipboardContentType,
@@ -478,7 +478,7 @@ export default function ClipboardHistoryCommand() {
               subtitle={formatCopiedTime(item.copiedAt)}
               icon={getItemIcon(item)}
               accessories={[
-                ...(item.pinned ? [{ tag: { value: "置顶" } }] : []),
+                ...(item.pinned ? [{ tag: { value: "置顶" }, tooltip: "已置顶" }] : []),
                 ...(isItemSensitive ? [{ tag: { value: "敏感", color: Color.Red } }] : []),
                 { text: item.type.toUpperCase() }
               ]}

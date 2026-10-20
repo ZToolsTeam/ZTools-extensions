@@ -1,12 +1,14 @@
 {
   "id": "memo",
-  "name": "便签备忘录",
-  "description": "极客全键盘便签速记、灵感记录与搜索管理",
+  "name": "便签",
+  "description": "随手记，支持 Markdown 与标签，按标题或正文搜索",
   "version": "1.0.0",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "category": "productivity",
+  "category": [
+    "效率工具"
+  ],
   "permissions": [],
   "targets": [
     {
@@ -22,5 +24,12 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "memo",
+    "note",
+    "便签",
+    "笔记",
+    "备忘"
+  ]
 }

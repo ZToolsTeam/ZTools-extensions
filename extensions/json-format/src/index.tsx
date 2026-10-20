@@ -24,19 +24,6 @@ import {
   JsonPathItem
 } from "./logic.js";
 
-const DEFAULT_SAMPLE_JSON = JSON.stringify(
-  {
-    name: "ZTools Platform",
-    version: "1.0.0",
-    features: ["Declarative UI", "Local-First", "Fluent Styling"],
-    author: {
-      team: "ZTools Core",
-      verified: true
-    }
-  },
-  null,
-  2
-);
 
 /**
  * 查看转换结果的二级详情页 (展示 JSON、TypeScript、Rust、Go 及 JSONPath)
@@ -153,7 +140,7 @@ ${pathsTable}
  * JSON 格式化与校验主命令组件
  */
 export default function JsonFormatCommand() {
-  const [jsonText, setJsonText] = useState(DEFAULT_SAMPLE_JSON);
+  const [jsonText, setJsonText] = useState("");
   const [indent, setIndent] = useState<number | string>(2);
   const { push } = useNavigation();
 
@@ -205,15 +192,6 @@ export default function JsonFormatCommand() {
     }
   };
 
-  const handleExportJson = async () => {
-    if (!validation.valid) {
-      await showToast(Toast.Style.Failure, "无法导出无效的 JSON");
-      return;
-    }
-    const fmt = formatJson(jsonText, indent);
-    await Clipboard.copy(fmt);
-    await showToast(Toast.Style.Success, "已导出并复制 .json 内容到剪贴板");
-  };
 
   return (
     <Form
@@ -261,11 +239,6 @@ export default function JsonFormatCommand() {
             icon={Icon.Globe}
           />
           <Action
-            title="导出为 .json 文件"
-            icon={Icon.Download}
-            onAction={handleExportJson}
-          />
-          <Action
             title={indent === 2 ? "切换为 4 格缩进" : "切换为 2 格缩进"}
             icon={Icon.Repeat}
             onAction={() => setIndent(indent === 2 ? 4 : 2)}
@@ -280,7 +253,7 @@ export default function JsonFormatCommand() {
         value={jsonText}
         onChange={(val) => setJsonText(val)}
         error={
-          validation.valid
+          validation.valid || !jsonText.trim()
             ? undefined
             : validation.errorInfo
             ? `[第 ${validation.errorInfo.line} 行, 列 ${validation.errorInfo.column}] ${validation.errorInfo.message}`

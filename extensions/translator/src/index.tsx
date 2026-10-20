@@ -1,4 +1,4 @@
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   Detail,
@@ -10,8 +10,8 @@ import {
   Toast,
   Clipboard,
   open
-} from "@ztools/declarative-ui";
-import { useState, useMemo, useEffect } from "@ztools/declarative-ui";
+} from "../../index.js";
+import { useState, useMemo, useEffect } from "../../runtime/hooks.js";
 import {
   SUPPORTED_LANGUAGES,
   getLanguageByCode,
@@ -116,7 +116,7 @@ export default function TranslatorCommand() {
 
   const handleSpeak = async (text: string, langCode: string) => {
     if (!text) return;
-    const { callHostTransport, isRealElectronHost } = await import("./native-ipc.js");
+    const { callHostTransport, isRealElectronHost } = await import("../shared/native-ipc.js");
     if (isRealElectronHost()) {
       await callHostTransport("dictionary_speak", { word: text, lang: langCode });
     }

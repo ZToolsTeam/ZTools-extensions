@@ -1,4 +1,4 @@
-import { callHostTransport, isRealElectronHost, showRealItemInFolder } from "./native-ipc.js";
+import { callHostTransport, isRealElectronHost, showRealItemInFolder } from "../shared/native-ipc.js";
 
 export interface ProcessInfo {
   pid: number;

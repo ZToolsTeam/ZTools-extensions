@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { hmac } from "./hash.js";
 
 export type OTPAlgorithm = "SHA1" | "SHA256" | "SHA512";
 
@@ -40,9 +40,9 @@ export function isValidBase32(secret: string): boolean {
 }
 
 /**
- * 解码 RFC 4648 Base32 字符串为 Buffer
+ * 解码 RFC 4648 Base32 字符串为字节数组
  */
-export function base32Decode(secret: string): Buffer {
+export function base32Decode(secret: string): Uint8Array {
   const cleaned = cleanSecret(secret);
   if (!cleaned) {
     throw new Error("密钥不能为空");
@@ -68,7 +68,7 @@ export function base32Decode(secret: string): Buffer {
     }
   }
 
-  return Buffer.from(bytes);
+  return Uint8Array.from(bytes);
 }
 
 /**
@@ -92,7 +92,7 @@ export function generateTOTP(
   const counter = Math.floor(nowMs / 1000 / period);
 
   // 构造 8 字节大端序计数器
-  const counterBuffer = Buffer.alloc(8);
+  const counterBuffer = new Uint8Array(8);
   let tempCounter = BigInt(counter);
   for (let i = 7; i >= 0; i--) {
     counterBuffer[i] = Number(tempCounter & 0xffn);
@@ -100,16 +100,16 @@ export function generateTOTP(
   }
 
   // 计算 HMAC
-  const algoName = algorithm.toLowerCase();
-  const hmac = crypto.createHmac(algoName, keyBuffer).update(counterBuffer).digest();
+  const algoName = algorithm.toLowerCase() as "sha1" | "sha256" | "sha512";
+  const mac = hmac(algoName, keyBuffer, counterBuffer);
 
   // 动态截断 Dynamic Truncation
-  const offset = hmac[hmac.length - 1] & 0x0f;
+  const offset = mac[mac.length - 1] & 0x0f;
   const binary =
-    ((hmac[offset] & 0x7f) << 24) |
-    ((hmac[offset + 1] & 0xff) << 16) |
-    ((hmac[offset + 2] & 0xff) << 8) |
-    (hmac[offset + 3] & 0xff);
+    ((mac[offset] & 0x7f) << 24) |
+    ((mac[offset + 1] & 0xff) << 16) |
+    ((mac[offset + 2] & 0xff) << 8) |
+    (mac[offset + 3] & 0xff);
 
   const mod = 10 ** digits;
   const token = (binary % mod).toString().padStart(digits, "0");
@@ -226,7 +226,7 @@ export function createAccount(params: {
   }
 
   return {
-    id: "auth_" + Math.random().toString(36).slice(2, 10),
+    id: "auth_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 10),
     name: trimmedName,
     issuer: (params.issuer || "").trim() || "2FA",
     secret: cleaned,
@@ -249,27 +249,31 @@ export function filterAccounts(accounts: AuthAccount[], query: string): AuthAcco
 }
 
 /**
- * 预设样例账号列表
+ * 校验从存储读回的账号列表：结构不对的条目直接丢弃，不让损坏数据导致整个列表崩溃
  */
-export const DEFAULT_ACCOUNTS: AuthAccount[] = [
-  {
-    id: "auth-github-demo",
-    name: "octocat@github.com",
-    issuer: "GitHub",
-    secret: "JBSWY3DPEHPK3PXP",
-    period: 30,
-    digits: 6,
-    algorithm: "SHA1",
-    createdAt: 1700000000000
-  },
-  {
-    id: "auth-google-demo",
-    name: "admin@ztools.org",
-    issuer: "Google Workspace",
-    secret: "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ",
-    period: 30,
-    digits: 6,
-    algorithm: "SHA1",
-    createdAt: 1700000010000
+export function sanitizeStoredAccounts(raw: unknown): AuthAccount[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AuthAccount[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const a = item as Record<string, unknown>;
+    if (typeof a.id !== "string" || typeof a.name !== "string" || typeof a.secret !== "string") continue;
+    if (!isValidBase32(a.secret)) continue;
+    const algorithm = a.algorithm === "SHA256" || a.algorithm === "SHA512" ? a.algorithm : "SHA1";
+    const period = typeof a.period === "number" && a.period > 0 ? a.period : 30;
+    const digits = typeof a.digits === "number" && a.digits >= 4 && a.digits <= 10 ? a.digits : 6;
+    out.push({
+      id: a.id,
+      name: a.name,
+      issuer: typeof a.issuer === "string" ? a.issuer : "2FA",
+      secret: cleanSecret(a.secret),
+      period,
+      digits,
+      algorithm,
+      createdAt: typeof a.createdAt === "number" ? a.createdAt : 0
+    });
   }
-];
+  return out;
+}
+
+export const ACCOUNTS_STORAGE_KEY = "google-auth.accounts.v1";

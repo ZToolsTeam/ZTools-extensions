@@ -1,6 +1,4 @@
 import { LocalStorage } from "@ztools/declarative-ui";
-import { getDeclarativeBridge } from "@ztools/declarative-ui";
-import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 
 export interface RGB {
   r: number;
@@ -71,19 +69,7 @@ export interface SavedColorItem {
   savedAt: string;
 }
 
-export interface PickedColorResult {
-  hex: string;
-  rgb: RGB;
-  hsl: HSL;
-  hsv: HSV;
-  x?: number;
-  y?: number;
-  source: "native" | "simulated";
-  pickedAt: number;
-}
-
 const PALETTE_STORAGE_KEY = "color_picker_palette";
-const HISTORY_STORAGE_KEY = "color_picker_history";
 
 const NAMED_COLORS: Record<string, string> = {
   black: "#000000",
@@ -410,7 +396,7 @@ export function parseColor(input: string): ColorConversionResult {
   }
 
   // 2. RGB 匹配 (rgb(r, g, b) 或 rgba(r, g, b, a))
-  const rgbMatch = trimmed.match(/^rgba?\(?\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*([\d.]+))?\)?/i);
+  const rgbMatch = trimmed.match(/^rgba?\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
   if (rgbMatch) {
     const rgb: RGB = {
       r: Math.max(0, Math.min(255, parseInt(rgbMatch[1], 10))),
@@ -443,7 +429,7 @@ export function parseColor(input: string): ColorConversionResult {
   }
 
   // 3. HSL 匹配 (hsl(h, s%, l%) 或 hsla(h, s%, l%, a))
-  const hslMatch = trimmed.match(/^hsla?\(?\s*(-?\d+)\s*,\s*(-?\d+)%?\s*,\s*(-?\d+)%?(?:\s*,\s*([\d.]+))?\)?/i);
+  const hslMatch = trimmed.match(/^hsla?\(\s*(-?\d+)\s*,\s*(-?\d+)%?\s*,\s*(-?\d+)%?(?:\s*,\s*([\d.]+))?\s*\)$/i);
   if (hslMatch) {
     const hsl: HSL = {
       h: ((parseInt(hslMatch[1], 10) % 360) + 360) % 360,
@@ -550,138 +536,60 @@ export function generateColorSwatchSvg(hex: string, width = 360, height = 120): 
 }
 
 /**
- * 屏幕拾色器核心 (Screen Eyedropper)
- * 优先调用 Win32 / UIAccess 或 macOS NSColorSampler / CGDisplayCreateImageForRect 屏幕选色，
- * 当检测到 macOS TCC 屏幕录制权限缺失时主动抛出清晰权限引导，测试/无特权环境下自动降级为高保真模拟取色
+ * sRGB → OKLCH（Björn Ottosson 的 OKLab 定义，CSS Color 4 同款）
+ * 返回 CSS 写法，例如 oklch(62.8% 0.2577 29.23)
  */
-export async function pickScreenColor(hostOverride?: any): Promise<PickedColorResult> {
-  const bridge = getDeclarativeBridge();
-  if (bridge && typeof (bridge as any).pickScreenColor === "function") {
-    try {
-      const res = await (bridge as any).pickScreenColor();
-      if (res && (res.permissionDenied || String(res.error || "").includes("SCREEN_RECORDING") || String(res.error || "").includes("TCC"))) {
-        throw new Error(
-          "SCREEN_RECORDING_PERMISSION_DENIED: 缺少 macOS 屏幕录制权限 (TCC Screen Recording)，请前往「系统设置 -> 隐私与安全性 -> 录屏与系统录音」授予 ZTools 权限"
-        );
-      }
-      if (res && res.hex) {
-        const parsed = parseColor(res.hex);
-        return {
-          hex: parsed.hex,
-          rgb: parsed.rgb,
-          hsl: parsed.hsl,
-          hsv: parsed.hsv,
-          x: res.x,
-          y: res.y,
-          source: "native",
-          pickedAt: Date.now()
-        };
-      }
-    } catch (err: any) {
-      if (String(err?.message || "").includes("SCREEN_RECORDING") || String(err?.message || "").includes("TCC") || String(err?.message || "").includes("屏幕录制")) {
-        throw err;
-      }
-    }
-  }
-
-  if (hostOverride || isRealElectronHost()) {
-    const pickRes = await callHostTransport<any>("screen_pick_color", {}, hostOverride);
-    const errText = String(pickRes.error || pickRes.data?.error || "");
-    if (
-      pickRes.data?.permissionDenied ||
-      errText.includes("SCREEN_RECORDING") ||
-      errText.includes("TCC") ||
-      errText.includes("Screen Recording") ||
-      errText.includes("屏幕录制")
-    ) {
-      throw new Error(
-        "SCREEN_RECORDING_PERMISSION_DENIED: 缺少 macOS 屏幕录制权限 (TCC Screen Recording)，请前往「系统设置 -> 隐私与安全性 -> 录屏与系统录音」授予 ZTools 权限"
-      );
-    }
-    if (pickRes.ok && pickRes.data?.hex) {
-      const parsed = parseColor(pickRes.data.hex);
-      return {
-        hex: parsed.hex,
-        rgb: parsed.rgb,
-        hsl: parsed.hsl,
-        hsv: parsed.hsv,
-        x: pickRes.data.x ?? 960,
-        y: pickRes.data.y ?? 540,
-        source: "native",
-        pickedAt: Date.now()
-      };
-    }
-
-    const capRes = await callHostTransport<any>("screen_capture", { mode: "color" }, hostOverride);
-    const capErr = String(capRes.error || capRes.data?.error || "");
-    if (
-      capRes.data?.permissionDenied ||
-      capErr.includes("SCREEN_RECORDING") ||
-      capErr.includes("TCC") ||
-      capErr.includes("Screen Recording") ||
-      capErr.includes("屏幕录制")
-    ) {
-      throw new Error(
-        "SCREEN_RECORDING_PERMISSION_DENIED: 缺少 macOS 屏幕录制权限 (TCC Screen Recording)，请前往「系统设置 -> 隐私与安全性 -> 录屏与系统录音」授予 ZTools 权限"
-      );
-    }
-    if (capRes.ok && capRes.data?.hex) {
-      const parsed = parseColor(capRes.data.hex);
-      return {
-        hex: parsed.hex,
-        rgb: parsed.rgb,
-        hsl: parsed.hsl,
-        hsv: parsed.hsv,
-        x: capRes.data.x ?? 960,
-        y: capRes.data.y ?? 540,
-        source: "native",
-        pickedAt: Date.now()
-      };
-    }
-  }
-
-  // 极客预置流行调色板取色样本
-  const sampleColors = [
-    "#0A84FF", "#30D158", "#FF9F0A", "#BF5AF2", "#FF453A",
-    "#5E5CE6", "#64D2FF", "#FF375F", "#FFD60A", "#AC8E68"
-  ];
-  const chosenHex = sampleColors[Math.floor(Math.random() * sampleColors.length)];
-  const parsed = parseColor(chosenHex);
-
-  return {
-    hex: parsed.hex,
-    rgb: parsed.rgb,
-    hsl: parsed.hsl,
-    hsv: parsed.hsv,
-    x: 960,
-    y: 540,
-    source: "simulated",
-    pickedAt: Date.now()
+export function rgbToOklch(rgb: RGB): { l: number; c: number; h: number; css: string } {
+  const lin = (v: number) => {
+    const x = v / 255;
+    return x <= 0.04045 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
   };
+  const r = lin(rgb.r), g = lin(rgb.g), b = lin(rgb.b);
+  const l_ = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+  const m_ = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+  const s_ = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+  const L = 0.2104542553 * l_ + 0.793617785 * m_ - 0.0040720468 * s_;
+  const A = 1.9779984951 * l_ - 2.428592205 * m_ + 0.4505937099 * s_;
+  const B = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.808675766 * s_;
+  const c = Math.sqrt(A * A + B * B);
+  let h = (Math.atan2(B, A) * 180) / Math.PI;
+  if (h < 0) h += 360;
+  const lp = Math.round(L * 10000) / 100;
+  const cr = Math.round(c * 10000) / 10000;
+  // 无彩色（灰阶）时色相没有意义，按 CSS 规范写 none
+  const hr = cr < 0.0002 ? "none" : String(Math.round(h * 100) / 100);
+  return { l: lp, c: cr, h: cr < 0.0002 ? 0 : Math.round(h * 100) / 100, css: `oklch(${lp}% ${cr} ${hr})` };
 }
 
 /**
  * 调色板 LocalStorage 持久化操作
  */
+function sanitizePalette(list: unknown): SavedColorItem[] {
+  return Array.isArray(list)
+    ? list.filter((c) => c && typeof c.id === "string" && typeof c.hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(c.hex))
+    : [];
+}
+
+/** 读取调色板；存储读失败时抛错（写入前必须用这个，避免读失败后把空列表覆盖回去） */
+async function loadPaletteStrict(): Promise<SavedColorItem[]> {
+  return sanitizePalette(await LocalStorage.getItem<SavedColorItem[]>(PALETTE_STORAGE_KEY));
+}
+
 export async function getSavedPalette(): Promise<SavedColorItem[]> {
-  try {
-    const list = await LocalStorage.getItem<SavedColorItem[]>(PALETTE_STORAGE_KEY);
-    return list || [];
-  } catch {
-    return [];
-  }
+  return loadPaletteStrict();
 }
 
 export async function saveColorToPalette(name: string, hex: string): Promise<SavedColorItem[]> {
-  const current = await getSavedPalette();
+  const current = await loadPaletteStrict();
+  if (current.length >= 100) throw new Error("调色板最多保存 100 个颜色，请先删除一些");
   const newItem: SavedColorItem = {
     id: `color_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: name || hex,
     hex: normalizeHex(hex).slice(0, 7),
-    savedAt: new Date().toLocaleTimeString()
+    savedAt: new Date().toLocaleString()
   };
 
-  const updated = [newItem, ...current.filter((c) => c.hex !== newItem.hex)].slice(0, 30);
+  const updated = [newItem, ...current.filter((c) => c.hex !== newItem.hex)];
   await LocalStorage.setItem(PALETTE_STORAGE_KEY, updated);
   return updated;
 }
@@ -691,34 +599,10 @@ export async function clearPalette(): Promise<void> {
 }
 
 export async function removeFromPalette(id: string): Promise<SavedColorItem[]> {
-  const current = await getSavedPalette();
+  const current = await loadPaletteStrict();
   const updated = current.filter((c) => c.id !== id);
   await LocalStorage.setItem(PALETTE_STORAGE_KEY, updated);
   return updated;
-}
-
-/**
- * 拾色历史记录持久化操作
- */
-export async function getColorHistory(): Promise<PickedColorResult[]> {
-  try {
-    const list = await LocalStorage.getItem<PickedColorResult[]>(HISTORY_STORAGE_KEY);
-    return list || [];
-  } catch {
-    return [];
-  }
-}
-
-export async function saveColorHistory(item: PickedColorResult): Promise<PickedColorResult[]> {
-  const current = await getColorHistory();
-  const filtered = current.filter((c) => c.hex !== item.hex);
-  const updated = [item, ...filtered].slice(0, 30);
-  await LocalStorage.setItem(HISTORY_STORAGE_KEY, updated);
-  return updated;
-}
-
-export async function clearColorHistory(): Promise<void> {
-  await LocalStorage.removeItem(HISTORY_STORAGE_KEY);
 }
 
 export const convertColor = parseColor;

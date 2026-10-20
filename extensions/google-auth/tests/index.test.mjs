@@ -1,174 +1,77 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import {
-  base32Decode,
-  generateTOTP,
-  formatToken,
-  getRemainingSeconds,
-  parseOTPAuthURL,
-  createAccount,
-  filterAccounts,
-  cleanSecret,
-  isValidBase32
-} from "../dist/logic.js";
-import GoogleAuthCommand, { CreateAccountForm } from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
+import GoogleAuthCommand from '../dist/index.js'
+import { generateTOTP, parseOTPAuthURL, sanitizeStoredAccounts, createAccount, ACCOUNTS_STORAGE_KEY } from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("google-auth 2FA 动态口令插件集成测试", () => {
-  test("1. plugin.json 清单结构与资源完整性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+const b32 = (ascii) => {
+  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  let bits = ''
+  for (const c of Buffer.from(ascii)) bits += c.toString(2).padStart(8, '0')
+  let o = ''
+  for (let i = 0; i < bits.length; i += 5) o += A[parseInt(bits.slice(i, i + 5).padEnd(5, '0'), 2)]
+  return o
+}
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "google-auth");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard", "crypto"]);
+test('RFC 6238 附录 B 全部 18 组标准向量', () => {
+  const keys = { SHA1: b32('12345678901234567890'), SHA256: b32('12345678901234567890123456789012'), SHA512: b32('1234567890123456789012345678901234567890123456789012345678901234') }
+  const V = [[59, '94287082', '46119246', '90693936'], [1111111109, '07081804', '68084774', '25091201'], [1111111111, '14050471', '67062674', '99943326'], [1234567890, '89005924', '91819424', '93441116'], [2000000000, '69279037', '90698825', '38618901'], [20000000000, '65353130', '77737706', '47863826']]
+  for (const [t, a, b, c] of V) {
+    assert.equal(generateTOTP(keys.SHA1, { nowMs: t * 1000, digits: 8, algorithm: 'SHA1' }), a)
+    assert.equal(generateTOTP(keys.SHA256, { nowMs: t * 1000, digits: 8, algorithm: 'SHA256' }), b)
+    assert.equal(generateTOTP(keys.SHA512, { nowMs: t * 1000, digits: 8, algorithm: 'SHA512' }), c)
+  }
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)), "icon.svg 必须存在");
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)), "dist/index.js 必须存在");
-  });
+test('首次打开没有示例账号，口令不显示 ERR', async () => {
+  const view = await mount(GoogleAuthCommand)
+  assert.ok(!view.text().includes('octocat'))
+  assert.equal(view.items()[0].props.title, '还没有 2FA 账号')
+  view.unmount()
+})
 
-  test("2. Base32 编码解码与异常输入防御", () => {
-    // 正常解码
-    const decoded = base32Decode("JBSWY3DPEHPK3PXP");
-    assert.equal(decoded.toString("latin1"), "Hello!\xde\xad\xbe\xef");
+test('粘贴 otpauth 链接添加账号，写入存储；删除需要确认', async () => {
+  const view = await mount(GoogleAuthCommand)
+  await view.run(null, '添加 2FA 账号')
+  const form = await mountPushed(host)
+  await form.fill('secret', 'otpauth://totp/GitHub:me%40x.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub')
+  await form.run(null, '保存账号')
+  await tick()
+  const stored = JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY))
+  assert.equal(stored.length, 1)
+  assert.equal(stored[0].issuer, 'GitHub')
+  const item = view.items().find((i) => i.props.title.startsWith('me@x.com'))
+  assert.match(item.props.title, /\d{3} \d{3}$/)
+  host.setConfirm(false)
+  await view.run(item, '删除该账号')
+  assert.equal(JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY)).length, 1, '取消确认时不删除')
+  host.setConfirm(true)
+  await view.run(view.items().find((i) => i.props.title.startsWith('me@x.com')), '删除该账号')
+  assert.equal(JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY)).length, 0)
+  view.unmount()
+})
 
-    // 容错处理：空格、连字符、小写与末尾填充 =
-    const decodedWithPadding = base32Decode("jbsw y3dp-ehpk 3pxp====");
-    assert.equal(decodedWithPadding.toString("latin1"), "Hello!\xde\xad\xbe\xef");
+test('[故障注入] 保存失败时不关闭表单、不显示新账号', async () => {
+  const view = await mount(GoogleAuthCommand)
+  await view.run(null, '添加 2FA 账号')
+  const form = await mountPushed(host)
+  host.faults.storageWrite = new Error('磁盘已满')
+  await form.fill('name', 'a')
+  await form.fill('secret', 'JBSWY3DPEHPK3PXP')
+  await form.run(null, '保存账号')
+  assert.equal(host.pushed.length, 1, '表单仍然打开')
+  assert.equal(view.items()[0].props.id, 'empty-auth')
+  view.unmount()
+})
 
-    // 格式合法性校验辅助函数
-    assert.equal(isValidBase32("JBSWY3DPEHPK3PXP"), true);
-    assert.equal(isValidBase32("INVALID890"), false);
-    assert.equal(isValidBase32(""), false);
-
-    // 异常防御：空密钥抛出错误
-    assert.throws(() => base32Decode(""), /密钥不能为空/);
-
-    // 异常防御：非法字符（8, 9, 0, 特殊符号）抛出详细异常
-    assert.throws(() => base32Decode("ABC8"), /包含非法字符 '8'/);
-    assert.throws(() => base32Decode("ABC9"), /包含非法字符 '9'/);
-    assert.throws(() => base32Decode("ABC0"), /包含非法字符 '0'/);
-    assert.throws(() => base32Decode("ABC@#$"), /包含非法字符/);
-  });
-
-  test("3. RFC 6238 TOTP 国际标准已知测试向量验证", () => {
-    // RFC 6238 官方已知向量：Secret 对应 '12345678901234567890' 的 Base32
-    const rfcSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
-
-    // T = 59 秒 (T0 = 0, X = 30) -> Counter = 1
-    const token59 = generateTOTP(rfcSecret, { nowMs: 59000, period: 30, digits: 6, algorithm: "SHA1" });
-    assert.equal(token59, "287082", "RFC 6238 SHA1 @ 59s 应当为 287082");
-
-    // T = 1111111109 秒 -> Counter = 37037036
-    const token111 = generateTOTP(rfcSecret, { nowMs: 1111111109000, period: 30, digits: 6, algorithm: "SHA1" });
-    assert.equal(token111, "081804", "RFC 6238 SHA1 @ 1111111109s 应当为 081804");
-
-    // T = 1234567890 秒 -> Counter = 41152263 (RFC 6238 Table 1: 89005924)
-    const token123 = generateTOTP(rfcSecret, { nowMs: 1234567890000, period: 30, digits: 6, algorithm: "SHA1" });
-    assert.equal(token123, "005924", "RFC 6238 SHA1 @ 1234567890s 应当为 005924");
-
-    // T = 2000000000 秒 -> Counter = 66666666
-    const token200 = generateTOTP(rfcSecret, { nowMs: 2000000000000, period: 30, digits: 6, algorithm: "SHA1" });
-    assert.equal(token200, "279037", "RFC 6238 SHA1 @ 2000000000s 应当为 279037");
-
-    // 8 位口令生成与前置零填充补全
-    const token8 = generateTOTP(rfcSecret, { nowMs: 59000, period: 30, digits: 8, algorithm: "SHA1" });
-    assert.equal(token8.length, 8);
-    assert.equal(token8, "94287082");
-
-    // SHA256 与 SHA512 哈希算法支持
-    const tokenSha256 = generateTOTP(rfcSecret, { nowMs: 59000, period: 30, digits: 6, algorithm: "SHA256" });
-    assert.equal(tokenSha256.length, 6);
-    assert.match(tokenSha256, /^\d{6}$/);
-
-    const tokenSha512 = generateTOTP(rfcSecret, { nowMs: 59000, period: 30, digits: 6, algorithm: "SHA512" });
-    assert.equal(tokenSha512.length, 6);
-    assert.match(tokenSha512, /^\d{6}$/);
-
-    // 口令格式化展示
-    assert.equal(formatToken("287082"), "287 082");
-    assert.equal(formatToken("94287082"), "9428 7082");
-
-    // 倒计时剩余秒数计算
-    const rem = getRemainingSeconds(30, 29000);
-    assert.equal(rem, 1);
-    const rem30 = getRemainingSeconds(30, 30000);
-    assert.equal(rem30, 30);
-  });
-
-  test("4. otpauth:// URL 协议解析与异常拦截", () => {
-    // 标准 Google Authenticator 链接
-    const url1 = "otpauth://totp/GitHub:octocat?secret=JBSWY3DPEHPK3PXP&issuer=GitHub&algorithm=SHA1&digits=6&period=30";
-    const res1 = parseOTPAuthURL(url1);
-    assert.equal(res1.type, "totp");
-    assert.equal(res1.name, "octocat");
-    assert.equal(res1.issuer, "GitHub");
-    assert.equal(res1.secret, "JBSWY3DPEHPK3PXP");
-    assert.equal(res1.digits, 6);
-    assert.equal(res1.period, 30);
-    assert.equal(res1.algorithm, "SHA1");
-
-    // 自定义 8 位与 SHA256
-    const url2 = "otpauth://totp/AWS:admin%40corp.com?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=AWS&algorithm=SHA256&digits=8&period=60";
-    const res2 = parseOTPAuthURL(url2);
-    assert.equal(res2.issuer, "AWS");
-    assert.equal(res2.name, "admin@corp.com");
-    assert.equal(res2.algorithm, "SHA256");
-    assert.equal(res2.digits, 8);
-    assert.equal(res2.period, 60);
-
-    // 异常防御：非法协议头
-    assert.throws(() => parseOTPAuthURL("https://example.com"), /必须以 otpauth:\/\/ 开头/);
-
-    // 异常防御：缺少 secret 密钥
-    assert.throws(() => parseOTPAuthURL("otpauth://totp/test?issuer=Test"), /缺少有效的 Base32 secret/);
-
-    // 异常防御：secret 包含非法字符
-    assert.throws(() => parseOTPAuthURL("otpauth://totp/test?secret=123INVALID89"), /缺少有效的 Base32 secret/);
-  });
-
-  test("5. 账号数据增删改查与检索过滤", () => {
-    const acc = createAccount({
-      name: "dev@ztools.org",
-      issuer: "GitLab",
-      secret: "JBSWY3DPEHPK3PXP",
-      digits: 6,
-      period: 30,
-      algorithm: "SHA1"
-    });
-    assert.equal(acc.name, "dev@ztools.org");
-    assert.equal(acc.issuer, "GitLab");
-    assert.equal(acc.secret, "JBSWY3DPEHPK3PXP");
-
-    // 异常拦截
-    assert.throws(() => createAccount({ name: "", secret: "JBSWY3DPEHPK3PXP" }), /账号名称不能为空/);
-    assert.throws(() => createAccount({ name: "test", secret: "" }), /密钥不能为空/);
-    assert.throws(() => createAccount({ name: "test", secret: "ABC999" }), /不是合法的 Base32/);
-
-    // 检索过滤
-    const list = [acc];
-    assert.equal(filterAccounts(list, "gitlab").length, 1);
-    assert.equal(filterAccounts(list, "ztools").length, 1);
-    assert.equal(filterAccounts(list, "nonexistent").length, 0);
-  });
-
-  test("6. 声明式 UI 挂载与列表渲染", () => {
-    const root = renderDeclarativeRoot(GoogleAuthCommand);
-    const desc = root.getLatest();
-
-    assert.ok(desc);
-    assert.equal(desc.type, "List");
-    assert.equal(desc.props.navigationTitle, "2FA 动态口令验证器");
-    assert.ok(desc.children.length > 0);
-
-    root.unmount();
-  });
-});
+test('[数据损坏] 存储里的坏条目被丢弃，非法密钥报错而不是显示假口令', () => {
+  const good = createAccount({ name: 'ok', secret: 'JBSWY3DPEHPK3PXP' })
+  const out = sanitizeStoredAccounts([good, null, { id: 'x', name: 'bad', secret: '1890!' }, 'str'])
+  assert.deepEqual(out.map((a) => a.name), ['ok'])
+  assert.throws(() => createAccount({ name: 'x', secret: '0189' }), /Base32/)
+  assert.throws(() => parseOTPAuthURL('https://example.com'), /otpauth/)
+  assert.throws(() => generateTOTP(''), /不能为空/)
+})

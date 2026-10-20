@@ -1,154 +1,52 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import {
-  validateJson,
-  formatJson,
-  minifyJson,
-  jsonToTsInterface
-} from "../dist/logic.js";
-import JsonFormatCommand, { JsonDetailView } from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHost, mount } from '../../shared/test-harness.mjs'
+import JsonFormatCommand from '../dist/index.js'
+import { validateJson, formatJson, minifyJson, jsonToTsInterface } from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("json-format 官方标杆插件集成测试与异常用例套件", () => {
-  test("1. plugin.json 清单结构合规性与必要资源文件完整性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+test('格式化与压缩保留原文的数字与字符串写法（长整数不丢精度）', () => {
+  const src = '{"id":12345678901234567890,"f":1.0,"e":1E+2,"u":"\\u4e2d","dup":1,"dup":2,"empty":{},"arr":[]}'
+  assert.equal(formatJson(src, 2), '{\n  "id": 12345678901234567890,\n  "f": 1.0,\n  "e": 1E+2,\n  "u": "\\u4e2d",\n  "dup": 1,\n  "dup": 2,\n  "empty": {},\n  "arr": []\n}')
+  assert.equal(minifyJson(formatJson(src, 4)), src)
+  assert.equal(formatJson('[1,{"a":"x"}]', 'tab'), '[\n\t1,\n\t{\n\t\t"a": "x"\n\t}\n]')
+})
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "json-format");
-    assert.equal(manifest.name, "JSON 格式化与类型推导");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard"]);
+test('随机 JSON：格式化与压缩结果与 JSON.stringify 一致', () => {
+  const gen = (d) => {
+    const r = Math.random()
+    if (d > 3 || r < 0.3) return [1.5, 'a"b\\\\c\n中', true, null, -7, ''][Math.floor(Math.random() * 6)]
+    if (r < 0.6) return Array.from({ length: Math.floor(Math.random() * 4) }, () => gen(d + 1))
+    return Object.fromEntries(Array.from({ length: Math.floor(Math.random() * 4) }, (_, i) => [`k${i}:{,`, gen(d + 1)]))
+  }
+  for (let i = 0; i < 300; i++) {
+    const v = gen(0)
+    const src = JSON.stringify(v, null, i % 2 ? 0 : 3)
+    assert.equal(formatJson(src, 2), JSON.stringify(v, null, 2))
+    assert.equal(minifyJson(src), JSON.stringify(v))
+  }
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)));
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)));
-  });
+test('[破坏性] 非法 JSON 原样返回并给出行列定位', () => {
+  for (const bad of ['{"a":1,}', '{a:1}', '[1,2', '']) {
+    assert.equal(formatJson(bad), bad)
+    const v = validateJson(bad)
+    assert.equal(v.valid, false)
+    assert.ok(v.errorInfo.line >= 1 && v.errorInfo.column >= 1)
+  }
+})
 
-  test("2. validateJson: 正常结构、深层嵌套、键计数与字节统计", () => {
-    const validJson = JSON.stringify({
-      id: 101,
-      name: "ZTools",
-      meta: {
-        tags: ["tool", "desktop"],
-        author: { name: "Team", active: true }
-      }
-    });
+test('类型推导生成 TypeScript 接口', () => {
+  const ts = jsonToTsInterface('{"name":"x","age":1,"tags":["a"]}')
+  assert.match(ts, /name: string/)
+  assert.match(ts, /age: number/)
+})
 
-    const res = validateJson(validJson);
-    assert.equal(res.valid, true);
-    assert.ok(res.parsed);
-    assert.equal(res.parsed.id, 101);
-    assert.ok(res.stats);
-    assert.ok(res.stats.keys >= 4);
-    assert.ok(res.stats.depth >= 3);
-    assert.ok(res.stats.byteSize > 0);
-  });
-
-  test("3. validateJson: 异常防御 (空值、畸形格式、截断 JSON、非对象类型)", () => {
-    // 空字符串与纯空白
-    const empty1 = validateJson("");
-    assert.equal(empty1.valid, false);
-    assert.match(empty1.error, /Empty JSON content/i);
-
-    const empty2 = validateJson("   \n\t  ");
-    assert.equal(empty2.valid, false);
-    assert.match(empty2.error, /Empty JSON content/i);
-
-    // 截断语法错误
-    const malformed1 = validateJson("{ id: 1, name: 'single quote' }");
-    assert.equal(malformed1.valid, false);
-    assert.ok(malformed1.error);
-
-    const malformed2 = validateJson('{"name": "ZTools", "unclosed": [1, 2,');
-    assert.equal(malformed2.valid, false);
-    assert.ok(malformed2.error);
-
-    // 尾部逗号语法错误 (标准 JSON 不允许末尾逗号)
-    const trailingComma = validateJson('{"key": "value",}');
-    assert.equal(trailingComma.valid, false);
-    assert.ok(trailingComma.error);
-  });
-
-  test("4. formatJson & minifyJson: 格式化、缩进定制与容错回退", () => {
-    const raw = '{"a":1,"b":[2,3]}';
-    const fmt2 = formatJson(raw, 2);
-    assert.equal(fmt2, '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}');
-
-    const fmt4 = formatJson(raw, 4);
-    assert.equal(fmt4, '{\n    "a": 1,\n    "b": [\n        2,\n        3\n    ]\n}');
-
-    const minified = minifyJson(fmt4);
-    assert.equal(minified, '{"a":1,"b":[2,3]}');
-
-    // 容错: 非法 JSON 字符串直接安全返回原文
-    const broken = "{broken";
-    assert.equal(formatJson(broken), broken);
-    assert.equal(minifyJson(broken), broken);
-  });
-
-  test("5. jsonToTsInterface: 自动推导结构体、数组与特殊标识符", () => {
-    const sample = JSON.stringify({
-      id: 1,
-      title: "Task",
-      done: false,
-      "special-key": "dash",
-      items: [{ sku: "A1", price: 9.9 }],
-      user: { uid: 123, role: "admin" }
-    });
-
-    const ts = jsonToTsInterface(sample, "TaskModel");
-    assert.ok(ts.includes("export interface TaskModel"));
-    assert.ok(ts.includes("id: number;"));
-    assert.ok(ts.includes("title: string;"));
-    assert.ok(ts.includes("done: boolean;"));
-    assert.ok(ts.includes('"special-key": string;')); // 特殊字符需引号包裹
-    assert.ok(ts.includes("items: ItemsItem[];"));
-    assert.ok(ts.includes("export interface ItemsItem"));
-    assert.ok(ts.includes("sku: string;"));
-    assert.ok(ts.includes("user: User;"));
-    assert.ok(ts.includes("export interface User"));
-
-    // 顶级数组推导
-    const arraySample = JSON.stringify([{ id: "item1" }, { id: "item2" }]);
-    const arrayTs = jsonToTsInterface(arraySample, "RecordItem");
-    assert.ok(arrayTs.includes("export type RecordItemList = RecordItem[];"));
-
-    // 空数组与空内容
-    assert.equal(jsonToTsInterface("[]", "EmptyList"), "export type EmptyList = any[];");
-
-    // 异常输入容错
-    const errTs = jsonToTsInterface("invalid");
-    assert.ok(errTs.includes("// Failed to generate TypeScript interface"));
-  });
-
-  test("6. 声明式 UI 挂载与全组件生命周期 (JsonFormatCommand & JsonDetailView)", () => {
-    // 主表单命令
-    const formRoot = renderDeclarativeRoot(JsonFormatCommand);
-    const formDesc = formRoot.getLatest();
-    assert.ok(formDesc);
-    assert.equal(formDesc.type, "Form");
-    assert.equal(formDesc.props.navigationTitle, "JSON 格式化与类型转换");
-    assert.equal(formDesc.props.actions.type, "ActionPanel");
-    assert.ok(formDesc.children.length >= 2);
-    formRoot.unmount();
-
-    // 二级详情视图
-    const detailView = JsonDetailView({
-      formatted: '{\n  "status": "ok"\n}',
-      tsInterface: "export interface Status {\n  status: string;\n}",
-      stats: { keys: 1, depth: 1, byteSize: 20 }
-    });
-    assert.equal(detailView.type, "Detail");
-    assert.equal(detailView.props.navigationTitle, "JSON 格式化详情");
-    assert.ok(detailView.props.markdown.includes("export interface Status"));
-    assert.equal(detailView.props.metadata.type, "Detail.Metadata");
-    assert.equal(detailView.props.actions.type, "ActionPanel");
-  });
-});
+test('界面：默认输入为空，不显示示例 JSON，也不显示错误', async () => {
+  const view = await mount(JsonFormatCommand)
+  const area = view.tree().children.find((c) => c.type === 'Form.TextArea')
+  assert.equal(area.props.value, '')
+  assert.equal(area.props.error, undefined)
+})

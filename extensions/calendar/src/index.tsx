@@ -7,7 +7,7 @@
  * - 对接主进程 `calendar_upcoming_events`, `calendar_list_events`, `calendar_create_event`, `calendar_delete_event`, `calendar_export_ics` IPC
  */
 
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   Detail,
@@ -20,9 +20,9 @@ import {
   showToast,
   Toast,
   useNavigation
-} from "@ztools/declarative-ui";
-import { useState, useEffect, useMemo } from "@ztools/declarative-ui";
-import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+} from "../../index.js";
+import { useState, useEffect, useMemo } from "../../runtime/hooks.js";
+import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
 
 export type CalendarFilterScope = "all" | "upcoming" | "meetings" | "today";
 

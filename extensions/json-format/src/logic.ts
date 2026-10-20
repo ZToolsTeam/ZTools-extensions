@@ -171,28 +171,73 @@ export function validateJson(raw: string): JsonValidationResult {
 }
 
 /**
- * JSON 格式化与美化 (支持 2 空格、4 空格、Tab 制表符)
+ * 按原文逐个记号重排缩进：数字、字符串照抄原文，不经过 JSON.parse/stringify，
+ * 因此超过 2^53 的长整数（订单号、雪花 ID）、1.0 这类写法、转义序列和重复键都原样保留。
+ * 调用前必须先确认 raw 是合法 JSON（validateJson）。
  */
-export function formatJson(raw: string | any, indent: number | "tab" | string = 2): string {
-  try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    const indentValue = indent === "tab" || indent === "\t" ? "\t" : Number(indent) || 2;
-    return JSON.stringify(parsed, null, indentValue);
-  } catch {
-    return typeof raw === "string" ? raw : String(raw);
+function reformatJsonText(raw: string, indentUnit: string | null): string {
+  let out = "";
+  let depth = 0;
+  let i = 0;
+  const n = raw.length;
+  const newline = () => (indentUnit === null ? "" : "\n" + indentUnit.repeat(depth));
+  while (i < n) {
+    const ch = raw[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < n && raw[j] !== '"') j += raw[j] === "\\" ? 2 : 1;
+      out += raw.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") { i++; continue; }
+    if (ch === "{" || ch === "[") {
+      // 空对象 / 空数组保持紧凑
+      let k = i + 1;
+      while (k < n && /\s/.test(raw[k])) k++;
+      if (raw[k] === (ch === "{" ? "}" : "]")) { out += ch + raw[k]; i = k + 1; continue; }
+      depth++;
+      out += ch + newline();
+      i++;
+      continue;
+    }
+    if (ch === "}" || ch === "]") { depth--; out += newline() + ch; i++; continue; }
+    if (ch === ",") { out += "," + newline(); i++; continue; }
+    if (ch === ":") { out += indentUnit === null ? ":" : ": "; i++; continue; }
+    // 数字、true、false、null：原样照抄到下一个分隔符
+    let j = i;
+    while (j < n && !/[\s,\]}:]/.test(raw[j])) j++;
+    out += raw.slice(i, j);
+    i = j;
   }
+  return out;
 }
 
 /**
- * 极速压缩 JSON 为单行
+ * JSON 格式化与美化 (支持 2 空格、4 空格、Tab 制表符)；非法 JSON 原样返回
+ */
+export function formatJson(raw: string | any, indent: number | "tab" | string = 2): string {
+  const unit = indent === "tab" || indent === "\t" ? "\t" : " ".repeat(Number(indent) || 2);
+  if (typeof raw !== "string") return JSON.stringify(raw, null, unit);
+  try {
+    JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  return reformatJsonText(raw.replace(/^\uFEFF/, ""), unit);
+}
+
+/**
+ * 压缩 JSON 为单行；非法 JSON 原样返回
  */
 export function minifyJson(raw: string | any): string {
+  if (typeof raw !== "string") return JSON.stringify(raw);
   try {
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return JSON.stringify(parsed);
+    JSON.parse(raw);
   } catch {
-    return typeof raw === "string" ? raw : String(raw);
+    return raw;
   }
+  return reformatJsonText(raw.replace(/^\uFEFF/, ""), null);
 }
 
 /**

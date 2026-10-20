@@ -7,7 +7,7 @@ import {
   openRealPath,
   showRealItemInFolder,
   trashRealItem
-} from "./native-ipc.js";
+} from "../shared/native-ipc.js";
 
 declare const process: any;
 declare const Buffer: any;
@@ -448,7 +448,7 @@ export async function getFileQuickLook(
         }
       }
       if (typeof process !== "undefined" && process.versions?.node) {
-        const fs: any = await Promise.resolve(null);
+        const fs: any = await (new Function('return import("node:fs/promises")')());
         const entries = await fs.readdir(file.path, { withFileTypes: true });
         const dirEntries = entries.slice(0, 25).map((e: any) => ({
           name: e.name,
@@ -556,7 +556,7 @@ export async function getFileQuickLook(
         }
       }
       if (typeof process !== "undefined" && process.versions?.node) {
-        const fs: any = await Promise.resolve(null);
+        const fs: any = await (new Function('return import("node:fs/promises")')());
         const fileHandle = await fs.open(file.path, "r");
         try {
           const maxReadBytes = 64 * 1024; // 64KB
@@ -640,8 +640,8 @@ export async function calculateFileSha256(filePath: string): Promise<string> {
 
   // 2. 本地 Node.js 流式计算
   if (typeof process !== "undefined" && process.versions?.node) {
-    const fs: any = await Promise.resolve(null);
-    const crypto: any = await Promise.resolve(null);
+    const fs: any = await (new Function('return import("node:fs")')());
+    const crypto: any = await (new Function('return import("node:crypto")')());
     const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
 
     // 检查文件存在性
@@ -677,8 +677,8 @@ export async function calculateFileMd5(filePath: string): Promise<string> {
   }
 
   if (typeof process !== "undefined" && process.versions?.node) {
-    const fs: any = await Promise.resolve(null);
-    const crypto: any = await Promise.resolve(null);
+    const fs: any = await (new Function('return import("node:fs")')());
+    const crypto: any = await (new Function('return import("node:crypto")')());
     const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
 
     if (!fs.existsSync(resolvedPath)) {
@@ -736,7 +736,7 @@ export async function openFile(filePath: string): Promise<FileActionResult> {
     }
 
     if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await Promise.resolve(null);
+      const fs: any = await (new Function('return import("node:fs")')());
       const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
       if (!fs.existsSync(resolvedPath)) {
         return { success: false, message: `文件不存在: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
@@ -801,7 +801,7 @@ export async function revealFile(filePath: string): Promise<FileActionResult> {
     }
 
     if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await Promise.resolve(null);
+      const fs: any = await (new Function('return import("node:fs")')());
       const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
       if (!fs.existsSync(resolvedPath)) {
         return { success: false, message: `定位失败，文件不存在: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
@@ -848,7 +848,7 @@ export async function moveToTrash(filePath: string): Promise<FileActionResult> {
     }
 
     if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await Promise.resolve(null);
+      const fs: any = await (new Function('return import("node:fs")')());
       if (!fs.existsSync(filePath)) {
         return { success: false, message: `目标文件不存在，无法移入回收站: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
       }

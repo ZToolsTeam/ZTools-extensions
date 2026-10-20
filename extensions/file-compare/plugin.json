@@ -1,8 +1,8 @@
 {
   "id": "file-compare",
-  "name": "文本与代码差异对比",
+  "name": "文本对比",
   "version": "2.0.0",
-  "description": "输入两段文本，计算行级/词级差异，声明式双栏展示与高亮，支持复制差异报告",
+  "description": "对比两段文本或两个文件的逐行差异，支持忽略空白与复制差异报告",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -23,5 +23,15 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "diff",
+    "对比",
+    "比较",
+    "compare",
+    "差异"
+  ],
+  "category": [
+    "开发工具"
+  ]
 }

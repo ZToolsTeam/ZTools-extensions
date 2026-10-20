@@ -1,79 +1,48 @@
-import { test, describe } from "node:test";
-import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
-import { evaluateExpression, formatResultNumber } from "../dist/engine.js";
-import CalculatorCommand from "../dist/index.js";
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createHost, mount } from '../../shared/test-harness.mjs'
+import CalculatorCommand, { evaluateMathExpression, evaluateCalculatorQuery } from '../dist/index.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const host = createHost()
+test.beforeEach(() => host.reset())
 
-describe("calculator 范例插件集成测试", () => {
-  test("1. plugin.json 清单结构合规性", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+test('四则运算、负号、取余、乘方与科学计数法结果正确', () => {
+  const cases = {
+    '2*-3': -6, '2^-1': 0.5, '-3^2': -9, '(-3)^2': 9, '--2': 2, '1-(-2)': 3, '10%3': 1, '10 % 3': 1,
+    '50%': 0.5, '200*50%': 100, '2**10': 1024, '1e21+1': 1e21, '2.5e-3*2': 0.005, '2(3)': 6, '2pi': 2 * Math.PI,
+    '(1+2)(3+4)': 21, '3sqrt(16)': 12, '2^3^2': 512, '7/2': 3.5, 'sin(-pi/2)': -1, '+5': 5, '3×4÷2': 6
+  }
+  for (const [expr, expected] of Object.entries(cases)) {
+    const r = evaluateMathExpression(expr)
+    assert.ok(r.answer !== null && Math.abs(r.answer - expected) < 1e-12, `${expr} = ${r.answer}，期望 ${expected}（${r.error || ''}）`)
+  }
+})
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "calculator");
-    assert.equal(manifest.name, "极简即时计算器");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.deepEqual(manifest.permissions, ["clipboard"]);
+test('[破坏性] 非法与越界输入给出错误，不抛异常、不返回错误数值', () => {
+  for (const expr of ['1/0', '10%0', '1.2.3+1', '(1+2', '1+', 'sqrt(-1)', '2^9999', 'foo(1)']) {
+    const r = evaluateMathExpression(expr)
+    assert.equal(r.answer, null, `${expr} 不应得出数值`)
+    assert.ok(r.error, `${expr} 应给出错误原因`)
+  }
+  // 不含运算符的内容不当作算式
+  assert.equal(evaluateMathExpression('1.2.3').answer, null)
+})
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)));
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)));
-  });
+test('不再提供写死汇率的货币换算', () => {
+  assert.notEqual(evaluateCalculatorQuery('100 usd to cny').type, 'currency')
+})
 
-  test("2. 算式解析与数学求值引擎 (覆盖正常、边界与异常分支)", () => {
-    // 基础四则运算与运算符优先级
-    const r1 = evaluateExpression("1 + 2 * 3");
-    assert.equal(r1.success, true);
-    assert.equal(r1.value, 7);
+test('单位换算正确', () => {
+  assert.equal(evaluateCalculatorQuery('5 km to m').rawAnswer, 5000)
+  assert.equal(evaluateCalculatorQuery('100 c to f').rawAnswer, 212)
+})
 
-    // 括号与嵌套
-    const r2 = evaluateExpression("(10 + 20) * 2 / 5");
-    assert.equal(r2.success, true);
-    assert.equal(r2.value, 12);
-
-    // 常用数学函数 (sqrt, sin, cos, abs, log)
-    const r3 = evaluateExpression("sqrt(144)");
-    assert.equal(r3.success, true);
-    assert.equal(r3.value, 12);
-
-    const rPow = evaluateExpression("2 ^ 10");
-    assert.equal(rPow.success, true);
-    assert.equal(rPow.value, 1024);
-
-    // 浮点数精度与格式化
-    assert.equal(formatResultNumber(0.1 + 0.2), "0.3");
-
-    // 异常场景 1: 除以零 (安全处理，拦截除零错误)
-    const rDivZero = evaluateExpression("10 / 0");
-    assert.equal(rDivZero.success, false);
-    assert.match(rDivZero.error, /除数不能为0/);
-
-    // 异常场景 2: 非法语法 (语法错误拦截，不崩溃)
-    const rSyntax = evaluateExpression("1 + + * 3");
-    assert.equal(rSyntax.success, false);
-    assert.ok(rSyntax.error);
-
-    // 异常场景 3: 括号不匹配
-    const rParen = evaluateExpression("(10 + 2");
-    assert.equal(rParen.success, false);
-    assert.ok(rParen.error);
-  });
-
-  test("3. 声明式 UI 挂载与列表渲染", () => {
-    const root = renderDeclarativeRoot(CalculatorCommand);
-    const desc = root.getLatest();
-
-    assert.ok(desc);
-    assert.equal(desc.type, "List");
-    assert.equal(desc.props.navigationTitle, "极简即时计算器");
-    assert.ok(desc.children.length > 0);
-
-    root.unmount();
-  });
-});
+test('界面：输入算式即时显示结果，可复制；输入框提示里没有汇率', async () => {
+  const view = await mount(CalculatorCommand)
+  assert.ok(!String(view.tree().props.searchBarPlaceholder).includes('USD'))
+  await view.search('2*-3')
+  const item = view.item('calc-success')
+  assert.ok(view.text().includes('-6'))
+  await view.run(item, '复制计算结果')
+  assert.equal(host.clipboard.text, '-6')
+})

@@ -84,7 +84,7 @@ const HISTORY_STORAGE_KEY = "ztools-calculator-history-v1";
 // 1. Math Expression Evaluator (Shunting-yard Algorithm & AST-safe Tokenizer)
 // =========================================================================
 
-type TokenType = "NUMBER" | "OP" | "LPAREN" | "RPAREN" | "FUNC" | "CONST";
+type TokenType = "NUMBER" | "OP" | "NEG" | "LPAREN" | "RPAREN" | "FUNC" | "CONST";
 
 interface Token {
   type: TokenType;
@@ -105,6 +105,13 @@ function tokenize(expr: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const s = expr.trim();
+  // 隐式乘法：2(3)、2pi、(1+2)(3+4)、3sqrt(4)
+  const pushImplicitMultiply = () => {
+    const prev = tokens[tokens.length - 1];
+    if (prev && (prev.type === "NUMBER" || prev.type === "CONST" || prev.type === "RPAREN")) {
+      tokens.push({ type: "OP", value: "*" });
+    }
+  };
 
   while (i < s.length) {
     const c = s[i];
@@ -115,12 +122,20 @@ function tokenize(expr: string): Token[] {
     }
 
     if (/[0-9.]/.test(c)) {
+      pushImplicitMultiply();
       let numStr = "";
       while (i < s.length && /[0-9.]/.test(s[i])) {
         numStr += s[i++];
       }
-      // Check for percentage
-      if (i < s.length && s[i] === "%") {
+      // 科学计数法：1e21、2.5E-3
+      const sci = s.slice(i).match(/^[eE][+-]?\d+/);
+      if (sci) {
+        numStr += sci[0];
+        i += sci[0].length;
+      }
+      if ((numStr.match(/\./g) || []).length > 1 || numStr === ".") throw new Error(`数字格式不正确: "${numStr}"`);
+      // 数字后的 % ：后面紧跟数字或括号时是取余（10 % 3），否则是百分号（50%）
+      if (i < s.length && s[i] === "%" && !/^%\s*[0-9.(a-zA-Z]/.test(s.slice(i))) {
         i++;
         tokens.push({ type: "NUMBER", value: parseFloat(numStr) / 100 });
       } else {
@@ -129,24 +144,28 @@ function tokenize(expr: string): Token[] {
       continue;
     }
 
-    if (c === "+" || c === "-" || c === "*" || c === "/" || c === "^" || c === "%") {
-      // 区分负号与减号：如果 '-' 在表达式首部或紧随左括号或运算符，则视作负数单目运算
-      if (c === "-") {
-        const prev = tokens[tokens.length - 1];
-        if (!prev || prev.type === "OP" || prev.type === "LPAREN") {
-          // Unary minus: represented as 0 - x
-          tokens.push({ type: "NUMBER", value: 0 });
-          tokens.push({ type: "OP", value: "-" });
-          i++;
-          continue;
-        }
+    if (c === "*" && s[i + 1] === "*") {
+      tokens.push({ type: "OP", value: "^" });
+      i += 2;
+      continue;
+    }
+
+    if (c === "+" || c === "-" || c === "*" || c === "/" || c === "^" || c === "%" || c === "×" || c === "÷") {
+      // 出现在开头、左括号或运算符之后的 +/- 是正负号，不是加减
+      const prev = tokens[tokens.length - 1];
+      const isPrefix = !prev || prev.type === "OP" || prev.type === "NEG" || prev.type === "LPAREN" || prev.type === "FUNC";
+      if (isPrefix && (c === "-" || c === "+")) {
+        if (c === "-") tokens.push({ type: "NEG", value: "neg" });
+        i++;
+        continue;
       }
-      tokens.push({ type: "OP", value: c });
+      tokens.push({ type: "OP", value: c === "×" ? "*" : c === "÷" ? "/" : c });
       i++;
       continue;
     }
 
     if (c === "(") {
+      pushImplicitMultiply();
       tokens.push({ type: "LPAREN", value: "(" });
       i++;
       continue;
@@ -164,6 +183,7 @@ function tokenize(expr: string): Token[] {
         word += s[i++];
       }
       const lower = word.toLowerCase();
+      if (FUNCTIONS.has(lower) || CONSTANTS[lower] !== undefined) pushImplicitMultiply();
       if (FUNCTIONS.has(lower)) {
         tokens.push({ type: "FUNC", value: lower });
       } else if (CONSTANTS[lower] !== undefined) {
@@ -186,6 +206,7 @@ const PRECEDENCE: Record<string, number> = {
   "*": 2,
   "/": 2,
   "%": 2,
+  neg: 2.5,
   "^": 3
 };
 
@@ -196,13 +217,14 @@ function shuntingYard(tokens: Token[]): Token[] {
   for (const token of tokens) {
     if (token.type === "NUMBER" || token.type === "CONST") {
       output.push(token);
-    } else if (token.type === "FUNC") {
+    } else if (token.type === "FUNC" || token.type === "NEG") {
+      // 前缀运算（函数、负号）直接入栈，等右侧操作数就绪后再弹出
       ops.push(token);
     } else if (token.type === "OP") {
       const op = token.value as string;
       while (
         ops.length > 0 &&
-        ops[ops.length - 1].type === "OP" &&
+        (ops[ops.length - 1].type === "OP" || ops[ops.length - 1].type === "NEG") &&
         (PRECEDENCE[ops[ops.length - 1].value as string] > PRECEDENCE[op] ||
           (PRECEDENCE[ops[ops.length - 1].value as string] === PRECEDENCE[op] && op !== "^"))
       ) {
@@ -242,6 +264,9 @@ function evaluateRpn(rpn: Token[]): number {
       stack.push(token.value as number);
     } else if (token.type === "CONST") {
       stack.push(token.value as number);
+    } else if (token.type === "NEG") {
+      if (stack.length < 1) throw new Error("负号后缺少数字");
+      stack.push(-stack.pop()!);
     } else if (token.type === "OP") {
       if (stack.length < 2) throw new Error("运算符参数不足");
       const b = stack.pop()!;
@@ -254,7 +279,10 @@ function evaluateRpn(rpn: Token[]): number {
           if (b === 0) throw new Error("除数不能为零");
           stack.push(a / b);
           break;
-        case "%": stack.push(a % b); break;
+        case "%":
+          if (b === 0) throw new Error("除数不能为零");
+          stack.push(a % b);
+          break;
         case "^": stack.push(Math.pow(a, b)); break;
         default: throw new Error(`未实现的运算符: ${token.value}`);
       }
@@ -299,7 +327,7 @@ export function evaluateMathExpression(input: string): CalculationResult {
   }
 
   const trimmed = input.trim();
-  const hasMathSignal = /[+\-*/%^()]/.test(trimmed) ||
+  const hasMathSignal = /[+\-*/%^()×÷]/.test(trimmed) || /^\d[\d.]*\s*pi$/i.test(trimmed) ||
     /^(sqrt|cbrt|sin|cos|tan|asin|acos|atan|log|log10|log2|ln|abs|round|floor|ceil|exp|pi|e)\b/i.test(trimmed);
 
   if (!hasMathSignal) {
@@ -547,74 +575,7 @@ export function convertUnits(
 }
 
 // =========================================================================
-// 3. Currency Conversion (Estimates against USD base)
-// =========================================================================
-
-export const CURRENCY_RATES_USD: Record<string, number> = {
-  USD: 1.0,
-  CNY: 7.25,
-  RMB: 7.25,
-  EUR: 0.92,
-  GBP: 0.78,
-  JPY: 154.5,
-  HKD: 7.78,
-  CAD: 1.38,
-  AUD: 1.52,
-  SGD: 1.35,
-  CHF: 0.88,
-  KRW: 1380.0,
-  BTC: 0.000015
-};
-
-const SYMBOL_MAP: Record<string, string> = {
-  "$": "USD",
-  "￥": "CNY",
-  "€": "EUR",
-  "£": "GBP"
-};
-
-export function convertCalculatorCurrency(input: string): CurrencyConversionResult | null {
-  if (!input || typeof input !== "string") return null;
-  const s = input.trim();
-
-  // Pattern: "100 USD in CNY", "50 EUR to USD", "$100 in CNY"
-  const m = s.match(/^([$￥€£]?)\s*([\d.]+)\s*([A-Za-z]{3}|[$￥€£]|RMB)?\s*(?:to|in|=)\s*([A-Za-z]{3}|[$￥€£]|RMB)$/i);
-  if (!m) return null;
-
-  const prefixSym = m[1];
-  const amount = parseFloat(m[2]);
-  let fromCode = (m[3] || (prefixSym ? SYMBOL_MAP[prefixSym] : "")).toUpperCase();
-  let toCode = m[4].toUpperCase();
-
-  if (SYMBOL_MAP[fromCode]) fromCode = SYMBOL_MAP[fromCode];
-  if (SYMBOL_MAP[toCode]) toCode = SYMBOL_MAP[toCode];
-
-  if (!fromCode || !CURRENCY_RATES_USD[fromCode] || !CURRENCY_RATES_USD[toCode]) {
-    return null;
-  }
-
-  const inUsd = amount / CURRENCY_RATES_USD[fromCode];
-  const converted = inUsd * CURRENCY_RATES_USD[toCode];
-  const rate = CURRENCY_RATES_USD[toCode] / CURRENCY_RATES_USD[fromCode];
-
-  const formattedAmount = converted >= 100
-    ? converted.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : converted.toFixed(4);
-
-  return {
-    isCurrency: true,
-    expression: input.trim(),
-    amount,
-    fromCurrency: fromCode,
-    toCurrency: toCode,
-    convertedAmount: converted,
-    formattedAnswer: `${formattedAmount} ${toCode}`,
-    rate
-  };
-}
-
-// =========================================================================
-// 4. Date & Time Arithmetic
+// 3. Date Calculation（汇率换算已移除：没有实时汇率来源时不提供估算值）
 // =========================================================================
 
 export function evaluateDateExpression(input: string): DateCalculationResult | null {
@@ -851,18 +812,6 @@ export function evaluateCalculatorQuery(
       formattedAnswer: unit.formattedAnswer,
       rawAnswer: unit.value,
       details: `单位换算 (${unit.category.toUpperCase()}): ${unit.fromUnit} -> ${unit.toUnit}`
-    };
-  }
-
-  // 3. Currency conversion check
-  const currency = convertCalculatorCurrency(s);
-  if (currency && currency.isCurrency) {
-    return {
-      type: "currency",
-      expression: s,
-      formattedAnswer: currency.formattedAnswer,
-      rawAnswer: currency.convertedAmount,
-      details: `汇率估算 (1 ${currency.fromCurrency} ≈ ${currency.rate.toFixed(4)} ${currency.toCurrency})`
     };
   }
 

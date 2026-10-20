@@ -1,4 +1,4 @@
-import React from "@ztools/declarative-ui";
+import React from "../../index.js";
 import {
   List,
   Detail,
@@ -10,8 +10,8 @@ import {
   Toast,
   Clipboard,
   useNavigation
-} from "@ztools/declarative-ui";
-import { useState, useEffect } from "@ztools/declarative-ui";
+} from "../../index.js";
+import { useState, useEffect } from "../../runtime/hooks.js";
 import {
   FileRecord,
   SortOption,
@@ -36,7 +36,7 @@ import {
   copyFileToClipboard,
   quickLookFile
 } from "./search-service.js";
-import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
 
 export * from "./types.js";
 export * from "./search-service.js";

@@ -1,8 +1,8 @@
 {
   "id": "color-picker",
-  "name": "调色板与色彩转换器",
+  "name": "颜色转换",
   "version": "2.0.0",
-  "description": "HEX/RGB/HSL/CMYK 双向换算与 WCAG 对比度",
+  "description": "HEX / RGB / HSL / OKLCH / CMYK 互转，显示无障碍对比度，可收藏常用颜色",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -23,5 +23,17 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "color",
+    "颜色",
+    "hex",
+    "rgb",
+    "hsl",
+    "oklch",
+    "调色板"
+  ],
+  "category": [
+    "设计工具"
+  ]
 }

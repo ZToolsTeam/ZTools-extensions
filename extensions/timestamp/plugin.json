@@ -1,8 +1,8 @@
 {
   "id": "timestamp",
-  "name": "时间戳转换助手",
+  "name": "时间戳转换",
   "version": "1.0.0",
-  "description": "秒与毫秒时间戳双向转换、多时区对照与友好相对时间显示，纯声明式零CSS架构",
+  "description": "秒 / 毫秒时间戳与日期互转，显示本地时间、UTC 与相对时间",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -23,5 +23,16 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "timestamp",
+    "时间戳",
+    "unix",
+    "date",
+    "日期",
+    "时间"
+  ],
+  "category": [
+    "开发工具"
+  ]
 }

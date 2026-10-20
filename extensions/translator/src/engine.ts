@@ -3,8 +3,8 @@
  * 对标 Raycast Translator 交互逻辑与反向对照规范
  */
 
-import { LocalStorage } from "@ztools/declarative-ui";
-import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+import { LocalStorage } from "../../api/storage.js";
+import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
 import { detectLanguage, getLanguageByCode } from "./languages.js";
 
 export interface ReverseTranslationItem {

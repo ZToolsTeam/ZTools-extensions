@@ -20,7 +20,7 @@ export function createTodo(title: string, priority: TodoPriority = "medium"): To
     throw new Error("待办事项标题不能为空");
   }
   return {
-    id: "todo_" + Math.random().toString(36).slice(2, 9),
+    id: "todo_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 9),
     title: trimmed,
     completed: false,
     priority,
@@ -85,4 +85,32 @@ export function filterAndSearchTodos(
     if (diff !== 0) return diff;
     return b.createdAt - a.createdAt;
   });
+}
+
+export const TODOS_STORAGE_KEY = "todo.items.v1";
+
+/**
+ * 校验从存储读回的待办列表：结构不对的条目直接丢弃，不让损坏数据导致整个列表崩溃
+ */
+export function sanitizeStoredTodos(raw: unknown): TodoItem[] {
+  if (!Array.isArray(raw)) return [];
+  const out: TodoItem[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const t = item as Record<string, unknown>;
+    if (typeof t.id !== "string" || seen.has(t.id)) continue;
+    if (typeof t.title !== "string" || !t.title.trim()) continue;
+    seen.add(t.id);
+    const priority: TodoPriority = t.priority === "high" || t.priority === "low" ? t.priority : "medium";
+    out.push({
+      id: t.id,
+      title: t.title,
+      completed: t.completed === true,
+      priority,
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : 0,
+      ...(t.completed === true && typeof t.completedAt === "number" ? { completedAt: t.completedAt } : {})
+    });
+  }
+  return out;
 }

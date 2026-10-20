@@ -93,24 +93,22 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
       date = new Date(num);
     }
   } else {
-    // 2. 日期字符串格式判断 (如 2026-10-12 15:30:00, 2026/10/12, ISO 8601 等)
-    // 规范化斜杠分隔符
-    const normalized = text.replace(/\//g, "-");
-    const parsed = Date.parse(normalized);
-    if (!isNaN(parsed)) {
-      date = new Date(parsed);
-    } else {
-      // 尝试匹配常用中文或正则格式 YYYY-MM-DD HH:mm:ss
-      const match = text.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
-      if (match) {
-        const year = parseInt(match[1], 10);
-        const month = parseInt(match[2], 10) - 1;
-        const day = parseInt(match[3], 10);
-        const hour = match[4] ? parseInt(match[4], 10) : 0;
-        const min = match[5] ? parseInt(match[5], 10) : 0;
-        const sec = match[6] ? parseInt(match[6], 10) : 0;
-        date = new Date(year, month, day, hour, min, sec);
+    // 2. 常用的 年-月-日[ 时:分[:秒]] 写法按本地时间严格解析：不存在的日期（2 月 30 日、25 点）直接报错，不顺延
+    const match = text.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[\sT]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
+    if (match) {
+      const [year, month, day, hour, min, sec] = [1, 2, 3, 4, 5, 6].map((i) => (match[i] ? parseInt(match[i], 10) : 0));
+      const local = new Date(year, month - 1, day, hour, min, sec);
+      const exact =
+        local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day &&
+        local.getHours() === hour && local.getMinutes() === min && local.getSeconds() === sec;
+      if (!exact) {
+        return { valid: false, error: `「${text}」不是一个存在的日期或时间` };
       }
+      date = local;
+    } else {
+      // 3. 其余写法（ISO 8601 带时区、RFC 2822 等）交给标准解析
+      const parsed = Date.parse(text);
+      if (!isNaN(parsed)) date = new Date(parsed);
     }
   }
 

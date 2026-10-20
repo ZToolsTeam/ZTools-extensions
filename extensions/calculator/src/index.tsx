@@ -16,7 +16,6 @@ import {
   evaluateMathExpression,
   inspectColor,
   convertUnits,
-  convertCalculatorCurrency,
   evaluateDateExpression,
   getCalculatorHistory,
   addCalculatorHistory,
@@ -45,8 +44,6 @@ const DEFAULT_CALC_EXAMPLES = [
   { expr: "0xFF to dec", desc: "十六进制转十进制", category: "进制" },
   { expr: "255 to hex", desc: "十进制转十六进制 (0xFF)", category: "进制" },
   { expr: "255 to bin", desc: "十进制转二进制 (0b11111111)", category: "进制" },
-  { expr: "100 USD in CNY", desc: "全球货币实时汇率估算", category: "汇率" },
-  { expr: "50 EUR to USD", desc: "欧元兑换美元", category: "汇率" },
   { expr: "now + 2 weeks", desc: "未来相对日期与时间推算", category: "日期" },
   { expr: "#3B82F6", desc: "HEX 颜色预览、互转与 WCAG 对比度", category: "色彩" },
   { expr: "rgb(59, 130, 246)", desc: "RGB 格式色彩即时检测", category: "色彩" }
@@ -119,7 +116,7 @@ export default function CalculatorCommand() {
 
   return (
     <List
-      searchBarPlaceholder="输入算式 (如 128*1024, 32px to rem, 0xFF to dec, 100 USD in CNY, now+2w, #3B82F6)..."
+      searchBarPlaceholder="输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"
       onSearchTextChange={setSearchText}
     >
       {/* 1. 色彩速查与双向转换 */}
@@ -212,7 +209,7 @@ export default function CalculatorCommand() {
         </List.Section>
       )}
 
-      {/* 2. 数学运算、单位换算、汇率与日期结果 */}
+      {/* 2. 数学运算、单位换算与日期结果 */}
       {queryResult.type !== "none" && queryResult.type !== "color" && (
         <List.Section title="计算与换算结果">
           {queryResult.error ? (

@@ -1,8 +1,8 @@
 {
   "id": "qr-code",
-  "name": "二维码生成器",
+  "name": "二维码生成",
   "version": "2.0.0",
-  "description": "离线极速二维码生成器，支持自定义纠错等级、SVG/DataURL 导出与历史记录，纯声明式零CSS架构",
+  "description": "输入文字实时生成二维码，可复制图片或保存 PNG，支持 Wi-Fi 二维码与历史记录",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -23,5 +23,14 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "qr",
+    "qrcode",
+    "二维码",
+    "wifi"
+  ],
+  "category": [
+    "效率工具"
+  ]
 }
