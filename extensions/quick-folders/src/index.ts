@@ -3,7 +3,6 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   Clipboard,
   useState,
   useEffect,
@@ -11,11 +10,11 @@ import {
   Toast
 } from '@ztools/declarative-ui'
 import {
-  getDefaultFolders,
-  type FolderItem
+  buildFolders,
+  type FolderItem,
+  type HostFolderPaths
 } from './logic'
-
-declare const ztools: any
+import { getRealSystemPath, openRealPath } from './native-ipc.js'
 
 export default function QuickFoldersCommand() {
   const [searchText, setSearchText] = useState('')
@@ -23,40 +22,24 @@ export default function QuickFoldersCommand() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 探测系统实际环境变量
-    let envOverrides: Record<string, string> | undefined
-    if (typeof process !== 'undefined' && process.env) {
-      envOverrides = {
-        USERPROFILE: process.env.USERPROFILE || 'C:\\Users\\Default',
-        APPDATA: process.env.APPDATA || '',
-        LOCALAPPDATA: process.env.LOCALAPPDATA || '',
-        WINDIR: process.env.WINDIR || 'C:\\Windows',
-        TEMP: process.env.TEMP || ''
+    // 从宿主读取当前用户的真实目录，不再写死 C:\Users\Default
+    const names = ['home', 'desktop', 'downloads', 'documents', 'pictures', 'videos', 'music', 'appData', 'temp'] as const
+    Promise.all(names.map((name) => getRealSystemPath(name))).then((values) => {
+      const paths = Object.fromEntries(names.map((name, i) => [name, values[i] || ''])) as unknown as HostFolderPaths
+      const list = buildFolders(paths)
+      setFolders(list)
+      setLoading(false)
+      if (list.length === 0) {
+        showToast({ style: Toast.Style.Failure, title: '读取系统目录失败', message: '没有读到当前用户的主目录' })
       }
-    }
-    setFolders(getDefaultFolders(envOverrides))
-    setLoading(false)
+    })
   }, [])
 
   async function openFolder(folder: FolderItem) {
-    try {
-      if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.openPath) {
-        await ztools.shell.openPath(folder.path)
-      } else if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.openExternal) {
-        await ztools.shell.openExternal(folder.path)
-      }
-      showToast({
-        style: Toast.Style.Success,
-        title: '已在资源管理器中打开',
-        message: folder.path
-      })
-    } catch (err) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '打开目录失败',
-        message: String(err)
-      })
-    }
+    const ok = await openRealPath(folder.path)
+    showToast(ok
+      ? { style: Toast.Style.Success, title: '已打开目录', message: folder.path }
+      : { style: Toast.Style.Failure, title: '打开目录失败', message: folder.path })
   }
 
   const query = searchText.trim().toLowerCase()
@@ -78,10 +61,7 @@ export default function QuickFoldersCommand() {
       id: f.id,
       title: f.name,
       subtitle: f.path,
-      icon: {
-        source: Icon.Folder,
-        tintColor: f.category === 'personal' ? Color.Yellow : f.category === 'system' ? Color.Blue : Color.Orange
-      },
+      icon: Icon.Folder,
       accessories: [
         {
           text: f.description
@@ -91,7 +71,7 @@ export default function QuickFoldersCommand() {
         title: f.name,
         children: [
           Action({
-            title: '在资源管理器中打开',
+            title: '打开目录',
             icon: Icon.ArrowRight,
             onAction: () => openFolder(f)
           }),
@@ -115,7 +95,7 @@ export default function QuickFoldersCommand() {
 
   return List({
     isLoading: loading,
-    searchBarPlaceholder: '搜索高频目录 (如 桌面, Downloads, AppData, Temp)...',
+    searchBarPlaceholder: '搜索常用目录 (如 桌面, Downloads, Library, Temp)...',
     onSearchTextChange: setSearchText,
     children: [
       personal.length > 0 &&

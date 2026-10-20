@@ -6,10 +6,10 @@ import {
   readRealDirectory,
   openRealPath,
   showRealItemInFolder,
-  trashRealItem
-} from "../shared/native-ipc.js";
+  trashRealItem,
+  computeRealFileSha256
+} from "./native-ipc.js";
 
-declare const process: any;
 declare const Buffer: any;
 
 export function formatBytes(bytes: number): string {
@@ -447,26 +447,6 @@ export async function getFileQuickLook(
           };
         }
       }
-      if (typeof process !== "undefined" && process.versions?.node) {
-        const fs: any = await (new Function('return import("node:fs/promises")')());
-        const entries = await fs.readdir(file.path, { withFileTypes: true });
-        const dirEntries = entries.slice(0, 25).map((e: any) => ({
-          name: e.name,
-          isDir: typeof e.isDirectory === "function" ? e.isDirectory() : false
-        }));
-        return {
-          path: file.path,
-          name: file.name,
-          isDir: true,
-          size: file.size,
-          mtime: file.mtime,
-          category,
-          previewType: "directory",
-          dirEntries,
-          totalLines: entries.length,
-          truncated: entries.length > 25
-        };
-      }
     } catch (err: any) {
       return {
         path: file.path,
@@ -555,36 +535,6 @@ export async function getFileQuickLook(
           };
         }
       }
-      if (typeof process !== "undefined" && process.versions?.node) {
-        const fs: any = await (new Function('return import("node:fs/promises")')());
-        const fileHandle = await fs.open(file.path, "r");
-        try {
-          const maxReadBytes = 64 * 1024; // 64KB
-          const buffer = Buffer.alloc(Math.min(file.size, maxReadBytes));
-          const { bytesRead } = await fileHandle.read(buffer, 0, buffer.length, 0);
-          const rawText = buffer.subarray(0, bytesRead).toString("utf8");
-          const allLines = rawText.split(/\r?\n/);
-          const maxLines = 200;
-          const displayLines = allLines.slice(0, maxLines);
-          const truncated = allLines.length > maxLines || file.size > maxReadBytes;
-
-          return {
-            path: file.path,
-            name: file.name,
-            isDir: false,
-            size: file.size,
-            mtime: file.mtime,
-            category,
-            previewType: ext === "md" || ext === "markdown" ? "markdown" : "code",
-            codeLanguage: EXT_TO_LANG[ext] || "plaintext",
-            content: displayLines.join("\n"),
-            totalLines: allLines.length,
-            truncated
-          };
-        } finally {
-          await fileHandle.close();
-        }
-      }
     } catch (err: any) {
       return {
         path: file.path,
@@ -613,94 +563,18 @@ export async function getFileQuickLook(
 }
 
 /**
- * 计算文件 SHA-256 哈希值
+ * 计算文件 SHA-256 哈希值：由宿主读取文件真实字节计算（filesearch_sha256）。
+ * 宿主算不出来时如实报错，不返回编造的值（以前会按路径拼一个看起来像哈希的字符串）。
  */
-function resolveLocalTestOrRealPath(fs: any, filePath: string): string {
-  if (fs.existsSync(filePath)) return filePath;
-  const stripped = filePath.replace(/^packages[\\/]+declarative-ui[\\/]+/i, "");
-  if (stripped !== filePath && fs.existsSync(stripped)) return stripped;
-  return filePath;
-}
-
-export async function calculateFileSha256(filePath: string): Promise<string> {
-  if (!filePath || typeof filePath !== "string") {
+export async function calculateFileSha256(filePath: string, hostOverride?: any): Promise<string> {
+  if (!filePath || typeof filePath !== "string" || !filePath.trim()) {
     throw new Error("文件路径无效或为空");
   }
-
-  // 1. 若宿主提供底层快速哈希 IPC，优先调用
-  try {
-    const ztools = (globalThis as any).ztools;
-    if (ztools?.fileSearch?.calculateSha256) {
-      const res = await ztools.fileSearch.calculateSha256({ path: filePath });
-      if (res?.sha256) return res.sha256;
-    }
-  } catch {
-    // 降级使用本地流
+  const hash = await computeRealFileSha256(filePath, hostOverride);
+  if (!/^[0-9a-f]{64}$/.test(hash)) {
+    throw new Error("宿主没有返回 SHA-256 结果");
   }
-
-  // 2. 本地 Node.js 流式计算
-  if (typeof process !== "undefined" && process.versions?.node) {
-    const fs: any = await (new Function('return import("node:fs")')());
-    const crypto: any = await (new Function('return import("node:crypto")')());
-    const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
-
-    // 检查文件存在性
-    if (!fs.existsSync(resolvedPath)) {
-      throw new Error(`文件不存在: ${filePath}`);
-    }
-
-    return new Promise((resolve, reject) => {
-      try {
-        const hash = crypto.createHash("sha256");
-        const stream = fs.createReadStream(resolvedPath, { highWaterMark: 64 * 1024 });
-        stream.on("data", (chunk: any) => hash.update(chunk));
-        stream.on("end", () => resolve(hash.digest("hex")));
-        stream.on("error", (err: any) => reject(err));
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  // 3. 兜底模拟值 (根据路径与内容确定性哈希)
-  let sum = 0;
-  for (let i = 0; i < filePath.length; i++) sum = (sum * 31 + filePath.charCodeAt(i)) >>> 0;
-  return sum.toString(16).padStart(64, "a");
-}
-
-/**
- * 计算文件 MD5 哈希值
- */
-export async function calculateFileMd5(filePath: string): Promise<string> {
-  if (!filePath || typeof filePath !== "string") {
-    throw new Error("文件路径无效或为空");
-  }
-
-  if (typeof process !== "undefined" && process.versions?.node) {
-    const fs: any = await (new Function('return import("node:fs")')());
-    const crypto: any = await (new Function('return import("node:crypto")')());
-    const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
-
-    if (!fs.existsSync(resolvedPath)) {
-      throw new Error(`文件不存在: ${filePath}`);
-    }
-
-    return new Promise((resolve, reject) => {
-      try {
-        const hash = crypto.createHash("md5");
-        const stream = fs.createReadStream(resolvedPath, { highWaterMark: 64 * 1024 });
-        stream.on("data", (chunk: any) => hash.update(chunk));
-        stream.on("end", () => resolve(hash.digest("hex")));
-        stream.on("error", (err: any) => reject(err));
-      } catch (err) {
-        reject(err);
-      }
-    });
-  }
-
-  let sum = 0;
-  for (let i = 0; i < filePath.length; i++) sum = (sum * 17 + filePath.charCodeAt(i)) >>> 0;
-  return sum.toString(16).padStart(32, "b");
+  return hash;
 }
 
 /**
@@ -735,15 +609,8 @@ export async function openFile(filePath: string): Promise<FileActionResult> {
       }
     }
 
-    if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await (new Function('return import("node:fs")')());
-      const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
-      if (!fs.existsSync(resolvedPath)) {
-        return { success: false, message: `文件不存在: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
-      }
-    }
-
-    return { success: true, message: `已打开文件: ${filePath}`, path: filePath };
+    // 没有宿主或宿主打开失败：如实报失败，不能假装已打开
+    return { success: false, message: `打开文件失败: ${filePath}`, path: filePath, error: "OPEN_FAILED" };
   } catch (err: any) {
     return { success: false, message: `打开文件失败: ${err.message || String(err)}`, path: filePath, error: "OPEN_FAILED" };
   }
@@ -763,11 +630,10 @@ export async function openWith(filePath: string, appPath?: string): Promise<File
       await launcher.openWith(filePath, appPath);
       return { success: true, message: `已调起打开方式向导`, path: filePath };
     }
-    if (isRealElectronHost()) {
-      await openRealPath(filePath);
+    if (isRealElectronHost() && (await openRealPath(filePath))) {
       return { success: true, message: `已通过系统关联程序打开: ${filePath}`, path: filePath };
     }
-    return { success: true, message: `已通过关联程序打开: ${appPath || "系统默认推荐"}`, path: filePath };
+    return { success: false, message: `打开失败: ${filePath}`, path: filePath, error: "OPEN_WITH_FAILED" };
   } catch (err: any) {
     return { success: false, message: `选择打开方式失败: ${err.message || String(err)}`, path: filePath, error: "OPEN_WITH_FAILED" };
   }
@@ -800,15 +666,7 @@ export async function revealFile(filePath: string): Promise<FileActionResult> {
       }
     }
 
-    if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await (new Function('return import("node:fs")')());
-      const resolvedPath = resolveLocalTestOrRealPath(fs, filePath);
-      if (!fs.existsSync(resolvedPath)) {
-        return { success: false, message: `定位失败，文件不存在: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
-      }
-    }
-
-    return { success: true, message: `已定位: ${filePath}`, path: filePath };
+    return { success: false, message: `定位文件失败: ${filePath}`, path: filePath, error: "REVEAL_FAILED" };
   } catch (err: any) {
     return { success: false, message: `定位文件失败: ${err.message || String(err)}`, path: filePath, error: "REVEAL_FAILED" };
   }
@@ -847,14 +705,7 @@ export async function moveToTrash(filePath: string): Promise<FileActionResult> {
       };
     }
 
-    if (typeof process !== "undefined" && process.versions?.node) {
-      const fs: any = await (new Function('return import("node:fs")')());
-      if (!fs.existsSync(filePath)) {
-        return { success: false, message: `目标文件不存在，无法移入回收站: ${filePath}`, path: filePath, error: "FILE_NOT_FOUND" };
-      }
-    }
-
-    return { success: true, message: `已移入回收站: ${filePath}`, path: filePath };
+    return { success: false, message: `移入回收站失败: ${filePath}`, path: filePath, error: "TRASH_FAILED" };
   } catch (err: any) {
     return { success: false, message: `移入回收站失败: ${err.message || String(err)}`, path: filePath, error: "TRASH_FAILED" };
   }
@@ -875,10 +726,12 @@ export async function copyFileToClipboard(filePath: string): Promise<FileActionR
       return { success: true, message: `已将文件本身复制到剪贴板`, path: filePath };
     }
 
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      await navigator.clipboard.writeText(`file:///${filePath.replace(/\\/g, "/")}`);
+    // 由宿主把文件本身放进系统剪贴板（粘贴到访达 / 资源管理器即是文件）；以前在这里只写了一段 file:/// 文本却提示已复制文件
+    const res = await callHostTransport("clipboard_copy_file", { filePath });
+    if (res.ok) {
+      return { success: true, message: `已将文件本身复制到剪贴板`, path: filePath };
     }
-    return { success: true, message: `已复制文件到剪贴板`, path: filePath };
+    return { success: false, message: res.error || `复制文件失败: ${filePath}`, path: filePath, error: "COPY_FILE_FAILED" };
   } catch (err: any) {
     return { success: false, message: `复制文件失败: ${err.message || String(err)}`, path: filePath, error: "COPY_FILE_FAILED" };
   }
@@ -896,9 +749,10 @@ export async function quickLookFile(filePath: string, hostOverride?: any): Promi
     return { success: true, message: `已调起 Quick Look 原生预览: ${filePath}`, path: filePath };
   }
   return {
-    success: true,
-    message: `已打开快速预览: ${filePath}`,
-    path: filePath
+    success: false,
+    message: res.error || `快速预览失败: ${filePath}`,
+    path: filePath,
+    error: "QUICK_LOOK_FAILED"
   };
 }
 

@@ -8,8 +8,8 @@
  * 4. 零彩色 Emoji 与去彩虹化：100% 单色 SVG 图标、中性灰标签（仅在重命名同名冲突时使用 color: "red" 高危告警）
  */
 
-import { Action, ActionPanel, Icon, List, useEffect, useState } from "../../index.js";
-import { formatBytes, isRealElectronHost } from "../shared/native-ipc.js";
+import { Action, ActionPanel, Icon, List, useEffect, useState } from "@ztools/declarative-ui";
+import { formatBytes, isRealElectronHost } from "./native-ipc.js";
 import {
   RENAME_RULE_PRESETS,
   applyRenameRule,

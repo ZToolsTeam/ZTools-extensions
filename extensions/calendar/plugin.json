@@ -1,8 +1,8 @@
 {
   "id": "calendar",
-  "name": "万年历与节气助手",
-  "version": "2.0.0",
-  "description": "万年历与节气：公历、农历、24节气、节假日、天干地支生肖查询，纯声明式零CSS架构",
+  "name": "日程与会议",
+  "version": "2.0.1",
+  "description": "查看今天和近期日程，一键加入视频会议链接，新建、删除日程并导出 .ics 日历文件，日程保存在本机",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -20,6 +20,7 @@ import {
   filterMemos,
   sanitizeStoredMemos,
   readLegacyMemos,
+  readLegacyNotes,
   MEMOS_STORAGE_KEY,
   type MemoItem
 } from './logic.js'
@@ -74,7 +75,9 @@ export default function MemoCommand() {
           if (!cancelled) setMemos(sanitizeStoredMemos(raw))
           return
         }
-        const legacy = readLegacyMemos()
+        // 旧便签 + 已合并进来的旧「轻量便签记事」(notes) 笔记，按 id 去重
+        const seen = new Set<string>()
+        const legacy = [...readLegacyMemos(), ...readLegacyNotes()].filter(m => (seen.has(m.id) ? false : (seen.add(m.id), true)))
         if (legacy.length > 0) {
           await LocalStorage.setItem(MEMOS_STORAGE_KEY, legacy)
           await showToast(Toast.Style.Success, `已迁移 ${legacy.length} 条旧便签`)

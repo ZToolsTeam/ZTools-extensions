@@ -2,7 +2,7 @@
   "id": "screen-color-picker",
   "name": "屏幕像素级取色放大镜",
   "description": "提供跟随鼠标的像素网格放大镜，一键拾取屏幕任意位置色彩并实时转换 HEX / RGB / HSL / CMYK 与 Tailwind 色值",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -20,12 +20,6 @@
     {
       "id": "windows-electron-any",
       "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
-    {
-      "id": "macos-electron-any",
-      "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }

@@ -7,7 +7,7 @@
  * - 100% 保留 ScreenshotsCommand, ScreenshotDetailView, ScreenshotsManager, defaultScreenshotsManager 导出
  */
 
-import React from "../../index.js";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -18,8 +18,8 @@ import {
   showToast,
   Toast,
   Clipboard
-} from "../../index.js";
-import { useState, useMemo, useEffect } from "../../runtime/hooks.js";
+} from "@ztools/declarative-ui";
+import { useState, useMemo, useEffect } from "@ztools/declarative-ui";
 import {
   ScreenshotItem,
   ScreenshotCategory
@@ -30,7 +30,7 @@ import {
   generateScreenshotThumbnailSvg,
   INITIAL_SCREENSHOTS
 } from "./screenshots-service.js";
-import { isRealElectronHost } from "../shared/native-ipc.js";
+import { isRealElectronHost } from "./native-ipc.js";
 
 export * from "./types.js";
 export * from "./screenshots-service.js";

@@ -11,7 +11,7 @@ import {
   confirmAlert,
   MetricGrid,
   SegmentedControl
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   OFFICIAL_WECHAT_OWNER_RULES,
   WechatCleanCategoryItem,

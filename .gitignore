@@ -1,5 +1,7 @@
 node_modules/
-dist/
+# 编译产物由 CI 从源码构建，不提交
+extensions/**/dist/
+/dist/
 *.log
 .DS_Store
 *.tmp

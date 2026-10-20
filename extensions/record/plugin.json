@@ -2,7 +2,7 @@
   "id": "record",
   "name": "高清屏幕录制与动图工作台",
   "description": "基于桌面复制 API (DXGI Desktop Duplication) 与硬件编码器的低延迟全屏/区域录屏、系统内录与 GIF 转换工具",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -21,12 +21,6 @@
     {
       "id": "windows-electron-any",
       "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
-    {
-      "id": "macos-electron-any",
-      "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }

@@ -16,9 +16,9 @@ import {
   readRealDirectory,
   showRealItemInFolder,
   trashRealItem
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
-export { formatBytes } from '../shared/native-ipc.js'
+export { formatBytes } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string

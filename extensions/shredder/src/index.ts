@@ -8,8 +8,8 @@
  * 4. 系统保护安全锁与二次确认：Windows 系统文件强制设置 checkable: false + lockedReason，主动作配置 confirmAlert 二次确认
  */
 
-import { Action, ActionPanel, Icon, List, useEffect, useState } from "../../index.js";
-import { isRealElectronHost } from "../shared/native-ipc.js";
+import { Action, ActionPanel, Icon, List, useEffect, useState } from "@ztools/declarative-ui";
+import { isRealElectronHost } from "./native-ipc.js";
 import {
   SHRED_CATEGORIES,
   SHRED_STANDARDS,

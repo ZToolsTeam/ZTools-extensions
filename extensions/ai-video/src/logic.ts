@@ -12,7 +12,7 @@ import {
   isRealElectronHost,
   scanRealDirectoryTree,
   showRealItemInFolder
-} from '../shared/native-ipc.js'
+} from './native-ipc.js'
 
 export { formatBytes }
 

@@ -18,7 +18,7 @@ import {
   showRealItemInFolder,
   writeRealClipboardText,
   type NativeInvocationResult
-} from "../shared/native-ipc.js";
+} from "./native-ipc.js";
 
 export { formatBytes };
 export type { NativeInvocationResult };

@@ -13,7 +13,7 @@ import {
   DistributionBar,
   FilterBar,
   SegmentedControl
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   SoftwareItem,
   SoftwareSummaryData,
@@ -36,7 +36,7 @@ import {
   filterSoftwareList
 } from './logic.js'
 
-import { isRealElectronHost, showRealItemInFolder } from '../shared/native-ipc.js'
+import { isRealElectronHost, showRealItemInFolder } from './native-ipc.js'
 
 export default function SoftwareManagerCommand() {
   const inRealHost = isRealElectronHost()

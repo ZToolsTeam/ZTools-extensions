@@ -3,7 +3,7 @@
  * 支持一键切换 Windows 11 经典完整右键菜单，以及真实扫描与管理文件/文件夹/桌面背景右键 Shell 扩展项
  */
 
-import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from '../shared/native-ipc.js'
+import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string

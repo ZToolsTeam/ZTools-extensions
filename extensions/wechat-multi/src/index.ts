@@ -8,7 +8,7 @@ import {
   useEffect,
   showToast,
   Toast
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   type WechatInstanceItem,
   type WechatFilterMode,

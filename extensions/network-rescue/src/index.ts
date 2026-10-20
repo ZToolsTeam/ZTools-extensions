@@ -9,7 +9,7 @@ import {
   useEffect,
   showToast,
   Toast
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   type NetworkRescueItem,
   type RescueFilterMode,

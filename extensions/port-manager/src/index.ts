@@ -3,7 +3,6 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   Clipboard,
   useState,
   useEffect,
@@ -11,56 +10,31 @@ import {
   Toast
 } from '@ztools/declarative-ui'
 import {
-  parseNetstatOutput,
+  normalizeHostPorts,
   isProtectedPid,
   type PortRecord
 } from './logic'
-
-declare const ztools: any
-
-const MOCK_NETSTAT = `
-  TCP    0.0.0.0:80             0.0.0.0:0              LISTENING       1044
-  TCP    0.0.0.0:443            0.0.0.0:0              LISTENING       1044
-  TCP    0.0.0.0:3000           0.0.0.0:0              LISTENING       14220
-  TCP    0.0.0.0:5173           0.0.0.0:0              LISTENING       21340
-  TCP    127.0.0.1:9222         0.0.0.0:0              LISTENING       8412
-  TCP    127.0.0.1:11434        0.0.0.0:0              LISTENING       1908
-  TCP    0.0.0.0:3306           0.0.0.0:0              LISTENING       3210
-  TCP    0.0.0.0:6379           0.0.0.0:0              LISTENING       4512
-  UDP    0.0.0.0:5353           *:*                                    2300
-`
+import { callHostTransport } from './native-ipc.js'
 
 export default function PortManagerCommand() {
   const [searchText, setSearchText] = useState('')
   const [records, setRecords] = useState<PortRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
 
   async function loadPorts() {
     setLoading(true)
-    try {
-      let output = ''
-      if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.exec) {
-        try {
-          const res = await ztools.shell.exec('netstat -ano')
-          output = typeof res === 'string' ? res : res.stdout || ''
-        } catch {
-          // 回退
-        }
-      }
-      if (!output) {
-        output = MOCK_NETSTAT
-      }
-      const parsed = parseNetstatOutput(output)
-      setRecords(parsed)
-    } catch (err) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '端口扫描失败',
-        message: String(err)
-      })
-    } finally {
-      setLoading(false)
+    const res = await callHostTransport<unknown>('process_list_ports', {})
+    if (res.ok) {
+      setRecords(normalizeHostPorts(res.data))
+      setLoadError('')
+    } else {
+      // 读不到就如实显示读取失败，不拿示例数据充数
+      setRecords([])
+      setLoadError(res.error || '读取端口列表失败')
+      showToast({ style: Toast.Style.Failure, title: '读取端口列表失败', message: res.error })
     }
+    setLoading(false)
   }
 
   useEffect(() => {
@@ -68,7 +42,7 @@ export default function PortManagerCommand() {
   }, [])
 
   async function terminateProcess(record: PortRecord) {
-    if (isProtectedPid(record.pid)) {
+    if (record.pid <= 0 || isProtectedPid(record.pid)) {
       showToast({
         style: Toast.Style.Failure,
         title: '系统关键进程',
@@ -76,24 +50,17 @@ export default function PortManagerCommand() {
       })
       return
     }
-
-    try {
-      if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.exec) {
-        await ztools.shell.exec(`taskkill /F /PID ${record.pid}`)
-      }
-      setRecords(prev => prev.filter(r => r.pid !== record.pid))
-      showToast({
-        style: Toast.Style.Success,
-        title: `已释放端口 :${record.localPort}`,
-        message: `成功终止 PID ${record.pid}`
-      })
-    } catch (err) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '释放端口失败',
-        message: String(err)
-      })
+    const res = await callHostTransport<unknown>('process_kill', { pid: record.pid, force: true })
+    if (!res.ok) {
+      showToast({ style: Toast.Style.Failure, title: '释放端口失败', message: res.error })
+      return
     }
+    showToast({
+      style: Toast.Style.Success,
+      title: `已释放端口 :${record.localPort}`,
+      message: `已结束 ${record.processName} (PID ${record.pid})`
+    })
+    await loadPorts()
   }
 
   const query = searchText.trim().toLowerCase()
@@ -116,30 +83,14 @@ export default function PortManagerCommand() {
     onSearchTextChange: setSearchText,
     children: [
       List.Section({
-        title: `监听中的端口 (${filtered.length}/${records.length})`,
+        title: loadError ? `读取失败：${loadError}` : `占用中的端口 (${filtered.length}/${records.length})`,
         children: filtered.map(rec =>
           List.Item({
             id: rec.id,
             title: `:${rec.localPort}`,
             subtitle: `${rec.processName} (PID: ${rec.pid})`,
-            icon: {
-              source: rec.state === 'LISTENING' ? Icon.CircleProgress : Icon.CheckCircle,
-              tintColor: rec.protocol === 'TCP' ? Color.Blue : Color.Orange
-            },
-            accessories: [
-              {
-                tag: {
-                  value: rec.protocol,
-                  color: rec.protocol === 'TCP' ? Color.Blue : Color.Orange
-                }
-              },
-              {
-                tag: {
-                  value: rec.state,
-                  color: rec.state === 'LISTENING' ? Color.Green : Color.SecondaryText
-                }
-              }
-            ],
+            icon: Icon.Plug,
+            accessories: [{ tag: { value: rec.protocol } }, { text: rec.localAddress }],
             actions: ActionPanel({
               title: `端口 :${rec.localPort}`,
               children: [

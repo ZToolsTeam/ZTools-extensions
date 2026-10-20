@@ -1,4 +1,4 @@
-import { LocalStorage } from "../../api/storage.js";
+import { LocalStorage } from "@ztools/declarative-ui";
 import {
   ScreenshotItem,
   ScreenshotCategory,
@@ -14,7 +14,7 @@ import {
   showRealItemInFolder,
   trashRealItem,
   writeRealClipboardText
-} from "../shared/native-ipc.js";
+} from "./native-ipc.js";
 
 const PINNED_STORAGE_KEY = "@ztools/screenshots/pinned";
 

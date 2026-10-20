@@ -4,10 +4,10 @@
  * 包含电源与会话、进程与桌面治理、音频与硬件控制、维护与通知 4 大分类 20+ 项指令
  */
 
-import { Icon } from "../../constants/icons.js";
-import { getDeclarativeBridge } from "../../api/bridge.js";
-import { showToast, Toast } from "../../api/toast.js";
-import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
+import { Icon } from "@ztools/declarative-ui";
+import { getDeclarativeBridge } from "@ztools/declarative-ui";
+import { showToast, Toast } from "@ztools/declarative-ui";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 
 export type SystemCategory = 'power' | 'apps' | 'audio' | 'maintenance' | 'desktop' | 'process';
 

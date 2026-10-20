@@ -7,7 +7,7 @@
  * - 对接主进程 `calendar_upcoming_events`, `calendar_list_events`, `calendar_create_event`, `calendar_delete_event`, `calendar_export_ics` IPC
  */
 
-import React from "../../index.js";
+import React from "@ztools/declarative-ui";
 import {
   List,
   Detail,
@@ -20,9 +20,9 @@ import {
   showToast,
   Toast,
   useNavigation
-} from "../../index.js";
-import { useState, useEffect, useMemo } from "../../runtime/hooks.js";
-import { callHostTransport, isRealElectronHost } from "../shared/native-ipc.js";
+} from "@ztools/declarative-ui";
+import { useState, useEffect, useMemo } from "@ztools/declarative-ui";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 
 export type CalendarFilterScope = "all" | "upcoming" | "meetings" | "today";
 
@@ -189,7 +189,7 @@ export async function createCalendarEvent(
     title: cleanTitle,
     startTime: (input.startTime || "10:00").trim(),
     endTime: (input.endTime || "11:00").trim(),
-    location: (input.location || "Online").trim(),
+    location: (input.location || "").trim(),
     conferenceUrl: input.conferenceUrl?.trim() || undefined,
     calendarName: (input.calendarName || "Work").trim(),
     notes: (input.notes || "").trim(),
@@ -206,6 +206,8 @@ export async function createCalendarEvent(
       memoryCalendarEvents = [merged, ...memoryCalendarEvents];
       return merged;
     }
+    // 宿主没存进去就如实报错，不能当作创建成功（否则关掉插件日程就没了）
+    throw new Error(`CREATE_EVENT_FAILED: ${res.error || "宿主没有返回日程 ID"}`);
   }
 
   memoryCalendarEvents = [newEvent, ...memoryCalendarEvents];
@@ -219,11 +221,14 @@ export async function deleteCalendarEvent(
   const cleanId = (id || "").trim();
   if (!cleanId) return false;
   if (hostOverride || isRealElectronHost()) {
-    await callHostTransport("calendar_delete_event", { id: cleanId }, hostOverride);
+    const res = await callHostTransport("calendar_delete_event", { id: cleanId }, hostOverride);
+    if (!res.ok) return false;
+    memoryCalendarEvents = memoryCalendarEvents.filter((e) => e.id !== cleanId);
+    return true;
   }
   const before = memoryCalendarEvents.length;
   memoryCalendarEvents = memoryCalendarEvents.filter((e) => e.id !== cleanId);
-  return memoryCalendarEvents.length < before || true;
+  return memoryCalendarEvents.length < before;
 }
 
 export async function exportCalendarIcs(
@@ -255,7 +260,7 @@ export function CreateCalendarEventForm({
   const [startTime, setStartTime] = useState("15:00");
   const [endTime, setEndTime] = useState("16:00");
   const [calendarName, setCalendarName] = useState("Work");
-  const [location, setLocation] = useState("Feishu / Zoom");
+  const [location, setLocation] = useState("");
   const [conferenceUrl, setConferenceUrl] = useState("");
   const [notes, setNotes] = useState("");
   const { pop } = useNavigation();
@@ -387,7 +392,11 @@ export function CalendarCommand() {
   }, [events, searchText, scope]);
 
   const handleDelete = async (evt: CalendarEventItem) => {
-    await deleteCalendarEvent(evt.id);
+    const ok = await deleteCalendarEvent(evt.id);
+    if (!ok) {
+      await showToast(Toast.Style.Failure, "删除日程失败", evt.title);
+      return;
+    }
     setEvents((prev) => prev.filter((item) => item.id !== evt.id));
     await showToast(Toast.Style.Success, `已删除日程: ${evt.title}`);
   };

@@ -1,10 +1,10 @@
-import { LocalStorage } from "../../api/storage.js";
-import { getDeclarativeBridge } from "../../api/bridge.js";
+import { LocalStorage } from "@ztools/declarative-ui";
+import { getDeclarativeBridge } from "@ztools/declarative-ui";
 import {
   callHostTransport,
   invokePluginService,
   isRealElectronHost
-} from "../shared/native-ipc.js";
+} from "./native-ipc.js";
 
 export interface RGB {
   r: number;

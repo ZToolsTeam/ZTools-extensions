@@ -9,7 +9,7 @@ import {
   showToast,
   Toast,
   FilterBar
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   INITIAL_RECORDED_VIDEOS,
   RECORD_SOURCE_MODES,
@@ -23,7 +23,7 @@ import {
   startScreenRecording,
   stopScreenRecording
 } from './logic.js'
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

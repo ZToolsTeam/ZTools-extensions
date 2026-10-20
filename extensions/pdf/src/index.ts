@@ -10,7 +10,7 @@ import {
   Toast,
   confirmAlert,
   FilterBar
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   CapabilityActionItem,
   PDF_TOOLBOX_MODES,
@@ -22,7 +22,7 @@ import {
   openPdfFileLocation,
   openPdfDocument
 } from './logic.js'
-import { isRealElectronHost } from '../shared/native-ipc.js'
+import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 

@@ -1,7 +1,7 @@
 {
   "id": "google-auth",
   "name": "2FA 验证码",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "两步验证动态口令（TOTP），支持粘贴 otpauth 链接添加，密钥保存在本机",
   "author": "ZTools Team",
   "entry": "dist/index.js",

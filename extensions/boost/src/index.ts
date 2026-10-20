@@ -12,7 +12,7 @@ import {
   DistributionBar,
   FilterBar,
   SegmentedControl
-} from '../../index.js'
+} from '@ztools/declarative-ui'
 import {
   BoostCandidateItem,
   BoostSnapshot,
@@ -24,7 +24,7 @@ import {
   openBoostItemLocation
 } from './logic.js'
 
-import { isRealElectronHost, trashRealItem } from '../shared/native-ipc.js'
+import { isRealElectronHost, trashRealItem } from './native-ipc.js'
 
 const INIT_BOOST_SNAPSHOT: BoostSnapshot = {
   totalMemoryBytes: 32 * 1024 * 1024 * 1024,

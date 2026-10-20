@@ -3,7 +3,7 @@
  * 针对 Windows / macOS 常见断网故障提供 8 大真实诊断与一键修复能力
  */
 
-import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from '../shared/native-ipc.js'
+import { callHostTransport, invokePluginService, isRealElectronHost, invokeDllPluginCapability } from './native-ipc.js'
 
 export interface CapabilityActionItem {
   id: string

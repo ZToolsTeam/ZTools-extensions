@@ -18,7 +18,7 @@ import {
   scanRealDirectoryTree,
   showRealItemInFolder,
   type NativeInvocationResult
-} from "../shared/native-ipc.js";
+} from "./native-ipc.js";
 
 export { formatBytes };
 export type { NativeInvocationResult };
