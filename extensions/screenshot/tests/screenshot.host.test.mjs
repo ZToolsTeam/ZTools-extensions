@@ -44,7 +44,19 @@ async function withRealElectronWindow(handlers, fn) {
   }
 }
 
-test('P34 screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴板回贴/复制与 OcrPlugin 识别（清零假 OCR 文本）', async () => {
+// OcrPlugin 只有 Windows DLL 实现：涉及 OCR 的用例按 Windows 平台运行
+async function asWindows(fn) {
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { platform: 'Win32', userAgent: 'Windows NT 10.0' }, configurable: true, writable: true })
+  try {
+    return await fn()
+  } finally {
+    if (desc) Object.defineProperty(globalThis, 'navigator', desc)
+    else delete globalThis.navigator
+  }
+}
+
+test('P34 screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴板回贴/复制与 OcrPlugin 识别（清零假 OCR 文本）', () => asWindows(async () => {
   // 1. 构造真实 320x180 PNG 头部字节流并验证 parseImageDimensionsFromBytes
   const pngHeader = new Uint8Array([
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -69,17 +81,26 @@ test('P34 screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴�
           modifiedAt: 1700000005000
         }
       ],
-      filesystem_read_file: ({ path: p }) => {
-        if (p === 'D:\\RealShots\\capture_real.png') return pngBase64
-        return ''
+      // 宿主真实形状：filesystem_read_file_chunk / filesystem_read_file 返回 { success, content(base64) }
+      filesystem_read_file_chunk: ({ path: p, offset, length }) => {
+        assert.equal(offset, 0)
+        assert.ok(length > 0 && length <= 2 * 1024 * 1024)
+        if (p === 'D:\\RealShots\\capture_real.png') return { success: true, content: pngBase64 }
+        throw new Error('路径未由当前窗口授权')
       },
-      clipboard_hide_and_paste_file: ({ filePath }) => {
-        assert.equal(filePath, 'D:\\RealShots\\capture_real.png')
-        return { ok: true }
+      filesystem_read_file: ({ path: p, encoding }) => {
+        assert.equal(encoding, 'base64')
+        if (p === 'D:\\RealShots\\capture_real.png') return { success: true, content: pngBase64 }
+        throw new Error('路径未由当前窗口授权')
       },
-      clipboard_copy_file: ({ filePath }) => {
-        assert.equal(filePath, 'D:\\RealShots\\capture_real.png')
-        return { ok: true }
+      clipboard_hide_and_paste_image: (params) => {
+        assert.deepEqual(Object.keys(params), ['image'])
+        assert.equal(params.image, pngBase64)
+        return { success: true }
+      },
+      clipboard_copy_image: (params) => {
+        assert.deepEqual(Object.keys(params), ['image'])
+        return { success: true }
       },
       dllplugin_call: ({ plugin, func, params }) => {
         assert.equal(plugin, 'OcrPlugin')
@@ -105,15 +126,15 @@ test('P34 screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴�
       assert.ok(!shot.ocrText.includes('系统自动提取文件文本'))
       assert.equal(shot.ocrText, '')
 
-      // 校验 pasteToActiveWindow 调用 clipboard_hide_and_paste_file
+      // 校验 pasteToActiveWindow 读出图片后调用 clipboard_hide_and_paste_image
       const pasteRes = await mgr.pasteToActiveWindow(shot)
       assert.equal(pasteRes.success, true)
-      assert.ok(calls.some(c => c.channel === 'clipboard_hide_and_paste_file'))
+      assert.ok(calls.some(c => c.channel === 'clipboard_hide_and_paste_image'))
 
-      // 校验 copyImageToClipboard 调用 clipboard_copy_file
+      // 校验 copyImageToClipboard 以图片格式写入剪贴板
       const copyRes = await mgr.copyImageToClipboard(shot)
       assert.equal(copyRes.success, true)
-      assert.ok(calls.some(c => c.channel === 'clipboard_copy_file'))
+      assert.ok(calls.some(c => c.channel === 'clipboard_copy_image'))
 
       // 校验 extractOcr 调用 OcrPlugin.recognizeImage 并写入剪贴板
       const ocrText = await mgr.extractOcr(shot)
@@ -154,4 +175,4 @@ test('P34 screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴�
       )
     }
   )
-})
+}))

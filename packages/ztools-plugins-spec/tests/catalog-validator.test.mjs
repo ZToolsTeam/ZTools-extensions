@@ -1,8 +1,17 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import {
+  validatePluginManifest,
+  buildPlatformTargets,
+  getManifestPlatforms,
+  describePlatforms,
   validateCatalogPluginItem,
-  validateStoreCatalog
+  validateStoreCatalog,
+  PERMISSIONS,
+  HIGH_RISK_PERMISSIONS
 } from '../src/validator.js'
 
 describe('Store Catalog & Plugin Item Validator (Beyond Happy Path)', () => {
@@ -186,6 +195,96 @@ describe('Store Catalog & Plugin Item Validator (Beyond Happy Path)', () => {
       assert.equal(result.totalValid, 2)
       assert.equal(result.errors.length, 1)
       assert.ok(result.errors[0].includes('plugins[1] 校验失败'))
+    })
+  })
+
+  describe('validatePluginManifest & Platform Helpers', () => {
+    it('process 权限（结束本机任意进程）可声明；JSON Schema 枚举与校验器权限列表保持一致', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-spec-test-'))
+      try {
+        fs.mkdirSync(path.join(tmpDir, 'dist'), { recursive: true })
+        fs.writeFileSync(path.join(tmpDir, 'dist/index.js'), 'export default {}')
+        fs.writeFileSync(path.join(tmpDir, 'icon.png'), 'png')
+        const manifest = {
+          id: 'port-manager',
+          name: '端口管理',
+          version: '1.0.2',
+          description: '结束占用端口的进程',
+          author: { name: 'ZTools' },
+          entry: 'dist/index.js',
+          icon: 'icon.png',
+          permissions: ['system', 'process'],
+          targets: buildPlatformTargets(['windows', 'macos']),
+          nativeComponents: [],
+          mode: 'view'
+        }
+        const res = validatePluginManifest(manifest, { baseDir: tmpDir })
+        assert.equal(res.valid, true, res.errors.join('; '))
+        // 大小写不同的近似名不算
+        const typo = validatePluginManifest({ ...manifest, permissions: ['Process'] }, { baseDir: tmpDir })
+        assert.ok(typo.errors.some((e) => e.includes('未知的权限声明')))
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+      const schema = JSON.parse(fs.readFileSync(new URL('../plugin.schema.json', import.meta.url), 'utf8'))
+      assert.deepEqual([...schema.properties.permissions.items.enum].sort(), [...PERMISSIONS].sort())
+      assert.ok(HIGH_RISK_PERMISSIONS.has('process'))
+    })
+
+    it('Happy Case: 校验合法的 plugin.json 与跨平台 targets', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-spec-test-'))
+      try {
+        fs.mkdirSync(path.join(tmpDir, 'dist'), { recursive: true })
+        fs.writeFileSync(path.join(tmpDir, 'dist/index.js'), 'export default {}')
+        fs.writeFileSync(path.join(tmpDir, 'icon.png'), 'png')
+
+        const targets = buildPlatformTargets(['windows', 'macos'])
+        const manifest = {
+          id: 'demo-plugin',
+          name: '演示插件',
+          version: '1.0.0',
+          description: '标准跨平台插件',
+          author: { name: 'ZTools' },
+          entry: 'dist/index.js',
+          icon: 'icon.png',
+          permissions: ['clipboard', 'network'],
+          targets,
+          nativeComponents: [],
+          mode: 'view',
+          features: [{ code: 'demo', explain: '打开演示', mode: 'view' }]
+        }
+
+        const res = validatePluginManifest(manifest, { baseDir: tmpDir })
+        assert.equal(res.valid, true, res.errors.join('; '))
+        assert.deepEqual(getManifestPlatforms(manifest), ['windows', 'macos'])
+        assert.equal(describePlatforms(['windows', 'macos']), '跨平台')
+        assert.equal(describePlatforms(['windows']), '仅 Windows')
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
+
+    it('安全与边界拦截: 拦截 entry/icon/main 路径穿越、非法权限与缺失 targets', () => {
+      const badManifest = {
+        id: 'evil-plugin',
+        name: '恶意插件',
+        version: '1.0.0',
+        description: '测试路径穿越与非法权限',
+        author: 'attacker',
+        entry: '../../etc/passwd.js',
+        icon: '../outside.png',
+        main: '../../evil.js',
+        permissions: ['root-access', 'clipboard', 'clipboard'],
+        mode: 'invalid-mode'
+      }
+      const res = validatePluginManifest(badManifest)
+      assert.equal(res.valid, false)
+      assert.ok(res.errors.some((e) => e.includes('entry 路径不合法')))
+      assert.ok(res.errors.some((e) => e.includes('icon 路径不合法')))
+      assert.ok(res.errors.some((e) => e.includes('main 路径不合法')))
+      assert.ok(res.errors.some((e) => e.includes('未知的权限声明')))
+      assert.ok(res.errors.some((e) => e.includes('重复声明的权限')))
+      assert.ok(res.errors.some((e) => e.includes('缺少必填字段: targets')))
     })
   })
 })

@@ -70,7 +70,7 @@ export function filterAndSearchTodos(
     list = list.filter((item) => item.title.toLowerCase().includes(q));
   }
 
-  // 3. 排序：未完成在前（高优先级排前），已完成在后
+  // 3. 排序：有关键词时标题完全相同的排最前；其余未完成在前（高优先级排前），已完成在后
   const priorityWeight: Record<TodoPriority, number> = {
     high: 3,
     medium: 2,
@@ -78,6 +78,11 @@ export function filterAndSearchTodos(
   };
 
   return [...list].sort((a, b) => {
+    if (q) {
+      const aExact = isSameTitle(a.title, q);
+      const bExact = isSameTitle(b.title, q);
+      if (aExact !== bExact) return aExact ? -1 : 1;
+    }
     if (a.completed !== b.completed) {
       return a.completed ? 1 : -1;
     }
@@ -85,6 +90,25 @@ export function filterAndSearchTodos(
     if (diff !== 0) return diff;
     return b.createdAt - a.createdAt;
   });
+}
+
+function isSameTitle(title: string, query: string): boolean {
+  return title.trim().toLowerCase() === query.trim().toLowerCase();
+}
+
+/** 搜索框里只有空白字符：此时既不能添加，也不能让回车改动任何已有待办 */
+export function isBlankQuery(searchText: string): boolean {
+  return typeof searchText === "string" && searchText.length > 0 && !searchText.trim();
+}
+
+/**
+ * 回车快速添加的标题：输入非空、且当前可见列表里没有标题完全相同（忽略大小写）的待办时返回去空格后的标题，否则返回 null。
+ * 只是部分匹配已有待办时照样可以添加，「添加待办」条目排在第一位，回车不会误改已有待办。
+ */
+export function quickAddTitle(visible: TodoItem[], searchText: string): string | null {
+  const title = (searchText || "").trim();
+  if (!title) return null;
+  return visible.some((item) => isSameTitle(item.title, title)) ? null : title;
 }
 
 export const TODOS_STORAGE_KEY = "todo.items.v1";

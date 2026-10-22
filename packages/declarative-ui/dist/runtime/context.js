@@ -24,12 +24,65 @@ export class DeclarativeRenderInstance {
     onRenderEmptyCallback;
     onRenderEventCallback;
     navigationHandler;
+    popoutSeed = null;
+    popoutRegistry = new Map();
     constructor(component, options) {
         this.component = component;
         this.onUpdateCallback = options?.onUpdate;
         this.onRenderEmptyCallback = options?.onRenderEmpty;
         this.onRenderEventCallback = options?.onRenderEvent;
         this.navigationHandler = options?.navigation;
+        const seed = options?.handoffSeed;
+        if (seed && typeof seed === "object" && !Array.isArray(seed)) {
+            // 拷一份 key 表：宿主传入的对象不会被改动，也不受原型链上的属性影响
+            this.popoutSeed = new Map(Object.entries(seed));
+        }
+    }
+    /** 取出并删除某个 key 的交接初值（只用一次） */
+    consumePopoutSeed(key) {
+        if (!this.popoutSeed || !this.popoutSeed.has(key))
+            return { found: false };
+        const value = this.popoutSeed.get(key);
+        this.popoutSeed.delete(key);
+        return { found: true, value };
+    }
+    /** 登记 usePopoutState；同一实例里 key 重复时只保留第一个，返回 false */
+    registerPopoutState(key, index, paths) {
+        const existing = this.popoutRegistry.get(key);
+        if (existing && existing.index !== index)
+            return false;
+        this.popoutRegistry.set(key, { index, paths });
+        return true;
+    }
+    /** 读取当前登记的状态最新值（独立窗口弹出前调用） */
+    collectPopoutState() {
+        const entries = [];
+        const rejected = [];
+        for (const [key, registration] of this.popoutRegistry) {
+            const hook = this.hooks[registration.index];
+            if (!hook || hook.type !== "state")
+                continue;
+            const value = hook.value;
+            let paths = [];
+            if (typeof registration.paths === "function") {
+                let raw;
+                try {
+                    raw = registration.paths(value);
+                }
+                catch (err) {
+                    console.warn(`[usePopoutState] "${key}" 的 paths 计算失败，该项不带到独立窗口:`, err);
+                    rejected.push(key);
+                    continue;
+                }
+                if (raw !== undefined && raw !== null && !Array.isArray(raw)) {
+                    rejected.push(key);
+                    continue;
+                }
+                paths = Array.isArray(raw) ? raw.filter((item) => typeof item === "string") : [];
+            }
+            entries.push({ key, value, paths });
+        }
+        return { entries, rejected };
     }
     get hookIndex() {
         return this.currentHookIndex;
@@ -78,6 +131,8 @@ export class DeclarativeRenderInstance {
             }
             const newDescriptor = rawResult;
             const isUnchanged = this.latestDescriptor !== null && areViewTreesEqual(this.latestDescriptor, newDescriptor);
+            // 始终更新 latestDescriptor，防止因 JSON.stringify 忽略函数引用导致事件回调闭包陈旧
+            this.latestDescriptor = newDescriptor;
             if (isUnchanged) {
                 this.emptyRenderCount++;
                 this.onRenderEmptyCallback?.();
@@ -91,7 +146,6 @@ export class DeclarativeRenderInstance {
             else {
                 this.emptyRenderCount = 0;
                 this.hasWarnedInfiniteLoop = false;
-                this.latestDescriptor = newDescriptor;
                 this.onUpdateCallback?.(this.latestDescriptor);
                 this.onRenderEventCallback?.({ type: "renderTree", descriptor: this.latestDescriptor });
             }
@@ -145,6 +199,8 @@ export class DeclarativeRenderInstance {
         }
         this.hooks = [];
         this.latestDescriptor = null;
+        this.popoutRegistry.clear();
+        this.popoutSeed = null;
     }
 }
 export let currentInstance = null;

@@ -160,3 +160,47 @@ export function readLegacyMemos(storage: { getItem(key: string): string | null }
     return []
   }
 }
+
+/** 一次保存操作：只描述「改了哪一条」，写入时套用到存储里的最新列表上 */
+export type MemoMutation =
+  | { type: 'create'; item: MemoItem }
+  | { type: 'update'; id: string; updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag'>>; fallback: MemoItem }
+  | { type: 'delete'; id: string }
+
+/**
+ * 判断存储读回的值能否当作便签列表使用：
+ * - undefined：还没有存过（可以迁移旧数据或从空列表开始）
+ * - 数组：正常；无法识别的条目不显示，但写回时原样保留
+ * - 其他（截断的 JSON 读回成字符串、null、对象等）：数据已损坏，不能在它上面写入，否则会覆盖原数据
+ */
+export function isWritableMemoStore(raw: unknown): raw is unknown[] | undefined {
+  return raw === undefined || Array.isArray(raw)
+}
+
+/**
+ * 把一次保存操作套用到存储里的最新列表（而不是本窗口内存里的旧快照），
+ * 其他窗口刚写入的便签、以及本插件识别不了的条目都原样保留
+ */
+export function applyMemoMutation(latest: unknown[] | undefined, mutation: MemoMutation): unknown[] {
+  const base = latest ?? []
+  const matches = (entry: unknown, id: string) => !!entry && typeof entry === 'object' && (entry as Record<string, unknown>).id === id
+  switch (mutation.type) {
+    case 'create':
+      return [mutation.item, ...base]
+    case 'update': {
+      const now = Date.now()
+      let found = false
+      const next = base.map((entry) => {
+        if (!matches(entry, mutation.id)) return entry
+        found = true
+        return { ...(entry as Record<string, unknown>), ...mutation.updates, updateTime: now }
+      })
+      // 正在编辑的便签已在其他窗口删除：保留用户刚输入的内容，不让它丢失
+      return found ? next : [{ ...mutation.fallback, ...mutation.updates, updateTime: now }, ...base]
+    }
+    case 'delete':
+      return base.filter((entry) => !matches(entry, mutation.id))
+    default:
+      return base
+  }
+}

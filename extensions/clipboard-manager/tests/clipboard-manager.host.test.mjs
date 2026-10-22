@@ -65,14 +65,17 @@ test('P11 clipboard-history: 真实 SQLite 查询、系统剪贴板同步与空�
   assert.equal(history.some((i) => i.id === 'clip-1'), false)
 
   // 同步当前系统剪贴板真实文本
-  const synced = await syncCurrentSystemClipboard(history, mockHost)
+  // 宿主历史库没有记下这条（模拟宿主采集未命中），插件存进自己的存储，不丢
+  const synced = await syncCurrentSystemClipboard(history, mockHost, { attempts: 1 })
   assert.equal(synced.added, true)
   assert.equal(synced.item?.content, 'npm run test:real-layout1')
+  assert.ok(synced.items.some((i) => i.id === 'sql-clip-101'), '宿主记录仍在列表里')
 
   // 正常切换置顶、删除与清空非置顶
   assert.equal(await toggleClipboardItemPin('sql-clip-101', mockHost), true)
   assert.equal(await deleteClipboardItem('sql-clip-101', mockHost), true)
-  assert.equal(await clearUnpinnedClipboardHistory(mockHost), 3)
+  // 宿主清掉 3 条 + 插件存储里刚同步的 1 条未置顶记录
+  assert.equal(await clearUnpinnedClipboardHistory(mockHost), 4)
 
   // 异常场景 1：空 ID 置顶或删除返回 false
   assert.equal(await toggleClipboardItemPin('', mockHost), false)

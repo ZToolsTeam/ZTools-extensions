@@ -3,6 +3,7 @@ export * from "./constants/colors.js";
 export * from "./constants/toast.js";
 export * from "./descriptors/index.js";
 export * from "./api/index.js";
+export { terminateProcess } from "./api/process.js";
 export * from "./runtime/index.js";
 export * from "./utils/index.js";
 import { createElement, Fragment } from "./descriptors/factory.js";

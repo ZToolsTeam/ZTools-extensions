@@ -1,7 +1,7 @@
 {
   "name": "@ztools/plugin-quick-folders",
   "version": "1.0.0",
-  "description": "Windows 高频系统目录与常用文件夹快速直达",
+  "description": "桌面、下载、文档、应用数据与临时目录等常用文件夹一键直达（Windows / macOS）",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

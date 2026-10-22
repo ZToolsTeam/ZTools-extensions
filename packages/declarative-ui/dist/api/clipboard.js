@@ -2,12 +2,14 @@ import { getDeclarativeBridge } from "./bridge.js";
 let memoryClipboard = "";
 export const Clipboard = {
     /**
-     * 复制内容到剪贴板
+     * 复制内容到剪贴板。宿主写入失败（内容为空、超过上限、系统剪贴板被占用等）时抛出错误，
+     * 调用方不要在失败时提示“已复制”。
      */
     async copy(content) {
         const text = typeof content === "object" && content !== null ? content.text ?? "" : String(content);
         const bridge = getDeclarativeBridge();
         if (bridge?.copyToClipboard) {
+            // 失败直接上抛，不更新内存剪贴板
             await bridge.copyToClipboard(text);
             memoryClipboard = text;
             return;
@@ -37,6 +39,10 @@ export const Clipboard = {
             await bridge.pasteToActive(text);
             return;
         }
+        if (bridge) {
+            // 宿主不支持粘贴到前台应用：内容已复制，但不能让插件以为已经粘贴
+            throw Object.assign(new Error("当前宿主不支持粘贴到前台应用，内容已复制到剪贴板"), { code: "NOT_SUPPORTED" });
+        }
     },
     /**
      * 读取剪贴板文本
@@ -62,6 +68,26 @@ export const Clipboard = {
      * 清空剪贴板
      */
     async clear() {
-        await this.copy("");
+        const bridge = getDeclarativeBridge();
+        if (bridge?.clearClipboard) {
+            await bridge.clearClipboard();
+            memoryClipboard = "";
+            return;
+        }
+        if (bridge?.copyToClipboard) {
+            // 旧宿主没有 clearClipboard：沿用写入空串
+            await bridge.copyToClipboard("");
+            memoryClipboard = "";
+            return;
+        }
+        if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+            try {
+                await navigator.clipboard.writeText("");
+            }
+            catch {
+                // 回退到内存剪贴板
+            }
+        }
+        memoryClipboard = "";
     }
 };

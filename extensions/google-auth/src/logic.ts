@@ -1,4 +1,4 @@
-import { hmac } from "./hash.js";
+import { hmac, digest, bytesToHex } from "./hash.js";
 
 export type OTPAlgorithm = "SHA1" | "SHA256" | "SHA512";
 
@@ -139,7 +139,7 @@ export function getRemainingSeconds(period = 30, nowMs = Date.now()): number {
 }
 
 export interface ParsedOTPAuth {
-  type: "totp" | "hotp";
+  type: "totp";
   secret: string;
   name: string;
   issuer: string;
@@ -160,7 +160,11 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
   try {
     const parsedUrl = new URL(trimmed);
     const type = parsedUrl.hostname.toLowerCase();
-    if (type !== "totp" && type !== "hotp") {
+    // 本插件只按时间生成口令（TOTP）。HOTP 按计数器生成，若按 TOTP 计算会显示错误口令，必须直接拒绝
+    if (type === "hotp") {
+      throw new Error("暂不支持 HOTP（计数器型）链接，请使用基于时间的 TOTP 链接");
+    }
+    if (type !== "totp") {
       throw new Error(`不支持的 OTP 类型: ${type}`);
     }
 
@@ -187,7 +191,7 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
     const algorithm: OTPAlgorithm = rawAlgo === "SHA256" || rawAlgo === "SHA512" ? rawAlgo : "SHA1";
 
     return {
-      type: type as "totp" | "hotp",
+      type: "totp",
       secret,
       name: name || issuer || "未命名账号",
       issuer: issuer || "2FA",
@@ -277,3 +281,79 @@ export function sanitizeStoredAccounts(raw: unknown): AuthAccount[] {
 }
 
 export const ACCOUNTS_STORAGE_KEY = "google-auth.accounts.v1";
+
+export interface StoredAccountsInspection {
+  accounts: AuthAccount[];
+  /** 存储值存在但不是账号数组（如非 JSON 文本、对象），一个账号都读不出来 */
+  corrupt: boolean;
+  /** 数组里被丢弃的损坏条目数 */
+  dropped: number;
+}
+
+/**
+ * 检查存储读回的原始值：区分「没有数据」「整体损坏」「部分条目损坏」，
+ * 让界面在覆盖写入前能提示用户并先备份原值，而不是把损坏数据当成空列表
+ */
+export function inspectStoredAccounts(raw: unknown): StoredAccountsInspection {
+  if (raw === undefined || raw === null) return { accounts: [], corrupt: false, dropped: 0 };
+  if (!Array.isArray(raw)) return { accounts: [], corrupt: true, dropped: 0 };
+  const accounts = sanitizeStoredAccounts(raw);
+  return { accounts, corrupt: false, dropped: raw.length - accounts.length };
+}
+
+/**
+ * 损坏原值的备份键：按内容取摘要，同一份损坏数据多次打开只备份到同一个键
+ */
+export function corruptBackupKey(raw: unknown): string {
+  let text: string;
+  try {
+    text = typeof raw === "string" ? raw : JSON.stringify(raw) ?? String(raw);
+  } catch {
+    text = String(raw);
+  }
+  return `${ACCOUNTS_STORAGE_KEY}.corrupt-${bytesToHex(digest("sha1", text)).slice(0, 12)}`;
+}
+
+/** 损坏原值备份键的格式（corruptBackupKey 的输出），迁移时只认这种键 */
+export const CORRUPT_BACKUP_KEY_PATTERN = /^google-auth\.accounts\.v1\.corrupt-[0-9a-f]{12}$/;
+
+/** 账号去重键：同一服务商、同一名称、同一密钥视为同一个账号 */
+function accountIdentity(account: Pick<AuthAccount, "secret" | "issuer" | "name">): string {
+  return JSON.stringify([cleanSecret(account.secret), account.issuer, account.name]);
+}
+
+/**
+ * 把旧版明文里的账号合并进加密存储的账号列表：加密存储的原始条目（含读不出的损坏条目）原样保留在前，
+ * 明文里新出现的账号追加在后，按 (secret, issuer, name) 去重
+ */
+export function mergeLegacyAccounts(secureRaw: unknown[], legacy: AuthAccount[]): { merged: unknown[]; added: number } {
+  const seen = new Set(sanitizeStoredAccounts(secureRaw).map(accountIdentity));
+  const merged = [...secureRaw];
+  let added = 0;
+  for (const account of legacy) {
+    const id = accountIdentity(account);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    merged.push(account);
+    added++;
+  }
+  return { merged, added };
+}
+
+/** SecureStorage.status() 不可用原因的说明 */
+export function describeSecureStorageUnavailable(reason: string): string {
+  switch (reason) {
+    case "encryption-unavailable":
+      return "系统加密存储不可用（钥匙串被拒绝访问或尚未解锁）";
+    case "insecure-backend":
+      return "系统只提供不安全的明文加密后端";
+    case "backend-unknown":
+      return "无法确认系统加密后端是否安全";
+    case "host-unsupported":
+      return "当前 ZTools 版本不支持加密存储，请升级 ZTools";
+    case "identity-required":
+      return "无法确认插件身份，请关闭后重新打开插件";
+    default:
+      return `系统加密存储不可用（${reason}）`;
+  }
+}

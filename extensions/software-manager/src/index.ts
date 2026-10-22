@@ -8,11 +8,7 @@ import {
   useEffect,
   showToast,
   Toast,
-  confirmAlert,
-  MetricGrid,
-  DistributionBar,
-  FilterBar,
-  SegmentedControl
+  confirmAlert
 } from '@ztools/declarative-ui'
 import {
   SoftwareItem,
@@ -402,7 +398,7 @@ export default function SoftwareManagerCommand() {
         })
       ]
     }),
-    filterBar: FilterBar({
+    filterBar: {
       summaryText:
         viewMode === 'residuals'
           ? `AppData 残留与缓存共 ${residuals.length} 项 (${formatBytes(residualTotalBytes)}) · 已勾选 ${checkedResidualIds.length} 项`
@@ -416,7 +412,7 @@ export default function SoftwareManagerCommand() {
           onAction: () => refreshData(true, true)
         }
       ]
-    }),
+    },
     subList: {
       title:
         viewMode === 'residuals'

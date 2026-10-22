@@ -31,6 +31,59 @@ export * from "./qr-generator.js";
 
 const LEVEL_LABEL: Record<QrErrorCorrectionLevel, string> = { L: "低（7%）", M: "中（15%）", Q: "较高（25%）", H: "高（30%）" };
 
+type PreviewResult = { ok: true; markdown: string } | { ok: false; error: string };
+
+/**
+ * 预览缓存（LRU）：key = 纠错等级 + 内容。每次渲染都会为所有匹配的历史项生成预览，
+ * 历史最多 100 条，不缓存时每次按键都要把它们全部重新编码。
+ * 条数上限覆盖满额历史 + 最近输入；字符预算防止大量第 40 版大码占满内存。
+ */
+const PREVIEW_CACHE_MAX_ENTRIES = 160;
+const PREVIEW_CACHE_MAX_CHARS = 16 * 1024 * 1024;
+const previewCache = new Map<string, PreviewResult>();
+let previewCacheChars = 0;
+
+const previewSize = (p: PreviewResult) => (p.ok ? p.markdown.length : p.error.length);
+
+export function previewMarkdown(content: string, lv: QrErrorCorrectionLevel): PreviewResult {
+  const key = `${lv}\u0000${content}`;
+  const hit = previewCache.get(key);
+  if (hit) {
+    // 命中后移到队尾，保持最近使用顺序
+    previewCache.delete(key);
+    previewCache.set(key, hit);
+    return hit;
+  }
+  let result: PreviewResult;
+  try {
+    const { dataUrl, qr } = generateQrSvg(content, lv);
+    result = {
+      ok: true,
+      markdown: `![二维码](${dataUrl})\n\n${detectQrContentType(content).label} · ${new TextEncoder().encode(content).length} 字节 · 版本 ${qr.version}（${qr.size}×${qr.size}）· 纠错 ${LEVEL_LABEL[lv]}`
+    };
+  } catch (err: any) {
+    result = { ok: false, error: err?.message || String(err) };
+  }
+  previewCache.set(key, result);
+  previewCacheChars += previewSize(result);
+  // 至少保留刚放入的这一条
+  while (previewCache.size > 1 && (previewCache.size > PREVIEW_CACHE_MAX_ENTRIES || previewCacheChars > PREVIEW_CACHE_MAX_CHARS)) {
+    const [oldestKey, oldest] = previewCache.entries().next().value as [string, PreviewResult];
+    previewCache.delete(oldestKey);
+    previewCacheChars -= previewSize(oldest);
+  }
+  return result;
+}
+
+/** 仅供测试：查看与清空预览缓存 */
+export function getPreviewCacheStats() {
+  return { entries: previewCache.size, chars: previewCacheChars };
+}
+export function resetPreviewCache() {
+  previewCache.clear();
+  previewCacheChars = 0;
+}
+
 function newItem(content: string, level: QrErrorCorrectionLevel, title?: string): QrItem {
   return {
     id: `qr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -161,19 +214,12 @@ export default function QrCodeCommand() {
     }
   };
 
-  // 生成预览；内容超出二维码容量时给出明确提示
+  // 生成预览；内容超出二维码容量时给出明确提示。编码结果走模块级缓存，避免每次按键为全部历史重新编码
   const preview = (content: string, lv: QrErrorCorrectionLevel) => {
-    try {
-      const { dataUrl, qr } = generateQrSvg(content, lv);
-      return {
-        ok: true as const,
-        detail: List.Item.Detail({
-          markdown: `![二维码](${dataUrl})\n\n${detectQrContentType(content).label} · ${new TextEncoder().encode(content).length} 字节 · 版本 ${qr.version}（${qr.size}×${qr.size}）· 纠错 ${LEVEL_LABEL[lv]}`
-        })
-      };
-    } catch (err: any) {
-      return { ok: false as const, error: err?.message || String(err), detail: List.Item.Detail({ markdown: "" }) };
-    }
+    const p = previewMarkdown(content, lv);
+    return p.ok
+      ? { ok: true as const, detail: List.Item.Detail({ markdown: p.markdown }) }
+      : { ok: false as const, error: p.error, detail: List.Item.Detail({ markdown: "" }) };
   };
 
   const globalActions = [

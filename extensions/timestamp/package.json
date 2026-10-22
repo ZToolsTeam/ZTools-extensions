@@ -1,6 +1,6 @@
 {
   "name": "timestamp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "秒与毫秒时间戳双向转换、多时区对照与友好相对时间显示",
   "type": "module",
   "main": "dist/index.js",

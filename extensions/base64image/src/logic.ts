@@ -94,9 +94,7 @@ export function detectImageFormat(bytes: Uint8Array): Base64ImageFormat | undefi
 
   // 检测 SVG 文本标签
   try {
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes).replace(/^\uFEFF/, "").trimStart();
-    const cleanDoc = text.replace(/^(?:<\?xml\b[\s\S]*?\?>\s*)?/i, "").replace(/^(?:<!--[\s\S]*?-->\s*)+/, "");
-    if (/^<svg(?:[\s/>])/i.test(cleanDoc)) {
+    if (isSvgSource(new TextDecoder("utf-8", { fatal: true }).decode(bytes))) {
       return "svg";
     }
   } catch {
@@ -104,6 +102,28 @@ export function detectImageFormat(bytes: Uint8Array): Base64ImageFormat | undefi
   }
 
   return undefined;
+}
+
+/** SVG 根元素前允许出现的前导：XML 声明 / 处理指令、注释、DOCTYPE（可带内部子集 [...]） */
+const SVG_PROLOG_PART = /(?:<\?[\s\S]*?\?>|<!--[\s\S]*?-->|<!DOCTYPE\b[^>[]*(?:\[[\s\S]*?\])?[^>]*>)\s*/iy;
+const SVG_ROOT = /<svg[\s/>]/iy;
+
+/**
+ * 判断文本是否是 SVG 文档：跳过 BOM、空白、XML 声明、注释与 DOCTYPE 后，以 <svg 根元素开头（忽略大小写）。
+ * 选择文件的格式识别与输入框里的 SVG 源码判断共用这一个函数。
+ */
+export function isSvgSource(text: string): boolean {
+  if (!text) return false;
+  let pos = 0;
+  while (pos < text.length && (text.charCodeAt(pos) === 0xfeff || /\s/.test(text[pos]))) pos++;
+  // 前导部分数量有限，防止异常输入导致长时间循环
+  for (let i = 0; i < 64; i++) {
+    SVG_PROLOG_PART.lastIndex = pos;
+    if (!SVG_PROLOG_PART.test(text)) break;
+    pos = SVG_PROLOG_PART.lastIndex;
+  }
+  SVG_ROOT.lastIndex = pos;
+  return SVG_ROOT.test(text);
 }
 
 /**

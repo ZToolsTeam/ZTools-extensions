@@ -1,7 +1,7 @@
 {
   "id": "qr-code",
   "name": "二维码生成",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "输入文字实时生成二维码，可复制图片或保存 PNG，支持 Wi-Fi 二维码与历史记录",
   "author": "ZTools Team",
   "entry": "dist/index.js",

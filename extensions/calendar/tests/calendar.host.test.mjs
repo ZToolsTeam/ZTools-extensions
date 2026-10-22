@@ -58,7 +58,10 @@ test('创建日程：宿主返回 ID 才算成功，地点留空时不编造「O
   assert.equal(created.id, 'srv-9')
   assert.equal(created.title, '一对一')
   assert.equal(created.location, '')
-  assert.equal(host.calls[0].params.startTime, '14:00')
+  // 时间以「今天 + 时分」换算成时间戳发给宿主，不再发文字让宿主猜
+  const today = new Date(); today.setHours(14, 0, 0, 0)
+  assert.equal(host.calls[0].params.startTime, today.getTime())
+  assert.equal(host.calls[0].params.endTime, today.getTime() + 3600_000)
 })
 
 test('[故障注入] 宿主创建失败或没返回 ID 时抛错，不能假装创建成功', async () => {
@@ -86,12 +89,75 @@ test('删除日程：宿主删除成功返回 true；宿主失败返回 false，
   assert.equal(ok.calls.length, 1)
 })
 
-test('导出 ICS：优先用宿主生成；宿主返回的不是日历格式时用本地生成的', async () => {
+test('导出 ICS：用宿主生成；宿主返回的不是日历格式或失败时抛错，不退回本地生成', async () => {
   const events = [{ id: 'e1', title: '发布评审', startTime: '10:00', endTime: '11:00', location: '', calendarName: 'Work', notes: '', attendees: [] }]
   const host = hostStub({ calendar_export_ics: { success: true, data: { ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR' } } })
   assert.match(await exportCalendarIcs(events, host), /^BEGIN:VCALENDAR/)
   const broken = hostStub({ calendar_export_ics: { success: true, data: '<html>error</html>' } })
-  const local = await exportCalendarIcs(events, broken)
-  assert.equal(local, buildCalendarIcsContent(events))
-  assert.match(local, /SUMMARY:发布评审/)
+  await assert.rejects(() => exportCalendarIcs(events, broken), /EXPORT_ICS_FAILED: 宿主返回的不是 ICS/)
+  const locked = hostStub({ calendar_export_ics: { success: false, error: { code: 'INTERNAL_ERROR', message: 'database is locked' } } })
+  await assert.rejects(() => exportCalendarIcs(events, locked), /EXPORT_ICS_FAILED: database is locked/)
+  // 本地生成（无宿主环境）也带完整时间
+  assert.match(buildCalendarIcsContent(events), /DTSTART:\d{8}T\d{6}Z[\s\S]*SUMMARY:发布评审/)
+})
+
+test('「全部日程」从今天 0 点起加载并带 limit；计数走 calendar_count_events；旧宿主没有计数接口时按已加载数量', async () => {
+  const { fetchCalendarPage, CALENDAR_PAGE_LIMIT } = await import('../dist/index.js')
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const host = hostStub({
+    calendar_list_events: { success: true, data: [{ id: 'f1', title: '明天的会' }] },
+    calendar_count_events: { success: true, data: { total: 812 } }
+  })
+  const page = await fetchCalendarPage('all', '', host)
+  assert.deepEqual(host.calls[0].params, { startTime: todayStart.getTime(), limit: CALENDAR_PAGE_LIMIT })
+  assert.deepEqual(host.calls[1], { method: 'calendar_count_events', params: { startTime: todayStart.getTime() } })
+  assert.equal(page.total, 812)
+  assert.equal(page.searchedOnHost, false)
+
+  const legacy = hostStub({ calendar_list_events: { success: true, data: [{ id: 'f1' }, { id: 'f2' }] } })
+  assert.equal((await fetchCalendarPage('all', '', legacy)).total, 2)
+  // 计数小于已加载数量（数据异常）时不采信
+  const bogus = hostStub({ calendar_list_events: { success: true, data: [{ id: 'f1' }, { id: 'f2' }] }, calendar_count_events: { success: true, data: { total: 1 } } })
+  assert.equal((await fetchCalendarPage('all', '', bogus)).total, 2)
+})
+
+test('搜索交给宿主（全部时间范围，含拼音）；「历史日程」限定今天以前并按时间倒序', async () => {
+  const { fetchCalendarPage, CALENDAR_PAGE_LIMIT } = await import('../dist/index.js')
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const host = hostStub({
+    calendar_list_events: { success: true, data: [{ id: 'p1', title: '架构评审' }] },
+    calendar_count_events: { success: true, data: { total: 1 } }
+  })
+  const searched = await fetchCalendarPage('all', '  jiagou ', host)
+  assert.deepEqual(host.calls[0].params, { search: 'jiagou', limit: CALENDAR_PAGE_LIMIT })
+  assert.equal(searched.searchedOnHost, true)
+  await fetchCalendarPage('past', '', host)
+  assert.deepEqual(host.calls[2].params, { endTime: todayStart.getTime() - 1, order: 'desc', limit: CALENDAR_PAGE_LIMIT })
+  assert.deepEqual(host.calls[3], { method: 'calendar_count_events', params: { endTime: todayStart.getTime() - 1 } }, '计数请求不带 order，宿主会拒绝未知字段')
+  // 「即将开始」仍走 upcoming，不发计数请求
+  const upcoming = hostStub({ calendar_upcoming_events: { success: true, data: [] } })
+  const up = await fetchCalendarPage('upcoming', '会', upcoming)
+  assert.equal(upcoming.calls.length, 1)
+  assert.equal(up.searchedOnHost, false)
+})
+
+test('创建日程：以宿主实际保存的会议链接与日历为准', async () => {
+  const host = hostStub({
+    calendar_create_event: (params) => ({ success: true, data: { ...params, id: 'srv-1', conferenceUrl: undefined, calendarName: 'Engineering' } })
+  })
+  const created = await createCalendarEvent({ title: '写周报', startTime: '10:00', endTime: '11:00', calendarName: 'Engineering', notes: '[链接](https://example.com)' }, host)
+  assert.equal(host.calls[0].params.calendarName, 'Engineering')
+  assert.equal(created.calendarName, 'Engineering')
+  assert.equal(created.conferenceUrl, undefined)
+  const detected = hostStub({ calendar_create_event: (params) => ({ success: true, data: { ...params, id: 'srv-2', conferenceUrl: 'https://zoom.us/j/1' } }) })
+  assert.equal((await createCalendarEvent({ title: '周会', startTime: '10:00', endTime: '11:00', notes: 'https://zoom.us/j/1' }, detected)).conferenceUrl, 'https://zoom.us/j/1')
+})
+
+test('导出 ICS：只把当前列表日程的 id 发给宿主', async () => {
+  const events = [{ id: 'e1', title: '健身', startTime: '19:30', endTime: '20:30', location: '', calendarName: 'Personal', notes: '', attendees: [] }]
+  const host = hostStub({ calendar_export_ics: { success: true, data: { ics: 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\nEND:VCALENDAR', count: 1 } } })
+  await exportCalendarIcs(events, host)
+  assert.deepEqual(host.calls[0].params, { eventIds: ['e1'] })
+  await exportCalendarIcs([], host)
+  assert.deepEqual(host.calls[1].params, { eventIds: [] })
 })

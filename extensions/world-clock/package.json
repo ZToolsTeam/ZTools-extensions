@@ -1,7 +1,7 @@
 {
   "name": "world-clock",
   "version": "1.0.0",
-  "description": "全球世界时钟：全球主流城市时区即时换算、当前时间对比、时区偏移量计算",
+  "description": "全球世界时钟：全球主流城市实时时间与时区偏移、与本机时区的时差对比、指定时间跨时区换算",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

@@ -46,6 +46,12 @@ export interface ColorHarmonies {
 export interface ColorConversionResult {
   hex: string;
   hex8: string;
+  /** 透明度 0..1 */
+  alpha: number;
+  /** 透明度不足 FF（8 位）时为 true，各写法改用带透明度的形式 */
+  hasAlpha: boolean;
+  /** 由 OKLCH 换算时超出 sRGB 色域、已逐通道裁剪 */
+  outOfGamut: boolean;
   rgb: RGB;
   hsl: HSL;
   hsv: HSV;
@@ -356,8 +362,104 @@ export function generateHarmonies(rgb: RGB): ColorHarmonies {
   };
 }
 
+/** 外部输入的透明度：非有限数按不透明处理，其余裁剪到 0..1 */
+function clampAlpha(a: number | undefined): number {
+  return typeof a === "number" && Number.isFinite(a) ? Math.max(0, Math.min(1, a)) : 1;
+}
+
+/** 透明度 → 8 位字节（00..FF） */
+function alphaToByte(a: number | undefined): number {
+  return Math.round(clampAlpha(a) * 255);
+}
+
+/** 8 位透明度字节 → 0..1，取能还原同一字节的最短小数（0x80 → 0.5，0x81 → 0.506） */
+function alphaFromByte(byte: number): number {
+  for (const digits of [2, 3]) {
+    const v = Number((byte / 255).toFixed(digits));
+    if (Math.round(v * 255) === byte) return v;
+  }
+  return byte / 255;
+}
+
+/** CSS 写法里的透明度数值，最多 3 位小数 */
+function formatAlpha(a: number | undefined): string {
+  return String(Number(clampAlpha(a).toFixed(3)));
+}
+
 /**
- * 智能色彩解析器 (支持 HEX, RGB, RGBA, HSL, HSLA, HSV, CMYK 以及常用命名色彩)
+ * 由 sRGB（含透明度）统一生成全部写法。
+ * hsl / hsv 传入时沿用用户输入的值（避免取整后再反算出偏差），否则从 rgb 计算。
+ */
+function buildResult(rgbIn: RGB, opts: { hsl?: HSL; hsv?: HSV; outOfGamut?: boolean; isValid?: boolean } = {}): ColorConversionResult {
+  const rgb: RGB = { r: rgbIn.r, g: rgbIn.g, b: rgbIn.b, a: clampAlpha(rgbIn.a) };
+  const alphaByte = alphaToByte(rgb.a);
+  const hasAlpha = alphaByte < 255;
+  const hex = rgbToHex(rgb);
+  const hex8 = `${hex}${alphaByte.toString(16).padStart(2, "0").toUpperCase()}`;
+  const hsl = opts.hsl ?? rgbToHsl(rgb);
+  const hsv = opts.hsv ?? rgbToHsv(rgb);
+  const cmyk = rgbToCmyk(rgb);
+  const a = formatAlpha(rgb.a);
+  return {
+    hex,
+    hex8,
+    alpha: rgb.a as number,
+    hasAlpha,
+    outOfGamut: Boolean(opts.outOfGamut),
+    rgb,
+    hsl,
+    hsv,
+    cmyk,
+    cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+    cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${a})`,
+    cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
+    cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${a})`,
+    cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
+    cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
+    cssVar: `--color-primary: ${hasAlpha ? hex8 : hex};`,
+    wcag: calculateWcag(rgb),
+    harmonies: generateHarmonies(rgb),
+    isValid: opts.isValid !== false
+  };
+}
+
+/**
+ * OKLCH → sRGB（Björn Ottosson 的 OKLab 逆变换，与 rgbToOklch 互逆）
+ * l: 0..1，c: ≥0，h: 角度。超出 sRGB 色域时逐通道裁剪，并以 outOfGamut 标出（误差超过半个 8 位色阶才算超出）。
+ */
+export function oklchToRgb(l: number, c: number, h: number): { rgb: RGB; outOfGamut: boolean } {
+  const hr = (h * Math.PI) / 180;
+  const A = c * Math.cos(hr);
+  const B = c * Math.sin(hr);
+  const l_ = l + 0.3963377774 * A + 0.2158037573 * B;
+  const m_ = l - 0.1055613458 * A - 0.0638541728 * B;
+  const s_ = l - 0.0894841775 * A - 1.291485548 * B;
+  const L3 = l_ * l_ * l_, M3 = m_ * m_ * m_, S3 = s_ * s_ * s_;
+  const linear = [
+    4.0767416621 * L3 - 3.3077115913 * M3 + 0.2309699292 * S3,
+    -1.2684380046 * L3 + 2.6097574011 * M3 - 0.3413193965 * S3,
+    -0.0041960863 * L3 - 0.7034186147 * M3 + 1.707614701 * S3
+  ];
+  let outOfGamut = false;
+  const [r, g, b] = linear.map((x) => {
+    const enc = x <= 0.0031308 ? 12.92 * x : 1.055 * Math.pow(x, 1 / 2.4) - 0.055;
+    const v = enc * 255;
+    if (!Number.isFinite(v) || v < -0.5 || v > 255.5) outOfGamut = true;
+    return Number.isFinite(v) ? Math.max(0, Math.min(255, Math.round(v))) : 0;
+  });
+  return { rgb: { r, g, b }, outOfGamut };
+}
+
+const NUM = "[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)";
+const SEP = "(?:\\s*,\\s*|\\s+)";
+const OKLCH_RE = new RegExp(
+  `^oklch\\(\\s*(${NUM})(%?)${SEP}(${NUM})(%?)${SEP}(?:(${NUM})(?:deg)?|none)(?:\\s*\\/\\s*(${NUM})(%?))?\\s*\\)$`,
+  "i"
+);
+const CMYK_RE = new RegExp(`^cmyk\\(\\s*(${NUM})%?${SEP}(${NUM})%?${SEP}(${NUM})%?${SEP}(${NUM})%?\\s*\\)$`, "i");
+
+/**
+ * 智能色彩解析器 (支持 HEX, RGB, RGBA, HSL, HSLA, HSV, OKLCH, CMYK 以及常用命名色彩)
  */
 export function parseColor(input: string): ColorConversionResult {
   const trimmed = input.trim();
@@ -372,60 +474,19 @@ export function parseColor(input: string): ColorConversionResult {
   if (/^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(trimmed)) {
     const hex = normalizeHex(trimmed);
     const rgb = hexToRgb(hex);
-    const hsl = rgbToHsl(rgb);
-    const hsv = rgbToHsv(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex: hex.slice(0, 7),
-      hex8: hex.length === 9 ? hex : `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${rgb.a ?? 1})`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${rgb.a ?? 1})`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex.slice(0, 7)};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    if (hex.length === 9) rgb.a = alphaFromByte(parseInt(hex.slice(7, 9), 16));
+    return buildResult(rgb);
   }
 
   // 2. RGB 匹配 (rgb(r, g, b) 或 rgba(r, g, b, a))
   const rgbMatch = trimmed.match(/^rgba?\(\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*([\d.]+))?\s*\)$/i);
   if (rgbMatch) {
-    const rgb: RGB = {
+    return buildResult({
       r: Math.max(0, Math.min(255, parseInt(rgbMatch[1], 10))),
       g: Math.max(0, Math.min(255, parseInt(rgbMatch[2], 10))),
       b: Math.max(0, Math.min(255, parseInt(rgbMatch[3], 10))),
-      a: rgbMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbMatch[4]))) : 1
-    };
-    const hex = rgbToHex(rgb);
-    const hsl = rgbToHsl(rgb);
-    const hsv = rgbToHsv(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${rgb.a ?? 1})`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${rgb.a ?? 1})`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+      a: rgbMatch[4] !== undefined ? parseFloat(rgbMatch[4]) : 1
+    });
   }
 
   // 3. HSL 匹配 (hsl(h, s%, l%) 或 hsla(h, s%, l%, a))
@@ -437,28 +498,8 @@ export function parseColor(input: string): ColorConversionResult {
       l: Math.max(0, Math.min(100, parseInt(hslMatch[3], 10)))
     };
     const rgb = hslToRgb(hsl);
-    rgb.a = hslMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(hslMatch[4]))) : 1;
-    const hex = rgbToHex(rgb);
-    const hsv = rgbToHsv(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${rgb.a ?? 1})`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${rgb.a ?? 1})`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    rgb.a = hslMatch[4] !== undefined ? parseFloat(hslMatch[4]) : 1;
+    return buildResult(rgb, { hsl });
   }
 
   // 4. HSV 匹配 (hsv(h, s%, v%))
@@ -469,70 +510,65 @@ export function parseColor(input: string): ColorConversionResult {
       s: Math.max(0, Math.min(100, parseInt(hsvMatch[2], 10))),
       v: Math.max(0, Math.min(100, parseInt(hsvMatch[3], 10)))
     };
-    const rgb = hsvToRgb(hsv);
-    const hex = rgbToHex(rgb);
-    const hsl = rgbToHsl(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    return buildResult(hsvToRgb(hsv));
+  }
+
+  // 5. OKLCH 匹配（CSS Color 4：oklch(L C H [/ A])，L 为 0..1 或百分比，C 的 100% = 0.4，H 可为 none）
+  const oklchMatch = trimmed.match(OKLCH_RE);
+  if (oklchMatch) {
+    const lRaw = parseFloat(oklchMatch[1]);
+    const cRaw = parseFloat(oklchMatch[3]);
+    const l = Math.max(0, Math.min(1, oklchMatch[2] ? lRaw / 100 : lRaw));
+    const c = Math.max(0, oklchMatch[4] ? (cRaw / 100) * 0.4 : cRaw);
+    const h = oklchMatch[5] !== undefined ? ((parseFloat(oklchMatch[5]) % 360) + 360) % 360 : 0;
+    const { rgb, outOfGamut } = oklchToRgb(l, c, h);
+    if (oklchMatch[6] !== undefined) {
+      const aRaw = parseFloat(oklchMatch[6]);
+      rgb.a = oklchMatch[7] ? aRaw / 100 : aRaw;
+    }
+    return buildResult(rgb, { outOfGamut });
+  }
+
+  // 6. CMYK 匹配（cmyk(c%, m%, y%, k%)，数值按 0..100 计）
+  const cmykMatch = trimmed.match(CMYK_RE);
+  if (cmykMatch) {
+    const pct = (v: string) => Math.max(0, Math.min(100, parseFloat(v)));
+    return buildResult(cmykToRgb({ c: pct(cmykMatch[1]), m: pct(cmykMatch[2]), y: pct(cmykMatch[3]), k: pct(cmykMatch[4]) }));
   }
 
   // 默认 Fallback
-  const fallbackHex = "#0A84FF";
-  const fallbackRgb = hexToRgb(fallbackHex);
-  const fallbackHsl = rgbToHsl(fallbackRgb);
-  const fallbackHsv = rgbToHsv(fallbackRgb);
-  const fallbackCmyk = rgbToCmyk(fallbackRgb);
-  return {
-    hex: fallbackHex,
-    hex8: `${fallbackHex}FF`,
-    rgb: fallbackRgb,
-    hsl: fallbackHsl,
-    hsv: fallbackHsv,
-    cmyk: fallbackCmyk,
-    cssRgb: `rgb(${fallbackRgb.r}, ${fallbackRgb.g}, ${fallbackRgb.b})`,
-    cssRgba: `rgba(${fallbackRgb.r}, ${fallbackRgb.g}, ${fallbackRgb.b}, 1)`,
-    cssHsl: `hsl(${fallbackHsl.h}, ${fallbackHsl.s}%, ${fallbackHsl.l}%)`,
-    cssHsla: `hsla(${fallbackHsl.h}, ${fallbackHsl.s}%, ${fallbackHsl.l}%, 1)`,
-    cssHsv: `hsv(${fallbackHsv.h}, ${fallbackHsv.s}%, ${fallbackHsv.v}%)`,
-    cssCmyk: `cmyk(${fallbackCmyk.c}%, ${fallbackCmyk.m}%, ${fallbackCmyk.y}%, ${fallbackCmyk.k}%)`,
-    cssVar: `--color-primary: ${fallbackHex};`,
-    wcag: calculateWcag(fallbackRgb),
-    harmonies: generateHarmonies(fallbackRgb),
-    isValid: false
-  };
+  return buildResult(hexToRgb("#0A84FF"), { isValid: false });
 }
 
 /**
  * 产生一个包含色块的 SVG Data URL 用于在虚拟 Detail Markdown 中渲染
  */
 export function generateColorSwatchSvg(hex: string, width = 360, height = 120): string {
-  const clean = normalizeHex(hex).slice(0, 7);
-  const rgb = hexToRgb(clean);
-  const wcag = calculateWcag(rgb);
-  const textColor = wcag.recommendedText === "white" ? "#FFFFFF" : "#000000";
+  const norm = normalizeHex(hex);
+  const solid = norm.slice(0, 7);
+  const alphaByte = norm.length === 9 ? parseInt(norm.slice(7, 9), 16) : 255;
+  const alpha = alphaByte / 255;
+  const label = alphaByte < 255 ? norm : solid;
+  const rgb = hexToRgb(solid);
+  // 半透明色按叠在浅色棋盘格上的效果选文字颜色
+  const shown: RGB = {
+    r: rgb.r * alpha + 238 * (1 - alpha),
+    g: rgb.g * alpha + 238 * (1 - alpha),
+    b: rgb.b * alpha + 238 * (1 - alpha)
+  };
+  const textColor = calculateWcag(shown).recommendedText === "white" ? "#FFFFFF" : "#000000";
+  // 半透明时在色块下面垫一层灰白棋盘格，透明度一眼可见
+  const checker = alphaByte < 255
+    ? `<defs><pattern id="checker" width="16" height="16" patternUnits="userSpaceOnUse"><rect width="16" height="16" fill="#FFFFFF"/><rect width="8" height="8" fill="#DDDDDD"/><rect x="8" y="8" width="8" height="8" fill="#DDDDDD"/></pattern></defs>
+    <rect width="${width}" height="${height}" rx="12" fill="url(#checker)"/>`
+    : "";
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">
-    <rect width="${width}" height="${height}" rx="12" fill="${clean}"/>
-    <text x="${width / 2}" y="${height / 2 + 7}" fill="${textColor}" font-size="22" font-family="monospace" text-anchor="middle" font-weight="bold">${clean}</text>
+    ${checker}<rect width="${width}" height="${height}" rx="12" fill="${solid}" fill-opacity="${Number(alpha.toFixed(3))}"/>
+    <text x="${width / 2}" y="${height / 2 + 7}" fill="${textColor}" font-size="22" font-family="monospace" text-anchor="middle" font-weight="bold">${label}</text>
   </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  // 括号也要编码：url(#checker) 里的「)」会提前结束 Markdown 图片链接
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg).replace(/\(/g, "%28").replace(/\)/g, "%29")}`;
 }
 
 /**
@@ -558,7 +594,9 @@ export function rgbToOklch(rgb: RGB): { l: number; c: number; h: number; css: st
   const cr = Math.round(c * 10000) / 10000;
   // 无彩色（灰阶）时色相没有意义，按 CSS 规范写 none
   const hr = cr < 0.0002 ? "none" : String(Math.round(h * 100) / 100);
-  return { l: lp, c: cr, h: cr < 0.0002 ? 0 : Math.round(h * 100) / 100, css: `oklch(${lp}% ${cr} ${hr})` };
+  // 半透明时按 CSS Color 4 写法追加「/ 透明度」
+  const alpha = alphaToByte(rgb.a) < 255 ? ` / ${formatAlpha(rgb.a)}` : "";
+  return { l: lp, c: cr, h: cr < 0.0002 ? 0 : Math.round(h * 100) / 100, css: `oklch(${lp}% ${cr} ${hr}${alpha})` };
 }
 
 /**
@@ -566,7 +604,7 @@ export function rgbToOklch(rgb: RGB): { l: number; c: number; h: number; css: st
  */
 function sanitizePalette(list: unknown): SavedColorItem[] {
   return Array.isArray(list)
-    ? list.filter((c) => c && typeof c.id === "string" && typeof c.hex === "string" && /^#[0-9A-Fa-f]{6}$/.test(c.hex))
+    ? list.filter((c) => c && typeof c.id === "string" && typeof c.hex === "string" && /^#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?$/.test(c.hex))
     : [];
 }
 
@@ -579,13 +617,19 @@ export async function getSavedPalette(): Promise<SavedColorItem[]> {
   return loadPaletteStrict();
 }
 
+/** 调色板里的颜色：不透明存 6 位 HEX，半透明存 8 位 HEX（保留透明度） */
+function paletteHex(hex: string): string {
+  const norm = normalizeHex(hex);
+  return norm.length === 9 && !norm.endsWith("FF") ? norm : norm.slice(0, 7);
+}
+
 export async function saveColorToPalette(name: string, hex: string): Promise<SavedColorItem[]> {
   const current = await loadPaletteStrict();
   if (current.length >= 100) throw new Error("调色板最多保存 100 个颜色，请先删除一些");
   const newItem: SavedColorItem = {
     id: `color_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
     name: name || hex,
-    hex: normalizeHex(hex).slice(0, 7),
+    hex: paletteHex(hex),
     savedAt: new Date().toLocaleString()
   };
 

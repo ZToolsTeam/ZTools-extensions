@@ -79,7 +79,8 @@
           "tray",
           "crypto",
           "audio",
-          "video"
+          "video",
+          "process"
         ]
       },
       "description": "插件声明申请的系统和运行时权限白名单列表"

@@ -1,4 +1,6 @@
 import { ToastOptions } from "../constants/toast.js";
+import type { SecureStorageApi } from "./secure-storage.js";
+import type { HostTransport, TerminateProcessOptions, TerminateProcessResult } from "./process.js";
 /**
  * 宿主与兼容运行时的统一通信桥接接口
  */
@@ -9,6 +11,8 @@ export interface ZToolsDeclarativeBridge {
         hide: () => void;
     };
     copyToClipboard?: (text: string | number) => Promise<void>;
+    /** 清空系统剪贴板 */
+    clearClipboard?: () => Promise<void>;
     readClipboardText?: () => Promise<string>;
     pasteToActive?: (text: string | number) => Promise<void>;
     manageWindow?: (action: string) => Promise<boolean>;
@@ -67,6 +71,12 @@ export interface ZToolsDeclarativeBridge {
         }>;
         export?: () => Promise<any[]>;
     };
+    /** 加密存储实现（宿主按插件注入；测试可注入替身）。缺省时 SecureStorage 报 host-unsupported，绝不回落明文 */
+    secureStorage?: Partial<SecureStorageApi>;
+    /** 结束本机任意进程（宿主按插件注入） */
+    terminateProcess?: (pid: number, options: TerminateProcessOptions) => Promise<TerminateProcessResult>;
+    /** 插件专属宿主调用通道 */
+    hostTransport?: HostTransport;
 }
 /**
  * 允许宿主或测试环境设置自定义 Bridge

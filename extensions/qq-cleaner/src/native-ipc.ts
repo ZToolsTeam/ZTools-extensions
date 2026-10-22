@@ -74,11 +74,13 @@ function normalizeMethodResult(method: string, payload: any): any {
   }
 
   if (method === 'system_get_battery_status') {
-    const rawPct = typeof payload.percent === 'number' ? payload.percent : 100
-    const clampedPct = rawPct > 100 || rawPct < 0 ? 100 : rawPct
+    // 宿主约定 percent 超出 0-100（如 255）表示无电池或电量未知，不能改写成 100%
+    const rawPct = payload.percent
+    const hasBattery = typeof rawPct === 'number' && Number.isFinite(rawPct) && rawPct >= 0 && rawPct <= 100
     return {
       ...payload,
-      percent: clampedPct
+      percent: hasBattery ? rawPct : null,
+      hasBattery
     }
   }
 
@@ -346,6 +348,8 @@ export interface RealDirectorySubdirSummary {
   fileCount: number
   totalBytes: number
   mtime: number
+  /** 体积不是完整统计（宿主扫描截断且独立统计超时 / 无权限），totalBytes 只是下限 */
+  approximate?: boolean
 }
 
 export interface RealDirectoryScanResult extends Iterable<RealIndexedFileEntry> {
@@ -354,6 +358,18 @@ export interface RealDirectoryScanResult extends Iterable<RealIndexedFileEntry> 
   fileCount: number
   totalBytes: number
   subdirs: RealDirectorySubdirSummary[]
+  /** 宿主扫描达到条目上限后停止：files / totalFiles 只是已遍历部分的抽样 */
+  truncated?: boolean
+  /** totalBytes 为近似值（下限） */
+  approximate?: boolean
+  /** 宿主实际遍历的条目数 */
+  visitedEntries?: number
+}
+
+interface ScanResultMeta {
+  truncated?: boolean
+  approximate?: boolean
+  visitedEntries?: number
 }
 
 export interface ScanDirectoryTreeOptions {
@@ -397,7 +413,8 @@ function makeScanResult(
   files: RealIndexedFileEntry[],
   totalFiles: number,
   totalBytes: number,
-  subdirs: RealDirectorySubdirSummary[]
+  subdirs: RealDirectorySubdirSummary[],
+  meta: ScanResultMeta = {}
 ): RealDirectoryScanResult {
   return {
     files,
@@ -405,6 +422,9 @@ function makeScanResult(
     fileCount: totalFiles,
     totalBytes,
     subdirs,
+    ...(meta.truncated ? { truncated: true } : {}),
+    ...(meta.approximate ? { approximate: true } : {}),
+    ...(typeof meta.visitedEntries === 'number' ? { visitedEntries: meta.visitedEntries } : {}),
     [Symbol.iterator]() {
       return files[Symbol.iterator]()
     }
@@ -458,8 +478,17 @@ export async function scanRealDirectoryTree(
   limitOrOptions: number | ScanDirectoryTreeOptions = 160,
   hostOverrideArg?: any
 ): Promise<RealDirectoryScanResult> {
+  return (await scanDirectoryTreeWithError(dirPath, limitOrOptions, hostOverrideArg)).scan
+}
+
+/** scanRealDirectoryTree 的实现：额外带回读取失败原因（目录不存在 / 为空 / 无权限 / 载荷异常） */
+async function scanDirectoryTreeWithError(
+  dirPath: string,
+  limitOrOptions: number | ScanDirectoryTreeOptions,
+  hostOverrideArg?: any
+): Promise<{ scan: RealDirectoryScanResult; error?: string }> {
   const empty = makeScanResult([], 0, 0, [])
-  if (!dirPath || !dirPath.trim()) return empty
+  if (!dirPath || !dirPath.trim()) return { scan: empty, error: 'EMPTY_DIRECTORY_PATH' }
   const targetDir = dirPath.trim()
 
   const opts: ScanDirectoryTreeOptions =
@@ -494,7 +523,13 @@ export async function scanRealDirectoryTree(
       }
     }
 
-    if (rawPayload && Array.isArray(rawPayload.files) && (rawPayload.files.length > 0 || Number(rawPayload.total_matches || 0) > 0)) {
+    if (
+      rawPayload &&
+      Array.isArray(rawPayload.files) &&
+      (rawPayload.files.length > 0 ||
+        Number(rawPayload.total_matches || 0) > 0 ||
+        (Array.isArray(rawPayload.subdirs) && rawPayload.subdirs.length > 0))
+    ) {
       let files: RealIndexedFileEntry[] = rawPayload.files.map(normalizeIndexedFileEntry)
       if (filterExt instanceof RegExp) {
         files = files.filter(f => !f.isDir && (filterExt.test(f.name) || filterExt.test(f.ext)))
@@ -503,7 +538,8 @@ export async function scanRealDirectoryTree(
           const extTokens = (filterExt.source.match(/[a-z0-9]{2,5}/gi) || [])
             .filter(t => !['thumbcache', 'iconcache'].includes(t.toLowerCase()))
             .slice(0, 4)
-          const prefixLower = targetDir.toLowerCase()
+          // 只接受确实位于目标目录下的检索结果，不能用别处同后缀文件冒充目录内容
+          const prefixLower = `${targetDir.replace(/[\\/]+$/, '')}${isWindowsStylePath(targetDir) ? '\\' : '/'}`.toLowerCase()
           const extraLists = await Promise.all(
             extTokens.map(ext => searchRealIndexedFiles(`.${ext.toLowerCase()}`, 30, hostOverride))
           )
@@ -511,7 +547,7 @@ export async function scanRealDirectoryTree(
           for (const list of extraLists) {
             for (const item of list) {
               if (!item.isDir && item.size > 0 && !seen.has(item.path)) {
-                if (item.path.toLowerCase().startsWith(prefixLower) || files.length < 15) {
+                if (item.path.replace(/\//g, isWindowsStylePath(targetDir) ? '\\' : '/').toLowerCase().startsWith(prefixLower)) {
                   seen.add(item.path)
                   files.push(item)
                 }
@@ -529,7 +565,8 @@ export async function scanRealDirectoryTree(
             path: String(s.path || ''),
             fileCount: Number(s.file_count ?? s.fileCount ?? 0),
             totalBytes: Number(s.total_bytes ?? s.totalBytes ?? 0),
-            mtime: Number(s.mtime || 0)
+            mtime: Number(s.mtime || 0),
+            ...(s.approximate === true ? { approximate: true } : {})
           }))
         : []
       const computedBytes = files.reduce((acc, f) => acc + (f.isDir ? 0 : f.size), 0)
@@ -537,125 +574,244 @@ export async function scanRealDirectoryTree(
         filterExt instanceof RegExp ? files.length : Number(rawPayload.total_matches ?? files.length)
       const totalBytesCount =
         filterExt instanceof RegExp ? computedBytes : Number(rawPayload.total_bytes ?? computedBytes)
-      return makeScanResult(files, totalFilesCount, totalBytesCount, subdirs)
+      const visited = Number(rawPayload.visited_entries)
+      return {
+        scan: makeScanResult(files, totalFilesCount, totalBytesCount, subdirs, {
+          truncated: rawPayload.truncated === true,
+          approximate: rawPayload.approximate === true,
+          ...(Number.isFinite(visited) && visited >= 0 ? { visitedEntries: visited } : {})
+        })
+      }
     }
 
-    // Fallback for test mock or before Main process restart: check filesystem_get_directory_contents
-    const listRes = await callHostTransport<string[]>(
-      'filesystem_get_directory_contents',
-      { path: targetDir },
-      hostOverride
-    )
-    if (listRes.ok && Array.isArray(listRes.data) && listRes.data.length > 0) {
+    // dir: 扫描无结果（目录不存在 / 为空 / 测试替身未实现）时，退回 filesystem_get_directory_contents 读取一级目录
+    const listing = await listDirectoryViaFilesystem(targetDir, hostOverride, { withSizes: true, limit: safeLimit })
+    if (listing.ok && listing.entries.length > 0) {
       const files: RealIndexedFileEntry[] = []
       let totalBytes = 0
-      for (const itemPath of listRes.data.slice(0, safeLimit)) {
-        const sz = await getRealFileSize(itemPath, hostOverride)
-        const name = String(itemPath).split(/[\\/]/).pop() || String(itemPath)
-        const entry = normalizeIndexedFileEntry({
-          name,
-          path: String(itemPath),
-          isDir: sz === 0 && !name.includes('.'),
-          size: sz,
-          mtime: Math.floor(Date.now() / 1000)
-        })
+      for (const entry of listing.entries) {
         if (filterExt instanceof RegExp && !filterExt.test(entry.name) && !filterExt.test(entry.ext)) {
           continue
         }
         files.push(entry)
-        totalBytes += sz
+        totalBytes += entry.isDir ? 0 : entry.size
       }
-      return makeScanResult(files, files.length, totalBytes, [])
+      return { scan: makeScanResult(files, files.length, totalBytes, []) }
     }
+    return { scan: empty, error: listing.ok ? DIRECTORY_EMPTY_OR_UNREADABLE : listing.error }
   } catch {
     // ignore
   }
 
-  return empty
+  return { scan: empty, error: DIRECTORY_EMPTY_OR_UNREADABLE }
 }
 
 
-function inferSearchQueriesForDir(dirPath: string): string[] {
-  const lower = dirPath.toLowerCase()
-  if (lower.includes('wechat') || lower.includes('xwechat')) {
-    return ['WeChat', 'xwechat', '.log']
-  }
-  if (lower.includes('tencent') || lower.includes('\\qq')) {
-    return ['Tencent', '.db', '.log']
-  }
-  if (lower.includes('\\videos')) {
-    return ['.mp4', '.mkv', '.mov', '.webm']
-  }
-  if (lower.includes('\\music')) {
-    return ['.mp3', '.wav', '.flac', '.m4a']
-  }
-  if (lower.includes('\\documents')) {
-    return ['.pdf', '.docx', '.xlsx', '.pptx']
-  }
-  if (lower.includes('temp') || lower.includes('cache') || lower.includes('crashpad')) {
-    return ['.tmp', '.log', 'Temp', 'Cache']
-  }
-  if (lower.includes('\\downloads')) {
-    return ['.zip', '.exe', '.pdf', '.mp4', '.mp3']
-  }
-  if (lower.includes('\\desktop')) {
-    return ['Desktop', '.png', '.jpg', '.mp4', '.wav']
-  }
-  const leaf = dirPath.split(/[\\/]/).filter(Boolean).pop() || ''
-  return leaf ? [leaf] : ['.exe', '.zip']
+/** 目录读取不到任何条目（不存在 / 为空 / 无权限）时的错误码 */
+export const DIRECTORY_EMPTY_OR_UNREADABLE = 'DIRECTORY_EMPTY_OR_UNREADABLE'
+
+export interface RealDirectoryListingResult {
+  /** 目录内条目的完整路径；读取失败时为空数组 */
+  entries: string[]
+  /** 读取失败或目录为空时的错误码 / 宿主错误信息 */
+  error?: string
+}
+
+export interface RealDirectChildrenResult {
+  /** 目录的直接子项（子目录在前），按路径去重 */
+  entries: RealIndexedFileEntry[]
+  /** 宿主扫描达到条目上限，可能只返回了部分直接子项 */
+  partial: boolean
+  error?: string
+}
+
+function stripTrailingSeparators(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  return trimmed || p.slice(0, 1)
+}
+
+function isWindowsStylePath(p: string): boolean {
+  return /^[A-Za-z]:/.test(p) || p.startsWith('\\\\') || (p.includes('\\') && !p.includes('/'))
+}
+
+function comparablePath(p: string): string {
+  const stripped = stripTrailingSeparators(String(p || '').trim())
+  return isWindowsStylePath(stripped) ? stripped.replace(/\//g, '\\').toLowerCase() : stripped
+}
+
+function parentDirOf(p: string): string {
+  const stripped = stripTrailingSeparators(String(p || ''))
+  const idx = Math.max(stripped.lastIndexOf('/'), stripped.lastIndexOf('\\'))
+  if (idx < 0) return ''
+  if (idx === 0) return stripped.slice(0, 1)
+  const parent = stripped.slice(0, idx)
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent
+}
+
+function isDirectChildPath(dirPath: string, candidate: string): boolean {
+  if (!candidate) return false
+  return comparablePath(parentDirOf(candidate)) === comparablePath(dirPath)
+}
+
+function joinChildPath(dirPath: string, name: string): string {
+  const sep = isWindowsStylePath(dirPath) ? '\\' : '/'
+  const base = dirPath.replace(/[\\/]+$/, '')
+  return `${base}${sep}${name}`
 }
 
 /**
- * 读取真实目录下的文件列表（在真实 Electron 宿主中优先走 dir: 深度目录树穿透，毫秒级返回且不触发未授权路径异常）
+ * 通过 filesystem_get_directory_contents 读取一级目录（需宿主授权）。
+ * 宿主真实返回 { success, files: [{ name, size, isDirectory, lastModified }] }（name 为文件名）；
+ * 兼容旧测试替身返回的完整路径字符串数组。
+ */
+async function listDirectoryViaFilesystem(
+  dirPath: string,
+  hostOverride: any,
+  options: { withSizes?: boolean; limit?: number } = {}
+): Promise<{ ok: boolean; entries: RealIndexedFileEntry[]; error?: string }> {
+  const res = await callHostTransport<any>('filesystem_get_directory_contents', { path: dirPath }, hostOverride)
+  if (!res.ok) return { ok: false, entries: [], error: res.error || 'DIRECTORY_READ_FAILED' }
+  const data = res.data
+  const rawList: unknown[] | null = Array.isArray(data) ? data : Array.isArray(data?.files) ? data.files : null
+  if (!rawList) return { ok: false, entries: [], error: 'INVALID_DIRECTORY_PAYLOAD' }
+
+  const limit = Math.max(1, Math.floor(options.limit ?? 1000))
+  const nowSec = Math.floor(Date.now() / 1000)
+  const entries: RealIndexedFileEntry[] = []
+  const seen = new Set<string>()
+  for (const item of rawList) {
+    if (entries.length >= limit) break
+    let entry: RealIndexedFileEntry | null = null
+    if (typeof item === 'string') {
+      const itemPath = item.trim()
+      if (!itemPath) continue
+      const name = itemPath.split(/[\\/]/).pop() || itemPath
+      const sz = options.withSizes ? await getRealFileSize(itemPath, hostOverride) : 0
+      entry = normalizeIndexedFileEntry({
+        name,
+        path: itemPath,
+        isDir: sz === 0 && !name.includes('.'),
+        size: sz,
+        mtime: nowSec
+      })
+    } else if (item && typeof item === 'object' && typeof (item as any).name === 'string') {
+      const raw = item as any
+      const rawName = raw.name.trim()
+      if (!rawName || rawName === '.' || rawName === '..') continue
+      // 只接受文件名，或确实位于该目录下的完整路径，拒绝越界路径
+      const fullPath = /[\\/]/.test(rawName) ? rawName : joinChildPath(dirPath, rawName)
+      if (!isDirectChildPath(dirPath, fullPath)) continue
+      const isDir = Boolean(raw.isDirectory ?? raw.isDir ?? raw.is_dir)
+      const parsedMtime = Date.parse(String(raw.lastModified || ''))
+      entry = normalizeIndexedFileEntry({
+        name: fullPath.split(/[\\/]/).pop() || rawName,
+        path: fullPath,
+        isDir,
+        size: isDir ? 0 : Math.max(0, Number(raw.size) || 0),
+        mtime: Number.isFinite(parsedMtime) ? parsedMtime : nowSec
+      })
+    }
+    if (!entry || seen.has(entry.path)) continue
+    seen.add(entry.path)
+    entries.push(entry)
+  }
+  return { ok: true, entries }
+}
+
+/**
+ * 读取真实目录下的条目路径（真实宿主中优先走 dir: 扫描：一级子目录 + 全树 Top-N 大文件），并返回失败原因。
+ * 目录不存在、为空或无权限时返回空列表与错误码，绝不用全盘关键词搜索结果冒充目录内容。
+ */
+export async function listRealDirectoryContentsResult(
+  dirPath: string,
+  hostOverride?: any
+): Promise<RealDirectoryListingResult> {
+  if (!dirPath || !dirPath.trim()) return { entries: [], error: 'EMPTY_DIRECTORY_PATH' }
+  const targetDir = dirPath.trim()
+
+  if (!hostOverride && isRealElectronHost()) {
+    const tree = await scanRealDirectoryTree(targetDir, 60)
+    const paths: string[] = []
+    for (const s of tree.subdirs) {
+      if (s.path) paths.push(s.path)
+    }
+    for (const f of tree.files) {
+      if (f.path) paths.push(f.path)
+    }
+    if (paths.length > 0) return { entries: Array.from(new Set(paths)) }
+  }
+
+  const listing = await listDirectoryViaFilesystem(targetDir, hostOverride)
+  if (!listing.ok) return { entries: [], error: listing.error }
+  if (listing.entries.length === 0) return { entries: [], error: DIRECTORY_EMPTY_OR_UNREADABLE }
+  return { entries: listing.entries.map(e => e.path) }
+}
+
+/**
+ * 读取真实目录下的条目路径（保持旧签名：失败时返回空数组，需要失败原因请用 listRealDirectoryContentsResult）
  */
 export async function listRealDirectoryContents(
   dirPath: string,
   hostOverride?: any
 ): Promise<string[]> {
-  if (!dirPath) return []
+  return (await listRealDirectoryContentsResult(dirPath, hostOverride)).entries
+}
 
-  // 在真实 Electron 宿主中，优先使用主进程 dir: 穿透扫描，毫秒级返回真实文件与子目录并缓存体积
-  if (!hostOverride && isRealElectronHost()) {
-    const tree = await scanRealDirectoryTree(dirPath, 60)
-    if (tree.files.length > 0 || tree.subdirs.length > 0) {
-      const paths: string[] = []
-      for (const s of tree.subdirs) {
-        if (s.path) paths.push(s.path)
-      }
-      for (const f of tree.files) {
-        if (f.path) paths.push(f.path)
-      }
-      if (paths.length > 0) return paths
-    }
+/**
+ * 只列出目录的直接子项（子目录 + 直接位于该目录下的文件），用于文件夹预览、按目录改名等场景。
+ * dir: 扫描结果中只保留 subdirs 与父目录等于 dirPath 的文件；扫描达到上限时 partial=true，由插件如实提示「仅显示部分」。
+ */
+export async function listDirectChildren(
+  dirPath: string,
+  hostOverride?: any
+): Promise<RealDirectChildrenResult> {
+  if (!dirPath || !dirPath.trim()) return { entries: [], partial: false, error: 'EMPTY_DIRECTORY_PATH' }
+  const targetDir = dirPath.trim()
+  const scanLimit = 200
+  const entries: RealIndexedFileEntry[] = []
+  const seen = new Set<string>()
+  const push = (entry: RealIndexedFileEntry) => {
+    const key = comparablePath(entry.path)
+    if (!entry.path || seen.has(key)) return
+    seen.add(key)
+    entries.push(entry)
   }
 
-  const res = await callHostTransport<string[]>(
-    'filesystem_get_directory_contents',
-    { path: dirPath },
-    hostOverride
-  )
-  if (res.ok && Array.isArray(res.data) && res.data.length > 0) {
-    return res.data
+  const { scan: tree, error } = await scanDirectoryTreeWithError(targetDir, { maxFiles: scanLimit, hostOverride })
+  for (const s of tree.subdirs) {
+    if (!s.path || !isDirectChildPath(targetDir, s.path)) continue
+    push(
+      normalizeIndexedFileEntry({
+        name: s.name || s.path.split(/[\\/]/).pop(),
+        path: s.path,
+        isDir: true,
+        size: s.totalBytes,
+        mtime: s.mtime
+      })
+    )
+  }
+  let directFileCount = 0
+  for (const f of tree.files) {
+    if (!isDirectChildPath(targetDir, f.path)) continue
+    directFileCount++
+    push(f)
+  }
+  // 宿主 total_matches 是全树文件数、subdirs[].file_count 是各子目录全树文件数，差值即直接子文件数；
+  // 拿到的直接子文件少于它就说明被 Top-N 截断了。计数不可用时按是否达到扫描上限判断
+  const expectedDirectFiles = tree.totalFiles - tree.subdirs.reduce((sum, d) => sum + (Number(d.fileCount) || 0), 0)
+  const partial =
+    Number.isFinite(expectedDirectFiles) && expectedDirectFiles >= 0
+      ? directFileCount < expectedDirectFiles
+      : tree.files.length >= scanLimit
+  if (entries.length > 0) {
+    return { entries, partial }
   }
 
-  if (!hostOverride && isRealElectronHost()) {
-    const queries = inferSearchQueriesForDir(dirPath)
-    const collected: string[] = []
-    const seen = new Set<string>()
-    for (const q of queries) {
-      const files = await searchRealIndexedFiles(q, 25)
-      for (const f of files) {
-        if (!f.isDir && f.path && f.size > 0 && !seen.has(f.path)) {
-          seen.add(f.path)
-          collected.push(f.path)
-        }
-      }
-      if (collected.length >= 25) break
-    }
-    return collected
+  if (tree.files.length > 0) {
+    // dir: 扫描只返回了深层文件（直接子文件被 Top-N 截掉），如实标注部分结果
+    return { entries: [], partial: true, error: DIRECTORY_EMPTY_OR_UNREADABLE }
   }
-
-  return []
+  return { entries: [], partial: false, error: error || DIRECTORY_EMPTY_OR_UNREADABLE }
 }
 
 /**
@@ -1022,24 +1178,8 @@ export async function readRealDirectory(
   for (const f of tree.files) {
     entries.push(f)
   }
-  if (entries.length > 0) return entries
-
-  const rawPaths = await listRealDirectoryContents(dirPath, hostOverride)
-  const fallbackEntries: RealIndexedFileEntry[] = []
-  for (const p of rawPaths) {
-    const sz = await getRealFileSize(p, hostOverride)
-    const name = String(p).split(/[\\/]/).pop() || String(p)
-    fallbackEntries.push(
-      normalizeIndexedFileEntry({
-        name,
-        path: String(p),
-        isDir: sz === 0 && !name.includes('.'),
-        size: sz,
-        mtime: Math.floor(Date.now() / 1000)
-      })
-    )
-  }
-  return fallbackEntries
+  // scanRealDirectoryTree 已在 dir: 扫描无结果时退回一级目录读取；仍为空即目录不存在 / 为空 / 无权限，如实返回空列表
+  return entries
 }
 
 export async function moveRealFilesToTrash(
@@ -1456,3 +1596,4 @@ export async function showRealToast(
     // ignore
   }
 }
+

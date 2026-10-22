@@ -1,8 +1,8 @@
 {
   "id": "screenshot",
-  "name": "多屏区域截图与悬浮贴图",
-  "description": "支持跨多显示器窗口自动识别、像素级选区微调、箭头/马赛克/文字标注与屏幕置顶悬浮贴图 (Pin)",
-  "version": "2.0.1",
+  "name": "截图历史与回贴",
+  "description": "浏览本机截图目录，一键回贴、复制、定位与清理截图；可立即截取全部屏幕并复制到剪贴板",
+  "version": "2.0.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

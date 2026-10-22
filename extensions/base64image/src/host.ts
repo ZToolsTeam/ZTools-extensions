@@ -1,5 +1,5 @@
 /**
- * 调用 ZTools 宿主能力（选择文件、读文件、读剪贴板图片）
+ * 调用 ZTools 宿主能力（选择文件、读文件、读剪贴板文件 / 图片）
  *
  * 宿主通过 preload 暴露 `__ztoolsElectron.transport.methods[method]({ messageId, params })`，
  * 返回 `{ success, data | error }` 信封。宿主不存在（如单元测试）时抛出 HOST_UNAVAILABLE。
@@ -29,11 +29,34 @@ export async function callHost<T = any>(method: string, params: Record<string, u
 /** 单张图片读取上限：宿主 IPC 单次最多 16 MiB，Base64 会膨胀到 4/3，这里留出余量 */
 export const MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
 
-const IMAGE_FILTER = "图片|png;jpg;jpeg;gif;webp;svg";
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+const IMAGE_FILTER = `图片|${IMAGE_EXTENSIONS.join(";")}`;
 
 export interface LoadedImage {
   name: string;
   base64: string;
+}
+
+const formatMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+function baseName(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() || filePath;
+}
+
+export function hasImageExtension(filePath: string): boolean {
+  const ext = filePath.match(/\.([^.\\/]+)$/)?.[1]?.toLowerCase();
+  return Boolean(ext && IMAGE_EXTENSIONS.includes(ext));
+}
+
+/** 读取一个图片文件的原始字节（Base64），先检查大小，避免把超大文件整段读进内存 */
+async function readImageFile(filePath: string): Promise<LoadedImage> {
+  const size = await callHost<{ size?: number } | number>("filesystem_get_file_size", { path: filePath });
+  const bytes = typeof size === "number" ? size : Number((size as any)?.size ?? 0);
+  if (bytes > MAX_IMAGE_FILE_BYTES) {
+    throw new HostError("FILE_TOO_LARGE", `图片超过 10 MB（${formatMb(bytes)}），请先压缩`);
+  }
+  const read = await callHost<{ content: string }>("filesystem_read_file", { path: filePath, encoding: "base64" });
+  return { name: baseName(filePath), base64: read.content };
 }
 
 /**
@@ -46,15 +69,29 @@ export async function pickImageFile(): Promise<LoadedImage | null> {
     properties: ["openFile"]
   });
   if (!picked || picked.canceled || !picked.filePath) return null;
-  const filePath = picked.filePath;
-  const size = await callHost<{ size?: number } | number>("filesystem_get_file_size", { path: filePath });
-  const bytes = typeof size === "number" ? size : Number((size as any)?.size ?? 0);
-  if (bytes > MAX_IMAGE_FILE_BYTES) {
-    throw new HostError("FILE_TOO_LARGE", `图片超过 10 MB（${(bytes / 1024 / 1024).toFixed(1)} MB），请先压缩`);
+  return readImageFile(picked.filePath);
+}
+
+/**
+ * 读取剪贴板里复制的图片文件（访达 / 资源管理器里 ⌘C 的文件），保留原文件字节与文件名。
+ * 剪贴板里没有文件、或宿主读不了文件剪贴板时返回 null，由调用方改读剪贴板图片；
+ * 有文件但都不是支持的图片时抛出 NOT_IMAGE_FILE。
+ */
+export async function readClipboardImageFile(): Promise<LoadedImage | null> {
+  let files: string[];
+  try {
+    const res = await callHost<{ files?: unknown }>("clipboard_read_files", {});
+    files = Array.isArray(res?.files) ? res.files.filter((f): f is string => typeof f === "string" && f.length > 0) : [];
+  } catch {
+    // 文件剪贴板不可用（旧宿主、开发版缺少原生助手等）不影响读取截图
+    return null;
   }
-  const read = await callHost<{ content: string }>("filesystem_read_file", { path: filePath, encoding: "base64" });
-  const name = filePath.split(/[\\/]/).pop() || filePath;
-  return { name, base64: read.content };
+  if (files.length === 0) return null;
+  const image = files.find(hasImageExtension);
+  if (!image) {
+    throw new HostError("NOT_IMAGE_FILE", `复制的文件不是支持的图片（${baseName(files[0])}），仅支持 PNG、JPEG、GIF、WebP 与 SVG`);
+  }
+  return readImageFile(image);
 }
 
 /**
@@ -63,8 +100,9 @@ export async function pickImageFile(): Promise<LoadedImage | null> {
 export async function readClipboardImage(): Promise<LoadedImage | null> {
   const res = await callHost<any>("clipboard_read_image", {});
   if (res?.useTempFile && typeof res.tempFile === "string") {
-    if (Number(res.size) > MAX_IMAGE_FILE_BYTES) {
-      throw new HostError("FILE_TOO_LARGE", "剪贴板里的图片超过 10 MB，请先压缩");
+    const bytes = Number(res.size);
+    if (bytes > MAX_IMAGE_FILE_BYTES) {
+      throw new HostError("FILE_TOO_LARGE", `剪贴板里的图片超过 10 MB（${formatMb(bytes)}），请先压缩`);
     }
     const read = await callHost<{ content: string }>("filesystem_read_file", { path: res.tempFile, encoding: "base64" });
     return { name: "剪贴板图片.png", base64: read.content };

@@ -139,3 +139,26 @@ export async function aesDecrypt(ciphertextBase64: string, key: string, options:
 export function calculateHmac(algorithm: HashAlgorithm, text: string, key: string): string {
   return bytesToHex(hmac(algorithm, key ?? "", text ?? ""));
 }
+
+/**
+ * 围栏代码块：内容原样显示（保留换行、缩进与 Markdown 符号）。
+ * 围栏比内容里最长的反引号串多一个，内容里的 ``` 不会让代码块提前结束。
+ */
+export function codeBlockMarkdown(text: string): string {
+  const body = text ?? "";
+  let longest = 0;
+  for (const run of body.match(/`+/g) || []) longest = Math.max(longest, run.length);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}\n${body}\n${fence}`;
+}
+
+/**
+ * 结果预览：单行、不含反引号、不含会被 HTML 折叠的空白（制表符、连续空格、首尾空白）时用行内代码，
+ * 所在段落会自动折行，SHA-512、长 Base64、单行 JSON 不需要横向滚动，Markdown 符号也不会被解释；
+ * 其余情况（多行文本等）退回围栏代码块，保证原样显示。
+ */
+export function valueMarkdown(value: string): string {
+  const text = value ?? "";
+  const inlineSafe = text !== "" && !/[`\r\n\t]|\s{2,}|^\s|\s$/.test(text);
+  return inlineSafe ? `\`${text}\`` : codeBlockMarkdown(text);
+}

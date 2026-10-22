@@ -20,6 +20,8 @@ import {
   clearCompletedTodos,
   filterAndSearchTodos,
   sanitizeStoredTodos,
+  isBlankQuery,
+  quickAddTitle,
   TODOS_STORAGE_KEY,
   type TodoItem,
   type TodoPriority,
@@ -129,7 +131,9 @@ export default function TodoCommand() {
     };
   }, []);
 
-  const filtered = filterAndSearchTodos(todos, filter, searchText);
+  // 只输入了空白字符时不展示任何待办：否则回车会切换当前选中的那条
+  const blankQuery = isBlankQuery(searchText);
+  const filtered = blankQuery ? [] : filterAndSearchTodos(todos, filter, searchText);
 
   // 先写入存储再更新界面：写入失败时界面保持原样
   const commit = async (next: TodoItem[]): Promise<boolean> => {
@@ -182,7 +186,9 @@ export default function TodoCommand() {
     );
   };
 
-  const quickTitle = searchText.trim();
+  // 有输入且没有标题完全相同的待办时，「添加待办」始终排第一，回车即添加；
+  // 部分匹配的已有待办排在后面，要操作它们用 ↓ 选中
+  const quickTitle = loaded ? quickAddTitle(filtered, searchText) : null;
 
   return List(
     {
@@ -220,76 +226,88 @@ export default function TodoCommand() {
         {
           title: filter === "all" ? `全部待办 (${filtered.length})` : filter === "active" ? `进行中 (${filtered.length})` : `已完成 (${filtered.length})`
         },
-        filtered.length > 0
-          ? filtered.map((item) =>
-              List.Item({
-                id: item.id,
-                title: item.title,
-                subtitle: item.priority === "high" ? "高优先级" : item.priority === "medium" ? "中优先级" : "低优先级",
-                icon: item.completed ? Icon.Check : Icon.Circle,
-                accessories: [
-                  {
-                    text: item.completed ? "已完成" : "待处理"
-                  },
-                  {
-                    text: new Date(item.createdAt).toLocaleDateString([], { month: "2-digit", day: "2-digit" })
-                  }
-                ],
-                actions: ActionPanel({ title: "待办操作" }, [
-                  Action({
-                    title: item.completed ? "标为未完成" : "标为已完成",
-                    icon: item.completed ? Icon.Circle : Icon.Check,
-                    onAction: () => handleToggle(item.id)
-                  }),
-                  Action({
-                    title: "新建待办事项",
-                    icon: Icon.Plus,
-                    onAction: handleOpenCreateForm
-                  }),
-                  Action.CopyToClipboard({
-                    title: "复制待办标题",
-                    content: item.title,
-                    icon: Icon.CopyClipboard
-                  }),
-                  Action({
-                    title: "删除此待办",
-                    icon: Icon.Trash,
-                    onAction: () => handleDelete(item.id)
-                  }),
-                  Action({
-                    title: "清空所有已完成待办",
-                    icon: Icon.Trash,
-                    onAction: handleClearCompleted
-                  })
-                ])
-              })
-            )
-          : [
-              quickTitle
-                ? List.Item({
-                    id: "quick-add",
-                    title: `添加待办「${quickTitle}」`,
-                    subtitle: "按回车直接添加（中优先级）",
-                    icon: Icon.Plus,
-                    actions: ActionPanel({ title: "操作" }, [
-                      Action({ title: "添加待办", icon: Icon.Plus, onAction: () => handleQuickAdd(quickTitle) }),
-                      Action({ title: "填写详情后添加…", icon: Icon.Pencil, onAction: handleOpenCreateForm })
-                    ])
-                  })
-                : List.Item({
-                    id: "empty-item",
-                    title: !loaded ? "正在读取待办…" : todos.length === 0 ? "还没有待办" : "这个分类下没有待办",
-                    subtitle: "在上方输入内容后按回车即可添加",
-                    icon: Icon.Document,
-                    actions: ActionPanel({ title: "操作" }, [
-                      Action({
-                        title: "新建待办",
-                        icon: Icon.Plus,
-                        onAction: handleOpenCreateForm
-                      })
-                    ])
-                  })
-            ]
+        [
+          ...(quickTitle
+            ? [
+                List.Item({
+                  id: "quick-add",
+                  title: `添加待办「${quickTitle}」`,
+                  subtitle: "按回车直接添加（中优先级）",
+                  icon: Icon.Plus,
+                  actions: ActionPanel({ title: "操作" }, [
+                    Action({ title: "添加待办", icon: Icon.Plus, onAction: () => handleQuickAdd(quickTitle) }),
+                    Action({ title: "填写详情后添加…", icon: Icon.Pencil, onAction: handleOpenCreateForm })
+                  ])
+                })
+              ]
+            : []),
+          ...filtered.map((item) =>
+            List.Item({
+              id: item.id,
+              title: item.title,
+              subtitle: item.priority === "high" ? "高优先级" : item.priority === "medium" ? "中优先级" : "低优先级",
+              icon: item.completed ? Icon.Check : Icon.Circle,
+              accessories: [
+                {
+                  text: item.completed ? "已完成" : "待处理"
+                },
+                {
+                  text: new Date(item.createdAt).toLocaleDateString([], { month: "2-digit", day: "2-digit" })
+                }
+              ],
+              actions: ActionPanel({ title: "待办操作" }, [
+                Action({
+                  title: item.completed ? "标为未完成" : "标为已完成",
+                  icon: item.completed ? Icon.Circle : Icon.Check,
+                  onAction: () => handleToggle(item.id)
+                }),
+                Action({
+                  title: "新建待办事项",
+                  icon: Icon.Plus,
+                  onAction: handleOpenCreateForm
+                }),
+                Action.CopyToClipboard({
+                  title: "复制待办标题",
+                  content: item.title,
+                  icon: Icon.CopyClipboard
+                }),
+                Action({
+                  title: "删除此待办",
+                  icon: Icon.Trash,
+                  onAction: () => handleDelete(item.id)
+                }),
+                Action({
+                  title: "清空所有已完成待办",
+                  icon: Icon.Trash,
+                  onAction: handleClearCompleted
+                })
+              ])
+            })
+          ),
+          ...(!quickTitle && filtered.length === 0
+            ? [
+                List.Item({
+                  id: "empty-item",
+                  title: blankQuery
+                    ? "请输入待办内容"
+                    : !loaded
+                      ? "正在读取待办…"
+                      : todos.length === 0
+                        ? "还没有待办"
+                        : "这个分类下没有待办",
+                  subtitle: blankQuery ? "只输入空格不会添加或修改待办" : "在上方输入内容后按回车即可添加",
+                  icon: Icon.Document,
+                  actions: ActionPanel({ title: "操作" }, [
+                    Action({
+                      title: "新建待办",
+                      icon: Icon.Plus,
+                      onAction: handleOpenCreateForm
+                    })
+                  ])
+                })
+              ]
+            : [])
+        ]
       )
     ]
   );

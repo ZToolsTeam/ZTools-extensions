@@ -206,18 +206,36 @@ export interface DiskAnalysisSnapshot {
     drive: string
     sizeBytes: number
     fileCount: number
+    /** 体积只是下限（宿主扫描截断且独立统计未完成） */
+    approximate?: boolean
   }>
+  /** 有目录扫描达到宿主条目上限：大文件列表只是抽样，不是全盘完整结果 */
+  sampled?: boolean
+  /** 各目录扫描实际遍历的条目数之和 */
+  scannedEntries?: number
   totalCapacityBytes: number
   totalUsedBytes: number
   totalAvailableBytes: number
 }
 
 export const DLL_PLUGIN_NAME = 'AnalyzerPlugin'
+/** Windows：系统目录、卷影副本区与程序安装目录 */
+const WINDOWS_PROTECTED_PATTERN =
+  /^(?:C:\\Windows(?:\\.*)?|C:\\System Volume Information(?:\\.*)?|C:\\Program Files(?:\\.*)?|C:\\Program Files \(x86\)(?:\\.*)?)$/i
+/**
+ * macOS：系统卷与系统配置（/System、/bin、/sbin、/etc、/Library、/usr 但不含用户自装的 /usr/local、
+ * /var 但不含用户临时目录 /var/folders）、用户 ~/Library（仅 ~/Library/Caches 可清理）、任意 .app 包内部文件
+ * （删掉包内文件会直接损坏应用）。APFS 默认不区分大小写，按不区分大小写匹配
+ */
+const MACOS_PROTECTED_PATTERN =
+  /^(?:\/(?:private\/)?(?:System|bin|sbin|etc|Library)(?:\/.*)?|\/usr(?:\/(?!local(?:\/|$)).*)?|\/(?:private\/)?var(?:\/(?!folders(?:\/|$)).*)?|\/Users\/[^/]+\/Library(?:\/(?!Caches(?:\/|$)).*)?|\/.*\.app\/Contents(?:\/.*)?)$/i
+/** 含 .. 段的路径无法按前缀判断真实位置（如 /usr/local/../bin），一律按受保护处理 */
+const PARENT_SEGMENT_PATTERN = /^(?:.*[\\/])?\.\.(?:[\\/].*)?$/
 export const FORBIDDEN_TARGET_PATTERN = new RegExp(
-  '^(?:C:\\\\Windows(?:\\\\.*)?|C:\\\\System Volume Information(?:\\\\.*)?|C:\\\\Program Files(?:\\\\.*)?|C:\\\\Program Files \\(x86\\)(?:\\\\.*)?)$',
+  `${WINDOWS_PROTECTED_PATTERN.source}|${MACOS_PROTECTED_PATTERN.source}|${PARENT_SEGMENT_PATTERN.source}`,
   'i'
 )
-export const FORBIDDEN_REASON = '系统核心目录与卷影副本区受保护，禁止通过分析器直接清理'
+export const FORBIDDEN_REASON = '系统核心目录、应用程序包内部文件与卷影副本区受保护，禁止通过分析器直接清理'
 
 const PRESET_ITEMS: CapabilityActionItem[] = [
   {
@@ -494,7 +512,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   const drives: DiskDriveItem[] = rawDrives.map(d => ({
     drive: d.drive,
     label: d.drive === 'C:' ? '系统主分区 (C:)' : d.drive === '/' ? '启动磁盘 (/)' : `本地数据卷 (${d.drive})`,
-    fileSystem: '未知',
+    fileSystem: d.drive.startsWith('/') ? 'APFS' : 'NTFS',
     totalBytes: d.totalBytes,
     usedBytes: d.usedBytes,
     availableBytes: d.availableBytes,
@@ -511,7 +529,10 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     getRealSystemPath('temp', hostOverride)
   ])
 
-  const scanDirs = [downloadsDir, documentsDir, desktopDir, videosDir, tempDir].filter(Boolean)
+  // macOS 额外扫描用户缓存目录（~/Library/Caches），优先覆盖用户可清理的位置
+  const homeDir = downloadsDir.startsWith('/') ? await getRealSystemPath('home', hostOverride) : ''
+  const macCachesDir = homeDir.startsWith('/') ? `${homeDir.replace(/\/+$/, '')}/Library/Caches` : ''
+  const scanDirs = [downloadsDir, documentsDir, desktopDir, videosDir, tempDir, macCachesDir].filter(Boolean)
   const files: DiskFileEntry[] = []
   const seenPaths = new Set<string>()
 
@@ -551,8 +572,11 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     drive: string
     sizeBytes: number
     fileCount: number
+    approximate?: boolean
   }> = []
   const seenDirs = new Set<string>()
+  let sampled = false
+  let scannedEntries = 0
 
   if (supportsDeepScan) {
     // 在真实 Electron 宿主或支持 dir: 深度扫描的环境中，直接并发调用 dir: 深度目录树扫描（基于本机真实挂载盘符与系统用户目录，严禁硬编码路径）
@@ -564,7 +588,11 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     const dirScans = await Promise.all(
       realTargetDirs.map(d => scanRealDirectoryTree(d, 100, hostOverride))
     )
-    for (const res of dirScans) {
+    for (const [scanIndex, res] of dirScans.entries()) {
+      if (res.truncated) sampled = true
+      scannedEntries += Number(res.visitedEntries) || 0
+      // 分区根目录扫描被截断时，文件只是最先遍历到的系统文件（如 /usr/bin），不代表大文件，只取其子目录体积
+      const isTruncatedDriveRoot = Boolean(res.truncated) && driveRoots.includes(realTargetDirs[scanIndex]!)
       if (Array.isArray(res.subdirs)) {
         for (const sub of res.subdirs) {
           if (!sub.path || sub.totalBytes <= 0) continue
@@ -577,10 +605,12 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
             path: cleanSub,
             drive: extractDrivePrefix(cleanSub),
             sizeBytes: sub.totalBytes,
-            fileCount: sub.fileCount || 0
+            fileCount: sub.fileCount || 0,
+            ...(sub.approximate ? { approximate: true } : {})
           })
         }
       }
+      if (isTruncatedDriveRoot) continue
       for (const f of res.files) {
         if (!f.isDir && f.size > 0) {
           addFileEntry(f.path, f.size, f.mtime)
@@ -615,6 +645,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     extStats,
     groupStats,
     topDirectories,
+    ...(sampled ? { sampled: true, scannedEntries } : {}),
     totalCapacityBytes,
     totalUsedBytes,
     totalAvailableBytes
@@ -634,7 +665,23 @@ export async function deleteDiskFileItem(
   if (FORBIDDEN_TARGET_PATTERN.test(filePath.trim())) {
     return { ok: false, error: FORBIDDEN_REASON }
   }
-  return trashRealItem(filePath.trim(), hostOverride)
+  const res = await trashRealItem(filePath.trim(), hostOverride)
+  return res.ok ? res : { ok: false, error: describeHostPathError(res.error) }
+}
+
+/**
+ * 回收失败的说明：宿主只放行本窗口扫描结果里的路径（30 分钟过期），回收站只给本插件扫描到的普通文件
+ * （文件夹、符号链接与系统目录除外）。保留宿主原话（只有错误码时不显示码），再补一句该怎么办。
+ */
+export function describeHostPathError(error: string | undefined): string {
+  const raw = String(error || '').trim()
+  const permission = /PERMISSION_DENIED|未由当前窗口授权|权限不足|未授权/i.test(raw)
+  const missing = !permission && /FILE_ERROR|FILE_NOT_FOUND|ENOENT|不存在|文件操作失败/i.test(raw)
+  if (!permission && !missing) return raw || '移除失败'
+  const hint = missing
+    ? '文件可能已被移动或删除，请重新扫描'
+    : '只能回收本次扫描到的普通文件（文件夹、链接与系统目录除外），授权可能已过期，请重新扫描后再试'
+  return /^[A-Z_]+$/.test(raw) || !raw ? hint : `${raw}（${hint}）`
 }
 
 /**

@@ -23,7 +23,9 @@ export class Cache {
             try {
                 sub(key, data);
             }
-            catch { }
+            catch {
+                // Ignore subscriber error to avoid breaking other listeners
+            }
         }
     }
     has(key) {
@@ -36,7 +38,9 @@ export class Cache {
                 try {
                     sub(key, undefined);
                 }
-                catch { }
+                catch {
+                    // Ignore subscriber error to avoid breaking other listeners
+                }
             }
         }
         return existed;
@@ -48,7 +52,9 @@ export class Cache {
                 try {
                     sub(undefined, undefined);
                 }
-                catch { }
+                catch {
+                    // Ignore subscriber error to avoid breaking other listeners
+                }
             }
         }
     }

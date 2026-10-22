@@ -226,8 +226,14 @@ function normalizeChineseInput(input: string): string {
   return [...compact].map((char) => NORMALIZE_MAP[char] ?? char).join("");
 }
 
-function parseChineseInteger(input: string): bigint {
-  if (!input) return 0n;
+interface ParsedChineseInteger {
+  value: bigint;
+  /** 是否按口语省略写法（如“三百五”“一万五”）解析了末位数字 */
+  colloquial: boolean;
+}
+
+function parseChineseInteger(input: string): ParsedChineseInteger {
+  if (!input) return { value: 0n, colloquial: false };
   if (!/^[零一二三四五六七八九十百千万亿兆]+$/.test(input)) {
     throw new ConversionError("包含无法识别的中文数字字符");
   }
@@ -238,15 +244,38 @@ function parseChineseInteger(input: string): bigint {
     if (digits.some((digit) => digit === undefined)) throw new ConversionError("包含无法识别的数字");
     const normalized = digits.join("").replace(/^0+(?=\d)/, "") || "0";
     if (normalized.length > MAX_INTEGER_DIGITS) throw new ConversionError("整数部分最多支持 16 位");
-    return BigInt(normalized);
+    return { value: BigInt(normalized), colloquial: false };
   }
 
+  const NO_SMALL_UNIT = 10000n;
+  const NO_LARGE_UNIT = 10000000000000n;
   let total = 0n;
   let section = 0n;
   let pendingDigit: number | null = null;
-  let lastSmallUnit = 10000n;
-  let lastLargeUnit = 10000000000000n;
+  let pendingAfterZero = false;
+  let lastSmallUnit = NO_SMALL_UNIT;
+  let lastLargeUnit = NO_LARGE_UNIT;
   let lastWasZero = false;
+  let colloquial = false;
+
+  /**
+   * 没有单位跟随的数字的位权：前面有“零”时是个位（三百零五 = 305）；
+   * 紧跟在百、千后面且中间没有“零”时，按口语省略写法表示下一级单位（三百五 = 350，一千二百三 = 1230）；
+   * allowLargeUnit 为真（数字位于末尾）且本节没有十百千时，紧跟在万、亿、兆后面的数字同理（一万五 = 15000）。
+   */
+  const pendingWeight = (allowLargeUnit: boolean): bigint => {
+    if (pendingAfterZero) return 1n;
+    if (lastSmallUnit !== NO_SMALL_UNIT) return lastSmallUnit / 10n;
+    if (allowLargeUnit && section === 0n && lastLargeUnit !== NO_LARGE_UNIT) return lastLargeUnit / 10n;
+    return 1n;
+  };
+  const flushPending = (allowLargeUnit: boolean) => {
+    if (pendingDigit === null) return;
+    const weight = pendingWeight(allowLargeUnit);
+    if (weight > 1n) colloquial = true;
+    section += BigInt(pendingDigit) * weight;
+    pendingDigit = null;
+  };
 
   for (const char of input) {
     if (char in PARSE_DIGITS) {
@@ -258,6 +287,7 @@ function parseChineseInteger(input: string): bigint {
       }
       if (pendingDigit !== null) throw new ConversionError("带单位写法中不能连续出现多个数字");
       pendingDigit = digit;
+      pendingAfterZero = lastWasZero;
       lastWasZero = false;
       continue;
     }
@@ -274,12 +304,12 @@ function parseChineseInteger(input: string): bigint {
 
     const largeUnit = LARGE_UNIT_VALUES[char];
     if (largeUnit) {
-      if (pendingDigit !== null) section += BigInt(pendingDigit);
+      // 数字紧挨在万、亿、兆前面时是该单位的系数，只按本节的十百千判断是否口语省略（一千二万 = 1200 万）
+      flushPending(false);
       if (section === 0n || largeUnit >= lastLargeUnit) throw new ConversionError("万、亿、兆的顺序不正确");
       total += section * largeUnit;
       section = 0n;
-      pendingDigit = null;
-      lastSmallUnit = 10000n;
+      lastSmallUnit = NO_SMALL_UNIT;
       lastLargeUnit = largeUnit;
       lastWasZero = false;
       continue;
@@ -289,10 +319,10 @@ function parseChineseInteger(input: string): bigint {
   }
 
   if (lastWasZero) throw new ConversionError("中文数字不能以无意义的零结尾");
-  if (pendingDigit !== null) section += BigInt(pendingDigit);
+  flushPending(true);
   const result = total + section;
   if (result.toString().length > MAX_INTEGER_DIGITS) throw new ConversionError("整数部分最多支持 16 位");
-  return result;
+  return { value: result, colloquial };
 }
 
 function normalizeNumberOutput(integer: bigint, fraction: string, negative: boolean): string {
@@ -301,7 +331,7 @@ function normalizeNumberOutput(integer: bigint, fraction: string, negative: bool
   return `${negative && !zero ? "-" : ""}${integer.toString()}${trimmedFraction ? `.${trimmedFraction}` : ""}`;
 }
 
-function parseTicketChinese(input: string, negative: boolean): string {
+function parseTicketChinese(input: string, negative: boolean): ChineseNumberParseResult {
   const ticketPattern =
     /^([零一二三四五六七八九十百千万亿兆]+)?(元)?(?:([零一二三四五六七八九])角)?(?:零?([零一二三四五六七八九])分)?(整)?$/;
   const match = input.match(ticketPattern);
@@ -320,11 +350,26 @@ function parseTicketChinese(input: string, negative: boolean): string {
   const integer = parseChineseInteger(integerText || "零");
   const jiao = jiaoText ? PARSE_DIGITS[jiaoText] ?? 0 : 0;
   const fen = fenText ? PARSE_DIGITS[fenText] ?? 0 : 0;
-  return normalizeNumberOutput(integer, `${jiao}${fen}`, negative);
+  return {
+    value: normalizeNumberOutput(integer.value, `${jiao}${fen}`, negative),
+    colloquial: integer.colloquial,
+  };
+}
+
+export interface ChineseNumberParseResult {
+  /** 阿拉伯数字结果 */
+  value: string;
+  /** 是否按口语省略写法解析（三百五 = 350、一万五 = 15000），界面据此提示用户核对 */
+  colloquial: boolean;
 }
 
 /** 中文数字转阿拉伯数字 (支持小写、大写、票据金额与小数) */
 export function chineseToNumber(input: string): string {
+  return parseChineseNumber(input).value;
+}
+
+/** 中文数字转阿拉伯数字，并返回是否使用了口语省略写法 */
+export function parseChineseNumber(input: string): ChineseNumberParseResult {
   let normalized = normalizeChineseInput(input);
   let negative = false;
   if (normalized.startsWith("负")) {
@@ -348,7 +393,7 @@ export function chineseToNumber(input: string): string {
 
   const integer = parseChineseInteger(integerText);
   const fraction = [...fractionText].map((char) => PARSE_DIGITS[char]).join("");
-  return normalizeNumberOutput(integer, fraction, negative);
+  return { value: normalizeNumberOutput(integer.value, fraction, negative), colloquial: integer.colloquial };
 }
 
 function decimalToFen(parsed: ParsedDecimal, roundingMode: TicketRoundingMode): bigint {

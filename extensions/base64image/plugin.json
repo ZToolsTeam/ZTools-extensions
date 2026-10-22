@@ -1,7 +1,7 @@
 {
   "id": "base64image",
   "name": "Base64 图片转换",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "图片文件或截图转 Base64 / Data URL，也能把 Base64 还原成图片预览",
   "author": "ZTools Team",
   "entry": "dist/index.js",

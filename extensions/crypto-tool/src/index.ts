@@ -15,9 +15,11 @@ import {
   aesEncrypt,
   aesDecrypt,
   calculateHmac,
+  valueMarkdown,
   type HashAlgorithm,
   type MultiHashResult
 } from "./logic.js";
+import { usePopoutValue } from "./popout-state.js";
 
 interface HashDisplayItem {
   id: string;
@@ -28,18 +30,60 @@ interface HashDisplayItem {
 }
 
 type Mode = "hash" | "base64-decode";
+type AesDirection = "encrypt" | "decrypt";
+const HMAC_ALGORITHMS: readonly HashAlgorithm[] = ["sha256", "sha512", "sha1", "md5"];
 
 /**
- * AES-256-CBC 加解密表单：结果直接显示在表单底部，可复制
+ * 二级表单里可以带到独立窗口的草稿。状态由根页面持有（只有根页面的 usePopoutState 会被带走），
+ * 表单打开时用它做初值、编辑时回写。口令 / 密钥与 AES 结果不进草稿：口令不离开表单，结果只对应生成它的那组输入。
  */
-export function AesForm() {
-  const { pop } = useNavigation();
-  const [direction, setDirection] = useState<"encrypt" | "decrypt">("encrypt");
-  const [text, setText] = useState("");
+export interface AesDraft {
+  direction: AesDirection;
+  text: string;
+  iv: string;
+}
+export interface HmacDraft {
+  algorithm: HashAlgorithm;
+  text: string;
+}
+
+const DEFAULT_AES_DRAFT: AesDraft = { direction: "encrypt", text: "", iv: "" };
+const DEFAULT_HMAC_DRAFT: HmacDraft = { algorithm: "sha256", text: "" };
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isText = (v: unknown): v is string => typeof v === "string";
+const isMode = (v: unknown): v is Mode => v === "hash" || v === "base64-decode";
+const isAesDraft = (v: unknown): v is AesDraft =>
+  isPlainObject(v) && (v.direction === "encrypt" || v.direction === "decrypt") && isText(v.text) && isText(v.iv);
+const isHmacDraft = (v: unknown): v is HmacDraft =>
+  isPlainObject(v) && HMAC_ALGORITHMS.includes(v.algorithm as HashAlgorithm) && isText(v.text);
+
+type DraftProps<T> = { draft?: T; onDraftChange?: (draft: T) => void };
+
+/**
+ * AES-256-CBC 加解密表单：结果直接显示在表单底部，可复制。
+ * 返回由宿主的 Esc / 头部返回按钮负责，表单里不再放「返回」动作（否则会占用 ⌘↵ 次动作位、与宿主入口重复）。
+ * 结果只对应生成它的那组输入：明文、口令、IV、方向任一改变都清空结果，「复制结果」随之消失，避免复制到旧密文。
+ */
+export function AesForm({ draft = DEFAULT_AES_DRAFT, onDraftChange }: DraftProps<AesDraft> = {}) {
+  const [direction, setDirectionState] = useState<AesDirection>(draft.direction);
+  const [text, setTextState] = useState(draft.text);
   const [key, setKey] = useState("");
-  const [iv, setIv] = useState("");
+  const [iv, setIvState] = useState(draft.iv);
   const [result, setResult] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
+
+  // 草稿回写根页面：独立窗口弹出时由根页面带走
+  const saveDraft = (patch: Partial<AesDraft>) => onDraftChange?.({ direction, text, iv, ...patch });
+  const setDirection = (v: AesDirection) => { setDirectionState(v); saveDraft({ direction: v }); };
+  const setText = (v: string) => { setTextState(v); saveDraft({ text: v }); };
+  const setIv = (v: string) => { setIvState(v); saveDraft({ iv: v }); };
+
+  // 输入一变，旧结果就不再对应当前输入，必须清空
+  const resetResult = () => {
+    setResult("");
+    setError(undefined);
+  };
 
   const run = async () => {
     setError(undefined);
@@ -63,13 +107,12 @@ export function AesForm() {
         Action.SubmitForm({ title: direction === "encrypt" ? "加密" : "解密", icon: Icon.Lock, onSubmit: run }),
         ...(result
           ? [Action.CopyToClipboard({ title: "复制结果", content: result, icon: Icon.CopyClipboard })]
-          : []),
-        Action({ title: "返回", icon: Icon.ArrowLeft, onAction: () => pop() })
+          : [])
       ])
     },
     [
       Form.Dropdown(
-        { id: "direction", title: "操作", value: direction, onChange: (v: string) => { setDirection(v as "encrypt" | "decrypt"); setResult(""); setError(undefined); } },
+        { id: "direction", title: "操作", value: direction, onChange: (v: string) => { setDirection(v === "decrypt" ? "decrypt" : "encrypt"); resetResult(); } },
         [
           Form.Dropdown.Item({ title: "加密：明文 → Base64 密文", value: "encrypt" }),
           Form.Dropdown.Item({ title: "解密：Base64 密文 → 明文", value: "decrypt" })
@@ -81,36 +124,36 @@ export function AesForm() {
         placeholder: direction === "encrypt" ? "要加密的文字" : "粘贴 Base64 密文",
         value: text,
         error,
-        onChange: (v: string) => { setText(v); setError(undefined); }
+        onChange: (v: string) => { setText(v); resetResult(); }
       }),
-      Form.PasswordField({ id: "key", title: "口令", placeholder: "加密和解密必须使用同一个口令", value: key, onChange: (v: string) => setKey(v) }),
-      Form.TextField({ id: "iv", title: "IV（可选）", placeholder: "留空则由口令派生", value: iv, onChange: (v: string) => setIv(v) }),
-      Form.Description({ title: "结果", text: result || "填写后按回车执行" })
+      Form.PasswordField({ id: "key", title: "口令", placeholder: "加密和解密必须使用同一个口令", value: key, onChange: (v: string) => { setKey(v); resetResult(); } }),
+      Form.TextField({ id: "iv", title: "IV（可选）", placeholder: "留空则由口令派生", value: iv, onChange: (v: string) => { setIv(v); resetResult(); } }),
+      Form.Description({ title: "结果", text: result || `填写后执行「${direction === "encrypt" ? "加密" : "解密"}」，结果显示在这里` })
     ]
   );
 }
 
 /**
- * HMAC 计算表单：输入或口令变化时实时计算
+ * HMAC 计算表单：输入或口令变化时实时计算；返回交给宿主 Esc / 头部返回按钮
  */
-export function HmacForm() {
-  const { pop } = useNavigation();
-  const [algorithm, setAlgorithm] = useState<HashAlgorithm>("sha256");
-  const [text, setText] = useState("");
+export function HmacForm({ draft = DEFAULT_HMAC_DRAFT, onDraftChange }: DraftProps<HmacDraft> = {}) {
+  const [algorithm, setAlgorithmState] = useState<HashAlgorithm>(draft.algorithm);
+  const [text, setTextState] = useState(draft.text);
   const [key, setKey] = useState("");
+  const setAlgorithm = (v: HashAlgorithm) => { setAlgorithmState(v); onDraftChange?.({ algorithm: v, text }); };
+  const setText = (v: string) => { setTextState(v); onDraftChange?.({ algorithm, text: v }); };
   const value = calculateHmac(algorithm, text, key);
 
   return Form(
     {
       navigationTitle: "HMAC 计算",
       actions: ActionPanel({ title: "HMAC" }, [
-        Action.CopyToClipboard({ title: "复制 HMAC", content: value, icon: Icon.CopyClipboard }),
-        Action({ title: "返回", icon: Icon.ArrowLeft, onAction: () => pop() })
+        Action.CopyToClipboard({ title: "复制 HMAC", content: value, icon: Icon.CopyClipboard })
       ])
     },
     [
       Form.Dropdown(
-        { id: "algorithm", title: "算法", value: algorithm, onChange: (v: string) => setAlgorithm(v as HashAlgorithm) },
+        { id: "algorithm", title: "算法", value: algorithm, onChange: (v: string) => setAlgorithm(HMAC_ALGORITHMS.includes(v as HashAlgorithm) ? (v as HashAlgorithm) : "sha256") },
         [
           Form.Dropdown.Item({ title: "HMAC-SHA256", value: "sha256" }),
           Form.Dropdown.Item({ title: "HMAC-SHA512", value: "sha512" }),
@@ -126,13 +169,16 @@ export function HmacForm() {
 }
 
 export default function CryptoToolCommand() {
-  const [inputText, setInputText] = useState<string>("");
-  const [mode, setMode] = useState<Mode>("hash");
+  // 根页面持有全部可带走的状态：散列页输入与模式，以及两个二级表单的草稿
+  const [inputText, setInputText] = usePopoutValue("inputText", () => "", isText);
+  const [mode, setMode] = usePopoutValue<Mode>("mode", () => "hash", isMode);
+  const [aesDraft, setAesDraft] = usePopoutValue("aesDraft", () => DEFAULT_AES_DRAFT, isAesDraft);
+  const [hmacDraft, setHmacDraft] = usePopoutValue("hmacDraft", () => DEFAULT_HMAC_DRAFT, isHmacDraft);
   const { push } = useNavigation();
 
   const globalActions = [
-    Action({ title: "AES 加解密…", icon: Icon.Lock, onAction: () => push(() => AesForm()) }),
-    Action({ title: "HMAC 计算…", icon: Icon.Key, onAction: () => push(() => HmacForm()) })
+    Action({ title: "AES 加解密…", icon: Icon.Lock, onAction: () => push(() => AesForm({ draft: aesDraft, onDraftChange: setAesDraft })) }),
+    Action({ title: "HMAC 计算…", icon: Icon.Key, onAction: () => push(() => HmacForm({ draft: hmacDraft, onDraftChange: setHmacDraft })) })
   ];
 
   const commonItemActions = (value: string, label: string) =>
@@ -148,7 +194,16 @@ export default function CryptoToolCommand() {
     items = !inputText.trim()
       ? [List.Item({ id: "empty", title: "在上方粘贴 Base64 字符串", subtitle: "支持标准与 URL-safe 两种写法", icon: Icon.Text, actions: ActionPanel({ title: "操作" }, globalActions) })]
       : decoded.success
-        ? [List.Item({ id: "decoded", title: decoded.result || "（空文本）", subtitle: "Base64 解码结果（UTF-8）", icon: Icon.Text, accessories: [{ text: `${(decoded.result || "").length} 字符` }], actions: commonItemActions(decoded.result || "", "解码结果") })]
+        ? [List.Item({
+            id: "decoded",
+            title: decoded.result || "（空文本）",
+            subtitle: "Base64 解码结果（UTF-8）",
+            icon: Icon.Text,
+            accessories: [{ text: `${(decoded.result || "").length} 字符` }],
+            // 解码结果往往是多行或很长的文本，列表行只能显示一行，右侧原样显示完整内容
+            detail: decoded.result ? List.Item.Detail({ markdown: valueMarkdown(decoded.result) }) : undefined,
+            actions: commonItemActions(decoded.result || "", "解码结果")
+          })]
         : [List.Item({ id: "decode-error", title: "无法解码", subtitle: decoded.error, icon: Icon.ExclamationMark, actions: ActionPanel({ title: "操作" }, globalActions) })];
   } else if (!inputText) {
     items = [
@@ -179,6 +234,8 @@ export default function CryptoToolCommand() {
         subtitle: item.subtitle,
         icon: item.icon,
         accessories: [{ text: `${item.value.length} 字符` }],
+        // SHA-512、长 Base64 / URL 编码在列表行里会被截断，右侧折行显示选中项的完整值
+        detail: List.Item.Detail({ markdown: valueMarkdown(item.value) }),
         actions: commonItemActions(item.value, item.subtitle)
       })
     );
@@ -187,11 +244,13 @@ export default function CryptoToolCommand() {
   return List(
     {
       navigationTitle: "加解密与散列助手",
+      // 只有存在结果时才开右侧预览；空状态、解码失败等提示行没有 detail，自动保持全宽
+      isShowingDetail: Boolean(inputText),
       searchBarPlaceholder: mode === "hash" ? "输入要计算散列或编码的文字..." : "粘贴要解码的 Base64...",
       searchText: inputText,
       onSearchTextChange: (text: string) => setInputText(text),
       searchBarAccessory: List.Dropdown(
-        { tooltip: "模式", value: mode, onChange: (v: string) => setMode(v as Mode) },
+        { tooltip: "模式", value: mode, onChange: (v: string) => setMode(isMode(v) ? v : "hash") },
         [
           List.Dropdown.Item({ title: "散列与编码", value: "hash" }),
           List.Dropdown.Item({ title: "Base64 解码", value: "base64-decode" })
