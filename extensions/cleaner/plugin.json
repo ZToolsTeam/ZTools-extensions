@@ -2,7 +2,7 @@
   "id": "cleaner",
   "name": "系统垃圾深度清理",
   "description": "智能扫描系统临时文件、Windows 更新残留、浏览器缓存、崩溃转储与日志碎片，安全释放磁盘空间",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

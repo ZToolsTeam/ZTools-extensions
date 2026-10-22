@@ -27,6 +27,7 @@ import {
   CalculatorColorResult,
   CalculationResult
 } from "./calculator-engine.js";
+import { usePopoutValue } from "./popout-state.js";
 
 export * from "./calculator-engine.js";
 
@@ -49,10 +50,39 @@ const DEFAULT_CALC_EXAMPLES = [
   { expr: "rgb(59, 130, 246)", desc: "RGB 格式色彩即时检测", category: "色彩" }
 ];
 
-export default function CalculatorCommand() {
-  const [searchText, setSearchText] = useState("");
-  const [history, setHistory] = useState<CalculatorHistoryItem[]>([]);
+/** 结果区第一行的 id：填入输入框后选中它；没有结果时返回 undefined（交给渲染器默认选第一项） */
+function getResultItemId(result: CalculatorQueryResult): string | undefined {
+  if (result.type === "none") return undefined;
+  if (result.type === "color" && result.colorResult) return "color-hex";
+  return result.error ? "calc-error" : "calc-success";
+}
 
+const HISTORY_TYPES: ReadonlyArray<CalculatorHistoryItem["type"]> = ["math", "unit", "currency", "date", "color"];
+const isText = (v: unknown): v is string => typeof v === "string";
+const isHistoryItem = (v: unknown): v is CalculatorHistoryItem => {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  const item = v as Record<string, unknown>;
+  return (
+    isText(item.id) &&
+    isText(item.expression) &&
+    isText(item.answer) &&
+    HISTORY_TYPES.includes(item.type as CalculatorHistoryItem["type"]) &&
+    (item.pinned === undefined || typeof item.pinned === "boolean") &&
+    typeof item.timestamp === "number" &&
+    Number.isFinite(item.timestamp)
+  );
+};
+// 独立窗口带来的历史里有一项不合法（旧版本形状、篡改）就整份不用，等存储读取结果
+const isHistory = (v: unknown): v is CalculatorHistoryItem[] => Array.isArray(v) && v.every(isHistoryItem);
+
+export default function CalculatorCommand() {
+  // 当前算式与历史随独立窗口带走：新窗口首帧就能显示，不闪空列表
+  const [searchText, setSearchText] = usePopoutValue("searchText", () => "", isText);
+  // 填入输入框后要选中的结果行 id（受控 selectedItemId）；用户自己输入或移动选中项后清空
+  const [selectedItemId, setSelectedItemId] = useState<string | undefined>(undefined);
+  const [history, setHistory] = usePopoutValue<CalculatorHistoryItem[]>("history", () => [], isHistory);
+
+  // 历史以插件存储为准：带来的那份只用于首帧，读到存储后覆盖
   useEffect(() => {
     void getCalculatorHistory().then(setHistory);
   }, []);
@@ -61,41 +91,58 @@ export default function CalculatorCommand() {
     return evaluateCalculatorQuery(searchText);
   }, [searchText]);
 
+  // 用户在输入框里打字：只更新文字，选中项由渲染器重置到第一项
+  const handleSearchTextChange = (text: string) => {
+    setSearchText(text);
+    setSelectedItemId(undefined);
+  };
+
+  // 「填入搜索框」类动作：写回受控输入框，并选中新算出的结果行，按 Enter 即可复制新结果。
+  // 填入的文字算不出结果时（如旧版本存下、现已不支持的历史算式）选中来源条目本身，
+  // 不能交给渲染器默认选第一行，否则 Enter 会作用于不相关的历史项。
+  const fillSearch = (text: string, sourceItemId?: string) => {
+    setSearchText(text);
+    setSelectedItemId(getResultItemId(evaluateCalculatorQuery(text)) ?? sourceItemId);
+  };
+
+  // 修改历史记录：存储读写失败时提示，界面保持原样，不能当作成功
+  const updateHistory = async (task: () => Promise<CalculatorHistoryItem[]>): Promise<boolean> => {
+    try {
+      setHistory(await task());
+      return true;
+    } catch (err: any) {
+      await showToast(Toast.Style.Failure, "历史记录保存失败", err?.message || String(err));
+      return false;
+    }
+  };
+
+  const recordCurrentQuery = async () => {
+    if (queryResult.type !== "none" && !queryResult.error) {
+      const type = queryResult.type;
+      await updateHistory(() => addCalculatorHistory(queryResult.expression, queryResult.formattedAnswer, type));
+    }
+  };
+
   const handleCopy = async (text: string, label: string) => {
     await Clipboard.copy(text);
     await showToast(Toast.Style.Success, `已复制 ${label}`, text);
-    if (queryResult.type !== "none" && !queryResult.error) {
-      const updated = await addCalculatorHistory(
-        queryResult.expression,
-        queryResult.formattedAnswer,
-        queryResult.type
-      );
-      setHistory(updated);
-    }
+    await recordCurrentQuery();
   };
 
   const handlePaste = async (text: string) => {
     await Clipboard.paste(text);
     await showToast(Toast.Style.Success, "已粘贴到前台应用", text);
-    if (queryResult.type !== "none" && !queryResult.error) {
-      const updated = await addCalculatorHistory(
-        queryResult.expression,
-        queryResult.formattedAnswer,
-        queryResult.type
-      );
-      setHistory(updated);
-    }
+    await recordCurrentQuery();
   };
 
   const handleTogglePin = async (id: string) => {
-    const updated = await togglePinCalculatorHistory(id);
-    setHistory(updated);
+    await updateHistory(() => togglePinCalculatorHistory(id));
   };
 
   const handleDeleteHistory = async (id: string) => {
-    const updated = await deleteCalculatorHistory(id);
-    setHistory(updated);
-    await showToast(Toast.Style.Success, "已删除历史记录");
+    if (await updateHistory(() => deleteCalculatorHistory(id))) {
+      await showToast(Toast.Style.Success, "已删除历史记录");
+    }
   };
 
   const handleClearHistory = async () => {
@@ -117,7 +164,10 @@ export default function CalculatorCommand() {
   return (
     <List
       searchBarPlaceholder="输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"
-      onSearchTextChange={setSearchText}
+      searchText={searchText}
+      onSearchTextChange={handleSearchTextChange}
+      selectedItemId={selectedItemId}
+      onSelectionChange={() => setSelectedItemId(undefined)}
     >
       {/* 1. 色彩速查与双向转换 */}
       {queryResult.type === "color" && queryResult.colorResult && (
@@ -245,24 +295,25 @@ export default function CalculatorCommand() {
                     shortcut={{ modifiers: ["ctrl", "alt"], key: "c" }}
                     onAction={() => handleCopy(`${queryResult.expression} = ${queryResult.formattedAnswer}`, "完整算式")}
                   />
-                  <Action
-                    title="将结果填入输入框"
-                    icon={Icon.Pencil}
-                    shortcut={{ modifiers: ["ctrl"], key: "e" }}
-                    onAction={() => setSearchText(queryResult.formattedAnswer)}
-                  />
+                  {queryResult.fillText !== undefined && (
+                    <Action
+                      title="将结果填入输入框"
+                      icon={Icon.Pencil}
+                      shortcut={{ modifiers: ["ctrl"], key: "e" }}
+                      onAction={() => fillSearch(queryResult.fillText!)}
+                    />
+                  )}
                   <Action
                     title="保存到历史算式"
                     icon={Icon.Pin}
                     shortcut={{ modifiers: ["ctrl"], key: "p" }}
                     onAction={async () => {
-                      const updated = await addCalculatorHistory(
+                      const saved = await updateHistory(() => addCalculatorHistory(
                         queryResult.expression,
                         queryResult.formattedAnswer,
                         (queryResult.type === "none" ? "math" : queryResult.type) as CalculatorHistoryItem["type"]
-                      );
-                      setHistory(updated);
-                      await showToast(Toast.Style.Success, "已保存到历史记录");
+                      ));
+                      if (saved) await showToast(Toast.Style.Success, "已保存到历史记录");
                     }}
                   />
                 </ActionPanel>
@@ -303,7 +354,7 @@ export default function CalculatorCommand() {
                   <Action
                     title="填入搜索框"
                     icon={Icon.Pencil}
-                    onAction={() => setSearchText(item.expression)}
+                    onAction={() => fillSearch(item.expression, item.id)}
                   />
                   <Action
                     title="删除此项"
@@ -349,7 +400,7 @@ export default function CalculatorCommand() {
                   <Action
                     title="填入搜索框"
                     icon={Icon.Pencil}
-                    onAction={() => setSearchText(item.expression)}
+                    onAction={() => fillSearch(item.expression, item.id)}
                   />
                   <Action
                     title="删除此项"
@@ -384,7 +435,7 @@ export default function CalculatorCommand() {
                 <Action
                   title="填入搜索框并计算"
                   icon={Icon.Pencil}
-                  onAction={() => setSearchText(eg.expr)}
+                  onAction={() => fillSearch(eg.expr, `eg-${idx}`)}
                 />
                 <Action
                   title="复制表达式"

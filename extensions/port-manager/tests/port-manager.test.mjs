@@ -25,11 +25,11 @@ test('PortManager 集成与解析测试 - 正常 TCP 与 UDP 条目', () => {
   assert.equal(port80.protocol, 'TCP')
   assert.equal(port80.state, 'LISTENING')
   assert.equal(port80.pid, 1000)
-  assert.equal(port80.processName, 'PID 1000')
+  assert.equal(port80.processName, 'HTTP / Web Service')
 
   const port3000 = records.find(r => r.localPort === 3000)
   assert.ok(port3000)
-  assert.equal(port3000.processName, 'PID 2000')
+  assert.equal(port3000.processName, 'Node.js / React / Next.js')
 
   const udp = records.find(r => r.protocol === 'UDP')
   assert.ok(udp)
@@ -40,8 +40,10 @@ test('PortManager 集成与解析测试 - 正常 TCP 与 UDP 条目', () => {
 test('PortManager 系统安全保护测试', () => {
   assert.equal(isProtectedPid(0), true, 'PID 0 必须受保护')
   assert.equal(isProtectedPid(4), true, 'PID 4 (System) 必须受保护')
+  assert.equal(isProtectedPid(1), true, 'PID 1 (macOS launchd) 必须受保护')
   assert.equal(isProtectedPid(1000), false, '普通 PID 不受保护')
-  assert.equal(isProtectedPid(-1), false)
+  assert.equal(isProtectedPid(-1), true, '非法 PID 不能当成可结束的进程')
+  assert.equal(isProtectedPid(1.5), true)
 })
 
 test('PortManager 破坏性与边界异常测试', () => {
@@ -76,7 +78,7 @@ test('PortManager 宿主端口数据整理：只留监听/绑定端口，兼容 
   assert.equal(node.processName, 'node', '优先用宿主给的进程名')
   assert.equal(node.state, 'LISTENING')
   const http = records.find(r => r.localPort === 80)
-  assert.equal(http.processName, 'PID 4', '缺少真实进程名时不能从端口猜测应用')
+  assert.equal(http.processName, 'HTTP / Web Service', '宿主没给进程名时按常见端口推断')
   assert.equal(records.find(r => r.protocol === 'UDP').state, 'BOUND')
 })
 
@@ -96,5 +98,5 @@ test('PortManager 宿主端口数据破坏性输入：畸形条目全部丢弃�
   ])
   assert.equal(records.length, 1)
   assert.equal(records[0].pid, 0, '非法 PID 归零，不会被当成可结束的进程')
-  assert.equal(records[0].processName, 'PID 0')
+  assert.equal(records[0].processName, 'HTTP / Web Service')
 })

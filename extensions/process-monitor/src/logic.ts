@@ -1,3 +1,4 @@
+import { terminateProcess as hostTerminateProcess, isZToolsHostError } from '@ztools/declarative-ui'
 import {
   callHostTransport,
   formatBytes,
@@ -33,7 +34,7 @@ export interface ProcessItem {
   pid: number
   name: string
   parentPid: number
-  threadCount: number
+  threadCount?: number
   handleCount?: number
   path: string
   workingSetBytes: number
@@ -94,13 +95,9 @@ export interface ResourceFocusSummary {
 }
 
 export const DLL_PLUGIN_NAME = 'ProcessMonitorPlugin'
-export const FORBIDDEN_TARGET_PATTERN = new RegExp(
-  '^(?:0|4|System|Idle|Registry|MemCompression|csrss\\.exe|lsass\\.exe|smss\\.exe|wininit\\.exe|services\\.exe|winlogon\\.exe|fontdrvhost\\.exe|dwm\\.exe)$',
-  'i'
-)
-export const FORBIDDEN_REASON = '系统内核与会话管理关键进程受保护，严禁强制终止以免引发蓝屏 (BSOD)'
 
-export const CRITICAL_PROCESS_NAMES = [
+// Windows 内核与会话管理进程：结束后会蓝屏或会话崩溃
+export const WINDOWS_CRITICAL_PROCESS_NAMES = [
   'System',
   'Idle',
   'Registry',
@@ -114,6 +111,64 @@ export const CRITICAL_PROCESS_NAMES = [
   'fontdrvhost.exe',
   'dwm.exe'
 ]
+
+// macOS 内核、launchd 与登录会话 / 安全 / 日志等核心守护进程：结束后会内核崩溃、注销当前用户或系统失去响应
+export const MACOS_CRITICAL_PROCESS_NAMES = [
+  'kernel_task',
+  'launchd',
+  'WindowServer',
+  'loginwindow',
+  'logd',
+  'opendirectoryd',
+  'securityd',
+  'coreservicesd',
+  'configd',
+  'notifyd',
+  'diskarbitrationd',
+  'fseventsd',
+  'watchdogd'
+]
+
+// 两个平台的进程名互不重叠，合并成一份名单，插件在两端都按同一规则拦截
+export const CRITICAL_PROCESS_NAMES = [...WINDOWS_CRITICAL_PROCESS_NAMES, ...MACOS_CRITICAL_PROCESS_NAMES]
+
+// 系统界面进程：结束后程序坞 / 桌面 / 菜单栏会短暂消失并由系统自动重启，允许结束但必须高危确认
+export const HIGH_RISK_PROCESS_NAMES = ['Dock', 'Finder', 'SystemUIServer', 'ControlCenter', 'NotificationCenter']
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+export const FORBIDDEN_TARGET_PATTERN = new RegExp(
+  `^(?:0|4|${CRITICAL_PROCESS_NAMES.map(escapeRegExp).join('|')})$`,
+  'i'
+)
+export const FORBIDDEN_REASON = '系统内核与会话管理关键进程受保护：结束后会导致系统崩溃或当前用户被注销，已拦截'
+
+function includesName(list: string[], name: string): boolean {
+  const lower = String(name || '').toLowerCase()
+  return lower !== '' && list.some((c) => c.toLowerCase() === lower)
+}
+
+export type TerminationRisk = 'forbidden' | 'high-risk' | 'normal'
+
+/**
+ * 结束进程前的风险分级：forbidden 直接拒绝（不弹确认、不调用宿主），high-risk 需高危确认，normal 普通确认
+ */
+export function getTerminationRisk(pid: number, name: string): TerminationRisk {
+  if (pid === 0 || pid === 1 || pid === 4) return 'forbidden'
+  if (includesName(CRITICAL_PROCESS_NAMES, name)) return 'forbidden'
+  if (includesName(HIGH_RISK_PROCESS_NAMES, name)) return 'high-risk'
+  return 'normal'
+}
+
+// macOS 系统组件所在目录；/System 下的 Applications（计算器、Safari 所在的 Cryptex 等）是用户应用，不算系统进程
+const MACOS_SYSTEM_PATH_PATTERN = /^\/(?:System|usr\/libexec|usr\/sbin|sbin|Library\/Apple)\//
+const MACOS_SYSTEM_APPS_PATTERN = /^\/System\/(?:[^/]+\/)*Applications\//
+
+export function isMacSystemPath(pathStr: string): boolean {
+  return MACOS_SYSTEM_PATH_PATTERN.test(pathStr) && !MACOS_SYSTEM_APPS_PATTERN.test(pathStr)
+}
 
 const PRESET_ITEMS: CapabilityActionItem[] = [
   {
@@ -244,17 +299,20 @@ export function normalizeProcessItem(raw: any): ProcessItem {
     0,
     Number(raw?.cpuPercent ?? raw?.cpuUsage ?? 0)
   )
-  const isSys =
-    typeof raw?.isSystem === 'boolean'
-      ? raw.isSystem
-      : pid <= 4 ||
-        CRITICAL_PROCESS_NAMES.some((c) => c.toLowerCase() === name.toLowerCase()) ||
-        /^c:\\windows\\(?:system32|syswow64|servicing)/i.test(pathStr) ||
-        /^(?:svchost|dwm|conhost|fontdrvhost|sihost|taskhostw|RuntimeBroker|SearchIndexer|WmiPrvSE|spoolsv|audiodg|dllhost|dashost|smartscreen|SecurityHealthService|MsMpEng)\.exe$/i.test(
-          name
-        )
+  const isWindowsSys =
+    pid === 0 ||
+    pid === 4 ||
+    includesName(WINDOWS_CRITICAL_PROCESS_NAMES, name) ||
+    /^c:\\windows\\(?:system32|syswow64|servicing)/i.test(pathStr) ||
+    /^(?:svchost|dwm|conhost|fontdrvhost|sihost|taskhostw|RuntimeBroker|SearchIndexer|WmiPrvSE|spoolsv|audiodg|dllhost|dashost|smartscreen|SecurityHealthService|MsMpEng)\.exe$/i.test(
+      name
+    )
+  const isMacSys = includesName(MACOS_CRITICAL_PROCESS_NAMES, name) || isMacSystemPath(pathStr)
+  const isSys = typeof raw?.isSystem === 'boolean' ? raw.isSystem : isWindowsSys || isMacSys
 
-  const threadCount = Math.max(1, Number(raw?.threadCount ?? 1))
+  // 宿主没给线程数（macOS 的 process_list 不返回）时保持 undefined，界面不显示，不能用 1 冒充
+  const rawThreads = Number(raw?.threadCount)
+  const threadCount = Number.isFinite(rawThreads) && rawThreads > 0 ? Math.round(rawThreads) : undefined
   const parentPid = Math.max(0, Number(raw?.parentPid ?? 0))
   const handleCount = Math.max(0, Number(raw?.handleCount ?? 0))
 
@@ -271,7 +329,7 @@ export function normalizeProcessItem(raw: any): ProcessItem {
     cpuPercent,
     isSystem: isSys,
     description: String(raw?.description || name),
-    companyName: String(raw?.companyName || (isSys ? 'Microsoft Corporation' : '')),
+    companyName: String(raw?.companyName || (isWindowsSys ? 'Microsoft Corporation' : '')),
     commandLine: String(raw?.commandLine || pathStr || name)
   }
 }
@@ -625,13 +683,12 @@ export async function fetchProcessDetail(pid: number, host?: any): Promise<Proce
         name: infoRes.data.name || `PID-${pid}`,
         path: infoRes.data.path || '',
         commandLine: infoRes.data.path || infoRes.data.name || '',
-        companyName: /^c:\\windows/i.test(infoRes.data.path || '') ? 'Microsoft Corporation' : '',
-        fileDescription: infoRes.data.name || '',
+        // process_info 只有基础字段：签名、发布者、版本拿不到就留空，界面据此提示“未提供”，不按路径猜测
+        companyName: '',
+        fileDescription: '',
         fileVersion: '',
         productName: '',
-        signerName: /^c:\\windows/i.test(infoRes.data.path || '')
-          ? 'Microsoft Windows'
-          : '本机真实运行进程',
+        signerName: '',
         startTime: '',
         memoryBytes: mem,
         privateBytes: Number(infoRes.data.privateBytes ?? mem),
@@ -679,12 +736,67 @@ export async function fetchServicesByPID(pid: number, host?: any): Promise<Proce
   return getMockServicesByPID(pid)
 }
 
+export interface TerminateOutcome {
+  ok: boolean
+  error?: string
+  mode?: ProcessTerminateMode
+  /** 宿主错误码（如 PROCESS_PROTECTED、PROCESS_TERMINATE_TIMEOUT） */
+  code?: string
+  /** 平缓关闭超时：可由用户再次确认后强制结束（宿主不会自动升级） */
+  canForce?: boolean
+  /** 结束前进程已经退出 */
+  alreadyExited?: boolean
+}
+
+const PROTECTED_REASON_TEXT: Record<string, string> = {
+  system: '这是系统关键进程，宿主已拦截',
+  'host-self': '这是 ZTools 自身的进程，结束后 ZTools 会退出',
+  'host-ancestor': '这是启动 ZTools 的上级进程，结束后 ZTools 会一起退出',
+  'host-child': '这是 ZTools 的内部进程（渲染、GPU 或后台服务），不能结束'
+}
+
+/** 把宿主结束进程的错误码换成用户能看懂的原因；未知错误按宿主原文提示 */
+export function describeTerminateError(err: unknown): { code: string; message: string } {
+  const code = isZToolsHostError(err) ? err.code : 'PROCESS_ERROR'
+  const details = isZToolsHostError(err) ? err.details : undefined
+  const raw = err instanceof Error ? err.message : String(err)
+  switch (code) {
+    case 'PROCESS_PROTECTED':
+      return { code, message: PROTECTED_REASON_TEXT[String(details?.reason)] || '该进程受保护，不能结束' }
+    case 'PROCESS_NOT_FOUND':
+      return { code, message: '进程已经退出' }
+    case 'PROCESS_ACCESS_DENIED':
+      return { code, message: '没有权限结束该进程：它可能属于系统或其他用户，需要管理员权限' }
+    case 'PROCESS_IDENTITY_MISMATCH':
+      return { code, message: '该 PID 已不是列表里的进程（可能已退出并被复用），为避免误杀未执行，请刷新后重试' }
+    case 'PROCESS_TERMINATE_TIMEOUT': {
+      const still = Array.isArray(details?.stillRunning) ? (details!.stillRunning as unknown[]).filter((p) => Number.isInteger(p)) : []
+      return { code, message: `进程没有在限定时间内退出${still.length ? `（仍在运行：PID ${still.join(', ')}）` : ''}` }
+    }
+    case 'PLUGIN_PERMISSION_REQUIRED':
+      return { code, message: '插件没有声明结束进程权限，请更新插件' }
+    case 'PLUGIN_IDENTITY_REQUIRED':
+      return { code, message: '无法确认插件身份，请关闭后重新打开插件再试' }
+    case 'HOST_FEATURE_UNAVAILABLE':
+      return { code, message: '当前 ZTools 版本不支持结束其他程序的进程，请升级 ZTools' }
+    default:
+      return { code, message: raw || '终止进程失败' }
+  }
+}
+
+/**
+ * 结束进程：force = 强制结束，tree = 强制结束并连同子孙进程，graceful = 请求正常退出。
+ *
+ * 走宿主 process_terminate_pid（plugin.json 声明 "process" 权限）：保护名单、pid 复用校验（expectedName）、
+ * 复查进程确实退出都在宿主完成；graceful 超时返回 canForce，由界面再次确认，不自动升级。
+ * 宿主过旧（HOST_FEATURE_UNAVAILABLE）或测试注入了 host 时，回落到旧的 DLL / process_kill 路径。
+ */
 export async function terminateProcess(
   pid: number,
   name: string,
   modeOrHost?: ProcessTerminateMode | any,
   maybeHost?: any
-): Promise<{ ok: boolean; error?: string; mode?: ProcessTerminateMode }> {
+): Promise<TerminateOutcome> {
   const mode: ProcessTerminateMode =
     modeOrHost === 'force' || modeOrHost === 'tree' || modeOrHost === 'graceful'
       ? modeOrHost
@@ -698,15 +810,40 @@ export async function terminateProcess(
     return { ok: false, error: 'INVALID_PID: 进程 PID 无效' }
   }
 
-  if (
-    pid === 0 ||
-    pid === 4 ||
-    FORBIDDEN_TARGET_PATTERN.test(name) ||
-    CRITICAL_PROCESS_NAMES.some((c) => c.toLowerCase() === String(name || '').toLowerCase())
-  ) {
+  if (getTerminationRisk(pid, name) === 'forbidden' || FORBIDDEN_TARGET_PATTERN.test(String(name || ''))) {
     return { ok: false, error: FORBIDDEN_REASON }
   }
 
+  if (!host) {
+    // 列表里没拿到进程名时（显示为 PID-<pid>）不做名称校验，避免误拒
+    const expectedName = name && name !== `PID-${pid}` ? name : undefined
+    try {
+      await hostTerminateProcess(pid, {
+        mode: mode === 'graceful' ? 'graceful' : 'force',
+        tree: mode === 'tree',
+        ...(expectedName ? { expectedName } : {})
+      })
+      return { ok: true, mode }
+    } catch (err) {
+      const info = describeTerminateError(err)
+      if (info.code === 'PROCESS_NOT_FOUND') return { ok: true, mode, alreadyExited: true }
+      if (info.code !== 'HOST_FEATURE_UNAVAILABLE') {
+        return {
+          ok: false,
+          mode,
+          code: info.code,
+          error: info.message,
+          canForce: mode === 'graceful' && info.code === 'PROCESS_TERMINATE_TIMEOUT'
+        }
+      }
+    }
+  }
+  return legacyTerminateProcess(pid, name, mode, host)
+}
+
+/** 旧宿主兼容：Windows DLL TerminateProcessByPID，失败再试 process_kill（只能结束本窗口启动的子进程） */
+async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTerminateMode, host?: any): Promise<TerminateOutcome> {
+  const upgradeHint = '当前 ZTools 版本不支持结束其他程序的进程，请升级 ZTools'
   try {
     const res = await invokeNativeCapability(
       'TerminateProcessByPID',
@@ -723,15 +860,14 @@ export async function terminateProcess(
       if (res.ok) {
         return { ok: true, mode }
       }
-      // 若 DLL 调用返回错误，尝试 process_kill (针对当前窗口自己启动的子进程)
       const killRes = await callHostTransport('process_kill', { pid, force: mode !== 'graceful' }, host)
       if (killRes.ok) {
         return { ok: true, mode }
       }
-      return { ok: false, error: res.error || '终止进程失败' }
+      return { ok: false, mode, error: res.error || '终止进程失败' }
     }
   } catch (err: any) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    return { ok: false, mode, error: err instanceof Error ? err.message : String(err) }
   }
 
   if (host || isRealElectronHost(host)) {
@@ -739,12 +875,11 @@ export async function terminateProcess(
     if (killRes.ok) {
       return { ok: true, mode }
     }
-    if (isRealElectronHost(host)) {
-      return { ok: false, error: killRes.error || '无法终止外部进程或权限不足' }
-    }
+    return { ok: false, mode, error: killRes.error || upgradeHint }
   }
 
-  return { ok: true, mode }
+  // 没有宿主（浏览器预览）：如实报告无法结束，不假装成功
+  return { ok: false, mode, error: upgradeHint }
 }
 
 export async function openFileLocation(filePath: string, host?: any): Promise<boolean> {
@@ -829,4 +964,71 @@ export function filterProcesses(
     }
     return memB - memA
   })
+}
+
+function getFallbackCoreCount(): number {
+  try {
+    const n = Number((globalThis as any).navigator?.hardwareConcurrency)
+    return Number.isFinite(n) && n > 0 ? n : 1
+  } catch {
+    return 1
+  }
+}
+
+/**
+ * 状态条的整机 CPU 占用：优先用宿主按全部核心计算的 cpuUsagePercent；
+ * 拿不到时才用各进程占用之和除以逻辑核数（ps 的 pcpu 以单核为 100%，直接相加会远超整机占用）
+ */
+export function resolveCpuLoadPercent(
+  systemInfo: Pick<SystemInfoData, 'cpuUsagePercent' | 'cpuCoreCount'> | null | undefined,
+  processes: Array<Pick<ProcessItem, 'cpuPercent'>>
+): number {
+  const clamp = (v: number) => Math.min(100, Math.max(0, Math.round(v)))
+  const sysCpu = Number(systemInfo?.cpuUsagePercent)
+  if (Number.isFinite(sysCpu) && sysCpu > 0) return clamp(sysCpu)
+  const sum = (Array.isArray(processes) ? processes : []).reduce((acc, p) => {
+    const v = Number(p?.cpuPercent)
+    return acc + (Number.isFinite(v) && v > 0 ? v : 0)
+  }, 0)
+  if (sum <= 0) return 0
+  const cores = Number(systemInfo?.cpuCoreCount)
+  return clamp(sum / (Number.isFinite(cores) && cores > 0 ? cores : getFallbackCoreCount()))
+}
+
+export interface ProcessProfileField {
+  title: string
+  text: string
+}
+
+/**
+ * 「数字签名与托管服务」画像：只收录宿主真实给出的签名 / 发布者 / 版本 / 服务字段，空字段不展示；
+ * 返回空数组表示当前系统没有提供这些信息（例如 macOS 上没有 Windows 签名与服务数据）
+ */
+export function describeProcessProfile(
+  proc: Pick<ProcessItem, 'name'>,
+  detail: ProcessDetailInfo | null | undefined,
+  services: ProcessServiceInfo[] | null | undefined
+): ProcessProfileField[] {
+  const fields: ProcessProfileField[] = []
+  const add = (title: string, value: unknown) => {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text) fields.push({ title, text })
+  }
+  if (detail) {
+    add('数字签名', detail.signerName)
+    add('发布者', detail.companyName)
+    add('产品名称', detail.productName)
+    if (detail.fileDescription && detail.fileDescription.trim() !== proc.name) {
+      add('文件描述', detail.fileDescription)
+    }
+    add('文件版本', detail.fileVersion)
+  }
+  for (const svc of Array.isArray(services) ? services : []) {
+    const id = String(svc?.serviceName || svc?.name || '').trim()
+    if (!id) continue
+    const display = String(svc?.displayName || '').trim()
+    const status = String(svc?.status ?? '').trim()
+    add(`托管服务 ${id}`, [display && display !== id ? display : '', status].filter(Boolean).join(' · ') || id)
+  }
+  return fields
 }

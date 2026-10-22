@@ -21,6 +21,23 @@ import {
 
 export * from './logic.js'
 
+/**
+ * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
+ */
+async function copyWithToast(text: string, successTitle: string, successMessage?: string): Promise<void> {
+  try {
+    await Clipboard.copy(text)
+  } catch (err) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: '复制失败',
+      message: err instanceof Error ? err.message : String(err)
+    })
+    return
+  }
+  await showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
+}
+
 function renderSharePreviewMarkdown(item: LanShareItem): string {
   const sizeLine =
     item.category === 'files'
@@ -128,14 +145,8 @@ export function LanShareCommand() {
           label: '复制内网主页地址',
           title: '复制内网主页地址',
           style: 'secondary',
-          onAction: async () => {
-            await Clipboard.copy(portalUrl)
-            showToast({
-              style: Toast.Style.Success,
-              title: '已复制内网访问地址',
-              message: portalUrl
-            })
-          }
+          // 顶栏按钮由宿主直接调用、不会兜底 rejected promise，失败必须在这里提示
+          onAction: () => void copyWithToast(portalUrl, '已复制内网访问地址', portalUrl)
         },
         {
           id: 'refresh-lan',
@@ -180,14 +191,7 @@ export function LanShareCommand() {
                 Action({
                   title: '复制局域网直连下载 URL',
                   icon: Icon.Clipboard,
-                  onAction: async () => {
-                    await Clipboard.copy(item.shareUrl)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制内网直连链接',
-                      message: item.shareUrl
-                    })
-                  }
+                  onAction: () => copyWithToast(item.shareUrl, '已复制内网直连链接', item.shareUrl)
                 }),
                 Action({
                   title: item.isShared ? '暂停该项局域网共享' : '开启该项局域网共享',

@@ -50,6 +50,8 @@ export interface FileQuickLookResult {
   totalLines?: number;
   truncated?: boolean;
   dirEntries?: Array<{ name: string; isDir: boolean }>;
+  /** 文件夹预览：宿主扫描达到上限，只拿到了部分直接子项 */
+  partial?: boolean;
   error?: string;
 }
 

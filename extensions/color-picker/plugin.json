@@ -1,7 +1,7 @@
 {
   "id": "color-picker",
   "name": "颜色转换",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "HEX / RGB / HSL / OKLCH / CMYK 互转，显示无障碍对比度，可收藏常用颜色",
   "author": "ZTools Team",
   "entry": "dist/index.js",

@@ -7,6 +7,7 @@ import {
   Clipboard,
   useState,
   useEffect,
+  useRef,
   showToast,
   Toast,
   confirmAlert
@@ -35,6 +36,20 @@ function driveRoot(drive: string): string {
   return drive.startsWith('/') ? drive : `${drive}\\`
 }
 
+/**
+ * 定位 / 打开：宿主只放行本窗口扫描结果里的路径，失败时必须提示（以前静默失败，用户以为点了没反应）。
+ * 分区根目录不在扫描结果里，新宿主下可能被拒，同样如实提示。
+ */
+async function openWithToast(kind: 'reveal' | 'open', targetPath: string): Promise<void> {
+  const ok = kind === 'reveal' ? await openDiskItemLocation(targetPath) : await openDiskFileDefault(targetPath)
+  if (ok) return
+  await showToast({
+    style: Toast.Style.Failure,
+    title: kind === 'reveal' ? '无法在文件管理器中定位' : '无法打开文件',
+    message: `${targetPath}\n可能已被移动或删除，或不在本次扫描结果里（授权可能已过期），请重新扫描后再试`
+  })
+}
+
 export default function DiskAnalyzerCommand() {
   const [searchText, setSearchText] = useState('')
   const [tab, setTab] = useState<'all' | 'files' | 'drives' | 'ext'>('all')
@@ -43,7 +58,6 @@ export default function DiskAnalyzerCommand() {
   const [selectedDirPath, setSelectedDirPath] = useState<string>('ALL')
   const [selectedExt, setSelectedExt] = useState<string>('ALL')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const [pageSize, setPageSize] = useState<number>(60)
 
   const [drives, setDrives] = useState<DiskDriveItem[]>([])
   const [files, setFiles] = useState<DiskFileEntry[]>(() =>
@@ -68,39 +82,62 @@ export default function DiskAnalyzerCommand() {
         ]
   )
   const [topDirectories, setTopDirectories] = useState<
-    Array<{ name: string; path: string; drive: string; sizeBytes: number; fileCount: number }>
+    Array<{ name: string; path: string; drive: string; sizeBytes: number; fileCount: number; approximate?: boolean }>
   >([])
+  // 宿主目录扫描达到条目上限时，大文件列表只是抽样结果，界面不能标成「全盘」「按体积降序」
+  const [sampledScan, setSampledScan] = useState<{ sampled: boolean; scannedEntries: number }>({ sampled: false, scannedEntries: 0 })
   const [totalCapacity, setTotalCapacity] = useState(0)
   const [totalUsed, setTotalUsed] = useState(0)
   const [totalAvailable, setTotalAvailable] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
+  const [isScanning, setIsScanning] = useState(false)
+  // 互斥标记用 ref：连点时后几次点击拿到的可能还是旧闭包，状态还没刷新，ref 在各次渲染间是同一个对象
+  const scanningRef = useRef(false)
+  const batchTrashingRef = useRef(false)
 
   async function refreshAnalysis(showIndicator = false) {
-    if (showIndicator) {
-      setIsLoading(true)
-      showToast({
-        style: Toast.Style.Animated,
-        title: '正在执行 MFT + 真实目录 10 大分类深度扫描...',
-        message: '采集全盘物理分区、10 大官方分类占比与二级后缀分布'
-      })
-    }
+    if (scanningRef.current) return
+    scanningRef.current = true
+    setIsScanning(true)
+    // 进行中提示（Animated）宿主不会自动隐藏，必须在结束时显式 hide
+    let progressToast: { hide: () => Promise<void> } | null = null
     try {
+      if (showIndicator) {
+        setIsLoading(true)
+        progressToast = await showToast({
+          style: Toast.Style.Animated,
+          title: '正在扫描磁盘空间...',
+          message: '采集分区容量、10 大分类占比与二级后缀分布'
+        })
+      }
       const snap = await fetchDiskAnalysisSnapshot()
       setDrives(snap.drives)
       setFiles(snap.files)
       setTopDirectories(Array.isArray(snap.topDirectories) ? snap.topDirectories : [])
+      setSampledScan({ sampled: snap.sampled === true, scannedEntries: Number(snap.scannedEntries) || 0 })
       setTotalCapacity(snap.totalCapacityBytes)
       setTotalUsed(snap.totalUsedBytes)
       setTotalAvailable(snap.totalAvailableBytes)
       setSelectedPaths([])
       if (showIndicator) {
+        await progressToast?.hide()
         showToast({
           style: Toast.Style.Success,
           title: '磁盘空间 10 大分类透视完成',
           message: `已识别 ${snap.drives.length} 个分区，归类 ${snap.files.length} 个真实文件 (${snap.extStats.length} 种后缀)`
         })
       }
+    } catch (err) {
+      await progressToast?.hide()
+      showToast({
+        style: Toast.Style.Failure,
+        title: '磁盘扫描失败',
+        message: err instanceof Error ? err.message : String(err)
+      })
     } finally {
+      await progressToast?.hide()
+      scanningRef.current = false
+      setIsScanning(false)
       setIsLoading(false)
     }
   }
@@ -154,17 +191,19 @@ export default function DiskAnalyzerCommand() {
     })
     .sort((a, b) => b.sizeBytes - a.sizeBytes)
 
-  const visibleFiles = finalFilteredFiles.slice(0, pageSize)
+  // 右侧完整渲染全部匹配项（每个扫描目录最多 100 个大文件），保证表头全选只作用于看得见的条目
+  const visibleFiles = finalFilteredFiles
 
-  // 勾选状态统计
+  // 勾选状态统计（系统保护文件永远不进入清理队列）
   const selectedSet = new Set(selectedPaths)
-  const selectedEntries = files.filter(f => selectedSet.has(f.path))
+  const selectedEntries = files.filter(f => selectedSet.has(f.path) && !f.isProtected)
   const selectedBytes = selectedEntries.reduce((acc, f) => acc + f.sizeBytes, 0)
   const selectableInFilter = finalFilteredFiles.filter(f => !f.isProtected)
   const allFilteredChecked =
     selectableInFilter.length > 0 && selectableInFilter.every(f => selectedSet.has(f.path))
 
   function toggleSingleFile(filePath: string, checked: boolean) {
+    if (checked && files.some(f => f.path === filePath && f.isProtected)) return
     setSelectedPaths(prev => {
       const next = new Set(prev)
       if (checked) next.add(filePath)
@@ -218,7 +257,7 @@ export default function DiskAnalyzerCommand() {
 
     const confirmed = await confirmAlert({
       title: `确认将文件移入回收站？`,
-      message: `文件名: ${entry.name}\n所属分类: ${entry.groupName} (${entry.extension})\n实际大小: ${formatBytes(entry.sizeBytes)}\n完整路径: ${entry.path}\n\n文件将被安全移入 Windows 回收站，可随时还原。`,
+      message: `文件名: ${entry.name}\n所属分类: ${entry.groupName} (${entry.extension})\n实际大小: ${formatBytes(entry.sizeBytes)}\n完整路径: ${entry.path}\n\n文件将被安全移入系统回收站（废纸篓），可随时还原。`,
       primaryAction: { title: '移入回收站', style: 'destructive' }
     })
     if (!confirmed) return
@@ -243,7 +282,16 @@ export default function DiskAnalyzerCommand() {
   }
 
   async function handleBatchTrashSelected() {
-    if (selectedEntries.length === 0) return
+    if (selectedEntries.length === 0 || batchTrashingRef.current) return
+    batchTrashingRef.current = true
+    try {
+      await runBatchTrash()
+    } finally {
+      batchTrashingRef.current = false
+    }
+  }
+
+  async function runBatchTrash() {
     const previewLines = selectedEntries
       .slice(0, 8)
       .map(f => `• [${f.groupName}] ${f.name} (${formatBytes(f.sizeBytes)})`)
@@ -253,18 +301,31 @@ export default function DiskAnalyzerCommand() {
 
     const confirmed = await confirmAlert({
       title: `确认批量清理已勾选的 ${selectedEntries.length} 个文件？`,
-      message: `预计释放总空间: ${formatBytes(selectedBytes)}\n\n清理清单预览:\n${previewLines}${moreLine}\n\n所有文件均安全移入 Windows 系统回收站，原目录与分类占比将立即实时重算。`,
+      message: `预计释放总空间: ${formatBytes(selectedBytes)}\n\n清理清单预览:\n${previewLines}${moreLine}\n\n所有文件均安全移入系统回收站（废纸篓），原目录与分类占比将立即实时重算。`,
       primaryAction: { title: `确认移入回收站 (${formatBytes(selectedBytes)})`, style: 'destructive' }
     })
     if (!confirmed) return
 
-    showToast({
+    const progressToast = await showToast({
       style: Toast.Style.Animated,
       title: `正在批量移入回收站 (${selectedEntries.length} 项)...`,
       message: `预计释放 ${formatBytes(selectedBytes)}`
     })
 
-    const { succeeded, failed } = await batchDeleteDiskFileItems(selectedEntries.map(f => f.path))
+    let result: Awaited<ReturnType<typeof batchDeleteDiskFileItems>>
+    try {
+      result = await batchDeleteDiskFileItems(selectedEntries.map(f => f.path))
+    } catch (err) {
+      await progressToast.hide()
+      showToast({
+        style: Toast.Style.Failure,
+        title: '批量移除未成功',
+        message: err instanceof Error ? err.message : String(err)
+      })
+      return
+    }
+    await progressToast.hide()
+    const { succeeded, failed } = result
     if (succeeded.length > 0) {
       const removedSet = new Set(succeeded)
       const freedBytes = selectedEntries
@@ -275,7 +336,7 @@ export default function DiskAnalyzerCommand() {
       showToast({
         style: Toast.Style.Success,
         title: `批量清理完成：成功移除 ${succeeded.length} 项`,
-        message: `已释放 ${formatBytes(freedBytes)}${failed.length > 0 ? `，${failed.length} 项被占用跳过` : ''}`
+        message: `已释放 ${formatBytes(freedBytes)}${failed.length > 0 ? `，${failed.length} 项未能移除：${failed[0]?.error || '被占用或无权限'}` : ''}`
       })
     } else if (failed.length > 0) {
       showToast({
@@ -374,31 +435,6 @@ ${extRows}
 `
   }
 
-  function renderFileMarkdown(f: DiskFileEntry): string {
-    const isChecked = selectedSet.has(f.path)
-    return `# ${f.name}
-
-**完整路径**: \`${f.path}\`
-
----
-
-### 文件空间与分类画像
-- **实际占用大小**: \`${formatBytes(f.sizeBytes)}\` (\`${f.sizeBytes.toLocaleString()} Bytes\`)
-- **官方 10 大分类**: **${f.groupName}** (\`Group #${f.groupId}\`)
-- **文件扩展名**: \`${f.extension}\`
-- **所在物理分区**: \`${driveRoot(f.drive)}\`
-- **所属父目录**: \`${f.parentDir}\`
-- **最后修改时间**: \`${formatDateTime(f.mtime)}\`
-- **清理勾选状态**: ${f.isProtected ? '系统保护目录文件 (禁止清理)' : isChecked ? '已加入待清理队列' : '未勾选'}
-
----
-
-> [!NOTE]
-> - 点击列表左侧复选框可将文件加入批量清理队列；
-> - 按 \`Enter\` 可直接在 Windows 资源管理器中高亮定位该文件。
-`
-  }
-
   // 构建 10 大分类彩色分段条
   const nonEmptyGroups = scopedGroupStats.filter(g => g.totalSizeBytes > 0)
   const distributionSegments = (nonEmptyGroups.length > 0 ? nonEmptyGroups : scopedGroupStats.slice(0, 5)).map(
@@ -453,7 +489,7 @@ ${extRows}
     const isChecked = selectedSet.has(f.path)
     const volRatio = Math.max(8, Math.min(100, Math.round((f.sizeBytes / maxFileBytes) * 100)))
     const catMeta = OFFICIAL_FILE_TYPE_GROUPS.find(g => g.groupId === f.groupId)
-    const shortCat = (catMeta?.name || f.groupName).replace(/^[^\s]+\s*/, '')
+    const shortCat = catMeta?.shortName || f.groupName
 
     return List.Item({
       id: f.id,
@@ -465,8 +501,9 @@ ${extRows}
       checked: isChecked,
       onCheckChange: nextChecked => toggleSingleFile(f.path, nextChecked),
       onToggleCheck: nextChecked => toggleSingleFile(f.path, nextChecked),
+      // 不可勾选的行由宿主在复选框位置显示锁标记，行图标不再重复放锁
       icon: {
-        source: f.isProtected ? Icon.Lock : Icon.Document
+        source: Icon.Document
       },
       accessories: [
         {
@@ -482,36 +519,38 @@ ${extRows}
         },
         { text: formatBytes(f.sizeBytes) }
       ],
-      detail: List.Item.Detail({
-        markdown: renderFileMarkdown(f)
-      }),
       actions: ActionPanel({
         title: f.name,
         children: [
-          Action({
-            title: '移入回收站清理',
-            icon: Icon.Trash,
-            style: Action.Style.Destructive,
-            onAction: () => handleTrashFile(f)
-          }),
+          // 系统保护文件不提供清理与勾选动作，主动作退为定位
+          ...(f.isProtected
+            ? []
+            : [
+                Action({
+                  title: '移入回收站清理',
+                  icon: Icon.Trash,
+                  style: Action.Style.Destructive,
+                  onAction: () => handleTrashFile(f)
+                })
+              ]),
           Action({
             title: '在资源管理器定位',
             icon: Icon.Folder,
-            onAction: () => {
-              openDiskItemLocation(f.path)
-            }
+            onAction: () => openWithToast('reveal', f.path)
           }),
-          Action({
-            title: isChecked ? '取消勾选此文件' : '勾选加入批量清理队列',
-            icon: Icon.Checkmark,
-            onAction: () => toggleSingleFile(f.path, !isChecked)
-          }),
+          ...(f.isProtected
+            ? []
+            : [
+                Action({
+                  title: isChecked ? '取消勾选此文件' : '勾选加入批量清理队列',
+                  icon: Icon.Checkmark,
+                  onAction: () => toggleSingleFile(f.path, !isChecked)
+                })
+              ]),
           Action({
             title: '使用默认程序打开文件',
             icon: Icon.AppWindow,
-            onAction: () => {
-              openDiskFileDefault(f.path)
-            }
+            onAction: () => openWithToast('open', f.path)
           }),
           Action({
             title: `仅筛选 ${f.extension} 后缀文件`,
@@ -544,9 +583,11 @@ ${extRows}
     selectedDirPath !== 'ALL'
       ? `目录「${selectedDirPath}」下的大文件`
       : selectedGroupId !== 'ALL'
-      ? `「${(scopedGroupStats.find(g => String(g.groupId) === selectedGroupId)?.name || '当前分类').replace(/^[^\s]+\s*/, '')}」下的大文件`
+      ? `「${scopedGroupStats.find(g => String(g.groupId) === selectedGroupId)?.name || '当前分类'}」下的大文件`
       : selectedDrive !== 'ALL'
       ? `${selectedDrive} 分区下的可清理大文件 (按体积从大到小)`
+      : sampledScan.sampled
+      ? `抽样大文件明细（已扫描 ${sampledScan.scannedEntries} 项，非完整结果，直接勾选或按 ↵ 移入回收站）`
       : `全盘可清理大文件明细 (按体积降序，直接勾选或按 ↵ 移入回收站)`
 
   return List({
@@ -576,12 +617,13 @@ ${extRows}
       ]
     }),
     filterBar: {
-      summaryText: `全盘总容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)} · 右侧共 ${finalFilteredFiles.length} 个大文件${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
+      summaryText: `全盘总容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)} · 右侧共 ${finalFilteredFiles.length} 个大文件${sampledScan.sampled ? ` · 抽样结果（已扫描 ${sampledScan.scannedEntries} 项）` : ''}${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
       actions: [
         {
           id: 'act-rescan',
-          label: '重新扫描',
+          label: isScanning ? '正在扫描...' : '重新扫描',
           style: 'secondary',
+          disabled: isScanning,
           onAction: () => refreshAnalysis(true)
         }
       ]
@@ -608,7 +650,7 @@ ${extRows}
         children: [
           List.Item({
             id: 'drive-ALL',
-            title: '全盘所有大文件',
+            title: sampledScan.sampled ? '已扫描到的大文件（抽样）' : '全盘所有大文件',
             subtitle: `已用 ${formatBytes(totalUsed)} / 总计 ${formatBytes(totalCapacity)}`,
             icon: { source: Icon.Globe },
             accessories: [{ text: `${files.length} 项` }],
@@ -661,9 +703,7 @@ ${extRows}
                   Action({
                     title: '在资源管理器中打开此分区',
                     icon: Icon.Folder,
-                    onAction: () => {
-                      openDiskItemLocation(driveRoot(d.drive))
-                    }
+                    onAction: () => openWithToast('reveal', driveRoot(d.drive))
                   })
                 ]
               })
@@ -676,7 +716,7 @@ ${extRows}
         children: scopedGroupStats
           .filter(g => g.fileCount > 0)
           .map(g => {
-            const cleanGroupName = g.name.replace(/^[^\s]+\s*/, '')
+            const cleanGroupName = g.name
             return List.Item({
               id: `group-${g.groupId}`,
               title: cleanGroupName,
@@ -723,7 +763,8 @@ ${extRows}
                   title: `${dir.name} (${dir.drive})`,
                   subtitle: dir.path,
                   icon: { source: Icon.Folder },
-                  accessories: [{ text: formatBytes(dir.sizeBytes) }],
+                  // 近似体积只是下限，用「≥」如实标注
+                  accessories: [{ text: `${dir.approximate ? '≥ ' : ''}${formatBytes(dir.sizeBytes)}` }],
                   onSelect: () => {
                     setSelectedDrive(dir.drive)
                     setSelectedGroupId('ALL')
@@ -746,9 +787,7 @@ ${extRows}
                       Action({
                         title: '在资源管理器中打开此目录',
                         icon: Icon.Folder,
-                        onAction: () => {
-                          openDiskItemLocation(dir.path)
-                        }
+                        onAction: () => openWithToast('reveal', dir.path)
                       }),
                       Action.CopyToClipboard({
                         title: '复制目录路径',

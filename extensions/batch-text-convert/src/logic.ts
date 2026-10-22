@@ -63,6 +63,15 @@ export function toBase64(str: string): string {
 }
 
 /**
+ * 统计换行数（\r\n 算一处）
+ */
+export function countLineBreaks(str: string): number {
+  if (!str) return 0
+  const matches = str.match(/\r\n|\r|\n/g)
+  return matches ? matches.length : 0
+}
+
+/**
  * 计算多编码结果对比
  */
 export function convertTextToAllEncodings(input: string): ConversionResult[] {

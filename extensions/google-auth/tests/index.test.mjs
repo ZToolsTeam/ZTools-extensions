@@ -1,11 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
+import { installSecureStorage } from './secure-storage-double.mjs'
 import GoogleAuthCommand from '../dist/index.js'
 import { generateTOTP, parseOTPAuthURL, sanitizeStoredAccounts, createAccount, ACCOUNTS_STORAGE_KEY } from '../dist/logic.js'
 
 const host = createHost()
-test.beforeEach(() => host.reset())
+let ss
+test.beforeEach(() => {
+  host.reset()
+  ss = installSecureStorage(host)
+})
 
 const b32 = (ascii) => {
   const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
@@ -40,17 +45,17 @@ test('粘贴 otpauth 链接添加账号，写入存储；删除需要确认', as
   await form.fill('secret', 'otpauth://totp/GitHub:me%40x.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub')
   await form.run(null, '保存账号')
   await tick()
-  const stored = JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY))
+  const stored = ss.read(ACCOUNTS_STORAGE_KEY)
   assert.equal(stored.length, 1)
   assert.equal(stored[0].issuer, 'GitHub')
   const item = view.items().find((i) => i.props.title.startsWith('me@x.com'))
   assert.match(item.props.title, /\d{3} \d{3}$/)
   host.setConfirm(false)
   await view.run(item, '删除该账号')
-  assert.equal(JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY)).length, 1, '取消确认时不删除')
+  assert.equal(ss.read(ACCOUNTS_STORAGE_KEY).length, 1, '取消确认时不删除')
   host.setConfirm(true)
   await view.run(view.items().find((i) => i.props.title.startsWith('me@x.com')), '删除该账号')
-  assert.equal(JSON.parse(host.storage.get(ACCOUNTS_STORAGE_KEY)).length, 0)
+  assert.equal(ss.read(ACCOUNTS_STORAGE_KEY).length, 0)
   view.unmount()
 })
 
@@ -58,7 +63,7 @@ test('[故障注入] 保存失败时不关闭表单、不显示新账号', async
   const view = await mount(GoogleAuthCommand)
   await view.run(null, '添加 2FA 账号')
   const form = await mountPushed(host)
-  host.faults.storageWrite = new Error('磁盘已满')
+  ss.faults.set = new Error('磁盘已满')
   await form.fill('name', 'a')
   await form.fill('secret', 'JBSWY3DPEHPK3PXP')
   await form.run(null, '保存账号')

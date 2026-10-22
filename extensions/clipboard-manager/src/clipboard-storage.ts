@@ -4,8 +4,7 @@ import { Clipboard } from "@ztools/declarative-ui";
 import {
   callHostTransport,
   isRealElectronHost,
-  readRealClipboardText,
-  writeRealClipboardText
+  readRealClipboardText
 } from "./native-ipc.js";
 import {
   ClipboardItem,
@@ -36,6 +35,31 @@ export function calculateShannonEntropy(str: string): number {
     entropy -= p * Math.log2(p);
   }
   return entropy;
+}
+
+const NON_SECRET_TYPES = new Set<ClipboardContentType>(["link", "json", "files", "color", "code", "image"]);
+
+const charClass = (ch: string) => (/[a-z]/.test(ch) ? 0 : /[A-Z]/.test(ch) ? 1 : /\d/.test(ch) ? 2 : 3);
+
+/**
+ * 单个无空白词是否可能是随机生成的密钥：
+ * 先排除结构化内容（链接、路径、JSON、邮箱、域名、带点的版本号/文件名），
+ * 再要求字母与至少 2 个数字混排，且相邻字符的类别（小写/大写/数字/符号）频繁切换——
+ * 随机串约一半以上的相邻字符类别不同，FX3-LEGACY-PINNED、report2024-final-v3 这类人写的标识只有约 0.3
+ */
+function looksLikeSecretToken(token: string): boolean {
+  if (NON_SECRET_TYPES.has(detectClipboardContentType(token))) return false;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(token) || /^(?:www\.|mailto:)/i.test(token)) return false; // 各类协议链接
+  if (/^(?:~|\.{1,2})?\//.test(token) || /^[a-zA-Z]:[\\/]/.test(token)) return false; // 文件路径
+  if (/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(token)) return false; // 邮箱
+  if (/^[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}(?:[/:?#]\S*)?$/i.test(token)) return false; // 域名 / 不带协议的网址
+  if (token.includes(".")) return false;
+  if (!/[A-Za-z]/.test(token) || (token.match(/\d/g) || []).length < 2) return false;
+  let switches = 0;
+  for (let i = 1; i < token.length; i++) {
+    if (charClass(token[i]) !== charClass(token[i - 1])) switches++;
+  }
+  return switches / (token.length - 1) >= 0.4;
 }
 
 /**
@@ -85,9 +109,15 @@ export function maskSensitiveContent(text: string): { isSensitive: boolean; mask
     masked = masked.replace(/(ey[A-Za-z0-9_-]{6})[A-Za-z0-9_-]{6,}(\.ey[A-Za-z0-9_-]{6})[A-Za-z0-9_-]{6,}(\.[A-Za-z0-9_-]{6})[A-Za-z0-9_-]{4,}/g, "$1••••$2••••$3••••");
   }
 
-  // 6. High-entropy single-token secrets
+  // 6. High-entropy single-token secrets（只针对纯文本里像密钥的单个词：链接、JSON、路径、颜色、邮箱、域名不按熵判定）
   const trimmed = text.trim();
-  if (!isSensitive && trimmed.length >= 16 && trimmed.length <= 128 && !/\s/.test(trimmed)) {
+  if (
+    !isSensitive &&
+    trimmed.length >= 16 &&
+    trimmed.length <= 128 &&
+    !/\s/.test(trimmed) &&
+    looksLikeSecretToken(trimmed)
+  ) {
     const entropy = calculateShannonEntropy(trimmed);
     if (entropy >= 3.6) {
       isSensitive = true;
@@ -154,33 +184,94 @@ export function detectClipboardContentType(content: string, rawFormat?: string):
   return "text";
 }
 
+const clampNumber = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+const toHex2 = (n: number) => Math.round(clampNumber(n, 0, 255)).toString(16).padStart(2, "0").toUpperCase();
+const formatAlpha = (a: number) => String(Math.round(a * 100) / 100);
+
 /**
- * 解析颜色详情并计算换算值
+ * 标准 RGB → HSL 换算（h 0-360，s/l 0-100，均取整）
+ */
+export function rgbToHsl(r: number, g: number, b: number): { h: number; s: number; l: number } {
+  const rn = clampNumber(r, 0, 255) / 255;
+  const gn = clampNumber(g, 0, 255) / 255;
+  const bn = clampNumber(b, 0, 255) / 255;
+  const max = Math.max(rn, gn, bn);
+  const min = Math.min(rn, gn, bn);
+  const l = (max + min) / 2;
+  const d = max - min;
+  let h = 0;
+  let s = 0;
+  if (d !== 0) {
+    s = d / (1 - Math.abs(2 * l - 1));
+    if (max === rn) h = 60 * (((gn - bn) / d) % 6);
+    else if (max === gn) h = 60 * ((bn - rn) / d + 2);
+    else h = 60 * ((rn - gn) / d + 4);
+  }
+  if (h < 0) h += 360;
+  return { h: Math.round(h) % 360, s: Math.round(s * 100), l: Math.round(l * 100) };
+}
+
+function hslToRgb(h: number, s: number, l: number): { r: number; g: number; b: number } {
+  const sn = clampNumber(s, 0, 100) / 100;
+  const ln = clampNumber(l, 0, 100) / 100;
+  const hn = ((h % 360) + 360) % 360;
+  const c = (1 - Math.abs(2 * ln - 1)) * sn;
+  const x = c * (1 - Math.abs(((hn / 60) % 2) - 1));
+  const m = ln - c / 2;
+  const [r1, g1, b1] =
+    hn < 60 ? [c, x, 0] : hn < 120 ? [x, c, 0] : hn < 180 ? [0, c, x] : hn < 240 ? [0, x, c] : hn < 300 ? [x, 0, c] : [c, 0, x];
+  return { r: Math.round((r1 + m) * 255), g: Math.round((g1 + m) * 255), b: Math.round((b1 + m) * 255) };
+}
+
+function parseColorChannels(input: string): { r: number; g: number; b: number; a: number } | null {
+  const t = input.trim();
+  const hex = t.match(/^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  if (hex) {
+    let h = hex[1];
+    if (h.length <= 4) h = h.split("").map((c) => c + c).join("");
+    return {
+      r: parseInt(h.slice(0, 2), 16),
+      g: parseInt(h.slice(2, 4), 16),
+      b: parseInt(h.slice(4, 6), 16),
+      a: h.length === 8 ? parseInt(h.slice(6, 8), 16) / 255 : 1
+    };
+  }
+  const fn = t.match(/^(rgba?|hsla?)\(\s*([^)]*)\)$/i);
+  if (!fn) return null;
+  const parts = fn[2].split(/[\s,/]+/).filter(Boolean);
+  if (parts.length < 3 || parts.length > 4) return null;
+  const num = (v: string) => (/^-?\d*\.?\d+%?$/.test(v) ? parseFloat(v) : NaN);
+  const alphaOf = (v?: string) => {
+    if (v === undefined) return 1;
+    const n = num(v);
+    return v.endsWith("%") ? n / 100 : n;
+  };
+  const a = alphaOf(parts[3]);
+  if (!Number.isFinite(a)) return null;
+  if (fn[1].toLowerCase().startsWith("rgb")) {
+    const ch = parts.slice(0, 3).map((v) => (v.endsWith("%") ? (num(v) / 100) * 255 : num(v)));
+    if (ch.some((n) => !Number.isFinite(n))) return null;
+    return { r: clampNumber(Math.round(ch[0]), 0, 255), g: clampNumber(Math.round(ch[1]), 0, 255), b: clampNumber(Math.round(ch[2]), 0, 255), a: clampNumber(a, 0, 1) };
+  }
+  const [h, sat, light] = parts.slice(0, 3).map(num);
+  if (![h, sat, light].every(Number.isFinite)) return null;
+  return { ...hslToRgb(h, sat, light), a: clampNumber(a, 0, 1) };
+}
+
+/**
+ * 解析颜色详情并计算换算值（支持 #RGB / #RGBA / #RRGGBB / #RRGGBBAA、rgb()/rgba()、hsl()/hsla()）
  */
 export function parseColorDetails(colorStr: string): { hex: string; rgb: string; hsl: string } | null {
-  const trimmed = colorStr.trim();
-  if (/^#[0-9a-fA-F]{6}$/i.test(trimmed)) {
-    const r = parseInt(trimmed.slice(1, 3), 16);
-    const g = parseInt(trimmed.slice(3, 5), 16);
-    const b = parseInt(trimmed.slice(5, 7), 16);
-    return {
-      hex: trimmed.toUpperCase(),
-      rgb: `rgb(${r}, ${g}, ${b})`,
-      hsl: `hsl(${Math.round((r / 255) * 360)}, 100%, 50%)`
-    };
-  }
-  if (/^#[0-9a-fA-F]{3}$/i.test(trimmed)) {
-    const r = parseInt(trimmed[1] + trimmed[1], 16);
-    const g = parseInt(trimmed[2] + trimmed[2], 16);
-    const b = parseInt(trimmed[3] + trimmed[3], 16);
-    const fullHex = `#${trimmed[1]}${trimmed[1]}${trimmed[2]}${trimmed[2]}${trimmed[3]}${trimmed[3]}`.toUpperCase();
-    return {
-      hex: fullHex,
-      rgb: `rgb(${r}, ${g}, ${b})`,
-      hsl: `hsl(${Math.round((r / 255) * 360)}, 100%, 50%)`
-    };
-  }
-  return null;
+  if (typeof colorStr !== "string") return null;
+  const c = parseColorChannels(colorStr);
+  if (!c) return null;
+  const { h, s, l } = rgbToHsl(c.r, c.g, c.b);
+  const hasAlpha = c.a < 1;
+  return {
+    hex: `#${toHex2(c.r)}${toHex2(c.g)}${toHex2(c.b)}${hasAlpha ? toHex2(c.a * 255) : ""}`,
+    rgb: hasAlpha ? `rgba(${c.r}, ${c.g}, ${c.b}, ${formatAlpha(c.a)})` : `rgb(${c.r}, ${c.g}, ${c.b})`,
+    hsl: hasAlpha ? `hsla(${h}, ${s}%, ${l}%, ${formatAlpha(c.a)})` : `hsl(${h}, ${s}%, ${l}%)`
+  };
 }
 
 export const SAMPLE_CLIPBOARD_ITEMS: ClipboardItem[] = [
@@ -359,6 +450,8 @@ export class PasteSequenceManager {
 
 export const pasteSequenceManager = new PasteSequenceManager();
 
+const HOST_MASKED_PREVIEW = /^•+ \[高熵敏感机密已脱敏\]$/;
+
 function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
   const content = String(r?.content ?? r?.text ?? "");
   const formatType = String(r?.format_type ?? r?.type ?? "text");
@@ -372,8 +465,15 @@ function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
     id: String(r?.id || `clip-host-${idx}-${Date.now()}`),
     type: detectedType,
     content,
-    preview: String(r?.text_preview || r?.preview || content.replace(/\s+/g, " ").slice(0, 100)),
-    copiedAt: Number(r?.created_at ?? r?.copiedAt) || Date.now(),
+    // 宿主会把它判定为高熵的内容的预览换成占位符，带数字的普通链接、路径、JSON 也会被误判：
+    // 这几类结构化内容按原文生成预览（真正的密钥仍由插件的敏感检测遮罩），其余保留宿主的遮罩
+    preview: String(
+      (HOST_MASKED_PREVIEW.test(String(r?.text_preview || "")) && NON_SECRET_TYPES.has(detectedType)
+        ? ""
+        : r?.text_preview || r?.preview) || content.replace(/\s+/g, " ").slice(0, 100)
+    ),
+    // 宿主去重命中时只更新 updated_at 并把条目移到最前，排序以它为准
+    copiedAt: Number(r?.updated_at ?? r?.created_at ?? r?.copiedAt) || Date.now(),
     pinned: Boolean(r?.is_pinned ?? r?.pinned),
     charCount: Number(r?.char_count ?? r?.charCount ?? content.length),
     wordCount: Number(r?.word_count ?? r?.wordCount) || undefined,
@@ -385,49 +485,80 @@ function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
 }
 
 /**
- * 获取真实或本地剪贴板历史
+ * 插件自己存的记录（id 由插件生成：clip-<时间戳> / clip-live-<时间戳>），其余 id 属于宿主历史库
  */
-export async function getClipboardHistory(hostOverride?: any): Promise<ClipboardItem[]> {
-  const realHost = isRealElectronHost(hostOverride);
+export function isLocalRecordId(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith("clip-") && !id.startsWith("clip-host-");
+}
 
-  // 1. 尝试通过 window.ztools 原生 IPC 接口读取
+function isUserLocalRecord(item: any): item is ClipboardItem {
+  if (!item || typeof item !== "object" || typeof item.content !== "string") return false;
+  const id = String(item.id);
+  return (
+    isLocalRecordId(id) &&
+    !SAMPLE_IDS.has(id) &&
+    !id.startsWith("clip-color-") &&
+    !id.startsWith("clip-json-")
+  );
+}
+
+async function readStoredRecords(): Promise<any[] | null> {
+  try {
+    const raw = await LocalStorage.getItem(STORAGE_KEY);
+    if (raw === undefined || raw === null || raw === "") return null;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 读出插件自己存的记录（不含示例数据、不含旧版本误存进来的宿主记录） */
+async function readLocalRecords(): Promise<ClipboardItem[]> {
+  return ((await readStoredRecords()) ?? []).filter(isUserLocalRecord);
+}
+
+/** 插件存储里只写插件自己的记录；宿主历史库里的记录由宿主保存，不能复制进来，否则会互相覆盖 */
+async function writeLocalRecords(items: ClipboardItem[]): Promise<void> {
+  await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(items.filter((i) => isLocalRecordId(i?.id))));
+}
+
+function hostResultSucceeded(res: { ok: boolean; data?: any }): boolean {
+  if (!res.ok) return false;
+  const d = res.data;
+  if (d === false || d?.ok === false || d?.success === false) return false;
+  return true;
+}
+
+/**
+ * 读取宿主剪贴板历史库。宿主不提供历史库（方法不存在或调用失败）时返回 null，
+ * 返回数组（哪怕为空）就表示宿主历史库可用，以宿主为准。
+ */
+async function queryHostHistory(hostOverride?: any): Promise<ClipboardItem[] | null> {
   if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_query) {
     try {
       const records = await (window as any).ztools.clipboard_history_query({ limit: 100 });
-      if (Array.isArray(records) && records.length > 0) {
-        return records.map((r: any, i: number) => mapRawClipboardRecord(r, i));
-      }
+      if (Array.isArray(records)) return records.map((r: any, i: number) => mapRawClipboardRecord(r, i));
     } catch {
-      // 优雅降级
+      // 继续尝试下一条通道
     }
   }
 
-  // 2. 尝试通过 Preload Transport (clipboard_history_query) 读取
-  if (hostOverride || realHost) {
+  if (hostOverride || isRealElectronHost(hostOverride)) {
     try {
-      const ipcRes = await callHostTransport<any>(
-        "clipboard_history_query",
-        { limit: 100 },
-        hostOverride
-      );
-      if (ipcRes.ok && ipcRes.data !== undefined) {
-        const list = Array.isArray(ipcRes.data)
-          ? ipcRes.data
-          : Array.isArray(ipcRes.data?.items)
-          ? ipcRes.data.items
-          : Array.isArray(ipcRes.data?.records)
-          ? ipcRes.data.records
-          : [];
-        if (list.length > 0) {
-          return list.map((r: any, i: number) => mapRawClipboardRecord(r, i));
-        }
+      const ipcRes = await callHostTransport<any>("clipboard_history_query", { limit: 100 }, hostOverride);
+      if (ipcRes.ok && ipcRes.data !== undefined && ipcRes.data !== null) {
+        const d = ipcRes.data;
+        const list = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.records) ? d.records : null;
+        if (list) return list.map((r: any, i: number) => mapRawClipboardRecord(r, i));
       }
     } catch {
-      // 优雅降级
+      // 继续尝试下一条通道
     }
+    return null;
   }
 
-  // 3. 尝试通过 DeclarativeBridge 读取
+  // DeclarativeBridge 的 query 在宿主没有该方法时也返回 []，无法区分“空”和“不可用”，只认非空结果
   const bridge = getDeclarativeBridge();
   if (bridge?.clipboardHistory?.query) {
     try {
@@ -439,157 +570,270 @@ export async function getClipboardHistory(hostOverride?: any): Promise<Clipboard
       // 优雅降级
     }
   }
+  return null;
+}
 
-  // 4. 在真实 Electron 宿主或显式传入 hostOverride 时，若历史数据库当前为空，主动读取当前操作系统剪贴板真实内容并拒绝假数据
-  if (realHost || hostOverride) {
-    let realStored: ClipboardItem[] = [];
+async function callHistoryHost(method: string, params: Record<string, unknown>, hostOverride?: any): Promise<{ ok: boolean; data?: any }> {
+  if (typeof window !== "undefined" && typeof (window as any).ztools?.[method] === "function") {
     try {
-      const raw = await LocalStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-        if (Array.isArray(parsed)) {
-          realStored = parsed.filter(
-            (item: any) =>
-              item &&
-              !SAMPLE_IDS.has(String(item.id)) &&
-              !String(item.id).startsWith("clip-color-") &&
-              !String(item.id).startsWith("clip-json-")
-          );
-        }
-      }
+      const data = await (window as any).ztools[method](params);
+      return { ok: data !== false && data?.success !== false, data };
     } catch {
-      // ignore
+      return { ok: false };
     }
+  }
+  if (hostOverride || isRealElectronHost(hostOverride)) {
+    try {
+      const res = await callHostTransport<any>(method, params, hostOverride);
+      return { ok: hostResultSucceeded(res), data: res.data };
+    } catch {
+      return { ok: false };
+    }
+  }
+  const bridge = getDeclarativeBridge();
+  const api = bridge?.clipboardHistory;
+  try {
+    if (method === "clipboard_history_toggle_pin" && api?.togglePin) return { ok: Boolean(await api.togglePin(String(params.id))) };
+    if (method === "clipboard_history_delete" && api?.delete) return { ok: Boolean(await api.delete(String(params.id))) };
+    if (method === "clipboard_history_clear_unpinned" && api?.clearUnpinned) {
+      const count = await api.clearUnpinned();
+      return { ok: true, data: { count } };
+    }
+  } catch {
+    return { ok: false };
+  }
+  return { ok: false };
+}
 
+function mergeHostAndLocal(host: ClipboardItem[], local: ClipboardItem[]): ClipboardItem[] {
+  const hostContents = new Set(host.map((i) => i.content));
+  return [...host, ...local.filter((i) => !hostContents.has(i.content))];
+}
+
+export interface HostRecordWaitOptions {
+  /** 查询宿主历史库的次数（宿主约每 750ms 采集一次剪贴板） */
+  attempts?: number;
+  intervalMs?: number;
+}
+
+const DEFAULT_HOST_WAIT: Required<HostRecordWaitOptions> = { attempts: 8, intervalMs: 300 };
+
+/**
+ * 等宿主把刚写入系统剪贴板的文本记进历史库；宿主不可用或超时未记录返回 null
+ */
+async function waitForHostRecord(
+  content: string,
+  hostOverride?: any,
+  options: HostRecordWaitOptions = {}
+): Promise<{ record: ClipboardItem | null; hostAvailable: boolean }> {
+  const attempts = Math.max(1, options.attempts ?? DEFAULT_HOST_WAIT.attempts);
+  const intervalMs = Math.max(0, options.intervalMs ?? DEFAULT_HOST_WAIT.intervalMs);
+  let hostAvailable = false;
+  for (let i = 0; i < attempts; i++) {
+    if (i > 0) await new Promise((r) => setTimeout(r, intervalMs));
+    const host = await queryHostHistory(hostOverride);
+    // 宿主没有历史库就不必再等
+    if (!host) return { record: null, hostAvailable };
+    hostAvailable = true;
+    const found = host.find((item) => item.content === content);
+    if (found) return { record: found, hostAvailable };
+  }
+  return { record: null, hostAvailable };
+}
+
+/**
+ * 获取剪贴板历史：宿主历史库可用时以宿主为准，并带上插件自己存的、宿主里没有的记录（不隐藏、不覆盖）
+ */
+export async function getClipboardHistory(hostOverride?: any): Promise<ClipboardItem[]> {
+  const realHost = isRealElectronHost(hostOverride);
+
+  const host = await queryHostHistory(hostOverride);
+  if (host) {
+    return mergeHostAndLocal(host, await readLocalRecords());
+  }
+
+  // 真实宿主但没有历史库：只用插件自己存的记录，并补上当前系统剪贴板里的文本，拒绝示例数据
+  if (realHost || hostOverride) {
+    let realStored = await readLocalRecords();
     try {
       const liveText = await readRealClipboardText(hostOverride);
       const trimmed = (liveText || "").trim();
-      if (trimmed) {
-        const alreadyExists = realStored.some((item) => item.content === liveText);
-        if (!alreadyExists) {
-          const liveItem: ClipboardItem = {
-            id: `clip-live-${Date.now()}`,
-            type: detectClipboardContentType(liveText),
-            content: liveText,
-            preview: trimmed.replace(/\s+/g, " ").slice(0, 100),
-            copiedAt: Date.now(),
-            pinned: false,
-            charCount: liveText.length,
-            lineCount: liveText.split(/\r?\n/).length,
-            sourceAppName: "System Clipboard"
-          };
-          realStored = [liveItem, ...realStored];
-          await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(realStored));
-          void callHostTransport("clipboard_history_add", { content: liveText }, hostOverride);
-        }
+      if (trimmed && !realStored.some((item) => item.content === liveText)) {
+        realStored = [buildLocalRecord(liveText, { idPrefix: "clip-live-" }), ...realStored];
+        await writeLocalRecords(realStored);
       }
     } catch {
       // ignore
     }
-
     return realStored;
   }
 
-  // 5. 离线/单元测试环境兜底 LocalStorage 读取
+  // 离线/单元测试环境兜底 LocalStorage 读取
   try {
-    const raw = await LocalStorage.getItem(STORAGE_KEY);
-    if (!raw) {
+    const stored = await readStoredRecords();
+    if (stored === null) {
       await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(SAMPLE_CLIPBOARD_ITEMS));
       return SAMPLE_CLIPBOARD_ITEMS;
     }
-    return JSON.parse(raw);
+    return stored;
   } catch {
     return SAMPLE_CLIPBOARD_ITEMS;
   }
 }
 
 /**
+ * 生成一条插件自存记录
+ */
+export function buildLocalRecord(
+  content: string,
+  options: { id?: string; pinned?: boolean; sourceAppName?: string; idPrefix?: string } = {}
+): ClipboardItem {
+  return {
+    id: options.id || `${options.idPrefix || "clip-"}${Date.now()}`,
+    type: detectClipboardContentType(content),
+    content,
+    preview: content.trim().replace(/\s+/g, " ").slice(0, 100),
+    copiedAt: Date.now(),
+    pinned: Boolean(options.pinned),
+    charCount: content.length,
+    lineCount: content.split(/\r?\n/).length,
+    sourceAppName: options.sourceAppName
+  };
+}
+
+/**
  * 主动读取当前系统剪贴板并写入历史记录
+ * - 宿主历史库可用：宿主会自动采集剪贴板，这里等它记录后重新读取；宿主没有记下时存进插件存储，保证不丢
+ * - 没有宿主历史库：存进插件存储
  */
 export async function syncCurrentSystemClipboard(
   currentItems: ClipboardItem[] = [],
-  hostOverride?: any
+  hostOverride?: any,
+  waitOptions?: HostRecordWaitOptions
 ): Promise<{ added: boolean; item?: ClipboardItem; items: ClipboardItem[] }> {
   const liveText = await readRealClipboardText(hostOverride);
   if (!liveText || !liveText.trim()) {
     return { added: false, items: currentItems };
   }
+  const alreadyListed = currentItems.some((i) => i.content === liveText);
+
+  const { record, hostAvailable } = await waitForHostRecord(liveText, hostOverride, waitOptions);
+  if (record) {
+    return { added: !alreadyListed, item: record, items: await getClipboardHistory(hostOverride) };
+  }
+
+  let item: ClipboardItem;
+  if (hostAvailable || hostOverride || isRealElectronHost(hostOverride)) {
+    const local = await readLocalRecords();
+    const existing = local.find((i) => i.content === liveText);
+    item = existing ? { ...existing, copiedAt: Date.now() } : buildLocalRecord(liveText);
+    await writeLocalRecords([item, ...local.filter((i) => i.id !== item.id)]);
+    return { added: !alreadyListed, item, items: await getClipboardHistory(hostOverride) };
+  }
+
+  // 离线环境：currentItems 就是插件存储里的全部记录
   const existing = currentItems.find((i) => i.content === liveText);
-  if (existing) {
-    const updatedItem = { ...existing, copiedAt: Date.now() };
-    const next = [updatedItem, ...currentItems.filter((i) => i.id !== existing.id)];
-    await saveClipboardHistory(next);
-    return { added: false, item: updatedItem, items: next };
-  }
-  const newItem: ClipboardItem = {
-    id: `clip-${Date.now()}`,
-    type: detectClipboardContentType(liveText),
-    content: liveText,
-    preview: liveText.trim().replace(/\s+/g, " ").slice(0, 100),
-    copiedAt: Date.now(),
-    pinned: false,
-    charCount: liveText.length,
-    lineCount: liveText.split(/\r?\n/).length,
-    sourceAppName: "System Clipboard"
-  };
-  if (hostOverride || isRealElectronHost(hostOverride)) {
-    void callHostTransport("clipboard_history_add", { content: liveText }, hostOverride);
-  }
-  const next = [newItem, ...currentItems];
+  item = existing ? { ...existing, copiedAt: Date.now() } : buildLocalRecord(liveText);
+  const next = [item, ...currentItems.filter((i) => i.id !== item.id)];
   await saveClipboardHistory(next);
-  return { added: true, item: newItem, items: next };
+  return { added: !existing, item, items: next };
 }
 
 /**
- * 保存剪贴板历史列表到本地缓存
+ * 保存新建或编辑后的记录（调用前文本已写入系统剪贴板）
+ * - 宿主历史库可用：等宿主记下新文本，按需置顶；编辑时删掉被替换的旧记录
+ * - 宿主没有记下或不可用：存进插件存储
+ * 返回 persisted=false 时表示没有保存成功，界面不能提示“已保存”
+ */
+export async function saveEditedClipboardItem(
+  input: { content: string; pinned: boolean },
+  original?: ClipboardItem,
+  hostOverride?: any,
+  waitOptions?: HostRecordWaitOptions
+): Promise<{ persisted: boolean; where?: "host" | "local"; item?: ClipboardItem; items: ClipboardItem[]; message?: string }> {
+  const content = String(input?.content ?? "");
+  if (!content.trim()) return { persisted: false, items: [], message: "内容不能为空" };
+  const pinned = Boolean(input?.pinned);
+
+  const removeOriginal = async (keepId: string) => {
+    if (!original || original.id === keepId) return true;
+    return deleteClipboardItem(original.id, hostOverride);
+  };
+
+  const { record } = await waitForHostRecord(content, hostOverride, waitOptions);
+  if (record) {
+    let item = record;
+    if (record.pinned !== pinned) {
+      const toggled = await callHistoryHost("clipboard_history_toggle_pin", { id: record.id }, hostOverride);
+      if (!toggled.ok) {
+        return { persisted: false, items: await getClipboardHistory(hostOverride), message: "已记录到历史，但置顶状态未能保存" };
+      }
+      item = { ...record, pinned };
+    }
+    await removeOriginal(record.id);
+    return { persisted: true, where: "host", item, items: await getClipboardHistory(hostOverride) };
+  }
+
+  try {
+    const local = (await readStoredRecords()) ?? [];
+    const keepOriginalId = original && isLocalRecordId(original.id) ? original.id : undefined;
+    const item = buildLocalRecord(content, {
+      id: keepOriginalId,
+      pinned,
+      sourceAppName: original?.sourceAppName || "ZTools Editor"
+    });
+    const rest = local.filter((i: any) => i && i.id !== item.id);
+    const isOffline = !hostOverride && !isRealElectronHost(hostOverride);
+    // 离线环境插件存储就是全部数据（含示例），原样保留；真实宿主下只保留插件自己的记录
+    await LocalStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(isOffline ? [item, ...rest] : [item, ...rest.filter(isUserLocalRecord)])
+    );
+    if (original && !isLocalRecordId(original.id)) await removeOriginal(item.id);
+    return { persisted: true, where: "local", item, items: await getClipboardHistory(hostOverride) };
+  } catch (err: any) {
+    return { persisted: false, items: [], message: err?.message || "插件存储写入失败" };
+  }
+}
+
+/**
+ * 保存剪贴板历史列表到本地缓存（只写插件自己的记录，宿主历史库的记录不复制进来）
  */
 export async function saveClipboardHistory(items: ClipboardItem[]): Promise<void> {
-  await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  await writeLocalRecords(items);
 }
 
-/**
- * 切换条目置顶状态
- */
-export async function toggleClipboardItemPin(id: string, hostOverride?: any): Promise<boolean> {
-  if (!id || typeof id !== "string" || !id.trim()) return false;
-  // 1. window.ztools
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_toggle_pin) {
-    try {
-      return await (window as any).ztools.clipboard_history_toggle_pin({ id });
-    } catch {}
-  }
-  if (hostOverride || isRealElectronHost(hostOverride)) {
-    try {
-      const res = await callHostTransport<any>("clipboard_history_toggle_pin", { id }, hostOverride);
-      if (res.ok && res.data?.ok !== false) return Boolean(res.data ?? true);
-      return false;
-    } catch {
-      return false;
-    }
-  }
-  // 2. Bridge
-  const bridge = getDeclarativeBridge();
-  if (bridge?.clipboardHistory?.togglePin) {
-    try {
-      return await bridge.clipboardHistory.togglePin(id);
-    } catch {}
-  }
-  // 3. LocalStorage fallback
+async function updateLocalRecord(id: string, fn: (item: ClipboardItem) => ClipboardItem | null): Promise<boolean> {
   try {
-    const items = await getClipboardHistory();
-    let newState = false;
-    const updated = items.map(item => {
-      if (item.id === id) {
-        newState = !item.pinned;
-        return { ...item, pinned: newState };
+    const stored = (await readStoredRecords()) ?? (await getClipboardHistory());
+    let found = false;
+    const next: ClipboardItem[] = [];
+    for (const item of stored) {
+      if (item && item.id === id) {
+        found = true;
+        const updated = fn(item);
+        if (updated) next.push(updated);
+      } else {
+        next.push(item);
       }
-      return item;
-    });
-    await saveClipboardHistory(updated);
-    return newState;
+    }
+    if (!found) return false;
+    await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    return true;
   } catch {
     return false;
   }
+}
+
+/**
+ * 切换条目置顶状态，返回是否切换成功（成功后请重新读取历史以获得真实状态）
+ */
+export async function toggleClipboardItemPin(id: string, hostOverride?: any): Promise<boolean> {
+  if (!id || typeof id !== "string" || !id.trim()) return false;
+  if (isLocalRecordId(id)) {
+    return updateLocalRecord(id, (item) => ({ ...item, pinned: !item.pinned }));
+  }
+  return (await callHistoryHost("clipboard_history_toggle_pin", { id }, hostOverride)).ok;
 }
 
 /**
@@ -597,75 +841,35 @@ export async function toggleClipboardItemPin(id: string, hostOverride?: any): Pr
  */
 export async function deleteClipboardItem(id: string, hostOverride?: any): Promise<boolean> {
   if (!id || typeof id !== "string" || !id.trim()) return false;
-  // 1. window.ztools
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_delete) {
-    try {
-      return await (window as any).ztools.clipboard_history_delete({ id });
-    } catch {}
+  if (isLocalRecordId(id)) {
+    return updateLocalRecord(id, () => null);
   }
-  if (hostOverride || isRealElectronHost(hostOverride)) {
-    try {
-      const res = await callHostTransport<any>("clipboard_history_delete", { id }, hostOverride);
-      if (res.ok && res.data?.ok !== false) return true;
-      return false;
-    } catch {
-      return false;
-    }
-  }
-  // 2. Bridge
-  const bridge = getDeclarativeBridge();
-  if (bridge?.clipboardHistory?.delete) {
-    try {
-      return await bridge.clipboardHistory.delete(id);
-    } catch {}
-  }
-  // 3. LocalStorage fallback
-  try {
-    const items = await getClipboardHistory();
-    const updated = items.filter(item => item.id !== id);
-    await saveClipboardHistory(updated);
-    return updated.length < items.length;
-  } catch {
-    return false;
-  }
+  return (await callHistoryHost("clipboard_history_delete", { id }, hostOverride)).ok;
 }
 
 /**
- * 清空所有未置顶历史
+ * 清空所有未置顶历史（宿主历史库与插件存储都清），返回清掉的条数
  */
 export async function clearUnpinnedClipboardHistory(hostOverride?: any): Promise<number> {
-  // 1. window.ztools
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_clear_unpinned) {
-    try {
-      return await (window as any).ztools.clipboard_history_clear_unpinned();
-    } catch {}
+  let removed = 0;
+  const hostRes = await callHistoryHost("clipboard_history_clear_unpinned", {}, hostOverride);
+  if (hostRes.ok) {
+    const d = hostRes.data;
+    removed += Number(typeof d === "number" ? d : d?.count ?? d?.clearedCount ?? 0) || 0;
   }
-  if (hostOverride || isRealElectronHost(hostOverride)) {
-    try {
-      const res = await callHostTransport<any>("clipboard_history_clear_unpinned", {}, hostOverride);
-      if (res.ok) return Number(res.data?.clearedCount ?? res.data ?? 0);
-      return 0;
-    } catch {
-      return 0;
-    }
-  }
-  // 2. Bridge
-  const bridge = getDeclarativeBridge();
-  if (bridge?.clipboardHistory?.clearUnpinned) {
-    try {
-      return await bridge.clipboardHistory.clearUnpinned();
-    } catch {}
-  }
-  // 3. LocalStorage fallback
   try {
-    const items = await getClipboardHistory();
-    const pinnedOnly = items.filter(item => item.pinned);
-    const removedCount = items.length - pinnedOnly.length;
-    await saveClipboardHistory(pinnedOnly);
-    return removedCount;
+    const stored = await readStoredRecords();
+    if (stored && stored.length > 0) {
+      const kept = stored.filter((item: any) => item?.pinned);
+      // 宿主历史库可用时插件存储里只有插件自己的记录算数；离线环境插件存储就是全部数据
+      const countable = hostRes.ok ? isUserLocalRecord : () => true;
+      removed += stored.filter(countable).length - kept.filter(countable).length;
+      await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+    }
   } catch {
-    return 0;
+    // ignore
   }
+  return removed;
 }
 
 /**
@@ -674,11 +878,26 @@ export async function clearUnpinnedClipboardHistory(hostOverride?: any): Promise
 export async function pasteSequentialClipboard(
   items: ClipboardItem[],
   options: { addNewLine?: boolean; timeoutSeconds?: number } = {}
-): Promise<{ success: boolean; item?: ClipboardItem; remaining: number; offset: number; message?: string }> {
+): Promise<{ success: boolean; item?: ClipboardItem; remaining: number; offset: number; message?: string; pasteFailed?: boolean }> {
+  // 宿主已取到条目但粘贴失败（如 macOS 未授权辅助功能）：如实返回失败，不能再走本地回退把它报成成功
+  const hostPasteFailure = (res: any) =>
+    res && res.success === false && res.item && typeof res.message === "string"
+      ? {
+          success: false,
+          pasteFailed: true,
+          item: res.item,
+          remaining: Math.max(0, (res.total || 0) - (res.sequenceIndex || 0)),
+          offset: res.sequenceIndex || 0,
+          message: res.message
+        }
+      : null;
+
   // 1. window.ztools 原生调度
   if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_paste_sequential) {
     try {
       const res = await (window as any).ztools.clipboard_history_paste_sequential();
+      const failed = hostPasteFailure(res);
+      if (failed) return failed;
       if (res && res.success) {
         return {
           success: true,
@@ -695,6 +914,8 @@ export async function pasteSequentialClipboard(
   if (bridge?.clipboardHistory?.pasteSequential) {
     try {
       const res = await bridge.clipboardHistory.pasteSequential();
+      const failed = hostPasteFailure(res);
+      if (failed) return failed;
       if (res && res.success) {
         return {
           success: true,

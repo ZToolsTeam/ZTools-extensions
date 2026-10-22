@@ -1,7 +1,7 @@
 {
   "id": "file-compare",
   "name": "文本对比",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "对比两段文本或两个文件的逐行差异，支持忽略空白与复制差异报告",
   "author": "ZTools Team",
   "entry": "dist/index.js",

@@ -28,8 +28,14 @@ export function createHost() {
       toasts.push(options)
       return { id: String(toasts.length), update() {}, hide() {} }
     },
+    // 与宿主一致：空内容与超过 8 MiB（UTF-8）的文本拒绝写入并抛错，插件不能据此提示“已复制”
     async copyToClipboard(text) {
-      clipboard.text = String(text)
+      const value = String(text)
+      if (value.length === 0) throw Object.assign(new Error('没有可复制的内容'), { code: 'EMPTY_CONTENT' })
+      if (Buffer.byteLength(value, 'utf8') > 8 * 1024 * 1024) {
+        throw Object.assign(new Error('剪贴板文本超过 8 MiB 上限'), { code: 'RESPONSE_TOO_LARGE' })
+      }
+      clipboard.text = value
     },
     async readClipboardText() {
       return clipboard.text
@@ -222,4 +228,64 @@ export async function mountPushed(host) {
     await tick()
   }
   return view
+}
+
+/**
+ * 按宿主真实行为模拟目录相关 IPC（读真实磁盘目录），用于验证插件不会把别处文件冒充为目录内容：
+ * - system_search_files「dir:<路径>」：与宿主 scanDirectoryForSearch 一致，返回一级子目录 subdirs（含各自全树文件数 file_count）+ 全树文件总数 total_matches + 全树按体积降序的 Top-N 文件（含深层文件）；目录不存在返回空结果
+ * - system_search_files 其他关键词：返回 globalHits（模拟 Spotlight / MFT 全盘结果）
+ * - filesystem_get_directory_contents：authorized 之外的路径抛 PERMISSION_DENIED；授权路径按宿主真实结构返回 { success, files: [{ name, size, isDirectory, lastModified }] }
+ */
+export async function installDirectoryHost(host, { authorized = [], globalHits = [] } = {}) {
+  const fs = await import('node:fs')
+  const path = await import('node:path')
+  const fail = (code, message) => Object.assign(new Error(message), { code })
+  host.ipc.system_search_files = async ({ query, limit = 50 }) => {
+    const q = String(query || '')
+    if (!q.toLowerCase().startsWith('dir:')) {
+      return { files: globalHits.map((p) => ({ name: path.basename(p), path: p, is_dir: false, size: 4096, mtime: 1 })), total_matches: globalHits.length }
+    }
+    const root = q.slice(4).trim()
+    if (!fs.existsSync(root)) return { files: [], subdirs: [], total_matches: 0, total_bytes: 0 }
+    const subdirs = new Map()
+    const files = []
+    const queue = [[root, null]]
+    while (queue.length > 0) {
+      const [dir, top] = queue.shift()
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, ent.name)
+        const st = fs.statSync(full)
+        if (st.isDirectory()) {
+          if (!top) subdirs.set(ent.name, { name: ent.name, path: full, file_count: 0, total_bytes: 0, mtime: Math.round(st.mtimeMs) })
+          queue.push([full, top || ent.name])
+        } else {
+          files.push({ name: ent.name, path: full, is_dir: false, size: st.size, mtime: Math.round(st.mtimeMs) })
+          if (top) {
+            subdirs.get(top).file_count++
+            subdirs.get(top).total_bytes += st.size
+          }
+        }
+      }
+    }
+    files.sort((a, b) => b.size - a.size)
+    return {
+      files: files.slice(0, limit),
+      subdirs: [...subdirs.values()],
+      total_matches: files.length,
+      total_bytes: files.reduce((s, f) => s + f.size, 0)
+    }
+  }
+  host.ipc.filesystem_get_directory_contents = async ({ path: target }) => {
+    if (!authorized.some((a) => target === a || target.startsWith(a + path.sep))) {
+      throw fail('PERMISSION_DENIED', '路径未授权')
+    }
+    if (!fs.existsSync(target)) throw fail('FILE_NOT_FOUND', '目录不存在')
+    return {
+      success: true,
+      files: fs.readdirSync(target, { withFileTypes: true }).map((ent) => {
+        const st = fs.statSync(path.join(target, ent.name))
+        return { name: ent.name, size: ent.isDirectory() ? 0 : st.size, isDirectory: ent.isDirectory(), lastModified: st.mtime.toLocaleString(), attributes: 32 }
+      })
+    }
+  }
 }

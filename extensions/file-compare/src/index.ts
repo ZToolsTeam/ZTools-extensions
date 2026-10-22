@@ -8,17 +8,32 @@ import {
   showToast,
   Toast,
   useState,
+  useMemo,
   useNavigation
 } from '@ztools/declarative-ui'
-import { diffText, formatHunk, formatUnifiedDiff, describeHunk, type DiffResult } from './logic.js'
+import { diffText, formatHunk, formatUnifiedDiff, describeHunk, fencedDiffMarkdown, splitLines, MAX_DIFF_LINES, type DiffResult } from './logic.js'
 import { pickTextFile } from './host.js'
+import { usePopoutValue } from './popout-state.js'
 
 export * from './logic.js'
+
+/** 内容来源：决定只载入一侧时，另一侧默认用哪种方式补上 */
+type Source = 'text' | 'clipboard' | 'file'
 
 interface Side {
   name: string
   text: string
+  source?: Source
 }
+
+const emptySide = (name: string): Side => ({ name, text: '' })
+// 独立窗口带来的值可能来自旧版本或被篡改：形状不对时整侧回落为空
+const isSide = (v: unknown): v is Side => {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false
+  const s = v as Record<string, unknown>
+  return typeof s.name === 'string' && typeof s.text === 'string' && (s.source === undefined || s.source === 'text' || s.source === 'clipboard' || s.source === 'file')
+}
+const isFlag = (v: unknown): v is boolean => typeof v === 'boolean'
 
 /**
  * 编辑左右两段文本的表单
@@ -35,11 +50,10 @@ export function EditTextsForm({ left, right, onSave }: { left: Side; right: Side
           title: '开始对比',
           icon: Icon.Check,
           onSubmit: () => {
-            onSave({ name: a === left.text ? left.name : '左侧', text: a }, { name: b === right.text ? right.name : '右侧', text: b })
+            onSave(a === left.text ? left : { name: '左侧', text: a, source: 'text' }, b === right.text ? right : { name: '右侧', text: b, source: 'text' })
             pop()
           }
-        }),
-        Action({ title: '返回', icon: Icon.ArrowLeft, onAction: () => pop() })
+        })
       ])
     },
     [
@@ -50,22 +64,26 @@ export function EditTextsForm({ left, right, onSave }: { left: Side; right: Side
 }
 
 export function FileCompareCommand() {
-  const [left, setLeft] = useState<Side>({ name: '左侧', text: '' })
-  const [right, setRight] = useState<Side>({ name: '右侧', text: '' })
-  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false)
+  // 两侧内容与「忽略空白」随独立窗口带走；文件内容已读成文本，不需要转交路径授权
+  const [left, setLeft] = usePopoutValue('left', () => emptySide('左侧'), isSide)
+  const [right, setRight] = usePopoutValue('right', () => emptySide('右侧'), isSide)
+  const [ignoreWhitespace, setIgnoreWhitespace] = usePopoutValue('ignoreWhitespace', () => false, isFlag)
   const { push } = useNavigation()
 
-  const ready = left.text.length > 0 || right.text.length > 0
-  let result: DiffResult | null = null
-  let error = ''
-  if (ready) {
+  // 两侧都有内容才对比；只有一侧时进入「待选另一侧」状态，不拿空文本做整篇删除的假差异
+  const hasLeft = left.text.length > 0
+  const hasRight = right.text.length > 0
+  const ready = hasLeft && hasRight
+  // 只在输入变化时重新计算（交换、忽略空白、载入新内容），其余重渲染直接复用结果
+  const { result, error, report } = useMemo(() => {
+    if (!ready) return { result: null as DiffResult | null, error: '', report: '' }
     try {
-      result = diffText(left.text, right.text, { ignoreWhitespace })
+      const r = diffText(left.text, right.text, { ignoreWhitespace })
+      return { result: r as DiffResult | null, error: '', report: formatUnifiedDiff(r, left.name, right.name) }
     } catch (err: any) {
-      error = err?.message || String(err)
+      return { result: null as DiffResult | null, error: String(err?.message || err), report: '' }
     }
-  }
-  const report = result ? formatUnifiedDiff(result, left.name, right.name) : ''
+  }, [ready, left.text, right.text, left.name, right.name, ignoreWhitespace])
 
   const openEditor = () =>
     push(() => EditTextsForm({ left, right, onSave: (l, r) => { setLeft(l); setRight(r) } }))
@@ -76,7 +94,7 @@ export function FileCompareCommand() {
       await showToast(Toast.Style.Failure, '剪贴板里没有文字')
       return
     }
-    side === 'left' ? setLeft({ name: '剪贴板', text }) : setRight({ name: '剪贴板', text })
+    side === 'left' ? setLeft({ name: '剪贴板', text, source: 'clipboard' }) : setRight({ name: '剪贴板', text, source: 'clipboard' })
     await showToast(Toast.Style.Success, side === 'left' ? '已设为左侧' : '已设为右侧')
   }
 
@@ -84,7 +102,7 @@ export function FileCompareCommand() {
     try {
       const file = await pickTextFile(side === 'left' ? '选择左侧（原文）文件' : '选择右侧（新文）文件')
       if (!file) return
-      side === 'left' ? setLeft({ name: file.name, text: file.text }) : setRight({ name: file.name, text: file.text })
+      side === 'left' ? setLeft({ name: file.name, text: file.text, source: 'file' }) : setRight({ name: file.name, text: file.text, source: 'file' })
     } catch (err: any) {
       await showToast(Toast.Style.Failure, '读取文件失败', err?.message || String(err))
     }
@@ -98,7 +116,7 @@ export function FileCompareCommand() {
     Action({ title: '选择文件作为右侧…', icon: Icon.Document, onAction: () => pickFile('right') }),
     Action({ title: '交换左右', icon: Icon.Repeat, onAction: () => { const l = left; setLeft(right); setRight(l) } }),
     Action({ title: ignoreWhitespace ? '恢复比较空白字符' : '忽略空白差异', icon: Icon.Text, onAction: () => setIgnoreWhitespace(!ignoreWhitespace) }),
-    Action({ title: '清空', icon: Icon.Trash, onAction: () => { setLeft({ name: '左侧', text: '' }); setRight({ name: '右侧', text: '' }) } })
+    Action({ title: '清空', icon: Icon.Trash, onAction: () => { setLeft(emptySide('左侧')); setRight(emptySide('右侧')) } })
   ]
 
   const reportActions = report
@@ -106,7 +124,33 @@ export function FileCompareCommand() {
     : []
 
   let sections: any[]
-  if (!ready) {
+  if (hasLeft !== hasRight) {
+    // 只载入了一侧：主动作沿用已载入一侧的来源补另一侧，次动作换另一种来源，其余收进 ⌘K
+    const loaded = hasLeft ? left : right
+    const missing: 'left' | 'right' = hasLeft ? 'right' : 'left'
+    const missingLabel = missing === 'left' ? '左侧（原文）' : '右侧（新文）'
+    const pickOther = missing === 'left' ? sourceActions[3] : sourceActions[4]
+    const pasteOther = missing === 'left' ? sourceActions[1] : sourceActions[2]
+    const ordered =
+      loaded.source === 'file' ? [pickOther, pasteOther, sourceActions[0]]
+      : loaded.source === 'clipboard' ? [pasteOther, pickOther, sourceActions[0]]
+      : [sourceActions[0], pickOther, pasteOther]
+    const rest = sourceActions.filter((a) => !ordered.includes(a))
+    const loadedLines = splitLines(loaded.text).length
+    sections = loadedLines > MAX_DIFF_LINES
+      ? [List.Section({ title: '无法对比' }, [List.Item({ id: 'error', title: `${loaded.name} 超过 ${MAX_DIFF_LINES} 行，暂不支持对比`, icon: Icon.ExclamationMark, actions: ActionPanel({ title: '操作' }, sourceActions) })])]
+      : [
+          List.Section({ title: `已载入${hasLeft ? '左侧' : '右侧'}：${loaded.name}（${loadedLines} 行）` }, [
+            List.Item({
+              id: 'need-other',
+              title: `还需要${missingLabel}才能对比`,
+              subtitle: '选择文件、使用剪贴板内容或编辑文本补上另一侧',
+              icon: Icon.Document,
+              actions: ActionPanel({ title: '补上另一侧' }, [...ordered, ...rest])
+            })
+          ])
+        ]
+  } else if (!ready) {
     sections = [
       List.Section({ title: '开始' }, [
         List.Item({ id: 'start-edit', title: '粘贴两段文本进行对比', subtitle: '按回车打开编辑框', icon: Icon.Pencil, actions: ActionPanel({ title: '开始' }, sourceActions) }),
@@ -132,14 +176,14 @@ export function FileCompareCommand() {
   } else if (result) {
     sections = [
       List.Section(
-        { title: `${left.name} ↔ ${right.name} · 删除 ${result.removed} 行，新增 ${result.added} 行 · ${result.hunks.length} 处差异` },
+        { title: `${left.name} ↔ ${right.name} · ${result.approximate ? '改动过多，按近似结果显示 · ' : ''}删除 ${result.removed} 行，新增 ${result.added} 行 · ${result.hunks.length} 处差异` },
         result.hunks.map((h, i) =>
           List.Item({
             id: `hunk-${i}`,
             title: `第 ${Math.max(h.rightStart, 1)} 行附近`,
             subtitle: describeHunk(h),
             icon: Icon.Document,
-            detail: List.Item.Detail({ markdown: '```diff\n' + formatHunk(h) + '\n```' }),
+            detail: List.Item.Detail({ markdown: fencedDiffMarkdown(formatHunk(h)) }),
             actions: ActionPanel({ title: '差异' }, [
               ...reportActions,
               Action({ title: '复制这一处差异', icon: Icon.CopyClipboard, onAction: async () => { await Clipboard.copy(formatHunk(h)); await showToast(Toast.Style.Success, '已复制') } }),

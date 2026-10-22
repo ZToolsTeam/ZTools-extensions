@@ -1,7 +1,7 @@
 {
   "id": "calculator",
   "name": "计算器",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "输入算式即时出结果，支持常用函数、单位换算、日期推算与计算历史",
   "author": "ZTools Team",
   "entry": "dist/index.js",

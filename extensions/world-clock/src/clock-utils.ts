@@ -3,17 +3,6 @@
  * 从 world-clock.vue 中抽取的无副作用逻辑，便于单元测试
  */
 
-/** 时区 → emoji 映射（按大洲） */
-export function cityEmoji(tz: string): string {
-  if (tz.startsWith('Asia')) return '🌏'
-  if (tz.startsWith('Europe')) return '🌍'
-  if (tz.startsWith('America')) return '🌎'
-  if (tz.startsWith('Africa')) return '🌍'
-  if (tz.startsWith('Australia') || tz.startsWith('Pacific')) return '🌏'
-  if (tz.startsWith('Indian') || tz.startsWith('Atlantic')) return '🌍'
-  return '🌐'
-}
-
 /** 格式化时间 HH:MM:SS */
 export function formatTime(date: Date, tz: string): string {
   return new Intl.DateTimeFormat('zh-CN', {
@@ -73,18 +62,8 @@ export function getDayDiff(date: Date, tz: string, localTz: string): number {
   return targetDay - localDay
 }
 
-/** 获取目标时区当前是一天中的第几分钟（0-1439） */
-export function getDayMinutes(date: Date, tz: string): number {
-  const p = new Intl.DateTimeFormat('en', {
-    timeZone: tz, hour: 'numeric', minute: 'numeric', hour12: false
-  }).formatToParts(date)
-  const h = parseInt(p.find(x => x.type === 'hour')?.value || '0')
-  const m = parseInt(p.find(x => x.type === 'minute')?.value || '0')
-  return h * 60 + m
-}
-
-/** 计算与换算基准时区的小时差标签 */
-export function getDiffLabel(date: Date, tz: string, sourceTz: string): string {
+/** 计算与换算基准时区的小时差标签（目标时区快于基准为「早」，慢于基准为「晚」） */
+export function getDiffLabel(date: Date, tz: string, sourceTz: string, sameLabel = '与基准相同'): string {
   const toWallClockMinutes = (zone: string) => {
     const parts = getZonedDateTimeParts(date, zone)
     return Date.UTC(
@@ -96,17 +75,11 @@ export function getDiffLabel(date: Date, tz: string, sourceTz: string): string {
     ) / 60000
   }
   const diff = toWallClockMinutes(tz) - toWallClockMinutes(sourceTz)
-  if (diff === 0) return '与基准相同'
+  if (diff === 0) return sameLabel
   const h = Math.floor(Math.abs(diff) / 60)
   const m = Math.abs(diff) % 60
   const label = h > 0 ? `${h}小时${m ? m + '分' : ''}` : `${m}分钟`
   return diff > 0 ? `早${label}` : `晚${label}`
-}
-
-/** 判断是否是白天（6:00-18:00） */
-export function isDaytime(date: Date, tz: string): boolean {
-  const mins = getDayMinutes(date, tz)
-  return mins >= 360 && mins < 1080
 }
 
 interface ZonedDateTimeParts {
@@ -212,4 +185,43 @@ export function parseZonedDateTime(value: string, tz: string): Date | null {
   } catch {
     return null
   }
+}
+
+export type ConversionInputResult =
+  | { ok: true; date: Date }
+  | { ok: false; error: string }
+
+/**
+ * 解析换算表单里用户输入的当地时间（按 tz 解释）：
+ * - 「YYYY-MM-DD HH:MM[:SS]」或「YYYY-MM-DDTHH:MM[:SS]」，日期分隔符也可用「/」，月日时可写一位数
+ * - 只写「HH:MM[:SS]」时取 tz 当地的今天（以 now 为准）
+ */
+export function parseConversionInput(value: string, tz: string, now: Date): ConversionInputResult {
+  const text = String(value ?? '').trim().replace(/\s+/g, ' ')
+  if (!text) return { ok: false, error: '请输入要换算的时间' }
+
+  const pad = (part: string) => part.padStart(2, '0')
+  let normalized: string | null = null
+  const timeOnly = text.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+  if (timeOnly) {
+    let today: string
+    try {
+      today = formatDateTimeInput(now, tz).slice(0, 10)
+    } catch {
+      return { ok: false, error: `无法识别时区 ${tz}` }
+    }
+    normalized = `${today}T${pad(timeOnly[1])}:${timeOnly[2]}${timeOnly[3] ? ':' + timeOnly[3] : ''}`
+  } else {
+    const full = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T](\d{1,2}):(\d{2})(?::(\d{2}))?$/)
+    if (full) {
+      normalized = `${full[1]}-${pad(full[2])}-${pad(full[3])}T${pad(full[4])}:${full[5]}${full[6] ? ':' + full[6] : ''}`
+    }
+  }
+  if (!normalized) return { ok: false, error: '格式应为 2026-10-22 09:30 或 09:30' }
+
+  const date = parseZonedDateTime(normalized, tz)
+  if (!date) {
+    return { ok: false, error: '该时间不存在（日期越界，或正好落在夏令时跳过的时段）' }
+  }
+  return { ok: true, date }
 }

@@ -64,6 +64,8 @@ export interface CalculatorQueryResult {
   expression: string;
   formattedAnswer: string;
   rawAnswer?: any;
+  /** 「将结果填入输入框」时写回输入框的文字：可以继续计算（不含千分位与单位） */
+  fillText?: string;
   details?: string;
   colorResult?: CalculatorColorResult;
   error?: string;
@@ -79,6 +81,38 @@ export interface CalculatorHistoryItem {
 }
 
 const HISTORY_STORAGE_KEY = "ztools-calculator-history-v1";
+/** 未置顶历史最多保留的条数；置顶项不受限制，不会被淘汰 */
+export const MAX_RECENT_HISTORY = 100;
+
+/** 单独一个数字（可带正负号、小数、科学计数法）：1e-9、-12.5、.5 */
+const PLAIN_NUMBER_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+/** 单独一个整数（可带正负号） */
+const PLAIN_INTEGER_RE = /^[+-]?\d+$/;
+/** 单独一个带前缀的进制字面量：0xFF、0b1010、0o77 */
+const RADIX_LITERAL_RE = /^(0x[0-9a-f]+|0b[01]+|0o[0-7]+)$/;
+/** 换算里的数字：可带正负号，最多一个小数点 */
+const UNIT_NUMBER_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
+
+/**
+ * 计算结果的显示格式：
+ * - 0 与 -0 统一显示 0；
+ * - 普通整数加千分位；
+ * - 绝对值小于 1e-6 或不小于 1e21 用科学计数法（15 位有效数字），避免极小数被舍成 0；
+ * - 其余小数保留 15 位有效数字（双精度可靠位数，去掉 0.1+0.2 这类浮点尾差）。
+ */
+export function formatCalculatorNumber(val: number): string {
+  if (val === 0) return "0";
+  const abs = Math.abs(val);
+  if (abs < 1e-6 || abs >= 1e21) return String(Number(val.toPrecision(15)));
+  if (Number.isInteger(val)) return val.toLocaleString("en-US");
+  return val.toLocaleString("en-US", { maximumSignificantDigits: 15 });
+}
+
+/** 按小数位四舍五入，并把 -0 规范成 0 */
+function roundTo(val: number, digits: number): number {
+  const rounded = parseFloat(val.toFixed(digits));
+  return rounded === 0 ? 0 : rounded;
+}
 
 // =========================================================================
 // 1. Math Expression Evaluator (Shunting-yard Algorithm & AST-safe Tokenizer)
@@ -328,6 +362,7 @@ export function evaluateMathExpression(input: string): CalculationResult {
 
   const trimmed = input.trim();
   const hasMathSignal = /[+\-*/%^()×÷]/.test(trimmed) || /^\d[\d.]*\s*pi$/i.test(trimmed) ||
+    PLAIN_NUMBER_RE.test(trimmed) ||
     /^(sqrt|cbrt|sin|cos|tan|asin|acos|atan|log|log10|log2|ln|abs|round|floor|ceil|exp|pi|e)\b/i.test(trimmed);
 
   if (!hasMathSignal) {
@@ -340,21 +375,17 @@ export function evaluateMathExpression(input: string): CalculationResult {
       return { isCalculation: false, expression: trimmed, answer: null, formattedAnswer: "" };
     }
     const rpn = shuntingYard(tokens);
-    const val = evaluateRpn(rpn);
-
-    let formatted = "";
-    if (Number.isInteger(val)) {
-      formatted = val.toLocaleString("en-US");
-    } else {
-      const fixed = parseFloat(val.toFixed(8));
-      formatted = fixed.toLocaleString("en-US", { maximumFractionDigits: 8 });
-    }
+    const raw = evaluateRpn(rpn);
+    const val = raw === 0 ? 0 : raw; // -0 规范成 0
 
     return {
       isCalculation: true,
       expression: trimmed,
       answer: val,
-      formattedAnswer: formatted
+      // 单独一个整数（如进制换算的十进制结果填回）按 BigInt 原样显示：超过 2^53 的整数用 Number 会丢精度
+      formattedAnswer: PLAIN_INTEGER_RE.test(trimmed)
+        ? BigInt(trimmed).toLocaleString("en-US")
+        : formatCalculatorNumber(val)
     };
   } catch (err: any) {
     return {
@@ -420,12 +451,13 @@ export function convertUnits(
   const s = input.trim().toLowerCase();
   const remBase = options.remBase || 16;
 
-  // 1. px <-> rem
-  const cssMatch = s.match(/^([\d.]+)\s*(px|rem)\s*(?:to|in|=)\s*(px|rem)$/);
+  // 1. px <-> rem（数字先按宽松模式匹配，再严格校验，格式不对时给出明确错误而不是静默取前半段）
+  const cssMatch = s.match(/^([+-]?[\d.]+)\s*(px|rem)\s*(?:to|in|=)\s*(px|rem)$/);
   if (cssMatch) {
-    const val = parseFloat(cssMatch[1]);
     const from = cssMatch[2];
     const to = cssMatch[3];
+    const val = parseUnitNumber(cssMatch[1]);
+    if (val === null) return unitError(input, cssMatch[1], from, to, "css");
     if (from === to) {
       return {
         isConversion: true,
@@ -437,16 +469,15 @@ export function convertUnits(
         category: "css"
       };
     }
-    const resVal = from === "px" ? val / remBase : val * remBase;
-    const formatted = from === "px"
-      ? `${parseFloat(resVal.toFixed(4))} rem`
-      : `${parseFloat(resVal.toFixed(2))} px`;
+    // value 与显示一致（舍入后的值），填回输入框后得到的就是界面上看到的数
+    const resVal = from === "px" ? roundTo(val / remBase, 4) : roundTo(val * remBase, 2);
+    if (!Number.isFinite(resVal)) return unitOverflow(input, from, to, "css");
 
     return {
       isConversion: true,
       expression: input.trim(),
       value: resVal,
-      formattedAnswer: formatted,
+      formattedAnswer: `${resVal} ${to}`,
       fromUnit: from,
       toUnit: to,
       category: "css"
@@ -454,22 +485,32 @@ export function convertUnits(
   }
 
   // 2. Radix: 0xFF to dec, 255 to hex, 255 to bin, 0b1010 to dec, 0o77 to dec
+  // 单独一个带前缀的进制字面量（0xFF、0b11111111）按「转十进制」处理：进制结果填回输入框后仍有结果行
+  const literalMatch = s.match(RADIX_LITERAL_RE);
+  if (literalMatch) {
+    const num = BigInt(literalMatch[1]);
+    return {
+      isConversion: true,
+      expression: input.trim(),
+      value: Number(num),
+      formattedAnswer: num.toString(10),
+      fromUnit: "radix",
+      toUnit: "dec",
+      category: "radix"
+    };
+  }
   const radixMatch = s.match(/^(0x[0-9a-f]+|0b[01]+|0o[0-7]+|\d+)\s*(?:to|in|=)\s*(dec|hex|bin|oct)$/);
   if (radixMatch) {
     const rawVal = radixMatch[1];
     const targetRadix = radixMatch[2];
-    let num: number;
-    if (rawVal.startsWith("0x")) {
-      num = parseInt(rawVal.slice(2), 16);
-    } else if (rawVal.startsWith("0b")) {
-      num = parseInt(rawVal.slice(2), 2);
-    } else if (rawVal.startsWith("0o")) {
-      num = parseInt(rawVal.slice(2), 8);
-    } else {
-      num = parseInt(rawVal, 10);
+    // 用 BigInt 换算：超过 2^53 的整数用 Number 会丢精度（0xFFFFFFFFFFFFFFFF 会变成 18446744073709552000）
+    // BigInt 原生识别 0x / 0b / 0o 前缀，正则已保证各进制只含合法数字
+    let num: bigint;
+    try {
+      num = BigInt(rawVal);
+    } catch {
+      return null;
     }
-
-    if (isNaN(num)) return null;
 
     let ans = "";
     switch (targetRadix) {
@@ -482,7 +523,7 @@ export function convertUnits(
     return {
       isConversion: true,
       expression: input.trim(),
-      value: num,
+      value: Number(num),
       formattedAnswer: ans,
       fromUnit: "radix",
       toUnit: targetRadix,
@@ -491,26 +532,43 @@ export function convertUnits(
   }
 
   // 3. General units with pattern: "<number> <from> to/in <to>"
-  const unitMatch = s.match(/^([\d.]+)\s*([a-z]+)\s*(?:to|in|=)\s*([a-z]+)$/);
+  const unitMatch = s.match(/^([+-]?[\d.]+)\s*([a-z]+)\s*(?:to|in|=)\s*([a-z]+)$/);
   if (unitMatch) {
-    const val = parseFloat(unitMatch[1]);
     const from = unitMatch[2];
     const to = unitMatch[3];
+    const category = getUnitCategory(from, to);
+    // 不认识的单位组合不当作换算，交给后面的日期 / 算式判断
+    if (!category) return null;
+    const val = parseUnitNumber(unitMatch[1]);
+    if (val === null) return unitError(input, unitMatch[1], from, to, category);
 
     // Temperature: c, f, k, celsius, fahrenheit, kelvin
-    const tempUnits = new Set(["c", "f", "k", "celsius", "fahrenheit", "kelvin"]);
-    if (tempUnits.has(from) && tempUnits.has(to)) {
+    if (category === "temp") {
       const fromNorm = from.startsWith("c") ? "c" : from.startsWith("f") ? "f" : "k";
       const toNorm = to.startsWith("c") ? "c" : to.startsWith("f") ? "f" : "k";
       let cVal = val;
       if (fromNorm === "f") cVal = (val - 32) * (5 / 9);
       if (fromNorm === "k") cVal = val - 273.15;
+      // 低于绝对零度（0 K = -273.15 °C）的温度不存在；留 1e-9 容差避免浮点误差误报
+      if (cVal < -273.15 - 1e-9) {
+        return {
+          isConversion: true,
+          expression: input.trim(),
+          value: NaN,
+          formattedAnswer: "",
+          fromUnit: from,
+          toUnit: to,
+          category,
+          error: "温度不能低于绝对零度（0 K / -273.15 °C / -459.67 °F）"
+        };
+      }
 
       let targetVal = cVal;
       if (toNorm === "f") targetVal = cVal * (9 / 5) + 32;
       if (toNorm === "k") targetVal = cVal + 273.15;
 
-      const rounded = parseFloat(targetVal.toFixed(2));
+      const rounded = roundTo(targetVal, 2);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, "temp");
       return {
         isConversion: true,
         expression: input.trim(),
@@ -526,7 +584,8 @@ export function convertUnits(
     if (LENGTH_RATIOS[from] && LENGTH_RATIOS[to]) {
       const inMeters = val * LENGTH_RATIOS[from];
       const targetVal = inMeters / LENGTH_RATIOS[to];
-      const rounded = parseFloat(targetVal.toFixed(4));
+      const rounded = roundTo(targetVal, 4);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -542,7 +601,8 @@ export function convertUnits(
     if (MASS_RATIOS[from] && MASS_RATIOS[to]) {
       const inGrams = val * MASS_RATIOS[from];
       const targetVal = inGrams / MASS_RATIOS[to];
-      const rounded = parseFloat(targetVal.toFixed(4));
+      const rounded = roundTo(targetVal, 4);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -558,7 +618,8 @@ export function convertUnits(
     if (DIGITAL_RATIOS[from] && DIGITAL_RATIOS[to]) {
       const inBytes = val * DIGITAL_RATIOS[from];
       const targetVal = inBytes / DIGITAL_RATIOS[to];
-      const rounded = parseFloat(targetVal.toFixed(4));
+      const rounded = roundTo(targetVal, 4);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -574,55 +635,176 @@ export function convertUnits(
   return null;
 }
 
+const TEMP_UNITS = new Set(["c", "f", "k", "celsius", "fahrenheit", "kelvin"]);
+
+function getUnitCategory(from: string, to: string): UnitConversionResult["category"] | null {
+  if (TEMP_UNITS.has(from) && TEMP_UNITS.has(to)) return "temp";
+  if (LENGTH_RATIOS[from] && LENGTH_RATIOS[to]) return "length";
+  if (MASS_RATIOS[from] && MASS_RATIOS[to]) return "mass";
+  if (DIGITAL_RATIOS[from] && DIGITAL_RATIOS[to]) return "digital";
+  return null;
+}
+
+/** 严格解析换算数字：格式不对（1.5.5、.、1..2）或不是有限数时返回 null */
+function parseUnitNumber(raw: string): number | null {
+  if (!UNIT_NUMBER_RE.test(raw)) return null;
+  const val = Number(raw);
+  return Number.isFinite(val) ? val : null;
+}
+
+/** 换算结果超出双精度范围（如 1e308 km to mm）：报错，不能显示 Infinity */
+function unitOverflow(
+  input: string,
+  from: string,
+  to: string,
+  category: UnitConversionResult["category"]
+): UnitConversionResult {
+  return {
+    isConversion: true,
+    expression: input.trim(),
+    value: NaN,
+    formattedAnswer: "",
+    fromUnit: from,
+    toUnit: to,
+    category,
+    error: "换算结果超出数值范围"
+  };
+}
+
+function unitError(
+  input: string,
+  rawNumber: string,
+  from: string,
+  to: string,
+  category: UnitConversionResult["category"]
+): UnitConversionResult {
+  return {
+    isConversion: true,
+    expression: input.trim(),
+    value: NaN,
+    formattedAnswer: "",
+    fromUnit: from,
+    toUnit: to,
+    category,
+    error: `数字格式不正确: "${rawNumber}"`
+  };
+}
+
 // =========================================================================
 // 3. Date Calculation（汇率换算已移除：没有实时汇率来源时不提供估算值）
 // =========================================================================
+
+const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
+const DATE_UNIT_SOURCE = "(days?|weeks?|months?|years?|hours?|mins?|minutes?)";
+/** now / today 加减：now + 2 weeks、today - 3 days */
+const RELATIVE_DATE_RE = new RegExp(`^(now|today)\\s*([+-])\\s*(\\d+)\\s*${DATE_UNIT_SOURCE}$`);
+/** 日期字面量（日期结果的显示格式），可单独出现或接着加减：2026-11-05、2026-11-05 14:30 + 2 hours */
+const LITERAL_DATE_RE = new RegExp(
+  `^(\\d{4})-(\\d{2})-(\\d{2})(?:\\s+(\\d{2}):(\\d{2}))?(?:\\s*([+-])\\s*(\\d+)\\s*${DATE_UNIT_SOURCE})?$`
+);
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
+function formatDateValue(d: Date, withTime: boolean): string {
+  const date = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  return withTime ? `${date} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : date;
+}
+
+function shiftDate(d: Date, sign: number, count: number, unit: string): void {
+  if (unit.startsWith("min")) {
+    d.setMinutes(d.getMinutes() + sign * count);
+  } else if (unit.startsWith("hour")) {
+    d.setHours(d.getHours() + sign * count);
+  } else if (unit.startsWith("day")) {
+    d.setDate(d.getDate() + sign * count);
+  } else if (unit.startsWith("week")) {
+    d.setDate(d.getDate() + sign * count * 7);
+  } else if (unit.startsWith("month")) {
+    d.setMonth(d.getMonth() + sign * count);
+  } else if (unit.startsWith("year")) {
+    d.setFullYear(d.getFullYear() + sign * count);
+  }
+}
+
+/** 「星期四 · 14 天后」：日期字面量的说明 */
+function describeDate(d: Date): string {
+  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const diff = Math.round((startOf(d) - startOf(new Date())) / 86400000);
+  const rel = diff === 0 ? "今天" : diff > 0 ? `${diff} 天后` : `${-diff} 天前`;
+  return `${WEEKDAYS[d.getDay()]} · ${rel}`;
+}
+
+function dateError(input: string, error: string): DateCalculationResult {
+  return {
+    isDate: true,
+    expression: input.trim(),
+    targetDate: new Date(NaN),
+    formattedAnswer: "",
+    details: "",
+    error
+  };
+}
 
 export function evaluateDateExpression(input: string): DateCalculationResult | null {
   if (!input || typeof input !== "string") return null;
   const s = input.trim().toLowerCase();
 
-  // Patterns: "now + 2 weeks", "today - 3 days", "now + 5 hours", "today + 1 month"
-  const m = s.match(/^(now|today)\s*([+-])\s*(\d+)\s*(days?|weeks?|months?|years?|hours?|mins?|minutes?)$/);
-  if (!m) return null;
-
-  const op = m[2];
-  const count = parseInt(m[3], 10);
-  const unit = m[4];
-
-  const now = new Date();
-  const sign = op === "+" ? 1 : -1;
-
-  if (unit.startsWith("min")) {
-    now.setMinutes(now.getMinutes() + sign * count);
-  } else if (unit.startsWith("hour")) {
-    now.setHours(now.getHours() + sign * count);
-  } else if (unit.startsWith("day")) {
-    now.setDate(now.getDate() + sign * count);
-  } else if (unit.startsWith("week")) {
-    now.setDate(now.getDate() + sign * count * 7);
-  } else if (unit.startsWith("month")) {
-    now.setMonth(now.getMonth() + sign * count);
-  } else if (unit.startsWith("year")) {
-    now.setFullYear(now.getFullYear() + sign * count);
+  // 1. now / today 加减
+  const rel = s.match(RELATIVE_DATE_RE);
+  if (rel) {
+    const op = rel[2];
+    const count = parseInt(rel[3], 10);
+    const unit = rel[4];
+    const target = new Date();
+    shiftDate(target, op === "+" ? 1 : -1, count, unit);
+    if (Number.isNaN(target.getTime())) return dateError(input, "日期超出可表示范围");
+    return {
+      isDate: true,
+      expression: input.trim(),
+      targetDate: target,
+      formattedAnswer: formatDateValue(target, unit.startsWith("hour") || unit.startsWith("min")),
+      details: `${input.trim()} (${op === "+" ? "未来" : "过去"} ${count} ${unit})`
+    };
   }
 
-  const yyyy = now.getFullYear();
-  const mm = String(now.getMonth() + 1).padStart(2, "0");
-  const dd = String(now.getDate()).padStart(2, "0");
-  const hh = String(now.getHours()).padStart(2, "0");
-  const min = String(now.getMinutes()).padStart(2, "0");
+  // 2. 日期字面量（可接着加减）：「将结果填入输入框」填回的就是这种格式，再次计算得到同一日期
+  const lit = s.match(LITERAL_DATE_RE);
+  if (!lit) return null;
+  const [year, month, day] = [lit[1], lit[2], lit[3]].map(v => parseInt(v, 10));
+  const hasTime = lit[4] !== undefined;
+  const hour = hasTime ? parseInt(lit[4], 10) : 0;
+  const minute = hasTime ? parseInt(lit[5], 10) : 0;
+  const target = new Date(year, month - 1, day, hour, minute);
+  // 2026-02-30、2026-13-01、25:00 这类不存在的日期报错，不能被 Date 自动进位成别的日期，也不能落到算式按减法求值
+  if (
+    hour > 23 || minute > 59 ||
+    target.getFullYear() !== year || target.getMonth() !== month - 1 || target.getDate() !== day
+  ) {
+    return dateError(input, `日期不存在: "${input.trim()}"`);
+  }
 
-  const formatted = unit.startsWith("hour") || unit.startsWith("min")
-    ? `${yyyy}-${mm}-${dd} ${hh}:${min}`
-    : `${yyyy}-${mm}-${dd}`;
-
+  const op = lit[6];
+  if (!op) {
+    return {
+      isDate: true,
+      expression: input.trim(),
+      targetDate: target,
+      formattedAnswer: formatDateValue(target, hasTime),
+      details: describeDate(target)
+    };
+  }
+  const count = parseInt(lit[7], 10);
+  const unit = lit[8];
+  shiftDate(target, op === "+" ? 1 : -1, count, unit);
+  if (Number.isNaN(target.getTime())) return dateError(input, "日期超出可表示范围");
   return {
     isDate: true,
     expression: input.trim(),
-    targetDate: now,
-    formattedAnswer: formatted,
-    details: `${input.trim()} (${op === "+" ? "未来" : "过去"} ${count} ${unit})`
+    targetDate: target,
+    formattedAnswer: formatDateValue(target, hasTime || unit.startsWith("hour") || unit.startsWith("min")),
+    details: `${describeDate(target)} (${op === "+" ? "往后" : "往前"} ${count} ${unit})`
   };
 }
 
@@ -798,6 +980,8 @@ export function evaluateCalculatorQuery(
       type: "color",
       expression: s,
       formattedAnswer: color.hex,
+      // 半透明色填回 rgba(...)：只填 HEX 会丢掉透明度，再次识别就成了另一种颜色
+      fillText: color.a < 1 ? color.rgb : color.hex,
       colorResult: color,
       details: `${color.rgb} | ${color.hsl} | ${color.cmyk}`
     };
@@ -806,11 +990,17 @@ export function evaluateCalculatorQuery(
   // 2. Unit conversion check (px/rem, distance, mass, temp, storage, radix)
   const unit = convertUnits(s, options);
   if (unit && unit.isConversion) {
+    if (unit.error) {
+      return { type: "unit", expression: s, formattedAnswer: "", error: unit.error };
+    }
     return {
       type: "unit",
       expression: s,
       formattedAnswer: unit.formattedAnswer,
       rawAnswer: unit.value,
+      // 进制结果原样填回（0xFF、0b1010 单独出现时按转十进制计算；十进制整数按 BigInt 精确显示），
+      // 其余换算填回不带单位的数值（与显示一致的舍入值），都能再次计算出同一数值
+      fillText: unit.category === "radix" ? unit.formattedAnswer : String(unit.value),
       details: `单位换算 (${unit.category.toUpperCase()}): ${unit.fromUnit} -> ${unit.toUnit}`
     };
   }
@@ -818,10 +1008,15 @@ export function evaluateCalculatorQuery(
   // 4. Date calculation check
   const dateRes = evaluateDateExpression(s);
   if (dateRes && dateRes.isDate) {
+    if (dateRes.error) {
+      return { type: "date", expression: s, formattedAnswer: "", error: dateRes.error };
+    }
     return {
       type: "date",
       expression: s,
       formattedAnswer: dateRes.formattedAnswer,
+      // 填回 2026-11-05 / 2026-11-05 14:30：日期字面量再次计算得到同一日期，不会被当成减法
+      fillText: dateRes.formattedAnswer,
       rawAnswer: dateRes.targetDate,
       details: dateRes.details
     };
@@ -835,6 +1030,8 @@ export function evaluateCalculatorQuery(
       expression: s,
       formattedAnswer: math.formattedAnswer,
       rawAnswer: math.answer,
+      // 去掉千分位，填回输入框后还能继续计算（786,432 → 786432）
+      fillText: math.error ? undefined : math.formattedAnswer.replace(/,/g, ""),
       error: math.error
     };
   }
@@ -862,6 +1059,15 @@ export async function getCalculatorHistory(): Promise<CalculatorHistoryItem[]> {
   return [];
 }
 
+/**
+ * 修改历史前读取：读失败直接抛出，不能当成空列表，否则保存时会把已有历史（含置顶项）整体覆盖掉。
+ * 存储里的值损坏（不是数组）时按空列表处理。
+ */
+async function readHistoryForUpdate(): Promise<CalculatorHistoryItem[]> {
+  const raw = await LocalStorage.getItem(HISTORY_STORAGE_KEY);
+  return Array.isArray(raw) ? (raw as CalculatorHistoryItem[]) : [];
+}
+
 export async function saveCalculatorHistory(
   items: CalculatorHistoryItem[]
 ): Promise<void> {
@@ -873,18 +1079,21 @@ export async function addCalculatorHistory(
   answer: string,
   type: CalculatorHistoryItem["type"]
 ): Promise<CalculatorHistoryItem[]> {
-  const current = await getCalculatorHistory();
-  // Filter out exact duplicate expression to keep recent at top
-  const filtered = current.filter(item => item.expression !== expression);
+  const current = await readHistoryForUpdate();
+  // 同一算式只留一条并移到最前；已有条目保留原 id 与置顶状态，只更新结果和时间
+  const existing = current.find(item => item.expression === expression);
+  const others = current.filter(item => item.expression !== expression);
   const newItem: CalculatorHistoryItem = {
-    id: `calc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    id: existing?.id || `calc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     expression,
     answer,
     type,
-    pinned: false,
+    pinned: existing?.pinned === true,
     timestamp: Date.now()
   };
-  const updated = [newItem, ...filtered].slice(0, 100);
+  // 只淘汰未置顶的旧历史：置顶项全部保留，未置顶最多 MAX_RECENT_HISTORY 条
+  let recentCount = 0;
+  const updated = [newItem, ...others].filter(item => item.pinned || ++recentCount <= MAX_RECENT_HISTORY);
   await saveCalculatorHistory(updated);
   return updated;
 }
@@ -892,7 +1101,7 @@ export async function addCalculatorHistory(
 export async function togglePinCalculatorHistory(
   id: string
 ): Promise<CalculatorHistoryItem[]> {
-  const current = await getCalculatorHistory();
+  const current = await readHistoryForUpdate();
   const updated = current.map(item => {
     if (item.id === id) {
       return { ...item, pinned: !item.pinned };
@@ -906,7 +1115,7 @@ export async function togglePinCalculatorHistory(
 export async function deleteCalculatorHistory(
   id: string
 ): Promise<CalculatorHistoryItem[]> {
-  const current = await getCalculatorHistory();
+  const current = await readHistoryForUpdate();
   const updated = current.filter(item => item.id !== id);
   await saveCalculatorHistory(updated);
   return updated;

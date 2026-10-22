@@ -2,7 +2,7 @@
   "id": "window-manager",
   "name": "窗口句柄与置顶分屏管理器",
   "description": "基于 Win32 原生窗口 API 枚举全部活动桌面窗口，支持一键窗口置顶 (Always on Top)、透明度调节、尺寸锁定与极速分屏贴靠",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

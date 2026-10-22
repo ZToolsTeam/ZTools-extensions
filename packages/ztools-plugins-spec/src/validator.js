@@ -16,7 +16,9 @@ export const PERMISSIONS = [
   'tray',
   'crypto',
   'audio',
-  'video'
+  'video',
+  // 结束本机任意进程（宿主 process_terminate_pid 按此权限把关）
+  'process'
 ]
 
 export const PERMISSION_SET = new Set(PERMISSIONS)
@@ -29,7 +31,8 @@ export const HIGH_RISK_PERMISSIONS = new Set([
   'child_process',
   'fs',
   'system',
-  'shell'
+  'shell',
+  'process'
 ])
 
 /**
@@ -153,6 +156,13 @@ const ID_REGEX = /^[a-z][a-z0-9_-]{1,63}$/
 const SEMVER_REGEX = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const SAFE_ENTRY_REGEX = /^(?!\/)(?!\\)(?!.*(?:^|[/\\])\.\.(?:[/\\]|$))[a-zA-Z0-9_./-]+\.(?:html|js|mjs)$/
 const SAFE_ICON_REGEX = /^(?!\/)(?!\\)(?!.*(?:^|[/\\])\.\.(?:[/\\]|$))[a-zA-Z0-9_./-]+\.(?:png|svg|jpg|jpeg|webp|ico)$/
+function isPathInsideBaseDir(baseDir, targetPath) {
+  if (!baseDir || typeof targetPath !== 'string' || targetPath.includes('\0')) return false
+  const resolvedBase = path.resolve(baseDir)
+  const resolvedTarget = path.resolve(baseDir, targetPath)
+  const rel = path.relative(resolvedBase, resolvedTarget)
+  return Boolean(rel) && !rel.startsWith('..') && !path.isAbsolute(rel)
+}
 
 /**
  * 校验插件清单 (plugin.json) 的完整性与规范性
@@ -291,6 +301,16 @@ export function validatePluginManifest(manifest, options = {}) {
   }
 
   // 10. window 校验 (如存在)
+  for (const optionalPathField of ['main', 'preload', 'logo']) {
+    const val = manifest[optionalPathField]
+    if (val !== undefined) {
+      if (typeof val !== 'string' || val.includes('\0') || /(?:^|[/\\])\.\.(?:[/\\]|$)/.test(val) || path.isAbsolute(val)) {
+        errors.push(`${optionalPathField} 路径不合法: "${val}"（禁止绝对路径或路径穿越）`)
+      } else if (options.baseDir && !isPathInsideBaseDir(options.baseDir, val)) {
+        errors.push(`${optionalPathField} 路径越界: "${val}" 不允许脱离插件根目录`)
+      }
+    }
+  }
   if (manifest.window !== undefined) {
     if (typeof manifest.window !== 'object' || Array.isArray(manifest.window)) {
       errors.push('window 必须为对象')

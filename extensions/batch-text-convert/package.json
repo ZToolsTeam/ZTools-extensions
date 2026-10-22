@@ -1,7 +1,7 @@
 {
   "name": "@ztools/plugin-batch-text-convert",
-  "version": "1.0.0",
-  "description": "文本与文件字符编码批量互转 (UTF-8, GBK, Unicode)",
+  "version": "1.0.1",
+  "description": "文本实时转为 Unicode 转义、UTF-8 Hex、Base64 与 URL 编码",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

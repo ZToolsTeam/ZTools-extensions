@@ -8,22 +8,32 @@
  * 4. 零彩色 Emoji 与去彩虹化：100% 单色 SVG 图标、中性灰标签（仅在重命名同名冲突时使用 color: "red" 高危告警）
  */
 
-import { Action, ActionPanel, Icon, List, useEffect, useState } from "@ztools/declarative-ui";
-import { formatBytes, isRealElectronHost } from "./native-ipc.js";
+import { Action, ActionPanel, Icon, List, Toast, showToast, useEffect, useRef, useState } from "@ztools/declarative-ui";
+import { formatBytes, getRealSystemPath, isRealElectronHost } from "./native-ipc.js";
 import {
+  MAX_RENAME_FILES,
   RENAME_RULE_PRESETS,
-  applyRenameRule,
+  buildRenamePreview,
+  conflictReasonText,
   executeRealFileRename,
-  fetchRealBatchRenameFiles,
+  fetchDirectoryFiles,
+  fileManagerName,
+  isPermissionError,
+  isSameOrParentDir,
   openRenameFileLocation,
+  requestFolderAccess,
   undoBatchRenameHistory,
+  type DirectoryFilesResult,
   type RealFileEntry,
+  type RenamePreviewItem,
   type RenameRule,
   type RenameRuleType,
-  type RenameUndoEntry
+  type RenameUndoEntry,
+  type SourceScope
 } from "./logic.js";
+import { usePopoutValue } from "./popout-state.js";
 
-type SourceDirScope = "downloads" | "desktop" | "documents" | "pictures" | "videos";
+type SourceDirScope = SourceScope | "custom";
 
 const SOURCE_SCOPES: Array<{ id: SourceDirScope; label: string }> = [
   { id: "downloads", label: "下载目录 (Downloads)" },
@@ -76,51 +86,136 @@ const INITIAL_FALLBACK_FILES: RealFileEntry[] = [
   }
 ];
 
+// 独立窗口带来的值可能来自旧版本或被篡改，逐项校验，不合法就用默认值
+const isSourceScope = (v: unknown): v is SourceDirScope => v === "custom" || SOURCE_SCOPES.some((s) => s.id === v);
+const isText = (v: unknown): v is string => typeof v === "string";
+const isRuleType = (v: unknown): v is RenameRuleType => RENAME_RULE_PRESETS.some((r) => r.id === v);
+const isPathList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText);
+
 function stripLeadingEmoji(label: string): string {
   return label.replace(/^[^\u4e00-\u9fa5A-Za-z0-9(\[_-]+/, "").trim();
 }
 
+function baseNameOf(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, "");
+  return trimmed.split(/[\\/]/).pop() || trimmed;
+}
+
+const FALLBACK_LISTING: DirectoryFilesResult = {
+  directory: "C:\\Users\\Default\\Downloads",
+  files: INITIAL_FALLBACK_FILES,
+  occupiedNames: INITIAL_FALLBACK_FILES.map((f) => f.name),
+  authorized: false,
+  partial: false,
+  totalFiles: INITIAL_FALLBACK_FILES.length,
+  truncated: false
+};
+
+function toast(style: "success" | "failure", title: string, message?: string) {
+  void showToast({
+    style: style === "success" ? Toast.Style.Success : Toast.Style.Failure,
+    title,
+    ...(message ? { message } : {})
+  });
+}
+
+function renamePlanKey(items: RenamePreviewItem[]): string {
+  return items.map((i) => `${i.fullPath}\u0000${i.newName}`).join("\u0001");
+}
+
 export function BatchRenameCommand() {
-  const [sourceScope, setSourceScope] = useState<SourceDirScope>("downloads");
-  const [currentDir, setCurrentDir] = useState<string>("C:\\Users\\Default\\Downloads");
-  const [realFiles, setRealFiles] = useState<RealFileEntry[]>(() =>
-    isRealElectronHost() ? [] : INITIAL_FALLBACK_FILES
+  // 当前目录的授权随独立窗口转交（宿主只转交本窗口已有的授权），新窗口里不用重新授权即可执行
+  const listingRef = useRef<DirectoryFilesResult | null>(null);
+  // 弹出独立窗口时带走：目录来源、所选文件夹、规则与勾选；撤销记录与目录清单不带（新窗口重新读取目录）
+  const [rawScope, setSourceScope] = usePopoutValue<SourceDirScope>("sourceScope", () => "downloads", isSourceScope, {
+    paths: () => (listingRef.current?.directory ? [listingRef.current.directory] : [])
+  });
+  const [customDir, setCustomDir] = usePopoutValue("customDir", () => "", isText, { paths: (v) => (v ? [v] : []) });
+  // 「所选文件夹」没有带来路径时退回默认目录
+  const sourceScope: SourceDirScope = rawScope === "custom" && !customDir ? "downloads" : rawScope;
+  const [listing, setListing] = useState<DirectoryFilesResult | null>(() =>
+    isRealElectronHost() ? null : FALLBACK_LISTING
   );
-  const [ruleType, setRuleType] = useState<RenameRuleType>("number");
-  const [checkedPaths, setCheckedPaths] = useState<string[]>(() =>
-    isRealElectronHost() ? [] : INITIAL_FALLBACK_FILES.map((f) => f.fullPath)
+  const [ruleType, setRuleType] = usePopoutValue<RenameRuleType>("ruleType", () => "number", isRuleType);
+  const [checkedPaths, setCheckedPaths, checksRestored] = usePopoutValue<string[]>(
+    "checkedPaths",
+    () => (isRealElectronHost() ? [] : INITIAL_FALLBACK_FILES.map((f) => f.fullPath)),
+    isPathList,
+    { paths: (v) => v }
   );
+  // 带来的勾选在第一次成功读取目录时生效（只保留仍存在的文件），之后按原规则：新出现的文件默认勾选。
+  // 带来的是空列表时（旧窗口还没读完目录就弹出，分不清是否全部取消）按新开处理
+  const restoreChecksRef = useRef(checksRestored && checkedPaths.length > 0);
   const [searchText, setSearchText] = useState<string>("");
   const [undoStack, setUndoStack] = useState<RenameUndoEntry[]>([]);
-  const [statusMessage, setStatusMessage] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  // 改名 / 撤销互斥：执行中再次触发直接忽略，避免并发改名
+  const busyRef = useRef(false);
+  // 每次加载的序号，丢弃过期（已切换目录）的加载结果
+  const loadSeqRef = useRef(0);
+  listingRef.current = listing;
 
-  const loadDirectoryFiles = async (scope: SourceDirScope) => {
+  const resolveDirectory = async (scope: SourceDirScope, custom: string): Promise<string> => {
+    if (scope === "custom") return custom;
+    return (await getRealSystemPath(scope)) || "";
+  };
+
+  /** 读取目录并更新列表；同目录重新加载时保留用户的勾选，新出现的文件（如改名结果）默认勾选 */
+  const loadDirectory = async (dirPath: string): Promise<DirectoryFilesResult | null> => {
+    const seq = ++loadSeqRef.current;
     setIsLoading(true);
     try {
-      const res = await fetchRealBatchRenameFiles(scope);
-      if (isRealElectronHost() || res.files.length > 0) {
-        setCurrentDir(res.directory || scope);
-        setRealFiles(res.files);
-        setCheckedPaths(res.files.slice(0, 15).map((f) => f.fullPath));
-        setStatusMessage(
-          res.files.length > 0
-            ? `已加载 ${res.directory} 下 ${res.files.length} 个真实文件`
-            : `当前目录 (${res.directory || scope}) 暂无可重命名文件`
-        );
-      } else {
-        setStatusMessage(`已就绪 (${scope}) · 共 ${realFiles.length} 个待重命名文件`);
-      }
+      const res = await fetchDirectoryFiles(dirPath);
+      if (seq !== loadSeqRef.current) return null;
+      const prev = listingRef.current;
+      const sameDir = Boolean(prev && prev.directory === res.directory);
+      const prevPaths = new Set(sameDir && prev ? prev.files.map((f) => f.fullPath) : []);
+      const keepRestored = restoreChecksRef.current;
+      restoreChecksRef.current = false;
+      setCheckedPaths((checked) => {
+        const checkedSet = new Set(checked);
+        return res.files
+          .map((f) => f.fullPath)
+          .filter((p) => (keepRestored ? checkedSet.has(p) : !sameDir || checkedSet.has(p) || !prevPaths.has(p)));
+      });
+      listingRef.current = res;
+      setListing(res);
+      return res;
     } catch (err) {
-      setStatusMessage(`读取目录失败: ${err instanceof Error ? err.message : String(err)}`);
+      if (seq !== loadSeqRef.current) return null;
+      const failed: DirectoryFilesResult = {
+        directory: dirPath,
+        files: [],
+        occupiedNames: [],
+        authorized: false,
+        partial: false,
+        totalFiles: 0,
+        truncated: false,
+        error: err instanceof Error ? err.message : String(err)
+      };
+      listingRef.current = failed;
+      setListing(failed);
+      return failed;
     } finally {
-      setIsLoading(false);
+      if (seq === loadSeqRef.current) setIsLoading(false);
     }
   };
 
+  const reloadCurrent = async () => {
+    const dir = listingRef.current?.directory || (await resolveDirectory(sourceScope, customDir));
+    return loadDirectory(dir);
+  };
+
   useEffect(() => {
-    void loadDirectoryFiles(sourceScope);
-  }, [sourceScope]);
+    if (!isRealElectronHost()) return;
+    void (async () => {
+      const dir = await resolveDirectory(sourceScope, customDir);
+      await loadDirectory(dir);
+    })();
+  }, [sourceScope, customDir]);
+
+  const currentDir = listing?.directory || "";
+  const managerName = fileManagerName(currentDir);
 
   const trimmedQuery = searchText.trim();
   const buildActiveRule = (): RenameRule => {
@@ -164,31 +259,18 @@ export function BatchRenameCommand() {
       ? ""
       : trimmedQuery.toLowerCase();
 
-  const visibleFiles = realFiles.filter((file) => {
-    if (!filterKeyword) return true;
-    return file.name.toLowerCase().includes(filterKeyword);
-  });
+  const computePreview = (source: DirectoryFilesResult | null): RenamePreviewItem[] => {
+    if (!source) return [];
+    const visible = source.files.filter((file) => !filterKeyword || file.name.toLowerCase().includes(filterKeyword));
+    return buildRenamePreview(visible, activeRule, source.occupiedNames);
+  };
 
   const checkedSet = new Set(checkedPaths);
-  const seenTargetNames = new Set<string>();
-
-  const previewItems = visibleFiles.map((file, idx) => {
-    const isChecked = checkedSet.has(file.fullPath);
-    const newName = applyRenameRule(file.name, activeRule, idx);
-    const lowerTarget = newName.toLowerCase();
-    const hasConflict = seenTargetNames.has(lowerTarget);
-    seenTargetNames.add(lowerTarget);
-    return {
-      ...file,
-      newName,
-      changed: newName !== file.name,
-      conflict: hasConflict,
-      isChecked
-    };
-  });
+  const previewItems = computePreview(listing).map((item) => ({ ...item, isChecked: checkedSet.has(item.fullPath) }));
 
   const selectedItems = previewItems.filter((item) => item.isChecked);
-  const changedSelectedCount = selectedItems.filter((item) => item.changed && !item.conflict).length;
+  const runnableSelected = selectedItems.filter((item) => item.changed && !item.conflict);
+  const changedSelectedCount = runnableSelected.length;
   const conflictCount = previewItems.filter((item) => item.conflict).length;
 
   const toggleFileCheck = (fullPath: string) => {
@@ -208,63 +290,188 @@ export function BatchRenameCommand() {
     }
   };
 
-  const executeBatchRename = async () => {
-    const targets = selectedItems.filter((item) => item.changed && !item.conflict);
-    if (targets.length === 0) {
-      setStatusMessage("没有需要改名的已勾选文件，或存在同名冲突需先解除");
-      return;
+  /**
+   * 通过系统选目录对话框取得 dir 的读写授权。用户选了别的文件夹时切换过去并让用户先确认预览，不直接执行
+   */
+  const ensureFolderAccess = async (dir: string, title: string): Promise<boolean> => {
+    const access = await requestFolderAccess(dir, title);
+    if (access.error) {
+      toast("failure", "无法取得文件夹授权", access.error);
+      return false;
     }
-    setIsLoading(true);
-    const historyBatch: RenameUndoEntry[] = [];
-    let successCount = 0;
-
-    for (const item of targets) {
-      const res = await executeRealFileRename(item.fullPath, item.newName);
-      if (res.ok && res.destinationPath) {
-        successCount += 1;
-        historyBatch.push({
-          oldPath: item.fullPath,
-          newPath: res.destinationPath,
-          oldName: item.name,
-          newName: item.newName
-        });
-      }
+    if (access.canceled || !access.folderPath) {
+      toast("failure", "已取消授权，未执行任何改动");
+      return false;
     }
-
-    if (historyBatch.length > 0) {
-      setUndoStack(historyBatch);
+    if (!isSameOrParentDir(access.folderPath, dir)) {
+      setCustomDir(access.folderPath);
+      setSourceScope("custom");
+      toast("failure", `已切换到「${baseNameOf(access.folderPath)}」`, "所选文件夹与当前目录不同，请确认新预览后再执行");
+      return false;
     }
-    setStatusMessage(`已完成批量重命名：成功改名 ${successCount}/${targets.length} 个文件 (支持一键撤销)`);
-    await loadDirectoryFiles(sourceScope);
+    return true;
   };
 
-  const handleUndoLastBatch = async () => {
-    if (undoStack.length === 0) {
-      setStatusMessage("当前没有可撤销的重命名历史记录");
+  const runRename = async (targets: RenamePreviewItem[], mode: "batch" | "single") => {
+    if (busyRef.current) return;
+    if (targets.length === 0) {
+      toast("failure", conflictCount > 0 ? "没有可执行的改名：存在同名冲突" : "没有需要改名的已勾选文件");
       return;
     }
+    busyRef.current = true;
     setIsLoading(true);
     try {
-      const res = await undoBatchRenameHistory(undoStack);
-      setUndoStack([]);
-      setStatusMessage(`已撤销回滚 ${res.restoredCount} 个文件至原文件名`);
-      await loadDirectoryFiles(sourceScope);
+      const startListing = listingRef.current;
+      let plan = targets;
+      if (!startListing?.authorized) {
+        const dir = startListing?.directory || targets[0].parentDir;
+        const granted = await ensureFolderAccess(dir, `授权批量重命名「${baseNameOf(dir)}」中的文件`);
+        if (!granted) return;
+        // 授权后读取完整目录并按同样的规则重算；与用户看到的预览不一致时先让用户确认
+        const fresh = await loadDirectory(dir);
+        if (!fresh || !fresh.authorized) {
+          toast("failure", "授权后仍无法读取该文件夹", fresh?.error);
+          return;
+        }
+        const freshByPath = new Map(computePreview(fresh).map((i) => [i.fullPath, i]));
+        const recomputed = targets.map((t) => freshByPath.get(t.fullPath));
+        if (recomputed.some((i) => !i || !i.changed || i.conflict) || renamePlanKey(recomputed as RenamePreviewItem[]) !== renamePlanKey(targets)) {
+          toast("failure", "已读取完整文件清单，预览有变化", "请确认新的预览后再次执行");
+          return;
+        }
+        plan = recomputed as RenamePreviewItem[];
+      }
+
+      const history: RenameUndoEntry[] = [];
+      const failures: Array<{ name: string; error: string }> = [];
+      for (let i = 0; i < plan.length; i++) {
+        const item = plan[i];
+        const res = await executeRealFileRename(item.fullPath, item.newName);
+        if (res.ok && res.destinationPath) {
+          history.push({ oldPath: item.fullPath, newPath: res.destinationPath, oldName: item.name, newName: item.newName });
+          continue;
+        }
+        failures.push({ name: item.name, error: res.error || "改名失败" });
+        if (isPermissionError(res.error)) {
+          // 授权失效（超时）时后续必然全部失败，停止并如实报告
+          for (const rest of plan.slice(i + 1)) failures.push({ name: rest.name, error: "未执行（文件夹授权已失效）" });
+          break;
+        }
+      }
+
+      if (history.length > 0) setUndoStack(history);
+      const total = plan.length;
+      if (failures.length === 0) {
+        toast(
+          "success",
+          mode === "single" ? `已将 ${plan[0].name} 改名为 ${plan[0].newName}` : `已重命名 ${history.length} 个文件`,
+          "可在动作面板撤销"
+        );
+      } else {
+        const first = failures[0];
+        toast(
+          "failure",
+          history.length > 0 ? `已重命名 ${history.length}/${total} 个，${failures.length} 个失败` : `重命名失败（0/${total}）`,
+          `${first.name}：${first.error}` + (history.length > 0 ? " · 成功的部分可在动作面板撤销" : "")
+        );
+      }
+      await reloadCurrent();
     } finally {
+      busyRef.current = false;
       setIsLoading(false);
     }
   };
 
+  const executeBatchRename = () => runRename(runnableSelected, "batch");
+
+  const handleUndoLastBatch = async () => {
+    if (busyRef.current) return;
+    if (undoStack.length === 0) {
+      toast("failure", "当前没有可撤销的重命名");
+      return;
+    }
+    busyRef.current = true;
+    setIsLoading(true);
+    try {
+      let res = await undoBatchRenameHistory(undoStack);
+      if (res.restoredCount === 0 && res.failed.some((f) => isPermissionError(f.error))) {
+        const dir = listingRef.current?.directory || "";
+        if (await ensureFolderAccess(dir, `授权撤销「${baseNameOf(dir)}」中的重命名`)) {
+          res = await undoBatchRenameHistory(undoStack);
+        }
+      }
+      setUndoStack(res.failed.map((f) => f.entry).reverse());
+      if (res.failed.length === 0) {
+        toast("success", `已撤销 ${res.restoredCount} 个文件的重命名`);
+      } else {
+        const first = res.failed[0];
+        toast(
+          "failure",
+          `已撤销 ${res.restoredCount} 个，${res.failed.length} 个未能还原`,
+          `${first.entry.newName}：${first.error}`
+        );
+      }
+      await reloadCurrent();
+    } finally {
+      busyRef.current = false;
+      setIsLoading(false);
+    }
+  };
+
+  const revealInFileManager = async (fullPath: string) => {
+    let res = await openRenameFileLocation(fullPath);
+    if (!res.ok && isPermissionError(res.error)) {
+      const dir = listingRef.current?.directory || "";
+      if (!(await ensureFolderAccess(dir, `授权访问「${baseNameOf(dir)}」以在${managerName}中显示文件`))) return;
+      void reloadCurrent();
+      res = await openRenameFileLocation(fullPath);
+    }
+    if (!res.ok) toast("failure", `无法在${managerName}中显示`, res.error);
+  };
+
+  const pickFolder = async () => {
+    const access = await requestFolderAccess(currentDir, "选择要批量重命名的文件夹");
+    if (access.error) {
+      toast("failure", "无法打开选择文件夹对话框", access.error);
+      return;
+    }
+    if (access.canceled || !access.folderPath) return;
+    if (sourceScope === "custom" && access.folderPath === customDir) {
+      void loadDirectory(access.folderPath);
+      return;
+    }
+    setCustomDir(access.folderPath);
+    setSourceScope("custom");
+  };
+
   const activePresetMeta =
     RENAME_RULE_PRESETS.find((r) => r.id === ruleType) || RENAME_RULE_PRESETS[0];
-  const cleanActiveRuleLabel = stripLeadingEmoji(activePresetMeta.label);
+  const cleanActiveRuleLabel = trimmedQuery.includes("->") ? "查找替换" : stripLeadingEmoji(activePresetMeta.label);
 
-  const summaryText =
-    statusMessage ||
-    `目录: ${currentDir} · 规则: ${cleanActiveRuleLabel} · 待改名 ${changedSelectedCount} 项` +
-      (conflictCount > 0 ? ` · 检测到 ${conflictCount} 项同名冲突` : "") +
-      (undoStack.length > 0 ? ` · 可撤销 ${undoStack.length} 项` : "");
+  const loadFailed = Boolean(listing && listing.files.length === 0 && listing.error);
+  // 完整路径在右栏标题里；状态条只放目录名，避免长路径把规则、待改名数、冲突数挤出可视区
+  const summaryParts: string[] = [`目录: ${currentDir ? baseNameOf(currentDir) : "读取中"}`];
+  if (loadFailed) {
+    summaryParts.push("目录不存在、为空或无权限读取");
+  } else {
+    summaryParts.push(`规则: ${cleanActiveRuleLabel}`, `待改名 ${changedSelectedCount} 项`);
+    if (conflictCount > 0) summaryParts.push(`${conflictCount} 项同名冲突（不会执行）`);
+    if (undoStack.length > 0) summaryParts.push(`可撤销 ${undoStack.length} 项`);
+    if (listing && listing.truncated) summaryParts.push(`仅显示前 ${MAX_RENAME_FILES} 个（共 ${listing.totalFiles} 个）`);
+    if (listing && !listing.authorized && listing.files.length > 0 && isRealElectronHost()) {
+      summaryParts.push(listing.partial ? "预览可能不完整，执行时需授权文件夹" : "执行时需授权文件夹");
+    }
+  }
+  const summaryText = summaryParts.join(" · ");
 
   const maxSizeBytes = Math.max(1, ...previewItems.map((f) => f.sizeBytes));
+
+  const undoAction = () =>
+    Action({
+      title: `撤销上一次重命名 (${undoStack.length} 项)`,
+      icon: Icon.RotateAntiClockwise,
+      onAction: handleUndoLastBatch
+    });
 
   const leftNavNodes = RENAME_RULE_PRESETS.map((preset) => {
     const cleanLabel = stripLeadingEmoji(preset.label);
@@ -282,20 +489,16 @@ export function BatchRenameCommand() {
       actions: ActionPanel({
         children: [
           Action({
-            title: `切换至「${cleanLabel}」规则 (Enter)`,
+            title: `切换至「${cleanLabel}」规则`,
             icon: Icon.CheckCircle,
             onAction: () => setRuleType(preset.id)
           }),
           Action({
-            title: `立即执行批量重命名 (${changedSelectedCount} 项) (Ctrl+Enter)`,
+            title: `执行批量重命名 (${changedSelectedCount} 项)`,
             icon: Icon.ArrowRight,
             onAction: executeBatchRename
           }),
-          Action({
-            title: `撤销上一次批量重命名 (${undoStack.length} 项)`,
-            icon: Icon.RotateAntiClockwise,
-            onAction: handleUndoLastBatch
-          })
+          ...(undoStack.length > 0 ? [undoAction()] : [])
         ]
       })
     });
@@ -312,7 +515,9 @@ export function BatchRenameCommand() {
     return List.Item({
       id: `rename-item-${item.fullPath}`,
       title: item.name,
-      subtitle: `-> ${item.newName} (实时 Diff 预览)`,
+      subtitle: item.conflict
+        ? `-> ${item.newName} (${conflictReasonText(item.conflictReason)}，不会执行)`
+        : `-> ${item.newName}`,
       icon: Icon.Document,
       checkable: true,
       checked: item.isChecked,
@@ -331,42 +536,31 @@ export function BatchRenameCommand() {
       actions: ActionPanel({
         children: [
           Action({
-            title: `执行批量重命名 (${changedSelectedCount} 个已选文件) (Enter)`,
+            title: `执行批量重命名 (${changedSelectedCount} 个已选文件)`,
             icon: Icon.CheckCircle,
             onAction: executeBatchRename
           }),
           Action({
-            title:
-              undoStack.length > 0
-                ? `撤销上一次重命名回滚 (${undoStack.length} 项) (Ctrl+Enter)`
-                : "在资源管理器中定位此文件 (Ctrl+Enter)",
-            icon: undoStack.length > 0 ? Icon.RotateAntiClockwise : Icon.Folder,
-            onAction: async () => {
-              if (undoStack.length > 0) {
-                await handleUndoLastBatch();
-              } else {
-                await openRenameFileLocation(item.fullPath);
-              }
-            }
+            title: `在${managerName}中显示`,
+            icon: Icon.Folder,
+            onAction: () => revealInFileManager(item.fullPath)
           }),
           Action({
-            title: "单条立即改名此文件",
+            title: "只改名此文件",
             icon: Icon.Document,
             onAction: async () => {
-              const res = await executeRealFileRename(item.fullPath, item.newName);
-              setStatusMessage(
-                res.ok ? `已将 ${item.name} 改名为 ${item.newName}` : `改名失败: ${res.error}`
-              );
-              await loadDirectoryFiles(sourceScope);
+              if (!item.changed) {
+                toast("failure", "此文件按当前规则不需要改名");
+                return;
+              }
+              if (item.conflict) {
+                toast("failure", `无法改名：${conflictReasonText(item.conflictReason)}`, item.newName);
+                return;
+              }
+              await runRename([item], "single");
             }
           }),
-          Action({
-            title: "在资源管理器中定位此文件",
-            icon: Icon.Folder,
-            onAction: async () => {
-              await openRenameFileLocation(item.fullPath);
-            }
-          })
+          ...(undoStack.length > 0 ? [undoAction()] : [])
         ]
       })
     });
@@ -375,16 +569,21 @@ export function BatchRenameCommand() {
   const allChecked = previewItems.length > 0 && previewItems.every((f) => f.isChecked);
   const someChecked = previewItems.some((f) => f.isChecked);
 
+  const dropdownScopes = [
+    ...SOURCE_SCOPES,
+    ...(customDir ? [{ id: "custom" as SourceDirScope, label: `所选文件夹 (${baseNameOf(customDir)})` }] : [])
+  ];
+
   return List({
     isLoading,
     searchBarPlaceholder: "输入「旧词->新词」实时替换，或输入前缀/后缀参数、搜索文件名...",
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     searchBarAccessory: List.Dropdown({
-      tooltip: "切换待重命名的本机目标文件夹",
+      tooltip: "切换待重命名的文件夹",
       value: sourceScope,
       onChange: (val) => setSourceScope(val as SourceDirScope),
-      children: SOURCE_SCOPES.map((s) =>
+      children: dropdownScopes.map((s) =>
         List.Dropdown.Item({
           title: s.label,
           value: s.id
@@ -395,11 +594,19 @@ export function BatchRenameCommand() {
       summaryText,
       actions: [
         {
+          id: "pick-folder",
+          title: "选择文件夹",
+          style: "secondary",
+          onAction: () => {
+            void pickFolder();
+          }
+        },
+        {
           id: "rescan",
           title: "重新扫描",
           style: "secondary",
           onAction: () => {
-            void loadDirectoryFiles(sourceScope);
+            void reloadCurrent();
           }
         }
       ]
@@ -407,7 +614,7 @@ export function BatchRenameCommand() {
     subList: {
       title: `原名 -> 新名实时对比预览 (${previewItems.length} 项 · 待执行 ${changedSelectedCount} 项)`,
       subtitle: currentDir,
-      emptyText: "当前目录下暂无可重命名文件",
+      emptyText: loadFailed ? "目录不存在、为空或无权限读取" : "当前目录下暂无可重命名文件",
       checkable: previewItems.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: () => toggleAllVisible(),

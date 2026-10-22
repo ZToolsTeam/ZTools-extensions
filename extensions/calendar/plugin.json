@@ -1,7 +1,7 @@
 {
   "id": "calendar",
   "name": "日程与会议",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "查看今天和近期日程，一键加入视频会议链接，新建、删除日程并导出 .ics 日历文件，日程保存在本机",
   "author": "ZTools Team",
   "entry": "dist/index.js",

@@ -56,15 +56,63 @@ test("P21 ~ P25 boost, software-manager, disk-analyzer, cleaner, batch-rename: �
   })
 })
 
+// ---- 宿主 dir: 扫描截断：如实标注抽样，不把抽样当全盘结果；macOS 额外扫描 ~/Library/Caches ----
+function dirPayload(dir, { truncated = false, approximate = false, visited = 0 } = {}) {
+  return {
+    success: true,
+    data: {
+      query: `dir:${dir}`,
+      files: [{ name: 'big.bin', path: `${dir}/big.bin`, size: 10 * 1024 * 1024, is_dir: false, mtime: 1 }],
+      count: 1,
+      total_matches: 1,
+      total_bytes: 10 * 1024 * 1024,
+      subdirs: [{ name: 'deep', path: `${dir}/deep`, file_count: 3, total_bytes: 40 * 1024 * 1024, ...(approximate ? { approximate: true } : {}) }],
+      truncated,
+      approximate,
+      visited_entries: visited,
+      max_entries: 2000
+    }
+  }
+}
 
-test('未探测文件系统时显示未知，不能按路径猜 APFS 或 NTFS', async () => {
-  const host = createRealHostStub({
-    system_get_disk_usage: ({ drive }) => drive === '/'
-      ? { total: 1000, used: 100, available: 900, percent: 10 }
-      : { total: 0, used: 0, available: 0, percent: 0 }
+function macHost(scanned, options) {
+  return createRealHostStub({
+    system_get_path: ({ name }) => ({ success: true, data: name === 'home' ? '/Users/tester' : name === 'temp' ? '' : `/Users/tester/${name[0].toUpperCase()}${name.slice(1)}` }),
+    system_search_files: ({ query }) => {
+      const dir = query.slice(4)
+      scanned.push(dir)
+      return dirPayload(dir, options(dir))
+    }
   })
-  const snapshot = await diskAnalyzer.fetchDiskAnalysisSnapshot(host)
-  assert.equal(snapshot.drives.length, 1)
-  assert.equal(snapshot.drives[0].drive, '/')
-  assert.equal(snapshot.drives[0].fileSystem, '未知')
+}
+
+test('disk-analyzer: 宿主扫描截断时快照标记 sampled 与已扫描条目数，子目录近似体积透传', async () => {
+  const scanned = []
+  const snap = await diskAnalyzer.fetchDiskAnalysisSnapshot(macHost(scanned, (dir) =>
+    dir.endsWith('/Downloads') ? { truncated: true, approximate: true, visited: 2000 } : { visited: 12 }))
+  assert.ok(scanned.includes('/Users/tester/Library/Caches'), `scanned: ${scanned.join(', ')}`)
+  assert.equal(snap.sampled, true)
+  assert.equal(snap.scannedEntries, 2000 + 12 * (scanned.length - 1))
+  const downloadsDeep = snap.topDirectories.find((dir) => dir.path === '/Users/tester/Downloads/deep')
+  assert.equal(downloadsDeep.approximate, true)
+  const docsDeep = snap.topDirectories.find((dir) => dir.path === '/Users/tester/Documents/deep')
+  assert.equal(docsDeep.approximate, undefined)
+})
+
+test('disk-analyzer: 宿主完整扫描（未截断）时不标抽样；畸形截断字段不被当成 true', async () => {
+  const scanned = []
+  const snap = await diskAnalyzer.fetchDiskAnalysisSnapshot(macHost(scanned, () => ({ visited: 5 })))
+  assert.equal(snap.sampled, undefined)
+  assert.equal(snap.scannedEntries, undefined)
+  const garbage = createRealHostStub({
+    system_get_path: () => ({ success: true, data: '/Users/tester/Downloads' }),
+    system_search_files: ({ query }) => {
+      const payload = dirPayload(query.slice(4))
+      payload.data.truncated = 'yes'
+      payload.data.visited_entries = 'many'
+      return payload
+    }
+  })
+  const garbageSnap = await diskAnalyzer.fetchDiskAnalysisSnapshot(garbage)
+  assert.equal(garbageSnap.sampled, undefined)
 })

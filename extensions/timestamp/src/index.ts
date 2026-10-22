@@ -7,18 +7,39 @@ import {
   showToast,
   Toast,
   Clipboard,
-  useState
+  useState,
+  useEffect
 } from "@ztools/declarative-ui";
-import { parseTimeInput } from "./logic.js";
+import { parseTimeInput, type ParsedTimeResult } from "./logic.js";
 
 export default function TimestampCommand() {
   const [searchText, setSearchText] = useState<string>("");
+  // 留空时展示的“当前时间”与输入内容的相对时间都依赖 now：每秒推进一次，卸载时清理
+  const [now, setNow] = useState<number>(() => Date.now());
 
-  const parsed = parseTimeInput(searchText);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
-  const handleCopy = async (val: string | number, label: string) => {
-    await Clipboard.copy(String(val));
+  const isLive = !searchText.trim();
+  const parsed = parseTimeInput(searchText, new Date(now));
+
+  // 留空时按下动作那一刻重新取当前时间，避免复制到最多 1 秒前的旧值
+  const pick = <K extends keyof ParsedTimeResult>(key: K): ParsedTimeResult[K] =>
+    (isLive ? parseTimeInput("", new Date()) : parsed)[key];
+
+  const handleCopy = async (key: keyof ParsedTimeResult, label: string) => {
+    const val = String(pick(key) ?? "");
+    await Clipboard.copy(val);
     await showToast(Toast.Style.Success, `已复制 ${label}: ${val}`);
+  };
+
+  const resetToNow = async () => {
+    const wasLive = isLive;
+    setSearchText("");
+    setNow(Date.now());
+    await showToast(Toast.Style.Success, wasLive ? "已刷新为当前时间" : "已清空输入，恢复为当前时间");
   };
 
   return List(
@@ -31,7 +52,7 @@ export default function TimestampCommand() {
     [
       parsed.valid
         ? List.Section(
-            { title: searchText ? "指定时间解析结果" : "当前实时时间" },
+            { title: isLive ? "当前实时时间" : "指定时间解析结果" },
             [
               List.Item({
                 id: "item-seconds",
@@ -43,12 +64,12 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制秒级时间戳",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.unixSeconds!, "秒级时间戳")
+                    onAction: () => handleCopy("unixSeconds", "秒级时间戳")
                   }),
                   Action({
                     title: "刷新并重置为当前时间",
                     icon: Icon.Repeat,
-                    onAction: () => setSearchText("")
+                    onAction: resetToNow
                   })
                 ])
               }),
@@ -62,12 +83,12 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制毫秒级时间戳",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.unixMilliseconds!, "毫秒级时间戳")
+                    onAction: () => handleCopy("unixMilliseconds", "毫秒级时间戳")
                   }),
                   Action({
                     title: "刷新并重置为当前时间",
                     icon: Icon.Repeat,
-                    onAction: () => setSearchText("")
+                    onAction: resetToNow
                   })
                 ])
               }),
@@ -81,12 +102,12 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制本地格式化时间",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.localDateTime!, "本地时间")
+                    onAction: () => handleCopy("localDateTime", "本地时间")
                   }),
                   Action({
                     title: "刷新并重置为当前时间",
                     icon: Icon.Repeat,
-                    onAction: () => setSearchText("")
+                    onAction: resetToNow
                   })
                 ])
               }),
@@ -100,7 +121,7 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制北京时间",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.beijingDateTime!, "北京时间")
+                    onAction: () => handleCopy("beijingDateTime", "北京时间")
                   })
                 ])
               }),
@@ -114,7 +135,7 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制 ISO 8601 时间",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.utcIso!, "UTC标准时间")
+                    onAction: () => handleCopy("utcIso", "UTC标准时间")
                   })
                 ])
               }),
@@ -128,7 +149,7 @@ export default function TimestampCommand() {
                   Action({
                     title: "复制相对时间",
                     icon: Icon.CopyClipboard,
-                    onAction: () => handleCopy(parsed.relativeTime!, "相对时间")
+                    onAction: () => handleCopy("relativeTime", "相对时间")
                   })
                 ])
               })
@@ -147,7 +168,7 @@ export default function TimestampCommand() {
                   Action({
                     title: "清空输入并恢复当前时间",
                     icon: Icon.Repeat,
-                    onAction: () => setSearchText("")
+                    onAction: resetToNow
                   })
                 ])
               })

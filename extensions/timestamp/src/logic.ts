@@ -55,6 +55,129 @@ export function getRelativeTime(d: Date, now: Date = new Date()): string {
   return isFuture ? `${diffYear} 年后` : `${diffYear} 年前`;
 }
 
+interface DateFields {
+  year: number;
+  month: number; // 1-12
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+  millisecond: number;
+  /** 相对 UTC 的偏移分钟数；null 表示按本地时区理解 */
+  offsetMinutes: number | null;
+  /** 写错的时区偏移（如 +25:00）也算不存在的时间 */
+  badOffset?: boolean;
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const WEEKDAYS = "(?:mon|tue|wed|thu|fri|sat|sun)";
+const MONTH_NAMES = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)";
+const ZONE = "(z|utc|gmt|ut|[+-]\\d{2}:?\\d{2})";
+
+// 年-月-日[ 时:分[:秒[.毫秒]]][时区]：- / . 年月日 分隔，日期与时间之间用空格或 T（ISO 8601）
+const YMD_RE = new RegExp(
+  "^(\\d{4})[-/.年](\\d{1,2})[-/.月](\\d{1,2})日?(?:[\\sT]+(\\d{1,2}):(\\d{1,2})(?::(\\d{1,2})(?:\\.(\\d{1,9}))?)?)?\\s*" + ZONE + "?$",
+  "i"
+);
+// 美式 月/日/年[ 时:分[:秒]]
+const US_RE = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/;
+// RFC 2822 / Date#toUTCString：[Tue, ]14 Nov 2023 22:13[:20] [GMT|+0800]
+const RFC_RE = new RegExp(
+  "^(?:" + WEEKDAYS + ",?\\s+)?(\\d{1,2})\\s+" + MONTH_NAMES + "\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?\\s*" + ZONE + "?$",
+  "i"
+);
+// Date#toString：Tue Nov 14 2023 22:13:20 GMT+0800 (中国标准时间)
+const JS_DATE_RE = new RegExp(
+  "^" + WEEKDAYS + "\\s+" + MONTH_NAMES + "\\s+(\\d{1,2})\\s+(\\d{4})\\s+(\\d{1,2}):(\\d{2}):(\\d{2})\\s+GMT([+-]\\d{4})(?:\\s+\\(.*\\))?$",
+  "i"
+);
+
+function toInt(v: string | undefined): number {
+  return v ? parseInt(v, 10) : 0;
+}
+
+/** "Z"/"UTC"/"+08:00"/"-0500" → 偏移分钟；未写时区返回 null；格式合法但数值越界返回 NaN */
+function parseOffset(zone: string | undefined): number | null {
+  if (!zone) return null;
+  const z = zone.toLowerCase();
+  if (z === "z" || z === "utc" || z === "gmt" || z === "ut") return 0;
+  const m = z.match(/^([+-])(\d{2}):?(\d{2})$/);
+  if (!m) return NaN;
+  const h = parseInt(m[2], 10);
+  const min = parseInt(m[3], 10);
+  if (h > 23 || min > 59) return NaN;
+  return (m[1] === "-" ? -1 : 1) * (h * 60 + min);
+}
+
+function fractionToMs(frac: string | undefined): number {
+  return frac ? parseInt((frac + "00").slice(0, 3), 10) : 0;
+}
+
+function withOffset(f: Omit<DateFields, "offsetMinutes">, zone: string | undefined): DateFields {
+  const off = parseOffset(zone);
+  if (off !== null && isNaN(off)) return { ...f, offsetMinutes: 0, badOffset: true };
+  return { ...f, offsetMinutes: off };
+}
+
+/** 识别受支持的日期写法；不在白名单内返回 null */
+function matchDateFields(text: string): DateFields | null {
+  let m = text.match(YMD_RE);
+  if (m) {
+    return withOffset(
+      {
+        year: toInt(m[1]), month: toInt(m[2]), day: toInt(m[3]),
+        hour: toInt(m[4]), minute: toInt(m[5]), second: toInt(m[6]), millisecond: fractionToMs(m[7])
+      },
+      m[8]
+    );
+  }
+  m = text.match(US_RE);
+  if (m) {
+    return {
+      year: toInt(m[3]), month: toInt(m[1]), day: toInt(m[2]),
+      hour: toInt(m[4]), minute: toInt(m[5]), second: toInt(m[6]), millisecond: 0, offsetMinutes: null
+    };
+  }
+  m = text.match(RFC_RE);
+  if (m) {
+    return withOffset(
+      {
+        year: toInt(m[3]), month: MONTHS.indexOf(m[2].toLowerCase()) + 1, day: toInt(m[1]),
+        hour: toInt(m[4]), minute: toInt(m[5]), second: toInt(m[6]), millisecond: 0
+      },
+      m[7]
+    );
+  }
+  m = text.match(JS_DATE_RE);
+  if (m) {
+    return withOffset(
+      {
+        year: toInt(m[3]), month: MONTHS.indexOf(m[1].toLowerCase()) + 1, day: toInt(m[2]),
+        hour: toInt(m[4]), minute: toInt(m[5]), second: toInt(m[6]), millisecond: 0
+      },
+      m[7]
+    );
+  }
+  return null;
+}
+
+/** 按字段构造日期；不存在的日期/时间（2 月 30 日、25 点、夏令时跳过的时刻）返回 null，不顺延 */
+function buildExactDate(f: DateFields): Date | null {
+  if (f.badOffset) return null;
+  if (f.offsetMinutes === null) {
+    const local = new Date(f.year, f.month - 1, f.day, f.hour, f.minute, f.second, f.millisecond);
+    const exact =
+      local.getFullYear() === f.year && local.getMonth() === f.month - 1 && local.getDate() === f.day &&
+      local.getHours() === f.hour && local.getMinutes() === f.minute && local.getSeconds() === f.second;
+    return exact ? local : null;
+  }
+  const wall = new Date(Date.UTC(f.year, f.month - 1, f.day, f.hour, f.minute, f.second, f.millisecond));
+  const exact =
+    wall.getUTCFullYear() === f.year && wall.getUTCMonth() === f.month - 1 && wall.getUTCDate() === f.day &&
+    wall.getUTCHours() === f.hour && wall.getUTCMinutes() === f.minute && wall.getUTCSeconds() === f.second;
+  return exact ? new Date(wall.getTime() - f.offsetMinutes * 60000) : null;
+}
+
 /**
  * 解析用户输入的时间戳或日期字符串
  */
@@ -93,29 +216,21 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
       date = new Date(num);
     }
   } else {
-    // 2. 常用的 年-月-日[ 时:分[:秒]] 写法按本地时间严格解析：不存在的日期（2 月 30 日、25 点）直接报错，不顺延
-    const match = text.match(/^(\d{4})[-/.年](\d{1,2})[-/.月](\d{1,2})日?(?:[\sT]+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?$/);
-    if (match) {
-      const [year, month, day, hour, min, sec] = [1, 2, 3, 4, 5, 6].map((i) => (match[i] ? parseInt(match[i], 10) : 0));
-      const local = new Date(year, month - 1, day, hour, min, sec);
-      const exact =
-        local.getFullYear() === year && local.getMonth() === month - 1 && local.getDate() === day &&
-        local.getHours() === hour && local.getMinutes() === min && local.getSeconds() === sec;
-      if (!exact) {
+    // 2. 只接受白名单内的日期写法并逐字段严格校验；不再交给宽松的 Date.parse，
+    //    否则 "abc 1"、"version 3.2"、"Oct 21" 会被 V8 补成 2001 年的伪造日期
+    const fields = matchDateFields(text);
+    if (fields) {
+      date = buildExactDate(fields);
+      if (!date) {
         return { valid: false, error: `「${text}」不是一个存在的日期或时间` };
       }
-      date = local;
-    } else {
-      // 3. 其余写法（ISO 8601 带时区、RFC 2822 等）交给标准解析
-      const parsed = Date.parse(text);
-      if (!isNaN(parsed)) date = new Date(parsed);
     }
   }
 
   if (!date || isNaN(date.getTime())) {
     return {
       valid: false,
-      error: `无法解析的时间内容: "${text}"，支持输入秒/毫秒时间戳或标准日期`
+      error: `无法解析的时间内容: "${text}"，支持秒/毫秒时间戳，或带年份的标准日期（如 2024-01-31 08:00:00、ISO 8601、RFC 2822）`
     };
   }
 

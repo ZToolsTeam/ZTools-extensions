@@ -57,7 +57,7 @@ test('QuickFolders 按宿主真实目录生成：Windows 用户目录与被重�
   const folders = buildFolders({
     home: 'D:\\Users\\alice',
     desktop: 'D:\\Users\\alice\\OneDrive\\桌面',
-    downloads: '', documents: '', pictures: '', videos: '', music: '', appData: '', temp: ''
+    downloads: '', documents: '', pictures: '', videos: '', music: '', appData: ''
   })
   const byId = Object.fromEntries(folders.map(f => [f.id, f]))
   assert.equal(byId.desktop.path, 'D:\\Users\\alice\\OneDrive\\桌面', '宿主给出的真实路径优先')
@@ -70,7 +70,7 @@ test('QuickFolders 按宿主真实目录生成：Windows 用户目录与被重�
 test('QuickFolders 按宿主真实目录生成：macOS 使用 POSIX 路径与 macOS 目录约定', () => {
   const folders = buildFolders({
     home: '/Users/bob', desktop: '/Users/bob/Desktop', downloads: '', documents: '', pictures: '',
-    videos: '', music: '', appData: '/Users/bob/Library/Application Support', temp: ''
+    videos: '', music: '', appData: '/Users/bob/Library/Application Support'
   })
   const byId = Object.fromEntries(folders.map(f => [f.id, f]))
   assert.equal(byId.videos.path, '/Users/bob/Movies', 'macOS 的视频目录叫 Movies')

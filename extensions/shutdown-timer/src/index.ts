@@ -15,9 +15,26 @@ import {
   calculateTargetTime,
   getQuickScheduleOptions,
   type QuickScheduleItem
-} from './logic'
+} from './logic.js'
 
 declare const ztools: any
+
+/**
+ * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
+ */
+async function copyWithToast(text: string, successTitle: string, successMessage?: string): Promise<void> {
+  try {
+    await Clipboard.copy(text)
+  } catch (err) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: '复制失败',
+      message: err instanceof Error ? err.message : String(err)
+    })
+    return
+  }
+  await showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
+}
 
 export default function ShutdownTimerCommand() {
   const [searchText, setSearchText] = useState('')
@@ -116,12 +133,7 @@ export default function ShutdownTimerCommand() {
                   shortcut: { modifiers: ['ctrl'], key: 'c' },
                   onAction: () => {
                     const cmd = getCommandForAction(item.action, item.seconds)
-                    Clipboard.copy(cmd)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制命令',
-                      message: cmd
-                    })
+                    return copyWithToast(cmd, '已复制命令', cmd)
                   }
                 }),
                 Action({

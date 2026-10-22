@@ -2,6 +2,12 @@ import { FormProps, FormTextFieldProps, FormTextAreaProps, FormCheckboxProps, Fo
 export interface FormDropdownComponent {
     (props: FormDropdownProps, ...children: any[]): ViewDescriptor<FormDropdownProps>;
     Item: (props: FormDropdownItemProps) => ViewDescriptor<FormDropdownItemProps>;
+    /** 选项分组（宿主用 optgroup 显示） */
+    Section: (props?: {
+        title?: string;
+    }, ...children: any[]) => ViewDescriptor<{
+        title?: string;
+    }>;
 }
 export interface FormComponent {
     (props?: FormProps, ...children: any[]): ViewDescriptor<FormProps>;

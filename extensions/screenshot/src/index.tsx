@@ -1,9 +1,9 @@
 /**
- * Windows Screenshots (截图捕获参数与截图历史回贴工作台 - 布局三)
+ * 截图历史与回贴 (布局三：左 34% 截取参数工作台 + 右 66% 截图队列)
  *
- * 严格遵循 ZTools 效率工具箱【布局三：左 34% 参数配置工作台 + 右 66% 任务队列/结果工作台】规范：
- * - 左栏 34% workbenchPanel：配置捕获区域模式、输出图像格式、截图后自动动作、窗口阴影边框、自动哈希去重 + previewCard
- * - 右栏 66% subList：本机扫描到的截图文件可勾选队列（支持一键回贴到活动窗口 Enter、复制图片到剪贴板 Ctrl+Enter、定位、批量清理）
+ * - 左栏 workbenchPanel：只保留宿主真实支持的截取选项（截取后是否复制到剪贴板）与截图库概览
+ * - 右栏 subList：宿主扫描到的本机截图 + 本次运行中立即截取的截图，可勾选
+ * - 底部黄金三键：回贴到活动窗口 ↵ / 复制图片 ⌘↵ / 动作面板 ⌘K
  * - 100% 保留 ScreenshotsCommand, ScreenshotDetailView, ScreenshotsManager, defaultScreenshotsManager 导出
  */
 
@@ -17,18 +17,22 @@ import {
   Color,
   showToast,
   Toast,
-  Clipboard
+  Clipboard,
+  confirmAlert
 } from "@ztools/declarative-ui";
 import { useState, useMemo, useEffect } from "@ztools/declarative-ui";
 import {
   ScreenshotItem,
-  ScreenshotCategory
+  ScreenshotCategory,
+  ScreenshotActionResult
 } from "./types.js";
 import {
   defaultScreenshotsManager,
   ScreenshotsManager,
   generateScreenshotThumbnailSvg,
-  INITIAL_SCREENSHOTS
+  INITIAL_SCREENSHOTS,
+  AUTHORIZE_FOLDER_ACTION_TITLE,
+  isOcrSupported
 } from "./screenshots-service.js";
 import { isRealElectronHost } from "./native-ipc.js";
 
@@ -44,22 +48,40 @@ function formatTotalBytes(bytes: number): string {
   return `${val >= 100 || idx === 0 ? val.toFixed(0) : val.toFixed(2)} ${units[idx]}`;
 }
 
+/** 按宿主真实结果选择提示样式：失败一律用失败样式，不再出现带成功勾的失败提示 */
+async function toastResult(res: ScreenshotActionResult): Promise<void> {
+  if (res.success) {
+    await showToast(Toast.Style.Success, res.message);
+    return;
+  }
+  // 失败提示拆成「标题 + 原因」两行，原因较长时也能完整看到
+  const idx = res.message.indexOf(": ");
+  if (idx > 0) await showToast(Toast.Style.Failure, res.message.slice(0, idx), res.message.slice(idx + 2));
+  else await showToast(Toast.Style.Failure, res.message);
+}
+
+function parentDir(filePath: string): string {
+  const idx = Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+  return idx > 0 ? filePath.slice(0, idx) : "";
+}
+
 /**
  * 独立单项详情查看页 (供导航栈或独立路由调用)
  */
 export function ScreenshotDetailView({ item }: { item: ScreenshotItem }) {
+  const ocrEnabled = isOcrSupported();
   const markdown = `![${item.filename}](${item.thumbnailSvg})
 
 ---
-
+${ocrEnabled && item.ocrText ? `
 ### 识别提取文字 (OCR Result)
 
 \`\`\`text
 ${item.ocrText}
 \`\`\`
-
+` : ""}
 - **存储路径**: \`${item.path}\`
-- **分辨率**: **${item.dimensions}** (${item.width} × ${item.height})
+- **分辨率**: **${item.dimensions}**
 - **文件大小**: ${item.formattedSize} (${item.sizeBytes.toLocaleString()} bytes)
 - **拍摄时间**: ${item.formattedDate}`;
 
@@ -89,16 +111,14 @@ ${item.ocrText}
             title="粘贴到活动窗口 (Paste to Active Window)"
             icon={Icon.Window}
             onAction={async () => {
-              const res = await defaultScreenshotsManager.pasteToActiveWindow(item);
-              await showToast(Toast.Style.Success, res.message);
+              await toastResult(await defaultScreenshotsManager.pasteToActiveWindow(item));
             }}
           />
           <Action
             title="复制图片本身 (Copy Image to Clipboard)"
             icon={Icon.Clipboard}
             onAction={async () => {
-              const res = await defaultScreenshotsManager.copyImageToClipboard(item);
-              await showToast(Toast.Style.Success, res.message);
+              await toastResult(await defaultScreenshotsManager.copyImageToClipboard(item));
             }}
           />
           <Action
@@ -109,15 +129,17 @@ ${item.ocrText}
               await showToast(Toast.Style.Success, `已复制路径: ${item.path}`);
             }}
           />
-          <Action
-            title="复制提取的文字 (Copy OCR Text)"
-            icon={Icon.Text}
-            onAction={async () => {
-              const res = await defaultScreenshotsManager.copyOcrText(item);
-              await Clipboard.copy(res.ocrText || "");
-              await showToast(Toast.Style.Success, res.message);
-            }}
-          />
+          {ocrEnabled ? (
+            <Action
+              title="复制提取的文字 (Copy OCR Text)"
+              icon={Icon.Text}
+              onAction={async () => {
+                const res = await defaultScreenshotsManager.copyOcrText(item);
+                if (res.success && res.ocrText) await Clipboard.copy(res.ocrText);
+                await toastResult(res);
+              }}
+            />
+          ) : null}
         </ActionPanel>
       }
     />
@@ -126,27 +148,29 @@ ${item.ocrText}
 
 export function ScreenshotsCommand() {
   const isRealHost = isRealElectronHost();
+  const ocrEnabled = isOcrSupported();
   const initialList = isRealHost ? [] : [...INITIAL_SCREENSHOTS];
   const [items, setItems] = useState<ScreenshotItem[]>(() => initialList);
-  const [checkedIds, setCheckedIds] = useState<string[]>(() => initialList.map((s) => s.id));
+  // 默认不勾选任何截图：批量清理是破坏性操作，必须由用户主动勾选
+  const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [searchText, setSearchText] = useState("");
   const [category, setCategory] = useState<ScreenshotCategory>("all");
-  const [captureRegionMode, setCaptureRegionMode] = useState<"region" | "window" | "fullscreen" | "delay3s">("region");
-  const [imageFormat, setImageFormat] = useState<"png" | "webp" | "jpeg">("png");
-  const [postCaptureAction, setPostCaptureAction] = useState<"paste_clipboard" | "save_only" | "auto_ocr">("paste_clipboard");
-  const [includeWindowShadow, setIncludeWindowShadow] = useState<boolean>(true);
-  const [autoHashDedupe, setAutoHashDedupe] = useState<boolean>(true);
+  const [copyAfterCapture, setCopyAfterCapture] = useState<"copy" | "none">("copy");
   const [refreshCount] = useState(0);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [, setSelectedId] = useState<string | null>(null);
+
+  const applyList = (list: ScreenshotItem[]) => {
+    const nextList = list.length > 0 ? list : isRealElectronHost() ? [] : [...INITIAL_SCREENSHOTS];
+    setItems(nextList);
+    // 重新扫描后只保留仍存在的勾选项
+    const alive = new Set(nextList.map((s) => s.id));
+    setCheckedIds((prev) => prev.filter((id) => alive.has(id)));
+  };
 
   useEffect(() => {
     let active = true;
     defaultScreenshotsManager.loadScreenshots().then((list) => {
-      if (active) {
-        const nextList = list.length > 0 ? list : isRealElectronHost() ? [] : [...INITIAL_SCREENSHOTS];
-        setItems(nextList);
-        setCheckedIds(nextList.map((s) => s.id));
-      }
+      if (active) applyList(list);
     });
     return () => {
       active = false;
@@ -154,43 +178,38 @@ export function ScreenshotsCommand() {
   }, [refreshCount]);
 
   const reloadScreenshots = (force = false) => {
-    defaultScreenshotsManager.loadScreenshots(force).then((list) => {
-      const nextList = list.length > 0 ? list : isRealElectronHost() ? [] : [...INITIAL_SCREENSHOTS];
-      setItems(nextList);
-      setCheckedIds(nextList.map((s) => s.id));
-    });
+    defaultScreenshotsManager.loadScreenshots(force).then(applyList);
   };
 
   const handleCaptureScreenNow = async () => {
-    const res = await defaultScreenshotsManager.captureScreenNow({
-      captureRegionMode,
-      imageFormat,
-      postCaptureAction,
-      includeWindowShadow,
-      autoHashDedupe
-    });
-    reloadScreenshots(true);
-    await showToast(
-      res.success ? Toast.Style.Success : Toast.Style.Failure,
-      res.message
-    );
+    const res = await defaultScreenshotsManager.captureScreenNow({ copyToClipboard: copyAfterCapture === "copy" });
+    if (res.screenshot) reloadScreenshots(false);
+    await toastResult(res);
+  };
+
+  const handleAuthorizeFolder = async (item?: ScreenshotItem) => {
+    const res = await defaultScreenshotsManager.authorizeFolder(item ? parentDir(item.path) : undefined);
+    if (res.success) reloadScreenshots(true);
+    if (res.error === "CANCELED") {
+      await showToast(Toast.Style.Failure, res.message);
+      return;
+    }
+    await toastResult(res);
   };
 
   const filtered = useMemo(() => {
-    return defaultScreenshotsManager.filterScreenshots(items, searchText, category);
-  }, [items, searchText, category]);
+    return defaultScreenshotsManager.filterScreenshots(items, searchText, ocrEnabled ? category : category === "ocr" ? "all" : category);
+  }, [items, searchText, category, ocrEnabled]);
 
-  useMemo(() => {
-    return filtered.find((s) => s.id === selectedId) || filtered[0];
-  }, [filtered, selectedId]);
+  // 批量清理只作用于当前可见、已勾选且未置顶的截图
+  const batchTargets = useMemo(
+    () => filtered.filter((s) => checkedIds.includes(s.id) && !s.pinned),
+    [filtered, checkedIds]
+  );
+  const visibleCheckedCount = filtered.filter((s) => checkedIds.includes(s.id)).length;
 
   const handlePasteToActive = async (item: ScreenshotItem) => {
-    try {
-      const res = await defaultScreenshotsManager.pasteToActiveWindow(item);
-      await showToast(Toast.Style.Success, res.message);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "粘贴失败", err.message || String(err));
-    }
+    await toastResult(await defaultScreenshotsManager.pasteToActiveWindow(item));
   };
 
   const handlePasteLatest = async () => {
@@ -199,7 +218,11 @@ export function ScreenshotsCommand() {
       if (res.success) {
         await showToast(Toast.Style.Success, res.message);
       } else {
-        await showToast(Toast.Style.Failure, "未找到截图", res.message);
+        await showToast(
+          Toast.Style.Failure,
+          res.error === "NO_SCREENSHOTS" ? "未找到截图" : "回贴最新截图失败",
+          res.message
+        );
       }
     } catch (err: any) {
       await showToast(Toast.Style.Failure, "回贴最新截图失败", err.message || String(err));
@@ -207,12 +230,7 @@ export function ScreenshotsCommand() {
   };
 
   const handleCopyImage = async (item: ScreenshotItem) => {
-    try {
-      const res = await defaultScreenshotsManager.copyImageToClipboard(item);
-      await showToast(Toast.Style.Success, res.message);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "复制图片失败", err.message || String(err));
-    }
+    await toastResult(await defaultScreenshotsManager.copyImageToClipboard(item));
   };
 
   const handleCopyPath = async (item: ScreenshotItem) => {
@@ -231,54 +249,67 @@ export function ScreenshotsCommand() {
   };
 
   const handleShowInExplorer = async (item: ScreenshotItem) => {
-    try {
-      const res = await defaultScreenshotsManager.showInExplorer(item);
-      await showToast(Toast.Style.Success, res.message);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "定位失败", err.message || String(err));
-    }
+    await toastResult(await defaultScreenshotsManager.showInExplorer(item));
   };
 
   const handleOpenWithDefault = async (item: ScreenshotItem) => {
-    try {
-      const res = await defaultScreenshotsManager.openWithDefaultApp(item);
-      await showToast(Toast.Style.Success, res.message);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "打开失败", err.message || String(err));
-    }
+    await toastResult(await defaultScreenshotsManager.openWithDefaultApp(item));
   };
 
   const handleDelete = async (item: ScreenshotItem) => {
-    try {
-      const res = await defaultScreenshotsManager.deleteScreenshot(item);
+    const res = await defaultScreenshotsManager.deleteScreenshot(item);
+    if (res.success) {
       setItems((prev) => prev.filter((s) => s.id !== item.id));
       setCheckedIds((prev) => prev.filter((id) => id !== item.id));
-      await showToast(Toast.Style.Success, res.message);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "删除截图失败", err.message || String(err));
+    } else {
+      // 删除失败（文件已不存在等）：以宿主重新扫描的结果为准，不在本地擅自删行
+      reloadScreenshots(true);
     }
+    await toastResult(res);
   };
 
   const handleBatchDeleteChecked = async () => {
-    const targets = items.filter((s) => checkedIds.includes(s.id) && !s.pinned);
+    const targets = batchTargets;
     if (targets.length === 0) {
-      await showToast(Toast.Style.Failure, "没有可清理的非置顶已勾选截图");
+      await showToast(Toast.Style.Failure, "没有可清理的截图", "请先在当前列表中勾选未置顶的截图");
       return;
     }
+    const confirmed = await confirmAlert({
+      title: `将 ${targets.length} 张截图移入废纸篓？`,
+      message: `仅清理当前列表中可见、已勾选且未置顶的截图：\n${targets
+        .slice(0, 5)
+        .map((t) => t.filename)
+        .join("\n")}${targets.length > 5 ? `\n… 等 ${targets.length} 张` : ""}`,
+      primaryAction: { title: "移入废纸篓", style: "destructive" }
+    });
+    if (!confirmed) return;
+
+    const deleted = new Set<string>();
+    const failures: string[] = [];
     for (const item of targets) {
-      await defaultScreenshotsManager.deleteScreenshot(item);
+      const res = await defaultScreenshotsManager.deleteScreenshot(item);
+      if (res.success) deleted.add(item.id);
+      else failures.push(`${item.filename}: ${res.message.replace(/^删除截图失败:\s*/, "")}`);
     }
-    const targetIds = new Set(targets.map((t) => t.id));
-    setItems((prev) => prev.filter((s) => !targetIds.has(s.id)));
-    setCheckedIds((prev) => prev.filter((id) => !targetIds.has(id)));
-    await showToast(Toast.Style.Success, `已批量清理 ${targets.length} 张旧截图`);
+    setItems((prev) => prev.filter((s) => !deleted.has(s.id)));
+    setCheckedIds((prev) => prev.filter((id) => !deleted.has(id)));
+    if (failures.length === 0) {
+      await showToast(Toast.Style.Success, `已清理 ${deleted.size} 张截图`);
+    } else {
+      reloadScreenshots(true);
+      await showToast(
+        Toast.Style.Failure,
+        `已清理 ${deleted.size} 张，${failures.length} 张失败`,
+        failures.slice(0, 3).join("\n")
+      );
+    }
   };
 
   const handleTogglePin = async (item: ScreenshotItem) => {
     try {
       const res = await defaultScreenshotsManager.togglePinScreenshot(item);
       reloadScreenshots();
-      await showToast(Toast.Style.Success, res.message);
+      await toastResult(res);
     } catch (err: any) {
       await showToast(Toast.Style.Failure, "置顶操作失败", err.message || String(err));
     }
@@ -304,12 +335,14 @@ export function ScreenshotsCommand() {
         shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
         onAction={() => handleCopyPath(item)}
       />
-      <Action
-        title="复制提取的文字 (Copy Recognized Text)"
-        icon={Icon.Text}
-        shortcut={{ modifiers: ["cmd", "alt"], key: "c" }}
-        onAction={() => handleCopyOcr(item)}
-      />
+      {ocrEnabled ? (
+        <Action
+          title="复制提取的文字 (Copy Recognized Text)"
+          icon={Icon.Text}
+          shortcut={{ modifiers: ["cmd", "alt"], key: "c" }}
+          onAction={() => handleCopyOcr(item)}
+        />
+      ) : null}
       <Action
         title="在资源管理器中定位 (Show in Explorer)"
         icon={Icon.Folder}
@@ -323,7 +356,7 @@ export function ScreenshotsCommand() {
         onAction={() => handleOpenWithDefault(item)}
       />
       <Action
-        title="立即截取当前屏幕 (Capture Screen Now)"
+        title="立即截取全部屏幕 (Capture Screen Now)"
         icon={Icon.Camera}
         shortcut={{ modifiers: ["ctrl", "shift"], key: "s" }}
         onAction={handleCaptureScreenNow}
@@ -341,7 +374,12 @@ export function ScreenshotsCommand() {
         onAction={handlePasteLatest}
       />
       <Action
-        title={`批量清理非置顶已勾选截图 (${checkedIds.length}项)`}
+        title={AUTHORIZE_FOLDER_ACTION_TITLE}
+        icon={Icon.Lock}
+        onAction={() => handleAuthorizeFolder(item)}
+      />
+      <Action
+        title={`批量清理已勾选截图 (${batchTargets.length}项)`}
         icon={Icon.Trash}
         onAction={handleBatchDeleteChecked}
       />
@@ -356,17 +394,21 @@ export function ScreenshotsCommand() {
 
   const pinnedCount = items.filter((s) => s.pinned).length;
   const totalBytes = items.reduce((sum, s) => sum + s.sizeBytes, 0);
-  const latestDimensions = items[0]?.dimensions || "2560 x 1440";
+  const latestDimensions = items[0]?.dimensions || "无截图";
   const maxShotBytes = Math.max(1, ...filtered.map((s) => s.sizeBytes));
 
   const rightQueueItems = filtered.map((item) => {
     const isChecked = checkedIds.includes(item.id);
     const sizeRatio = Math.max(10, Math.min(100, Math.round((item.sizeBytes / maxShotBytes) * 100)));
+    const knownDims = item.width > 0 && item.height > 0;
+    const tagText = [item.pinned ? "置顶" : "", item.source === "capture" ? "本次截取" : "", knownDims ? item.dimensions : ""]
+      .filter(Boolean)
+      .join(" · ");
 
     return List.Item({
       id: item.id,
       title: item.filename,
-      subtitle: `${item.dimensions} · ${item.formattedDate} · ${item.ocrText ? item.ocrText.slice(0, 42).replace(/\s+/g, " ") : item.path}`,
+      subtitle: `${item.dimensions} · ${item.formattedDate} · ${ocrEnabled && item.ocrText ? item.ocrText.slice(0, 42).replace(/\s+/g, " ") : item.path}`,
       checkable: true,
       checked: isChecked,
       onCheckChange: (c) => {
@@ -385,11 +427,7 @@ export function ScreenshotsCommand() {
             value: sizeRatio
           }
         },
-        {
-          tag: {
-            value: item.pinned ? `置顶 · ${item.dimensions}` : item.dimensions
-          }
-        },
+        ...(tagText ? [{ tag: { value: tagText } }] : []),
         { text: item.formattedSize }
       ],
       actions: renderActionPanel(item)
@@ -399,7 +437,7 @@ export function ScreenshotsCommand() {
   return (
     <List
       isShowingDetail={false}
-      searchBarPlaceholder="搜索系统截图文件名、OCR 提取文字或分辨率 (如 2560x1440, error)..."
+      searchBarPlaceholder={ocrEnabled ? "搜索截图文件名、路径、分辨率或 OCR 提取文字..." : "搜索截图文件名、路径或分辨率..."}
       onSearchTextChange={setSearchText}
       onSelectionChange={setSelectedId}
       filterBar={{
@@ -426,71 +464,37 @@ export function ScreenshotsCommand() {
         ]
       }}
       workbenchPanel={{
-        title: "截图捕获与回贴工作台",
-        subtitle: postCaptureAction === "paste_clipboard" ? "截屏即回贴活动窗口" : "本地截图与 OCR 管线",
+        title: "截图截取与回贴工作台",
+        subtitle: "截取全部屏幕 · 截图历史回贴",
         fields: [
           {
-            id: "wb-capture-region",
-            label: "捕获区域模式",
-            type: "select",
-            value: captureRegionMode,
-            onChange: (val) => setCaptureRegionMode(val as any),
-            options: [
-              { label: "框选区域截图 (Region)", value: "region" },
-              { label: "当前活动窗口 (Active Window)", value: "window" },
-              { label: "全屏多显示器 (Full Screen)", value: "fullscreen" },
-              { label: "延时 3 秒截屏 (3s Delay)", value: "delay3s" }
-            ]
-          },
-          {
-            id: "wb-image-format",
-            label: "输出图像格式",
-            type: "select",
-            value: imageFormat,
-            onChange: (val) => setImageFormat(val as any),
-            options: [
-              { label: "PNG 无损 (透明通道)", value: "png" },
-              { label: "WebP 高压 (体积省 65%)", value: "webp" },
-              { label: "JPEG 标准兼容", value: "jpeg" }
-            ]
-          },
-          {
             id: "wb-post-action",
-            label: "截图后自动动作",
+            label: "截取后动作",
             type: "select",
-            value: postCaptureAction,
-            onChange: (val) => setPostCaptureAction(val as any),
+            value: copyAfterCapture,
+            onChange: (val) => setCopyAfterCapture(val === "none" ? "none" : "copy"),
             options: [
-              { label: "立即写入剪贴板并回贴", value: "paste_clipboard" },
-              { label: "仅保存至本机截图库", value: "save_only" },
-              { label: "自动提取图中文字 OCR", value: "auto_ocr" }
+              { label: "复制到剪贴板", value: "copy" },
+              { label: "仅加入截图列表", value: "none" }
             ]
           },
           {
-            id: "wb-window-shadow",
-            label: "携带窗口阴影边框",
-            type: "toggle",
-            value: includeWindowShadow,
-            onChange: (val) => setIncludeWindowShadow(Boolean(val))
-          },
-          {
-            id: "wb-hash-dedupe",
-            label: "自动哈希去重",
-            type: "toggle",
-            value: autoHashDedupe,
-            onChange: (val) => setAutoHashDedupe(Boolean(val))
+            id: "wb-capture-scope",
+            label: "截取范围",
+            type: "info",
+            value: "全部显示器（截取前自动隐藏 ZTools 窗口）"
           },
           {
             id: "wb-save-dir",
-            label: "截图保存目录",
+            label: "截取文件保存位置",
             type: "info",
-            value: `Pictures\\Screenshots (*.${imageFormat})`
+            value: "ZTools 缓存目录 (PNG，本次运行内保留在列表中)"
           }
         ],
         previewCard: {
-          title: "截图库存储与状态总览",
-          badge: `${imageFormat.toUpperCase()} 无损`,
-          subtitle: `捕获模式: ${captureRegionMode} · 已选 ${checkedIds.length}/${items.length} 张`,
+          title: "截图库概览",
+          badge: "PNG",
+          subtitle: `已选 ${visibleCheckedCount}/${filtered.length} 张 · 可清理 ${batchTargets.length} 张`,
           metrics: [
             { label: "本机截图总数", value: `${items.length} 张` },
             { label: "收藏置顶数", value: `${pinnedCount} 张` },
@@ -500,8 +504,8 @@ export function ScreenshotsCommand() {
         }
       }}
       subList={{
-        title: "本机截图历史与回贴队列 (按拍摄时间排序，按 ↵ 立即回贴到活动窗口)",
-        subtitle: `${filtered.length} 张截图 · 已选 ${checkedIds.length} 项 · 总计 ${formatTotalBytes(totalBytes)}`,
+        title: "本机截图历史与回贴队列 (按拍摄时间排序，按 ↵ 回贴到活动窗口)",
+        subtitle: `${filtered.length} 张截图 · 已选 ${visibleCheckedCount} 项 · 总计 ${formatTotalBytes(totalBytes)}`,
         checkable: filtered.length > 0,
         checked:
           filtered.length > 0 && filtered.every((s) => checkedIds.includes(s.id))
@@ -510,7 +514,11 @@ export function ScreenshotsCommand() {
             ? "indeterminate"
             : false,
         onCheckChange: (checked) => {
-          setCheckedIds(checked ? filtered.map((s) => s.id) : []);
+          // 全选 / 全不选只作用于当前可见的截图，不影响被搜索或分类隐藏的勾选状态
+          const visible = new Set(filtered.map((s) => s.id));
+          setCheckedIds((prev) =>
+            checked ? Array.from(new Set([...prev, ...visible])) : prev.filter((id) => !visible.has(id))
+          );
         },
         emptyText: "当前分类下暂无匹配的截图记录",
         items: rightQueueItems
@@ -518,7 +526,7 @@ export function ScreenshotsCommand() {
       actions={
         <ActionPanel title="屏幕截图全局操作">
           <Action
-            title="立即截取当前屏幕 (Capture Screen Now)"
+            title="立即截取全部屏幕 (Capture Screen Now)"
             icon={Icon.Camera}
             onAction={handleCaptureScreenNow}
           />
@@ -526,6 +534,11 @@ export function ScreenshotsCommand() {
             title="重新扫描截图目录 (Refresh Screenshots)"
             icon={Icon.Repeat}
             onAction={() => reloadScreenshots(true)}
+          />
+          <Action
+            title={AUTHORIZE_FOLDER_ACTION_TITLE}
+            icon={Icon.Lock}
+            onAction={() => handleAuthorizeFolder()}
           />
         </ActionPanel>
       }
@@ -538,7 +551,7 @@ export function ScreenshotsCommand() {
           <List.Dropdown.Item title="全部截图 (All Screenshots)" value="all" />
           <List.Dropdown.Item title="已置顶截图 (Pinned)" value="pinned" />
           <List.Dropdown.Item title="1小时内拍摄 (Recent)" value="recent" />
-          <List.Dropdown.Item title="包含提取文字 (With OCR Text)" value="ocr" />
+          {ocrEnabled ? <List.Dropdown.Item title="包含提取文字 (With OCR Text)" value="ocr" /> : null}
         </List.Dropdown>
       }
     >
@@ -586,4 +599,3 @@ export function ScreenshotsCommand() {
 }
 
 export default ScreenshotsCommand;
-

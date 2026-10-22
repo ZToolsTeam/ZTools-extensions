@@ -17,6 +17,9 @@ export function renderDeclarativeRoot(component, options) {
         },
         getInstance() {
             return instance;
+        },
+        collectPopoutState() {
+            return instance.collectPopoutState();
         }
     };
 }

@@ -1,5 +1,6 @@
 import {
   List,
+  Detail,
   ActionPanel,
   Action,
   Icon,
@@ -10,7 +11,8 @@ import {
   useRef,
   showToast,
   Toast,
-  confirmAlert
+  confirmAlert,
+  useNavigation
 } from '@ztools/declarative-ui'
 import {
   DLL_PLUGIN_NAME,
@@ -20,7 +22,10 @@ import {
   type ProcessServiceInfo,
   type ProcessSortKey,
   type ProcessTerminateMode,
-  CRITICAL_PROCESS_NAMES,
+  FORBIDDEN_REASON,
+  getTerminationRisk,
+  resolveCpuLoadPercent,
+  describeProcessProfile,
   formatBytes,
   getMockProcesses,
   getMockSystemInfo,
@@ -42,7 +47,25 @@ export * from './logic.js'
 
 type ProcessViewFilter = 'memory' | 'cpu' | 'high-load' | 'system' | 'user' | 'name' | 'pid'
 
+/**
+ * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
+ */
+async function copyWithToast(text: string, successTitle: string, successMessage?: string): Promise<void> {
+  try {
+    await Clipboard.copy(text)
+  } catch (err) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: '复制失败',
+      message: err instanceof Error ? err.message : String(err)
+    })
+    return
+  }
+  await showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
+}
+
 export default function ProcessMonitorCommand() {
+  const { push } = useNavigation()
   const inRealHost = isRealElectronHost()
   const [searchText, setSearchText] = useState('')
   const [viewFilter, setViewFilter] = useState<ProcessViewFilter>('memory')
@@ -80,9 +103,10 @@ export default function ProcessMonitorCommand() {
     return initServices
   })
   const refreshingRef = useRef(false)
+  const terminatingRef = useRef(false)
   const detailLoadedRef = useRef<Record<number, boolean>>({})
 
-  async function loadProcessExtra(proc: ProcessItem, showNotice = false) {
+  async function loadProcessExtra(proc: ProcessItem) {
     if (!proc || proc.pid <= 0) return
     try {
       const isSvchost = proc.name.toLowerCase() === 'svchost.exe'
@@ -97,16 +121,49 @@ export default function ProcessMonitorCommand() {
         setServices((prev) => ({ ...prev, [proc.pid]: svcRes }))
       }
       detailLoadedRef.current[proc.pid] = true
-      if (showNotice) {
-        showToast({
-          style: Toast.Style.Success,
-          title: `已加载进程深度画像: ${proc.name}`,
-          message: `PID: ${proc.pid}${svcRes?.length ? ` · 托管服务: ${svcRes.length} 项` : ''}`
-        })
-      }
     } catch {
       // ignore background detail errors
     }
+  }
+
+  // ⌘I：读取真实的签名 / 发布者 / 版本 / 托管服务并在详情页展示；宿主一项都没给时明确提示，不弹假成功
+  async function handleShowProfile(proc: ProcessItem) {
+    if (!proc || proc.pid <= 0) return
+    let detailRes: ProcessDetailInfo | null = null
+    let svcRes: ProcessServiceInfo[] = []
+    try {
+      ;[detailRes, svcRes] = await Promise.all([fetchProcessDetail(proc.pid), fetchServicesByPID(proc.pid)])
+    } catch (err) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: '读取签名与托管服务失败',
+        message: err instanceof Error ? err.message : String(err)
+      })
+      return
+    }
+    if (detailRes) setDetails((prev) => ({ ...prev, [proc.pid]: detailRes as ProcessDetailInfo }))
+    if (svcRes.length > 0) setServices((prev) => ({ ...prev, [proc.pid]: svcRes }))
+
+    const fields = describeProcessProfile(proc, detailRes, svcRes)
+    if (fields.length === 0) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: '未读取到签名与托管服务信息',
+        message: `当前系统没有为 ${proc.name} (PID: ${proc.pid}) 提供数字签名、版本或关联服务数据`
+      })
+      return
+    }
+    const execPath = detailRes?.path || proc.path
+    push(() =>
+      Detail({
+        navigationTitle: `${proc.name} (PID: ${proc.pid})`,
+        markdown: `# ${proc.name}\n\nPID ${proc.pid}${execPath ? `\n\n\`${execPath}\`` : ''}`,
+        metadata: Detail.Metadata(
+          {},
+          ...fields.map((f) => Detail.Metadata.Label({ title: f.title, text: f.text }))
+        )
+      })
+    )
   }
 
   async function refreshData(showIndicator = false) {
@@ -130,7 +187,7 @@ export default function ProcessMonitorCommand() {
         for (const cand of candidates.slice(0, 3)) {
           if (!detailLoadedRef.current[cand.pid]) {
             detailLoadedRef.current[cand.pid] = true
-            void loadProcessExtra(cand, false)
+            void loadProcessExtra(cand)
           }
         }
       }
@@ -166,23 +223,34 @@ export default function ProcessMonitorCommand() {
   }
 
   async function handleTerminate(proc: ProcessItem, mode: ProcessTerminateMode = 'force') {
-    const isCritical =
-      CRITICAL_PROCESS_NAMES.some((c) => c.toLowerCase() === proc.name.toLowerCase()) ||
-      proc.pid === 0 ||
-      proc.pid === 4
-    const modeLabel =
-      mode === 'tree'
-        ? '强制结束进程树 (taskkill /F /T)'
-        : mode === 'graceful'
-        ? '平缓关闭进程 (taskkill /PID)'
-        : '结束进程 (taskkill /F)'
+    // 同一时间只允许一个结束流程，防止连按重复弹确认或重复结束
+    if (terminatingRef.current) return
+    terminatingRef.current = true
+    try {
+      await runTerminate(proc, mode)
+    } finally {
+      terminatingRef.current = false
+    }
+  }
 
-    if (isCritical) {
+  async function runTerminate(proc: ProcessItem, mode: ProcessTerminateMode) {
+    const risk = getTerminationRisk(proc.pid, proc.name)
+    if (risk === 'forbidden') {
+      showToast({
+        style: Toast.Style.Failure,
+        title: `已拦截：${proc.name} 是系统关键进程`,
+        message: FORBIDDEN_REASON
+      })
+      return
+    }
+    const modeLabel = mode === 'tree' ? '强制结束进程树' : mode === 'graceful' ? '平缓关闭进程' : '结束进程'
+
+    if (risk === 'high-risk') {
       const confirmed = await confirmAlert({
-        title: `高危拦截：终止系统关键进程 [${proc.name}]`,
-        message: `进程 PID: ${proc.pid} 属于系统核心服务。强制终止将导致会话异常或系统崩溃。\n\n确定依然执行 [${modeLabel}]？`,
+        title: `高危操作：结束系统界面进程 [${proc.name}]`,
+        message: `进程 PID: ${proc.pid} 是系统界面组件，结束后程序坞、桌面或菜单栏会短暂消失，通常由系统自动重新启动。\n\n确定依然执行 [${modeLabel}]？`,
         primaryAction: {
-          title: '强制终止',
+          title: '依然结束',
           style: 'destructive'
         }
       })
@@ -205,19 +273,39 @@ export default function ProcessMonitorCommand() {
       message: `${proc.name} (PID: ${proc.pid})`
     })
 
-    const res = await terminateProcess(proc.pid, proc.name, mode)
+    let res = await terminateProcess(proc.pid, proc.name, mode)
+    if (!res.ok && res.canForce) {
+      // 平缓关闭超时：宿主不自动升级，强制结束必须由用户再次确认
+      const force = await confirmAlert({
+        title: `${proc.name} (PID: ${proc.pid}) 没有响应平缓关闭`,
+        message: `${res.error}。强制结束会立即终止它，未保存的数据会丢失。`,
+        primaryAction: {
+          title: '强制结束',
+          style: 'destructive'
+        }
+      })
+      if (!force) {
+        showToast({
+          style: Toast.Style.Failure,
+          title: '进程仍在运行',
+          message: `已取消强制结束 ${proc.name} (PID: ${proc.pid})`
+        })
+        return
+      }
+      res = await terminateProcess(proc.pid, proc.name, 'force')
+    }
     if (!res.ok) {
       showToast({
         style: Toast.Style.Failure,
         title: '终止失败',
-        message: res.error || '权限不足或进程受内核保护'
+        message: res.error || '终止进程失败'
       })
       return
     }
 
     showToast({
       style: Toast.Style.Success,
-      title: '进程已成功终止',
+      title: res.alreadyExited ? '进程已经退出' : '进程已成功终止',
       message: `${proc.name} (PID: ${proc.pid})`
     })
 
@@ -226,7 +314,9 @@ export default function ProcessMonitorCommand() {
   }
 
   async function handleOpenLocation(proc: ProcessItem) {
-    const targetPath = details[proc.pid]?.path || proc.path
+    // 优先用进程列表里的原始路径：宿主只把 process_list / GetProcessList 返回的可执行文件路径授权给本窗口定位，
+    // 详情接口（process_info 等）给的路径没有授权，只在列表没有路径时才用
+    const targetPath = proc.path || details[proc.pid]?.path
     if (!targetPath) {
       showToast({
         style: Toast.Style.Failure,
@@ -246,7 +336,8 @@ export default function ProcessMonitorCommand() {
       showToast({
         style: Toast.Style.Failure,
         title: '打开路径失败',
-        message: targetPath
+        // 宿主拒绝（列表刷新后授权过期、文件已不在）时说明怎么办，不只回显路径
+        message: `${targetPath}\n文件可能已被移动或删除，或授权已过期，请刷新进程列表后再试`
       })
     }
   }
@@ -275,11 +366,7 @@ export default function ProcessMonitorCommand() {
   const usedMem = systemInfo.usedMemoryBytes || Math.max(0, totalMem - availMem)
   const memPercent =
     systemInfo.memoryUsagePercent || (totalMem > 0 ? Math.round((usedMem / totalMem) * 100) : 0)
-  const sumProcCpu = Number(processes.reduce((acc, p) => acc + p.cpuPercent, 0).toFixed(1))
-  const totalCpuPercent = Math.min(
-    100,
-    Math.round(sumProcCpu > 0 ? sumProcCpu : systemInfo.cpuUsagePercent || 0)
-  )
+  const totalCpuPercent = resolveCpuLoadPercent(systemInfo, processes)
 
   const maxMemBytes = Math.max(
     1,
@@ -333,20 +420,22 @@ export default function ProcessMonitorCommand() {
       List.Section({
         title: `活动进程列表 (${filtered.length})`,
         children: filtered.map((proc) => {
-          const isCrit =
-            CRITICAL_PROCESS_NAMES.some((c) => c.toLowerCase() === proc.name.toLowerCase()) ||
-            proc.pid === 0 ||
-            proc.pid === 4
+          const isCrit = getTerminationRisk(proc.pid, proc.name) === 'forbidden'
           const memVal = proc.workingSetBytes ?? proc.memoryBytes ?? 0
           const memRatio = Math.min(100, Math.max(4, Math.round((memVal / maxMemBytes) * 100)))
           const isHighLoad = proc.cpuPercent >= 25 || memVal >= 1024 * 1024 * 1024
           const procServices = services[proc.pid] || []
-          const svcHint = procServices.length > 0 ? ` · 托管服务 ${procServices.length} 项` : ''
+          const svcHint = procServices.length > 0 ? `托管服务 ${procServices.length} 项` : ''
 
           return List.Item({
             id: String(proc.pid),
             title: `${proc.name} [PID: ${proc.pid}]`,
-            subtitle: `PID: ${proc.pid} · 线程 ${proc.threadCount}${svcHint} · ${proc.path || proc.commandLine || '系统内核进程'}`,
+            subtitle: [
+              `PID: ${proc.pid}`,
+              ...(proc.threadCount ? [`线程 ${proc.threadCount}`] : []),
+              ...(svcHint ? [svcHint] : []),
+              proc.path || proc.commandLine || '系统内核进程'
+            ].join(' · '),
             icon: isCrit ? Icon.Shield : isHighLoad ? Icon.ExclamationMark : Icon.Terminal,
             accessories: [
               { progress: { value: memRatio } },
@@ -384,14 +473,7 @@ export default function ProcessMonitorCommand() {
                   title: '复制 PID',
                   icon: Icon.Key,
                   shortcut: { modifiers: ['ctrl'], key: 'c' },
-                  onAction: () => {
-                    Clipboard.copy(String(proc.pid))
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制 PID',
-                      message: String(proc.pid)
-                    })
-                  }
+                  onAction: () => copyWithToast(String(proc.pid), '已复制 PID', String(proc.pid))
                 }),
                 Action({
                   title: '平缓关闭进程 (Graceful)',
@@ -399,10 +481,10 @@ export default function ProcessMonitorCommand() {
                   onAction: () => handleTerminate(proc, 'graceful')
                 }),
                 Action({
-                  title: '读取数字签名与托管服务',
+                  title: '查看数字签名与托管服务',
                   icon: Icon.MagnifyingGlass,
                   shortcut: { modifiers: ['ctrl'], key: 'i' },
-                  onAction: () => loadProcessExtra(proc, true)
+                  onAction: () => handleShowProfile(proc)
                 }),
                 Action({
                   title: '复制完整可执行路径',
@@ -411,12 +493,7 @@ export default function ProcessMonitorCommand() {
                   onAction: () => {
                     const targetPath = details[proc.pid]?.path || proc.path
                     if (targetPath) {
-                      Clipboard.copy(targetPath)
-                      showToast({
-                        style: Toast.Style.Success,
-                        title: '已复制可执行路径',
-                        message: targetPath
-                      })
+                      return copyWithToast(targetPath, '已复制可执行路径', targetPath)
                     } else {
                       showToast({
                         style: Toast.Style.Failure,
@@ -432,12 +509,7 @@ export default function ProcessMonitorCommand() {
                   onAction: () => {
                     const cmdLine =
                       details[proc.pid]?.commandLine || proc.commandLine || proc.path || proc.name
-                    Clipboard.copy(cmdLine)
-                    showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制启动命令行',
-                      message: cmdLine
-                    })
+                    return copyWithToast(cmdLine, '已复制启动命令行', cmdLine)
                   }
                 }),
                 Action({

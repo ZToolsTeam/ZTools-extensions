@@ -6,15 +6,17 @@ import {
   showToast,
   Toast,
   Clipboard,
-  useState
+  useState,
+  useRef
 } from "@ztools/declarative-ui";
 import {
   parseBase64Image,
   encodeSvgOrTextToBase64,
+  isSvgSource,
   SAMPLE_PNG_DATA_URI,
   type ParsedImageResult
 } from "./logic.js";
-import { pickImageFile, readClipboardImage } from "./host.js";
+import { pickImageFile, readClipboardImage, readClipboardImageFile } from "./host.js";
 
 interface LoadedSource {
   name: string;
@@ -25,11 +27,13 @@ export default function Base64ImageCommand() {
   const [inputText, setInputText] = useState<string>("");
   const [loaded, setLoaded] = useState<LoadedSource | null>(null);
   const [busy, setBusy] = useState(false);
+  // 渲染闭包里的 busy 可能是旧值，用 ref 做真正的互斥
+  const busyRef = useRef(false);
 
   const source = loaded ? loaded.dataUri : inputText.trim();
   let parsed: ParsedImageResult = { valid: false };
   if (source) {
-    parsed = source.startsWith("<svg") || source.startsWith("<?xml")
+    parsed = isSvgSource(source) || /^<\?xml/i.test(source)
       ? encodeSvgOrTextToBase64(source)
       : parseBase64Image(source);
   }
@@ -39,56 +43,82 @@ export default function Base64ImageCommand() {
     await showToast(Toast.Style.Success, `已复制 ${label}`);
   };
 
-  // 选择图片文件 / 读取剪贴板图片的公共处理：校验图片格式后展示
-  const loadImage = async (loader: () => Promise<{ name: string; base64: string } | null>, emptyMessage: string) => {
-    if (busy) return;
+  // 校验图片格式后展示
+  const showImage = async (image: { name: string; base64: string }) => {
+    const check = parseBase64Image(image.base64);
+    if (!check.valid || !check.dataUri) {
+      await showToast(Toast.Style.Failure, "不是支持的图片", check.error);
+      return;
+    }
+    setLoaded({ name: image.name, dataUri: check.dataUri });
+    setInputText("");
+    await showToast(Toast.Style.Success, `已转换 ${image.name}`, check.formattedSize);
+  };
+
+  // 读取期间加锁，避免连按触发并发读取
+  const runExclusive = async (task: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     try {
-      const image = await loader();
-      if (!image) {
-        if (emptyMessage) await showToast(Toast.Style.Failure, emptyMessage);
-        return;
-      }
-      const check = parseBase64Image(image.base64);
-      if (!check.valid || !check.dataUri) {
-        await showToast(Toast.Style.Failure, "不是支持的图片", check.error);
-        return;
-      }
-      setLoaded({ name: image.name, dataUri: check.dataUri });
-      setInputText("");
-      await showToast(Toast.Style.Success, `已转换 ${image.name}`, check.formattedSize);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "读取图片失败", err?.message || String(err));
+      await task();
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
-  const handlePickFile = () => loadImage(pickImageFile, "");
+  const handlePickFile = () =>
+    runExclusive(async () => {
+      try {
+        const image = await pickImageFile();
+        if (image) await showImage(image);
+      } catch (err: any) {
+        await showToast(Toast.Style.Failure, "读取图片失败", err?.message || String(err));
+      }
+    });
 
-  // 剪贴板优先读图片（截图），没有图片时再读文字（Base64 / Data URL / SVG 源码）
-  const handlePaste = async () => {
-    try {
-      const image = await readClipboardImage();
+  // 剪贴板读取顺序：复制的图片文件（保留原文件字节）→ 图片（截图）→ 文字（Base64 / Data URL / SVG 源码）。
+  // 读文件或图片出错时直接提示真实原因，不再落到“没有图片或文字”。
+  const handlePaste = () =>
+    runExclusive(async () => {
+      let image: { name: string; base64: string } | null;
+      try {
+        image = await readClipboardImageFile();
+      } catch (err: any) {
+        await showToast(Toast.Style.Failure, "读取复制的图片文件失败", err?.message || String(err));
+        return;
+      }
+      if (!image) {
+        try {
+          image = await readClipboardImage();
+        } catch (err: any) {
+          // 截图 / 复制的图片会被系统重新编码成 PNG，体积可能远大于原文件，原文件可改用选择文件
+          const detail = err?.message || String(err);
+          await showToast(
+            Toast.Style.Failure,
+            "读取剪贴板图片失败",
+            err?.code === "FILE_TOO_LARGE" ? `${detail}；原图文件可改用「选择图片文件」` : detail
+          );
+          return;
+        }
+      }
       if (image) {
-        await loadImage(async () => image, "");
+        await showImage(image);
         return;
       }
-    } catch {
-      // 读图片失败时继续尝试读文字
-    }
-    try {
-      const text = await Clipboard.readText();
-      if (text && text.trim()) {
-        setLoaded(null);
-        setInputText(text.trim());
-        return;
+      try {
+        const text = await Clipboard.readText();
+        if (text && text.trim()) {
+          setLoaded(null);
+          setInputText(text.trim());
+          return;
+        }
+        await showToast(Toast.Style.Failure, "剪贴板里没有图片或文字");
+      } catch (err: any) {
+        await showToast(Toast.Style.Failure, "读取剪贴板失败", err?.message || String(err));
       }
-      await showToast(Toast.Style.Failure, "剪贴板里没有图片或文字");
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "读取剪贴板失败", err?.message || String(err));
-    }
-  };
+    });
 
   const clearAll = () => {
     setLoaded(null);

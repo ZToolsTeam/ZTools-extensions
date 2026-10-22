@@ -5,6 +5,9 @@ const DropdownComponent = function FormDropdown(props, ...children) {
 DropdownComponent.Item = function FormDropdownItem(props) {
     return createDescriptor("Form.Dropdown.Item", props);
 };
+DropdownComponent.Section = function FormDropdownSection(props, ...children) {
+    return createDescriptor("Form.Dropdown.Section", props, ...children);
+};
 /**
  * Form 表单声明式组件
  */

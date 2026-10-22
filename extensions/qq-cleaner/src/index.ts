@@ -8,9 +8,7 @@ import {
   useEffect,
   showToast,
   Toast,
-  confirmAlert,
-  MetricGrid,
-  SegmentedControl
+  confirmAlert
 } from '@ztools/declarative-ui'
 import {
   OFFICIAL_QQ_GROUP_RULES,

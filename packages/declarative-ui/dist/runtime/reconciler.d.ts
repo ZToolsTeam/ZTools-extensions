@@ -1,5 +1,5 @@
 import { ViewDescriptor } from "../descriptors/types.js";
-import { DeclarativeRenderInstance } from "./context.js";
+import { DeclarativeRenderInstance, type CollectedPopoutState } from "./context.js";
 import { NavigationHandler } from "../api/navigation.js";
 export interface DeclarativeRootOptions {
     onUpdate?: (descriptor: ViewDescriptor) => void;
@@ -11,12 +11,16 @@ export interface DeclarativeRootOptions {
         type: "renderEmpty";
     }) => void;
     navigation?: NavigationHandler;
+    /** 独立窗口交接的 usePopoutState 初值，见 DeclarativeRenderInstanceOptions.handoffSeed */
+    handoffSeed?: Record<string, unknown> | null;
 }
 export interface DeclarativeRoot {
     getLatest(): ViewDescriptor;
     forceRender(): ViewDescriptor;
     unmount(): void;
     getInstance(): DeclarativeRenderInstance;
+    /** 本页面 usePopoutState 登记的最新值（只含本页面，不含导航栈里推入的其他页面） */
+    collectPopoutState(): CollectedPopoutState;
 }
 /**
  * 挂载并执行声明式根组件

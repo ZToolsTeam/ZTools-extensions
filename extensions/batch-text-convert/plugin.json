@@ -1,14 +1,15 @@
 {
   "id": "batch-text-convert",
   "name": "编码转换",
-  "description": "UTF-8、GBK、Unicode 与 ASCII 字符编码即时互转",
-  "version": "1.0.0",
+  "description": "把文本实时转为 Unicode 转义（\\uXXXX）、UTF-8 十六进制（Hex）、Base64 与 URL 编码，可读取剪贴板里的多行文本",
+  "version": "1.0.1",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": "developer",
   "permissions": [
-    "fs"
+    "fs",
+    "clipboard"
   ],
   "targets": [
     {
@@ -24,5 +25,19 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "keywords": [
+    "unicode",
+    "hex",
+    "十六进制",
+    "utf-8",
+    "utf8",
+    "base64",
+    "url",
+    "urlencode",
+    "url编码",
+    "百分号编码",
+    "转义",
+    "编码"
+  ]
 }

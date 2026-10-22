@@ -12,7 +12,7 @@ import {
 import {
   numberToChinese,
   numberToTicketUppercase,
-  chineseToNumber,
+  parseChineseNumber,
   type TicketRules,
   DEFAULT_TICKET_RULES,
   ConversionError
@@ -80,7 +80,8 @@ export default function ChineseNumberConverterCommand() {
       }
     } else if (hasChineseChars) {
       try {
-        const arabicNum = chineseToNumber(trimmed);
+        const parsed = parseChineseNumber(trimmed);
+        const arabicNum = parsed.value;
         const ticketRmb = numberToTicketUppercase(arabicNum, ticketRules);
         const upperChinese = numberToChinese(arabicNum, "upper");
         const lowerChinese = numberToChinese(arabicNum, "lower");
@@ -88,7 +89,10 @@ export default function ChineseNumberConverterCommand() {
         results.push({
           id: "res-arabic",
           title: arabicNum,
-          subtitle: "阿拉伯数字金额",
+          // 口语省略写法（三百五、一万五）与规范写法（三百零五）结果不同，提示用户核对理解是否正确
+          subtitle: parsed.colloquial
+            ? `阿拉伯数字金额 (按口语省略写法理解，${numberToChinese(arabicNum, "lower")})`
+            : "阿拉伯数字金额",
           tag: "阿拉伯数字",
           icon: Icon.Text,
         });

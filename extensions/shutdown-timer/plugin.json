@@ -2,7 +2,7 @@
   "id": "shutdown-timer",
   "name": "定时关机",
   "description": "Windows 定时关机、重启、锁屏与电源任务管理",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

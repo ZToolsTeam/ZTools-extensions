@@ -15,8 +15,7 @@ import {
 import { useState, useEffect } from "@ztools/declarative-ui";
 import {
   isRealElectronHost,
-  showRealItemInFolder,
-  writeRealClipboardText
+  showRealItemInFolder
 } from "./native-ipc.js";
 import {
   ClipboardItem,
@@ -26,9 +25,8 @@ import {
 import {
   SAMPLE_CLIPBOARD_ITEMS,
   getClipboardHistory,
-  saveClipboardHistory,
   syncCurrentSystemClipboard,
-  detectClipboardContentType,
+  saveEditedClipboardItem,
   filterClipboardItems,
   formatCopiedTime,
   parseColorDetails,
@@ -45,12 +43,43 @@ import {
 export * from "./types.js";
 export * from "./clipboard-storage.js";
 
+/**
+ * 把用户内容原样放进围栏代码块：围栏比内容里最长的连续反引号多一个，内容里的 ``` 不会提前结束代码块
+ */
+export function fencedBlock(content: string, lang = "text"): string {
+  const runs = String(content).match(/`+/g) || [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  const fence = "`".repeat(Math.max(3, longest + 1));
+  return `${fence}${lang}\n${content}\n${fence}`;
+}
+
+/**
+ * 列表标题、提示里展示的文字：敏感内容只显示遮罩后的值
+ */
+export function getDisplayTitle(item: ClipboardItem): string {
+  const sensitivity = maskSensitiveContent(item.content);
+  if (sensitivity.isSensitive) return sensitivity.masked;
+  return item.preview;
+}
+
 export function getClipboardMarkdown(item: ClipboardItem): string {
   let markdown = `# 剪贴板内容详情\n\n`;
 
   const sensitivity = maskSensitiveContent(item.content);
-  if (sensitivity.isSensitive || item.isSensitive) {
-    markdown += `> **安全防护提示**: 检测到敏感凭据 (${sensitivity.reason || "机密凭据"})，已自动对预览内容执行安全脱敏遮罩。\n\n`;
+  if (sensitivity.isSensitive) {
+    // 敏感内容：所有类型都只展示遮罩后的文本，不渲染可点击链接或完整 JSON
+    markdown += `> **安全防护提示**: 检测到敏感凭据 (${sensitivity.reason || "机密凭据"})，下方预览已遮罩；复制、粘贴仍使用原文。\n\n`;
+    let body = item.content;
+    if (item.type === "json") {
+      try {
+        body = JSON.stringify(JSON.parse(item.content), null, 2);
+      } catch {
+        // 保持原文
+      }
+    }
+    const maskedBody = maskSensitiveContent(body);
+    markdown += fencedBlock(maskedBody.isSensitive ? maskedBody.masked : sensitivity.masked, item.type === "json" ? "json" : "text");
+    return markdown;
   }
 
   if (item.type === "color") {
@@ -60,31 +89,28 @@ export function getClipboardMarkdown(item: ClipboardItem): string {
       markdown += `\`\`\`css\n/* HEX 格式 */\ncolor: ${details.hex};\n\n/* RGB 格式 */\nbackground-color: ${details.rgb};\n\n/* HSL 格式 */\nborder-color: ${details.hsl};\n\`\`\`\n\n`;
       markdown += `> **HEX**: \`${details.hex}\` | **RGB**: \`${details.rgb}\` | **HSL**: \`${details.hsl}\``;
     } else {
-      markdown += `> 色彩代码: \`${item.content}\``;
+      markdown += fencedBlock(item.content);
     }
   } else if (item.type === "json") {
     try {
       const parsed = JSON.parse(item.content);
       const formatted = JSON.stringify(parsed, null, 2);
       const keysCount = typeof parsed === "object" && parsed !== null ? Object.keys(parsed).length : 0;
-      markdown += `### JSON 结构化数据预览 (${keysCount} 个顶层属性)\n\n\`\`\`json\n${formatted}\n\`\`\``;
+      markdown += `### JSON 结构化数据预览 (${keysCount} 个顶层属性)\n\n${fencedBlock(formatted, "json")}`;
     } catch {
-      markdown += `\`\`\`json\n${item.content}\n\`\`\``;
+      markdown += fencedBlock(item.content, "json");
     }
   } else if (item.type === "code") {
-    markdown += "```typescript\n" + item.content + "\n```";
+    markdown += fencedBlock(item.content, "typescript");
   } else if (item.type === "link") {
     markdown += `### 网络链接\n\n[${item.content}](${item.content})\n\n> 协议: \`${item.content.startsWith("https") ? "HTTPS (安全加密)" : "HTTP"}\``;
   } else if (item.type === "image") {
     markdown += `![图片预览](${item.content})\n\n> 分辨率: ${item.imageDimensions?.width ?? 0} x ${item.imageDimensions?.height ?? 0}`;
   } else if (item.type === "files") {
-    markdown += "### 包含的文件列表\n" + (item.filePaths?.map(f => `- \`${f}\``).join("\n") ?? item.content);
+    markdown += "### 包含的文件列表\n\n" + fencedBlock(item.filePaths?.length ? item.filePaths.join("\n") : item.content);
   } else {
-    if (sensitivity.isSensitive) {
-      markdown += `\`\`\`text\n${sensitivity.masked}\n\`\`\``;
-    } else {
-      markdown += item.content;
-    }
+    // 纯文本按原样展示：保留换行与所有字符，不当作 Markdown 解析
+    markdown += fencedBlock(item.content);
   }
   return markdown;
 }
@@ -98,10 +124,13 @@ export function ClipboardDetailView({
   onPinToggled
 }: {
   item?: ClipboardItem;
-  onDeleted?: (id: string) => void;
-  onPinToggled?: (id: string) => void;
+  /** 由列表负责删除并刷新；返回 false 表示删除失败 */
+  onDeleted?: (id: string) => Promise<boolean | void> | boolean | void;
+  /** 由列表负责切换置顶并刷新；返回切换后的真实置顶状态，null 表示切换失败 */
+  onPinToggled?: (id: string) => Promise<boolean | null | void> | boolean | null | void;
 } = {}) {
   const { pop } = useNavigation();
+  const [pinned, setPinned] = useState<boolean>(Boolean(item.pinned));
   const markdown = getClipboardMarkdown(item);
   const colorDetails = item.type === "color" ? parseColorDetails(item.content) : null;
   const sensitivity = maskSensitiveContent(item.content);
@@ -114,7 +143,7 @@ export function ClipboardDetailView({
         <Detail.Metadata>
           <Detail.Metadata.Label title="内容类型" text={item.type.toUpperCase()} icon={Icon.Document} />
           <Detail.Metadata.Label title="复制时间" text={formatCopiedTime(item.copiedAt)} icon={Icon.Clock} />
-          <Detail.Metadata.Label title="置顶状态" text={item.pinned ? "已置顶" : "未置顶"} icon={Icon.Pin} />
+          <Detail.Metadata.Label title="置顶状态" text={pinned ? "已置顶" : "未置顶"} icon={Icon.Pin} />
           {item.sourceAppName ? (
             <Detail.Metadata.Label title="来源应用" text={item.sourceAppName} icon={Icon.AppWindow} />
           ) : null}
@@ -137,7 +166,7 @@ export function ClipboardDetailView({
           <Detail.Metadata.Separator />
           <Detail.Metadata.TagList title="分类标签">
             <Detail.Metadata.TagList.Item
-              text={item.pinned ? "PINNED" : "STANDARD"}
+              text={pinned ? "PINNED" : "STANDARD"}
               color={Color.SecondaryText}
             />
             {(sensitivity.isSensitive || item.isSensitive) ? (
@@ -194,13 +223,24 @@ export function ClipboardDetailView({
             </>
           ) : null}
           <Action
-            title={item.pinned ? "取消置顶" : "置顶条目"}
+            title={pinned ? "取消置顶" : "置顶条目"}
             icon={Icon.Pin}
             shortcut={{ modifiers: ["ctrl"], key: "p" }}
             onAction={async () => {
-              await toggleClipboardItemPin(item.id);
-              onPinToggled?.(item.id);
-              showToast(Toast.Style.Success, item.pinned ? "已取消置顶" : "已置顶");
+              // 只切换一次：有列表回调时由列表切换并刷新，否则自己切换
+              let next: boolean | null;
+              if (onPinToggled) {
+                const res = await onPinToggled(item.id);
+                next = typeof res === "boolean" ? res : res === null ? null : !pinned;
+              } else {
+                next = (await toggleClipboardItemPin(item.id)) ? !pinned : null;
+              }
+              if (next === null) {
+                await showToast(Toast.Style.Failure, pinned ? "取消置顶失败" : "置顶失败", "历史记录可能已被删除，请返回列表刷新");
+                return;
+              }
+              setPinned(next);
+              await showToast(Toast.Style.Success, next ? "已置顶" : "已取消置顶");
             }}
           />
           <Action
@@ -208,9 +248,12 @@ export function ClipboardDetailView({
             icon={Icon.Trash}
             shortcut={{ modifiers: ["ctrl"], key: "x" }}
             onAction={async () => {
-              await deleteClipboardItem(item.id);
-              onDeleted?.(item.id);
-              showToast(Toast.Style.Success, "条目已删除");
+              const res = onDeleted ? await onDeleted(item.id) : await deleteClipboardItem(item.id);
+              if (res === false) {
+                await showToast(Toast.Style.Failure, "删除失败", "历史记录可能已被删除，请返回列表刷新");
+                return;
+              }
+              await showToast(Toast.Style.Success, "条目已删除");
               pop();
             }}
           />
@@ -228,9 +271,12 @@ export function ClipboardItemForm({
   onSaved
 }: {
   initialItem?: ClipboardItem;
-  onSaved?: (item: ClipboardItem) => void;
+  /** 返回 persisted=false 时表单不关闭并提示失败原因 */
+  onSaved?: (input: { content: string; pinned: boolean }) => Promise<{ persisted: boolean; message?: string } | void> | void;
 }) {
   const { pop } = useNavigation();
+  const [content, setContent] = useState<string>(initialItem?.content || "");
+  const [pinned, setPinned] = useState<boolean>(Boolean(initialItem?.pinned));
 
   return (
     <Form
@@ -241,27 +287,23 @@ export function ClipboardItemForm({
             title={initialItem ? "保存并写入剪贴板" : "创建并写入剪贴板"}
             icon={Icon.Checkmark}
             onSubmit={async (values: Record<string, any>) => {
-              const content = String(values.content || "");
-              if (!content.trim()) {
+              const text = typeof values?.content === "string" ? values.content : content;
+              const pin = typeof values?.pinned === "boolean" ? values.pinned : pinned;
+              if (!text.trim()) {
                 await showToast(Toast.Style.Failure, "内容不能为空");
                 return;
               }
-              const nextItem: ClipboardItem = {
-                id: initialItem?.id || `clip-${Date.now()}`,
-                type: detectClipboardContentType(content),
-                content,
-                preview: content.trim().replace(/\s+/g, " ").slice(0, 100),
-                copiedAt: Date.now(),
-                pinned: Boolean(values.pinned ?? initialItem?.pinned),
-                charCount: content.length,
-                lineCount: content.split(/\r?\n/).length,
-                sourceAppName: initialItem?.sourceAppName || "ZTools Editor"
-              };
-              await Clipboard.copy(content);
-              if (isRealElectronHost()) {
-                await writeRealClipboardText(content);
+              try {
+                await Clipboard.copy(text);
+              } catch (err: any) {
+                await showToast(Toast.Style.Failure, "写入系统剪贴板失败", err?.message || "请重试");
+                return;
               }
-              onSaved?.(nextItem);
+              const result = await onSaved?.({ content: text, pinned: pin });
+              if (result && result.persisted === false) {
+                await showToast(Toast.Style.Failure, "已写入系统剪贴板，但未能保存到历史", result.message || "请重试");
+                return;
+              }
               await showToast(Toast.Style.Success, "已保存并同步至系统剪贴板");
               pop();
             }}
@@ -273,12 +315,14 @@ export function ClipboardItemForm({
         id="content"
         title="剪贴板文本内容"
         placeholder="输入或编辑要写入剪贴板的文本、代码、JSON 或链接..."
-        defaultValue={initialItem?.content || ""}
+        value={content}
+        onChange={(v: string) => setContent(String(v ?? ""))}
       />
       <Form.Checkbox
         id="pinned"
         label="置顶保护该条目 (Pin Item)"
-        defaultValue={Boolean(initialItem?.pinned)}
+        value={pinned}
+        onChange={(v: boolean) => setPinned(Boolean(v))}
       />
     </Form>
   );
@@ -325,28 +369,35 @@ export default function ClipboardHistoryCommand() {
 
   const pinnedCount = items.filter((item) => item.pinned).length;
 
-  const handleTogglePin = async (id: string) => {
-    await toggleClipboardItemPin(id);
-    const updated = items.map(item =>
-      item.id === id ? { ...item, pinned: !item.pinned } : item
-    );
-    setItems(updated);
-    await saveClipboardHistory(updated);
+  // 每次改动后都从存储重新读取，界面与宿主历史库保持一致
+  const reloadItems = async () => {
+    const data = await getClipboardHistory();
+    setItems(data);
+    return data;
   };
 
-  const handleDelete = async (id: string) => {
-    await deleteClipboardItem(id);
-    const updated = items.filter(item => item.id !== id);
-    setItems(updated);
-    await saveClipboardHistory(updated);
+  const handleTogglePin = async (id: string): Promise<boolean | null> => {
+    const ok = await toggleClipboardItemPin(id);
+    const data = await reloadItems();
+    if (!ok) {
+      await showToast(Toast.Style.Failure, "置顶状态未能保存", "历史记录可能已被删除");
+      return null;
+    }
+    const current = data.find((item) => item.id === id);
+    return current ? current.pinned : null;
+  };
+
+  const handleDelete = async (id: string): Promise<boolean> => {
+    const ok = await deleteClipboardItem(id);
+    await reloadItems();
+    if (!ok) await showToast(Toast.Style.Failure, "删除失败", "历史记录可能已被删除");
+    return ok;
   };
 
   const handleClearUnpinned = async () => {
     await clearUnpinnedClipboardHistory();
-    const updated = items.filter(item => item.pinned);
-    setItems(updated);
-    await saveClipboardHistory(updated);
-    await showToast(Toast.Style.Success, "已清空未置顶历史", `保留了 ${updated.length} 条置顶条目`);
+    const data = await reloadItems();
+    await showToast(Toast.Style.Success, "已清空未置顶历史", `保留了 ${data.filter((i) => i.pinned).length} 条置顶条目`);
   };
 
   const handleSyncSystemClipboard = async () => {
@@ -355,17 +406,14 @@ export default function ClipboardHistoryCommand() {
     await showToast(
       Toast.Style.Success,
       res.added ? "已同步当前系统剪贴板" : "系统剪贴板已是最新记录",
-      res.item?.preview || "当前系统剪贴板为空"
+      res.item ? getDisplayTitle(res.item) : "当前系统剪贴板为空"
     );
   };
 
-  const handleSaveEditedItem = async (saved: ClipboardItem) => {
-    const exists = items.some((i) => i.id === saved.id);
-    const next = exists
-      ? items.map((i) => (i.id === saved.id ? saved : i))
-      : [saved, ...items];
-    setItems(next);
-    await saveClipboardHistory(next);
+  const saveFromForm = (original?: ClipboardItem) => async (input: { content: string; pinned: boolean }) => {
+    const res = await saveEditedClipboardItem(input, original);
+    if (res.items.length > 0 || res.persisted) setItems(res.items);
+    return { persisted: res.persisted, message: res.message };
   };
 
   const handlePasteSequential = async () => {
@@ -379,6 +427,8 @@ export default function ClipboardHistoryCommand() {
         `流水粘贴 [第 ${res.offset} 项]`,
         `剩余 ${res.remaining} 条记录`
       );
+    } else if (res.pasteFailed) {
+      await showToast(Toast.Style.Failure, "已复制，但无法粘贴", res.message || "请手动粘贴");
     } else {
       await showToast(Toast.Style.Failure, "连续流水粘贴已结束", res.message || "无可用条目");
     }
@@ -442,7 +492,7 @@ export default function ClipboardHistoryCommand() {
             title="新建剪贴板记录..."
             icon={Icon.Plus}
             shortcut={{ modifiers: ["ctrl"], key: "n" }}
-            target={<ClipboardItemForm onSaved={handleSaveEditedItem} />}
+            target={<ClipboardItemForm onSaved={saveFromForm()} />}
           />
         </ActionPanel>
       }
@@ -474,7 +524,7 @@ export default function ClipboardHistoryCommand() {
             <List.Item
               key={item.id}
               id={item.id}
-              title={isItemSensitive ? sensitivity.masked : item.preview}
+              title={getDisplayTitle(item)}
               subtitle={formatCopiedTime(item.copiedAt)}
               icon={getItemIcon(item)}
               accessories={[
@@ -615,13 +665,13 @@ export default function ClipboardHistoryCommand() {
                     title="编辑该剪贴板内容..."
                     icon={Icon.Pencil}
                     shortcut={{ modifiers: ["ctrl"], key: "e" }}
-                    target={<ClipboardItemForm initialItem={item} onSaved={handleSaveEditedItem} />}
+                    target={<ClipboardItemForm initialItem={item} onSaved={saveFromForm(item)} />}
                   />
                   <Action.Push
                     title="新建剪贴板记录..."
                     icon={Icon.Plus}
                     shortcut={{ modifiers: ["ctrl"], key: "n" }}
-                    target={<ClipboardItemForm onSaved={handleSaveEditedItem} />}
+                    target={<ClipboardItemForm onSaved={saveFromForm()} />}
                   />
                   <Action
                     title="读取并同步当前系统剪贴板"
@@ -634,14 +684,18 @@ export default function ClipboardHistoryCommand() {
                     title={item.pinned ? "取消置顶" : "置顶条目"}
                     icon={Icon.Pin}
                     shortcut={{ modifiers: ["ctrl"], key: "p" }}
-                    onAction={() => handleTogglePin(item.id)}
+                    onAction={async () => {
+                      await handleTogglePin(item.id);
+                    }}
                   />
 
                   <Action
                     title="删除该记录"
                     icon={Icon.Trash}
                     shortcut={{ modifiers: ["ctrl"], key: "x" }}
-                    onAction={() => handleDelete(item.id)}
+                    onAction={async () => {
+                      await handleDelete(item.id);
+                    }}
                   />
 
                   <Action

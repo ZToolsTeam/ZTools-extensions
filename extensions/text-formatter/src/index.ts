@@ -1,13 +1,15 @@
 import {
   List,
+  Form,
   ActionPanel,
   Action,
   Icon,
-  Color,
   showToast,
   Toast,
   Clipboard,
-  useState
+  useState,
+  useMemo,
+  useNavigation
 } from "@ztools/declarative-ui";
 import {
   toUpperCase,
@@ -226,16 +228,95 @@ const FORMAT_ITEMS: FormatItemDef[] = [
   }
 ];
 
+const CATEGORY_LABELS: Record<FormatItemDef["category"], string> = {
+  typesetting: "中文智能与排版",
+  case: "大小写与命名规范",
+  punctuation: "全半角与标点切换",
+  lines: "行操作与去重排序",
+  chinese: "简繁汉字转换"
+};
+
+/** 右侧预览最多展示的字符数：超长文本只预览开头，复制得到的仍是完整结果 */
+export const PREVIEW_CHAR_LIMIT = 10000;
+
+/** 用代码块原样展示文本（保留换行、缩进与空白）；围栏比内容里最长的反引号串更长，内容里的 ``` 不会提前结束代码块 */
+export function textPreviewMarkdown(text: string, emptyHint: string): string {
+  if (!text) return emptyHint;
+  const shown = text.length > PREVIEW_CHAR_LIMIT ? text.slice(0, PREVIEW_CHAR_LIMIT) : text;
+  const longestTicks = Math.max(0, ...(shown.match(/`+/g) || []).map((run) => run.length));
+  const fence = "`".repeat(Math.max(3, longestTicks + 1));
+  const note =
+    shown.length < text.length
+      ? `\n\n仅预览前 ${PREVIEW_CHAR_LIMIT} 个字符（共 ${text.length} 个），复制可得到完整结果`
+      : "";
+  return `${fence}text\n${shown}\n${fence}${note}`;
+}
+
+/** 列表行标题用的单行摘要：取第一行非空内容 */
+function firstLine(text: string): string {
+  const line = text.split("\n").find((item) => item.trim().length > 0) || "";
+  return line.trim().slice(0, 60);
+}
+
+/**
+ * 编辑待排版文本：多行正文用 TextArea 输入，保留换行（搜索框是单行输入，只用来筛选转换方式）
+ */
+export function EditTextForm({ initialText, onApply }: { initialText: string; onApply: (text: string) => void }) {
+  const { pop } = useNavigation();
+  const [text, setText] = useState<string>(initialText);
+
+  return Form(
+    {
+      navigationTitle: "编辑待排版文本",
+      actions: ActionPanel({ title: "待排版文本" }, [
+        Action.SubmitForm({
+          title: "应用文本",
+          icon: Icon.Check,
+          onSubmit: () => {
+            onApply(text);
+            pop();
+          }
+        })
+      ])
+    },
+    [
+      Form.TextArea({
+        id: "text",
+        title: "待排版文本",
+        placeholder: "输入或粘贴多行文本，⌘↵ 应用；留空则使用示例文本",
+        value: text,
+        onChange: (value: string) => setText(value)
+      })
+    ]
+  );
+}
+
 export default function TextFormatterCommand() {
   const [inputText, setInputText] = useState<string>("");
   const [category, setCategory] = useState<string>("all");
+  const [searchText, setSearchText] = useState<string>("");
+  const { push } = useNavigation();
 
   const effectiveText = inputText || DEFAULT_SAMPLE_TEXT;
-  const stats = getTextStats(effectiveText);
+  const stats = useMemo(() => getTextStats(effectiveText), [effectiveText]);
+  // 结果只随文本变化重新计算，筛选、切换分类不重复跑 24 种转换
+  const results = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const item of FORMAT_ITEMS) map.set(item.id, item.transform(effectiveText));
+    return map;
+  }, [effectiveText]);
 
   const handleCopy = async (result: string, label: string) => {
-    await Clipboard.copy(result);
-    await showToast(Toast.Style.Success, `已复制: ${label}`);
+    if (!result) {
+      await showToast(Toast.Style.Failure, "没有可复制的内容", `${label} 对当前文本没有输出`);
+      return;
+    }
+    try {
+      await Clipboard.copy(result);
+      await showToast(Toast.Style.Success, `已复制: ${label}`);
+    } catch (error) {
+      await showToast(Toast.Style.Failure, "复制失败", error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handlePaste = async () => {
@@ -252,16 +333,51 @@ export default function TextFormatterCommand() {
     }
   };
 
-  const filteredItems = FORMAT_ITEMS.filter(
-    (item) => category === "all" || item.category === category
-  );
+  const openEditor = () =>
+    push(() =>
+      EditTextForm({
+        initialText: inputText,
+        onApply: (text: string) => {
+          setInputText(text);
+          showToast(Toast.Style.Success, text ? "已更新待排版文本" : "已清空，使用示例文本");
+        }
+      })
+    );
+
+  const keyword = searchText.trim().toLowerCase();
+  const filteredItems = FORMAT_ITEMS.filter((item) => {
+    if (category !== "all" && item.category !== category) return false;
+    if (!keyword) return true;
+    return `${item.label} ${item.id} ${CATEGORY_LABELS[item.category]}`.toLowerCase().includes(keyword);
+  });
+
+  const editAction = Action({ title: "编辑待排版文本", icon: Icon.Pencil, onAction: openEditor });
+  const pasteAction = Action({ title: "从剪贴板粘贴文本", icon: Icon.CopyClipboard, onAction: handlePaste });
+
+  const sourceItem = List.Item({
+    id: "source-text",
+    title: inputText ? firstLine(inputText) || "(空白文本)" : "输入或粘贴待排版文本",
+    subtitle: `${inputText ? "当前文本" : "示例文本"} · ${stats.characters} 字符 · ${stats.lines} 行`,
+    icon: Icon.Pencil,
+    detail: List.Item.Detail({ markdown: textPreviewMarkdown(effectiveText, "") }),
+    actions: ActionPanel({ title: "待排版文本" }, [
+      editAction,
+      pasteAction,
+      Action({
+        title: "重置为默认示例文本",
+        icon: Icon.Repeat,
+        onAction: () => setInputText("")
+      })
+    ])
+  });
 
   return List(
     {
       navigationTitle: "文本排版与格式化助手",
-      searchBarPlaceholder: "输入或粘贴待排版文本 (留空使用默认示例)...",
-      searchText: inputText,
-      onSearchTextChange: (text: string) => setInputText(text),
+      searchBarPlaceholder: "筛选转换方式，例如 大写、行号、繁体",
+      searchText,
+      onSearchTextChange: (text: string) => setSearchText(text),
+      isShowingDetail: true,
       searchBarAccessory: List.Dropdown(
         {
           tooltip: "筛选格式化分类",
@@ -278,65 +394,30 @@ export default function TextFormatterCommand() {
         ]
       ),
       actions: ActionPanel({ title: "全局操作" }, [
-        Action({
-          title: "从剪贴板粘贴文本",
-          icon: Icon.CopyClipboard,
-          onAction: handlePaste
-        }),
+        editAction,
+        pasteAction,
         Action({
           title: "重置为默认示例文本",
           icon: Icon.Repeat,
-          onAction: () => setInputText(DEFAULT_SAMPLE_TEXT)
-        }),
-        Action({
-          title: "清空当前输入文本",
-          icon: Icon.Trash,
           onAction: () => setInputText("")
         })
       ])
     },
     [
-      // 文本统计信息栏
+      // 待排版文本：筛选时隐藏，避免改了筛选词后回车打开编辑页而不是执行转换
+      ...(keyword ? [] : [List.Section({ title: "待排版文本" }, [sourceItem])]),
       List.Section(
-        { title: "文本实时统计" },
-        [
-          List.Item({
-            id: "text-stats",
-            title: `字符数: ${stats.characters} | 不含空格: ${stats.charactersNoSpaces} | 词数: ${stats.words} | 行数: ${stats.lines}`,
-            subtitle: inputText ? "当前输入文本统计" : "示例文本统计",
-            icon: Icon.Document,
-            accessories: [
-              { text: stats.hasChinese ? "包含中文" : "纯英/数字" }
-            ],
-            actions: ActionPanel({ title: "统计操作" }, [
-              Action.CopyToClipboard({
-                title: "复制原文本",
-                content: effectiveText,
-                icon: Icon.CopyClipboard
-              }),
-              Action({
-                title: "从剪贴板粘贴",
-                icon: Icon.CopyClipboard,
-                onAction: handlePaste
-              })
-            ])
-          })
-        ]
-      ),
-      // 各项格式化结果与一键复制
-      List.Section(
-        { title: `格式化结果预览 (${filteredItems.length} 项可用)` },
+        { title: `格式化结果 (${filteredItems.length} 项)` },
         filteredItems.map((item) => {
-          const result = item.transform(effectiveText);
-          const singleLinePreview = result.replace(/\n+/g, "  ").slice(0, 100);
+          const result = results.get(item.id) ?? "";
           return List.Item({
             id: item.id,
-            title: singleLinePreview || "(无输出内容)",
-            subtitle: item.label,
+            title: item.label,
             icon: item.icon,
-            accessories: [
-              { text: `${result.length} 字符` }
-            ],
+            accessories: [{ text: result ? `${result.length} 字符` : "无输出" }],
+            detail: List.Item.Detail({
+              markdown: textPreviewMarkdown(result, "该转换对当前文本没有输出内容")
+            }),
             actions: ActionPanel({ title: item.label }, [
               Action({
                 title: `复制: ${item.label}`,
@@ -346,26 +427,17 @@ export default function TextFormatterCommand() {
               Action({
                 title: "将此结果设为当前输入文本",
                 icon: Icon.Repeat,
-                onAction: () => {
+                onAction: async () => {
+                  if (!result) {
+                    await showToast(Toast.Style.Failure, "该结果为空，未替换当前文本");
+                    return;
+                  }
                   setInputText(result);
-                  showToast(Toast.Style.Success, "已应用为当前输入");
+                  await showToast(Toast.Style.Success, "已应用为当前输入");
                 }
               }),
-              Action.CopyToClipboard({
-                title: "直接复制结果到剪贴板",
-                content: result,
-                icon: Icon.CopyClipboard
-              }),
-              Action({
-                title: "从剪贴板粘贴",
-                icon: Icon.CopyClipboard,
-                onAction: handlePaste
-              }),
-              Action({
-                title: "清空输入",
-                icon: Icon.Trash,
-                onAction: () => setInputText("")
-              })
+              editAction,
+              pasteAction
             ])
           });
         })

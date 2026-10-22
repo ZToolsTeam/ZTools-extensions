@@ -6,7 +6,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import FileCompareCommand from '../dist/index.js'
-import { diffText, formatUnifiedDiff, splitLines, MAX_DIFF_LINES } from '../dist/logic.js'
+import { diffText, formatUnifiedDiff, splitLines, MAX_DIFF_LINES, fencedDiffMarkdown } from '../dist/logic.js'
 
 const host = createHost()
 test.beforeEach(() => host.reset())
@@ -67,4 +67,14 @@ test('[故障注入] 选择的文件不是 UTF-8 文本时提示，不显示乱�
   await view.run(view.item('start-file'), '选择文件作为左侧…')
   assert.match(String(host.lastToast().message), /UTF-8/)
   assert.equal(view.items()[0].props.id, 'start-edit')
+})
+
+test('差异详情围栏比内容里最长的反引号多一个：对比含 ``` 的 Markdown 文件时代码块不被截断', () => {
+  assert.equal(fencedDiffMarkdown('-a\n+b'), '```diff\n-a\n+b\n```')
+  const md = fencedDiffMarkdown('- ```js\n-const a = 1\n+const a = 2\n- ```')
+  assert.ok(md.startsWith('````diff\n'))
+  assert.ok(md.endsWith('\n````'))
+  // 内容里更长的反引号串（如 5 个）同样能被包住
+  assert.ok(fencedDiffMarkdown('x `````` y').startsWith('```````diff'))
+  assert.equal(fencedDiffMarkdown(''), '```diff\n\n```')
 })

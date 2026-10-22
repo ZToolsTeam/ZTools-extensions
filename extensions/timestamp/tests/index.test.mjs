@@ -33,7 +33,11 @@ test('[边界] 非法内容、超长数字给出错误；空输入表示当前�
 
 test('界面：输入时间戳后可复制毫秒值', async () => {
   const view = await mount(TimestampCommand)
-  await view.search('1700000000')
-  await view.run(view.item('item-ms'), '复制毫秒级时间戳')
-  assert.equal(host.clipboard.text, '1700000000000')
+  try {
+    await view.search('1700000000')
+    await view.run(view.item('item-ms'), '复制毫秒级时间戳')
+    assert.equal(host.clipboard.text, '1700000000000')
+  } finally {
+    view.unmount() // 插件有每秒刷新的定时器，必须卸载
+  }
 })

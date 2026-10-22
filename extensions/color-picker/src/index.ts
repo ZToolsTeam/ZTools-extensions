@@ -30,8 +30,9 @@ export * from "./converter.js";
 function colorDetailMarkdown(color: ColorConversionResult): string {
   const h = color.harmonies;
   return [
-    `![${color.hex}](${generateColorSwatchSvg(color.hex)})`,
+    `![${displayHex(color)}](${generateColorSwatchSvg(color.hex8)})`,
     "",
+    ...(color.hasAlpha ? [`**透明度** ${Math.round(color.alpha * 100)}%（下列对比度按不透明颜色计算）`, ""] : []),
     `**白字对比度** ${color.wcag.contrastOnWhite}:1（${color.wcag.whiteRating}）`,
     "",
     `**黑字对比度** ${color.wcag.contrastOnBlack}:1（${color.wcag.blackRating}）`,
@@ -45,6 +46,11 @@ function colorDetailMarkdown(color: ColorConversionResult): string {
     `- 三色配色 \`${h.triadic.join("`、`")}\``,
     `- 单色渐变 \`${h.monochromatic.join("` → `")}\``
   ].join("\n");
+}
+
+/** 半透明颜色以 8 位 HEX 作为代表写法，否则用 6 位 */
+function displayHex(color: ColorConversionResult): string {
+  return color.hasAlpha ? color.hex8 : color.hex;
 }
 
 export function ColorPickerCommand() {
@@ -72,8 +78,9 @@ export function ColorPickerCommand() {
 
   const save = async (c: ColorConversionResult) => {
     try {
-      setPalette(await saveColorToPalette(c.hex, c.hex));
-      await showToast(Toast.Style.Success, `已收藏 ${c.hex}`);
+      const hex = displayHex(c);
+      setPalette(await saveColorToPalette(hex, hex));
+      await showToast(Toast.Style.Success, `已收藏 ${hex}`);
     } catch (err: any) {
       await showToast(Toast.Style.Failure, "收藏失败", err?.message || String(err));
     }
@@ -113,18 +120,22 @@ export function ColorPickerCommand() {
     const detail = List.Item.Detail({ markdown: colorDetailMarkdown(color) });
     const formats: Array<[string, string, string]> = [
       ["hex", "HEX", color.hex],
-      ["rgb", "RGB", color.cssRgb],
-      ["hsl", "HSL", color.cssHsl],
+      ["rgb", "RGB", color.hasAlpha ? color.cssRgba : color.cssRgb],
+      ["hsl", "HSL", color.hasAlpha ? color.cssHsla : color.cssHsl],
       ["oklch", "OKLCH", oklch.css],
       ["hsv", "HSV", color.cssHsv],
       ["cmyk", "CMYK", color.cssCmyk],
       ["hex8", "HEX（含透明度）", color.hex8],
-      ["tailwind", "Tailwind 任意值", `bg-[${color.hex}]`],
+      ["tailwind", "Tailwind 任意值", `bg-[${displayHex(color)}]`],
       ["css-var", "CSS 变量", color.cssVar]
     ];
     sections.push(
       List.Section(
-        { title: `${color.hex} 的各种写法（按回车复制）` },
+        {
+          title: color.outOfGamut
+            ? `${displayHex(color)} 的各种写法（超出 sRGB 色域，已按最接近的颜色换算）`
+            : `${displayHex(color)} 的各种写法（按回车复制）`
+        },
         formats.map(([id, label, value]) =>
           List.Item({
             id: `fmt-${id}`,
@@ -147,7 +158,7 @@ export function ColorPickerCommand() {
         List.Item({
           id: "invalid",
           title: `无法识别「${trimmed}」`,
-          subtitle: "支持 #RGB、#RRGGBB、#RRGGBBAA、rgb()、hsl()、颜色英文名",
+          subtitle: "支持 #RGB、#RRGGBB、#RRGGBBAA、rgb()、hsl()、hsv()、oklch()、cmyk()、颜色英文名",
           icon: Icon.ExclamationMark,
           detail: List.Item.Detail({ markdown: "" })
         })
@@ -178,7 +189,7 @@ export function ColorPickerCommand() {
           return List.Item({
             id: item.id,
             title: item.hex,
-            subtitle: item.name !== item.hex ? item.name : c.cssRgb,
+            subtitle: item.name !== item.hex ? item.name : (c.hasAlpha ? c.cssRgba : c.cssRgb),
             icon: Icon.Star,
             accessories: [{ text: item.savedAt }],
             detail: List.Item.Detail({ markdown: colorDetailMarkdown(c) }),

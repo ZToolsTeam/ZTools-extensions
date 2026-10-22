@@ -1,7 +1,7 @@
 {
   "id": "todo",
   "name": "待办清单",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "输入即添加待办，支持优先级、完成状态筛选",
   "author": "ZTools Team",
   "entry": "dist/index.js",

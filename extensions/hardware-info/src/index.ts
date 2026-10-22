@@ -14,7 +14,9 @@ import {
   HardwareTelemetrySnapshot,
   formatBytes,
   fetchHardwareTelemetrySnapshot,
-  exportHardwareReport
+  exportHardwareReport,
+  buildSummaryText,
+  TELEMETRY_MODULES
 } from './logic.js'
 
 export * from './logic.js'
@@ -27,20 +29,46 @@ export default function HardwareInfoCommand() {
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
+  // showIndicator：用户主动刷新时才弹成功提示；读取失败无论首次加载还是刷新都要如实提示
   async function refreshTelemetry(showIndicator = false) {
     if (showIndicator) setIsLoading(true)
     try {
       const snap = await fetchHardwareTelemetrySnapshot()
       setSnapshot(snap)
-      if (showIndicator) {
+      if (snap.failures.length > 0) {
+        showToast({
+          style: Toast.Style.Failure,
+          title: snap.failures.length >= TELEMETRY_MODULES.length ? '硬件信息读取失败' : '部分硬件信息读取失败',
+          message: `未能读取：${snap.failures.join('、')}`
+        })
+      } else if (showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '本机硬件传感器遥测已刷新',
-          message: `${snap.cpuModel} · 内存 ${snap.memoryUsagePercent}% · 存储池 ${formatBytes(snap.totalDiskBytes)}`
+          title: '硬件信息已刷新',
+          message: `${snap.cpuModel} · 内存 ${snap.memoryUsagePercent}% · 存储 ${formatBytes(snap.totalDiskBytes)}`
         })
       }
+    } catch (err) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: '硬件信息读取失败',
+        message: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function copyText(content: string, successTitle: string, successMessage: string) {
+    try {
+      await Clipboard.copy(content)
+      showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
+    } catch (err) {
+      showToast({
+        style: Toast.Style.Failure,
+        title: '复制失败',
+        message: err instanceof Error ? err.message : String(err)
+      })
     }
   }
 
@@ -51,12 +79,10 @@ export default function HardwareInfoCommand() {
   async function handleCopyReport(format: 'markdown' | 'json' | 'txt') {
     if (!snapshot) return
     const content = exportHardwareReport(snapshot, format)
-    await Clipboard.copy(content)
-    showToast({
-      style: Toast.Style.Success,
-      title: `已导出 ${format.toUpperCase()} 硬件配置报告至剪贴板`,
-      message: `${snapshot.cpuModel} · ${formatBytes(snapshot.totalMemoryBytes)} RAM`
-    })
+    const message = snapshot.failures.length > 0
+      ? `报告中「${snapshot.failures.join('、')}」标注为读取失败`
+      : `${snapshot.cpuModel} · ${formatBytes(snapshot.totalMemoryBytes ?? 0)} RAM`
+    await copyText(content, `已导出 ${format.toUpperCase()} 硬件配置报告至剪贴板`, message)
   }
 
   const entries: HardwareSpecEntry[] = snapshot?.entries || []
@@ -77,16 +103,8 @@ export default function HardwareInfoCommand() {
     )
   })
 
-  const cpuPct = snapshot?.cpuUsagePercent || 0
-  const memPct = snapshot?.memoryUsagePercent || 0
-  const totalMem = snapshot?.totalMemoryBytes || 0
-  const usedMem = snapshot?.usedMemoryBytes || 0
-  const totalDisk = snapshot?.totalDiskBytes || 0
-  const availDisk = snapshot?.availableDiskBytes || 0
-  const drives = snapshot?.drives || []
-
   return List({
-    searchBarPlaceholder: '搜索本机 CPU 型号、内存、磁盘分区、显示器分辨率、AI 大模型兼容性或导出报告...',
+    searchBarPlaceholder: '搜索 CPU 型号、内存、系统版本、磁盘分区、显示器或场景评估...',
     onSearchTextChange: setSearchText,
     isShowingDetail: true,
     isLoading,
@@ -98,20 +116,18 @@ export default function HardwareInfoCommand() {
         List.Dropdown.Item({ title: '全部硬件模块 (All Modules)', value: 'all' }),
         List.Dropdown.Item({ title: '处理器与内存 (CPU & RAM)', value: 'cpu-mem' }),
         List.Dropdown.Item({ title: '磁盘存储卷 (Storage Volumes)', value: 'storage' }),
-        List.Dropdown.Item({ title: '显卡与显示器 (Display & GPU)', value: 'display' }),
-        List.Dropdown.Item({ title: '4大场景性能评测 (Benchmarks)', value: 'benchmark' }),
+        List.Dropdown.Item({ title: '显示器 (Displays)', value: 'display' }),
+        List.Dropdown.Item({ title: '4 大场景估算评分 (Scenarios)', value: 'benchmark' }),
         List.Dropdown.Item({ title: '导出硬件报告 (Export Report)', value: 'report' })
       ]
     }),
     filterBar: {
-      summaryText: snapshot
-        ? `整机健康度 ${snapshot.healthScore} 分 · CPU ${snapshot.logicalCpuCount} 线程 (${cpuPct}%) · 物理内存 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPct}%) · 存储池 ${formatBytes(totalDisk)} (${drives.length} 个分区，可用 ${formatBytes(availDisk)})`
-        : '硬件传感器采集中...',
+      summaryText: buildSummaryText(snapshot),
       actions: [
         {
           id: 'refresh-hw',
-          label: '刷新传感器',
-          title: '刷新传感器',
+          label: '刷新',
+          title: '刷新',
           style: 'secondary',
           onAction: () => void refreshTelemetry(true)
         },
@@ -195,7 +211,7 @@ export default function HardwareInfoCommand() {
           ]
         : [
             List.Section({
-              title: `本机真实硬件与传感器规格清单 (${filtered.length})`,
+              title: `本机硬件规格清单 (${filtered.length})`,
               children: filtered.map((item) =>
                 List.Item({
                   id: item.id,
@@ -238,14 +254,11 @@ export default function HardwareInfoCommand() {
                         title: '复制当前硬件规格摘要',
                         icon: Icon.Clipboard,
                         shortcut: { modifiers: ['ctrl'], key: 'c' },
-                        onAction: async () => {
-                          const text = `${item.title} | ${item.subtitle} | ${item.value}`
-                          await Clipboard.copy(text)
-                          showToast({ style: Toast.Style.Success, title: '已复制硬件规格', message: item.title })
-                        }
+                        onAction: () =>
+                          copyText(`${item.title} | ${item.subtitle} | ${item.value}`, '已复制硬件规格', item.title)
                       }),
                       Action({
-                        title: '刷新硬件传感器遥测',
+                        title: '刷新硬件信息',
                         icon: Icon.ArrowClockwise,
                         shortcut: { modifiers: ['ctrl'], key: 'r' },
                         onAction: () => refreshTelemetry(true)
