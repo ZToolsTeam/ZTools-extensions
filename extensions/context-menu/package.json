@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-context-menu",
+  "version": "1.0.0",
+  "description": "扫描并管理 Windows 资源管理器文件、目录、桌面与背景右键扩展菜单，解决右键卡顿与菜单臃肿",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/context-menu.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

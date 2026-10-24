@@ -1,0 +1,26 @@
+{
+  "id": "boost",
+  "name": "开机加速与启动项管理",
+  "description": "深度扫描注册表、启动文件夹、计划任务与非系统服务自启项，一键禁用拖慢开机的冗余进程",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

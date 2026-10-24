@@ -1,0 +1,206 @@
+export interface MemoItem {
+  id: string
+  title: string
+  content: string
+  tag: string
+  createTime: number
+  updateTime: number
+}
+
+/**
+ * 创建新便签
+ */
+export function createMemo(
+  items: MemoItem[],
+  title: string,
+  content: string,
+  tag: string = ''
+): MemoItem[] {
+  const cleanTitle = title.trim() || '无标题便签'
+  const cleanContent = content.trim()
+  const now = Date.now()
+
+  const newItem: MemoItem = {
+    id: `memo-${now}-${Math.floor(Math.random() * 1000)}`,
+    title: cleanTitle,
+    content: cleanContent,
+    tag: tag.trim(),
+    createTime: now,
+    updateTime: now
+  }
+
+  return [newItem, ...items]
+}
+
+/**
+ * 更新现有便签
+ */
+export function updateMemo(
+  items: MemoItem[],
+  id: string,
+  updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag'>>
+): MemoItem[] {
+  return items.map(item => {
+    if (item.id === id) {
+      return {
+        ...item,
+        ...updates,
+        updateTime: Date.now()
+      }
+    }
+    return item
+  })
+}
+
+/**
+ * 删除便签
+ */
+export function deleteMemo(items: MemoItem[], id: string): MemoItem[] {
+  return items.filter(item => item.id !== id)
+}
+
+/**
+ * 按标题、正文、标签检索；最近更新的排在前面
+ */
+export function filterMemos(items: MemoItem[], query: string): MemoItem[] {
+  const q = (query || '').trim().toLowerCase()
+  const list = q
+    ? items.filter(m => m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.tag.toLowerCase().includes(q))
+    : items
+  return [...list].sort((a, b) => b.updateTime - a.updateTime)
+}
+
+export const MEMOS_STORAGE_KEY = 'memo.items.v1'
+
+/** 旧版本直接写在浏览器 localStorage 里的键 */
+export const LEGACY_LOCALSTORAGE_KEY = 'ztools_memo_items'
+
+/** 旧版本自带的 3 条示例便签，迁移时不带过来 */
+const LEGACY_SAMPLE_IDS = new Set(['memo-1', 'memo-2', 'memo-3'])
+
+/**
+ * 校验从存储读回的便签：结构不对的条目直接丢弃
+ */
+export function sanitizeStoredMemos(raw: unknown): MemoItem[] {
+  if (!Array.isArray(raw)) return []
+  const out: MemoItem[] = []
+  const seen = new Set<string>()
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const m = item as Record<string, unknown>
+    if (typeof m.id !== 'string' || seen.has(m.id)) continue
+    if (typeof m.title !== 'string' || typeof m.content !== 'string') continue
+    seen.add(m.id)
+    const createTime = typeof m.createTime === 'number' ? m.createTime : 0
+    out.push({
+      id: m.id,
+      title: m.title,
+      content: m.content,
+      tag: typeof m.tag === 'string' ? m.tag : '',
+      createTime,
+      updateTime: typeof m.updateTime === 'number' ? m.updateTime : createTime
+    })
+  }
+  return out
+}
+
+/** 已合并进便签的旧插件「轻量便签记事」(notes) 写在浏览器 localStorage 里的键 */
+export const LEGACY_NOTES_LOCALSTORAGE_KEY = 'raycast_ztools-raycast-notes-v1'
+
+/** 旧 notes 插件自带的 3 条示例笔记，迁移时不带过来 */
+const LEGACY_NOTES_SAMPLE_IDS = new Set(['note-1', 'note-2', 'note-3'])
+
+/**
+ * 读取旧「轻量便签记事」(notes) 插件的笔记并转换成便签；读不到、已损坏或只有示例数据时返回空数组。
+ * 旧插件把 JSON 字符串再序列化了一次存储，这里两种写法都兼容。
+ */
+export function readLegacyNotes(storage: { getItem(key: string): string | null } | undefined = (globalThis as any).localStorage): MemoItem[] {
+  try {
+    const raw = storage?.getItem(LEGACY_NOTES_LOCALSTORAGE_KEY)
+    if (!raw) return []
+    let parsed: unknown = JSON.parse(raw)
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed)
+    if (!Array.isArray(parsed)) return []
+    const out: MemoItem[] = []
+    const seen = new Set<string>()
+    for (const item of parsed) {
+      if (!item || typeof item !== 'object') continue
+      const n = item as Record<string, unknown>
+      if (typeof n.id !== 'string' || LEGACY_NOTES_SAMPLE_IDS.has(n.id)) continue
+      if (typeof n.title !== 'string' || typeof n.content !== 'string') continue
+      const id = `notes-${n.id}`
+      if (seen.has(id)) continue
+      seen.add(id)
+      const createTime = typeof n.createdAt === 'number' ? n.createdAt : 0
+      const tags = Array.isArray(n.tags) ? n.tags.filter((t): t is string => typeof t === 'string' && t.trim() !== '') : []
+      out.push({
+        id,
+        title: n.title,
+        content: n.content,
+        tag: tags.join(' '),
+        createTime,
+        updateTime: typeof n.updatedAt === 'number' ? n.updatedAt : createTime
+      })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 读取旧版存在浏览器 localStorage 的便签（过滤掉示例数据）；读不到或已损坏时返回空数组
+ */
+export function readLegacyMemos(storage: { getItem(key: string): string | null } | undefined = (globalThis as any).localStorage): MemoItem[] {
+  try {
+    const raw = storage?.getItem(LEGACY_LOCALSTORAGE_KEY)
+    if (!raw) return []
+    return sanitizeStoredMemos(JSON.parse(raw)).filter(m => !LEGACY_SAMPLE_IDS.has(m.id))
+  } catch {
+    return []
+  }
+}
+
+/** 一次保存操作：只描述「改了哪一条」，写入时套用到存储里的最新列表上 */
+export type MemoMutation =
+  | { type: 'create'; item: MemoItem }
+  | { type: 'update'; id: string; updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag'>>; fallback: MemoItem }
+  | { type: 'delete'; id: string }
+
+/**
+ * 判断存储读回的值能否当作便签列表使用：
+ * - undefined：还没有存过（可以迁移旧数据或从空列表开始）
+ * - 数组：正常；无法识别的条目不显示，但写回时原样保留
+ * - 其他（截断的 JSON 读回成字符串、null、对象等）：数据已损坏，不能在它上面写入，否则会覆盖原数据
+ */
+export function isWritableMemoStore(raw: unknown): raw is unknown[] | undefined {
+  return raw === undefined || Array.isArray(raw)
+}
+
+/**
+ * 把一次保存操作套用到存储里的最新列表（而不是本窗口内存里的旧快照），
+ * 其他窗口刚写入的便签、以及本插件识别不了的条目都原样保留
+ */
+export function applyMemoMutation(latest: unknown[] | undefined, mutation: MemoMutation): unknown[] {
+  const base = latest ?? []
+  const matches = (entry: unknown, id: string) => !!entry && typeof entry === 'object' && (entry as Record<string, unknown>).id === id
+  switch (mutation.type) {
+    case 'create':
+      return [mutation.item, ...base]
+    case 'update': {
+      const now = Date.now()
+      let found = false
+      const next = base.map((entry) => {
+        if (!matches(entry, mutation.id)) return entry
+        found = true
+        return { ...(entry as Record<string, unknown>), ...mutation.updates, updateTime: now }
+      })
+      // 正在编辑的便签已在其他窗口删除：保留用户刚输入的内容，不让它丢失
+      return found ? next : [{ ...mutation.fallback, ...mutation.updates, updateTime: now }, ...base]
+    }
+    case 'delete':
+      return base.filter((entry) => !matches(entry, mutation.id))
+    default:
+      return base
+  }
+}

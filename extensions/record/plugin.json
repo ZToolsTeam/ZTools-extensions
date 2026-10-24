@@ -1,0 +1,28 @@
+{
+  "id": "record",
+  "name": "高清屏幕录制与动图工作台",
+  "description": "基于桌面复制 API (DXGI Desktop Duplication) 与硬件编码器的低延迟全屏/区域录屏、系统内录与 GIF 转换工具",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "图像媒体"
+  ],
+  "permissions": [
+    "screen",
+    "audio",
+    "video",
+    "fs"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

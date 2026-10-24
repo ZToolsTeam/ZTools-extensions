@@ -1,0 +1,29 @@
+{
+  "id": "image-tool",
+  "name": "图像转换与元数据",
+  "version": "1.0.0",
+  "description": "图像格式转换与元数据分析，支持输入图片路径与Base64，查看分辨率/色彩深度/体积并生成转换预览，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "revoked": true,
+  "revokedReason": "功能尚未完成，已停止分发；保留下架记录以通知现有安装。"
+}

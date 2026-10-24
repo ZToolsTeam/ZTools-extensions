@@ -1,0 +1,24 @@
+{
+  "name": "@ztools/extensions",
+  "version": "1.0.0",
+  "description": "ZTools 官方开源插件与生态扩展大仓 | 纯声明式 UI 标准、一键脚手架与 GitOps 自动化分发",
+  "private": true,
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "create-plugin": "node scripts/create-plugin.mjs",
+    "build": "node scripts/build-declarative.mjs --all",
+    "scan": "node scripts/scan-plugin-security.mjs extensions",
+    "verify": "node scripts/verify-changed-plugins.mjs --base origin/main",
+    "verify:all": "node scripts/verify-changed-plugins.mjs --all",
+    "test": "node scripts/verify-changed-plugins.mjs --base origin/main"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "@types/node": "24.3.0",
+    "acorn": "8.15.0",
+    "@babel/parser": "7.28.5"
+  }
+}

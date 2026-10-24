@@ -1,0 +1,10 @@
+{
+  "name": "kill-process",
+  "version": "1.0.0",
+  "description": "高资源消耗进程秒级检索、CPU/内存降序与一键终止",
+  "type": "module",
+  "main": "dist/index.js",
+  "dependencies": {
+    "@ztools/declarative-ui": "^1.0.0"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-network-adapter",
+  "version": "1.0.0",
+  "description": "本机网络适配器与 IP 配置信息一览",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

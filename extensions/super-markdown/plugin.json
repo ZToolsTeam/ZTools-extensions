@@ -1,0 +1,29 @@
+{
+  "id": "super-markdown",
+  "name": "Markdown 即时阅读与大纲笔记",
+  "version": "1.0.0",
+  "description": "Markdown 即时阅读与大纲笔记：Markdown 源码预览、大纲提取、字符数统计、格式清洗，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "revoked": true,
+  "revokedReason": "功能尚未完成，已停止分发；保留下架记录以通知现有安装。"
+}

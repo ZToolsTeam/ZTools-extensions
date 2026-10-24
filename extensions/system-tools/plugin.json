@@ -1,0 +1,26 @@
+{
+  "id": "system-tools",
+  "name": "Windows 极客系统工具集",
+  "description": "一站式直达注册表编辑器、组策略、服务管理、计算机管理、磁盘管理、环境变量、GodMode 上帝模式与高级控制面板",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

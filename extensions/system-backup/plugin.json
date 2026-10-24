@@ -1,0 +1,26 @@
+{
+  "id": "system-backup",
+  "name": "系统配置与关键目录快照备份",
+  "description": "支持关键工作目录、开发环境配置、浏览器书签与注册表关键项的增量多版本压缩快照备份与一键校验还原",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

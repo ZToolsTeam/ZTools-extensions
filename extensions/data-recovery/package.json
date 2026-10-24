@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-data-recovery",
+  "version": "1.0.0",
+  "description": "基于底层扇区与 NTFS MFT/FAT 文件分配表扫描技术，深度找回误清空回收站或格式化丢失的文档与照片",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/data-recovery.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

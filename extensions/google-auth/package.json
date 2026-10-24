@@ -1,0 +1,19 @@
+{
+  "name": "google-auth",
+  "version": "1.0.0",
+  "description": "2FA TOTP 动态口令验证器，支持密钥与二维码URL解析、30秒倒计时刷新、多账号管理与一键复制口令",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.8.0"
+  }
+}

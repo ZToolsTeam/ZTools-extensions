@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-quick-folders",
+  "version": "1.0.0",
+  "description": "桌面、下载、文档、应用数据与临时目录等常用文件夹一键直达（Windows / macOS）",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

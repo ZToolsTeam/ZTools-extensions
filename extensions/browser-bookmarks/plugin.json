@@ -1,0 +1,31 @@
+{
+  "id": "browser-bookmarks",
+  "name": "浏览器书签",
+  "description": "Chrome / Edge 浏览器书签全键盘极速秒搜与打开",
+  "version": "1.0.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "browser",
+  "permissions": [
+    "fs",
+    "shell"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "revoked": true,
+  "revokedReason": "功能尚未完成，已停止分发；保留下架记录以通知现有安装。"
+}

@@ -1,0 +1,28 @@
+{
+  "id": "everything-file-search",
+  "name": "Everything 文件秒搜",
+  "version": "2.0.2",
+  "description": "基于自研 MFT / USN 硬件级极速文件检索",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard",
+    "fs"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

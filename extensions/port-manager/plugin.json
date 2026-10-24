@@ -1,0 +1,30 @@
+{
+  "id": "port-manager",
+  "name": "端口管理器",
+  "description": "本地网络端口占用扫描、进程关联与快速释放",
+  "version": "1.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "shell",
+    "child_process",
+    "process"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

@@ -1,0 +1,29 @@
+{
+  "id": "image-editor",
+  "name": "图片轻量编辑与批注",
+  "version": "1.0.0",
+  "description": "图片轻量编辑与批注助手，支持尺寸缩放、旋转翻转与防伪水印文字生成，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "revoked": true,
+  "revokedReason": "功能尚未完成，已停止分发；保留下架记录以通知现有安装。"
+}

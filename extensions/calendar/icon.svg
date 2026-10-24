@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="calGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#calGrad)"/>
+  <!-- Calendar Body -->
+  <rect x="22" y="26" width="56" height="52" rx="8" fill="#ffffff" fill-opacity="0.15" stroke="#ffffff" stroke-width="4"/>
+  <rect x="22" y="26" width="56" height="16" rx="6" fill="#ffffff"/>
+  <!-- Rings -->
+  <circle cx="36" cy="22" r="3.5" fill="#ffffff"/>
+  <circle cx="64" cy="22" r="3.5" fill="#ffffff"/>
+  <!-- Grid Dots / Date text -->
+  <circle cx="36" cy="54" r="3" fill="#ffffff"/>
+  <circle cx="50" cy="54" r="3" fill="#ffffff"/>
+  <circle cx="64" cy="54" r="3" fill="#ffffff"/>
+  <circle cx="36" cy="66" r="3" fill="#ffffff"/>
+  <circle cx="50" cy="66" r="3" fill="#ffffff"/>
+  <circle cx="64" cy="66" r="3" fill="#ffffff"/>
+</svg>

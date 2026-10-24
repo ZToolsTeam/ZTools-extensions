@@ -1,0 +1,23 @@
+{
+  "id": "network-adapter",
+  "name": "网络适配器",
+  "description": "本机各网卡 IPv4/IPv6、子网掩码、网关与 MAC 地址查询",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "shell",
+    "child_process"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

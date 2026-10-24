@@ -1,0 +1,28 @@
+{
+  "id": "quick-folders",
+  "name": "常用文件夹",
+  "description": "桌面、下载、文档、应用数据与临时目录等常用文件夹一键直达（Windows / macOS）",
+  "version": "1.1.0",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "shell"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <defs>
+    <linearGradient id="uuidGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <rect width="100" height="100" rx="22" fill="url(#uuidGrad)"/>
+  <rect x="20" y="24" width="60" height="52" rx="10" fill="none" stroke="#ffffff" stroke-width="4" opacity="0.9"/>
+  <circle cx="36" cy="42" r="6" fill="#ffffff"/>
+  <line x1="48" y1="38" x2="68" y2="38" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <line x1="48" y1="46" x2="62" y2="46" stroke="#ffffff" stroke-width="3" stroke-linecap="round" opacity="0.8"/>
+  <line x1="28" y1="58" x2="72" y2="58" stroke="#a5b4fc" stroke-width="2" stroke-dasharray="3 3"/>
+  <line x1="30" y1="66" x2="44" y2="66" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <line x1="48" y1="66" x2="56" y2="66" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+  <line x1="60" y1="66" x2="70" y2="66" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+</svg>

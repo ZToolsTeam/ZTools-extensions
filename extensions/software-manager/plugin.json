@@ -1,0 +1,27 @@
+{
+  "id": "software-manager",
+  "name": "软件卸载与残余深度清理",
+  "description": "扫描系统已安装桌面软件、64/32位注册表卸载项与 UserAssist 使用频率，支持一键静默卸载并扫除注册表与目录残留",
+  "version": "2.0.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "fs",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}
