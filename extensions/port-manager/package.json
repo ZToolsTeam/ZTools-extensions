@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-port-manager",
+  "version": "1.0.0",
+  "description": "本地端口占用检测与释放管理器",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

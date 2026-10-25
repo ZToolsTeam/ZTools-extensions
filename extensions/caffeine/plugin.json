@@ -1,0 +1,57 @@
+{
+  "id": "caffeine",
+  "name": "防休眠常亮",
+  "version": "1.0.1",
+  "description": "阻止系统自动休眠、息屏与锁屏，支持定时倒计时自动恢复与一键常亮切换",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "system",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "caffeine-panel",
+      "explain": "设置防休眠常亮时长（无限期 / 15分钟 / 30分钟 / 1小时 / 2小时 / 4小时）",
+      "cmds": [
+        "防休眠",
+        "常亮",
+        "不锁屏",
+        "caffeine",
+        "keep awake",
+        "amp"
+      ]
+    },
+    {
+      "code": "caffeine-toggle",
+      "explain": "一键切换防休眠开启与关闭状态",
+      "cmds": [
+        "切换防休眠",
+        "caffeine toggle",
+        "开启防休眠",
+        "关闭防休眠"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

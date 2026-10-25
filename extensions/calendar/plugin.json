@@ -1,0 +1,27 @@
+{
+  "id": "calendar",
+  "name": "日程日历",
+  "version": "2.0.5",
+  "description": "查看今日与近期日程、一键加入视频会议，支持快速新建提醒事项并导出日历文件",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

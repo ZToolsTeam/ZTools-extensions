@@ -1,0 +1,46 @@
+{
+  "id": "clean-keyboard",
+  "name": "键盘清洁锁",
+  "version": "1.0.1",
+  "description": "擦拭笔记本键盘与触控板时临时屏蔽全部按键输入，支持倒计时自动恢复与紧急解锁组合键",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "clean-keyboard",
+      "explain": "锁定键盘输入以便擦拭清洁键盘，倒计时结束自动恢复输入",
+      "cmds": [
+        "清洁键盘",
+        "锁键盘",
+        "擦键盘",
+        "键盘锁",
+        "clean keyboard",
+        "lock keyboard"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

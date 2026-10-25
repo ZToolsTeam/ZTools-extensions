@@ -1,0 +1,60 @@
+{
+  "id": "file-unlock",
+  "name": "文件解锁",
+  "description": "检测并解除文件、文件夹或外接 U 盘被进程占用的锁死状态，支持解锁后一键移入回收站或重命名",
+  "version": "1.0.1",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "fs",
+    "system",
+    "clipboard",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "file-unlock",
+      "explain": "检测文件或文件夹被哪个进程占用并一键强制解锁、解锁并删除",
+      "cmds": [
+        "文件解锁",
+        "解除占用",
+        "unlock",
+        "无法删除",
+        "文件被占用",
+        "谁占用了"
+      ]
+    },
+    {
+      "code": "usb-unlock",
+      "explain": "检测 U 盘或移动硬盘被哪个后台进程占用导致无法安全弹出",
+      "cmds": [
+        "U盘解锁",
+        "弹出U盘",
+        "无法弹出",
+        "移动硬盘占用",
+        "eject"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

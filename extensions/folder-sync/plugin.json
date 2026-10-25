@@ -1,0 +1,55 @@
+{
+  "id": "folder-sync",
+  "name": "目录同步",
+  "version": "1.0.1",
+  "description": "快速比对两个文件夹（本地磁盘、移动硬盘、U盘、NAS）的新增与修改差异，一键执行高速增量备份或双向同步",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "文件管理",
+    "效率工具"
+  ],
+  "permissions": [
+    "fs",
+    "dialog",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "folder-sync-workbench",
+      "explain": "比对源目录与目标目录差异并执行增量备份同步",
+      "cmds": [
+        "目录同步",
+        "文件夹同步",
+        "增量备份",
+        "freefilesync",
+        "folder sync"
+      ]
+    },
+    {
+      "code": "folder-sync-compare",
+      "explain": "快速比对两个文件夹中的新增、修改与缺失文件清单",
+      "cmds": [
+        "文件夹比对",
+        "目录差异对比"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

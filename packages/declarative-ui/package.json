@@ -1,0 +1,27 @@
+{
+  "name": "@ztools/declarative-ui",
+  "version": "1.0.0",
+  "description": "ZTools 声明式插件 SDK（类型声明与运行时，供插件编译与测试；用户端运行时由 ZTools 客户端提供）",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api/index.d.ts",
+      "import": "./dist/api/index.js",
+      "default": "./dist/api/index.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "import": "./dist/utils/index.js",
+      "default": "./dist/utils/index.js"
+    }
+  }
+}

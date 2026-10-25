@@ -1,0 +1,28 @@
+{
+  "id": "quick-folders",
+  "name": "常用文件夹",
+  "description": "一键打开桌面、下载、文档、AppData 与系统临时目录等高频文件夹，免去层层翻找",
+  "version": "1.1.2",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "shell"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

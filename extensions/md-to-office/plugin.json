@@ -1,0 +1,53 @@
+{
+  "id": "md-to-office",
+  "name": "AI文档转Word",
+  "version": "1.0.1",
+  "description": "纯本地将 DeepSeek / ChatGPT 生成的 Markdown 文本或文件，一键转为带标准公文排版、学术三线表与代码高亮的原生 Word 文档",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard",
+    "fs",
+    "shell",
+    "dialog"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "md-to-office-workbench",
+      "explain": "打开 AI 文档转 Word 工作台，粘贴 Markdown 文本或载入 .md 文件进行排版转换",
+      "cmds": [
+        "md转word",
+        "ai转word",
+        "markdown转word",
+        "deepseek转word",
+        "导出word",
+        "md to docx"
+      ]
+    },
+    {
+      "code": "md-to-office-clipboard-fast",
+      "explain": "自动读取剪贴板中的 Markdown 内容，按公文预设极速复制为 Word 富文本格式",
+      "cmds": [
+        "复制为word格式",
+        "剪贴板转word",
+        "快速排版粘贴"
+      ]
+    }
+  ]
+}

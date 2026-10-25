@@ -1,0 +1,32 @@
+{
+  "id": "port-manager",
+  "name": "端口占用",
+  "description": "本地网络端口占用扫描、进程关联与快速释放",
+  "version": "1.0.4",
+  "revoked": true,
+  "revokedReason": "已合并至「进程监控」插件，请在插件市场安装进程监控",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "shell",
+    "child_process",
+    "process"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

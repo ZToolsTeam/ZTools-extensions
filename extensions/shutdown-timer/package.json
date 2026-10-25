@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-shutdown-timer",
+  "version": "1.0.0",
+  "description": "Windows 定时关机、重启与电源计划任务管理",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

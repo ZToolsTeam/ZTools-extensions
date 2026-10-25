@@ -1,0 +1,43 @@
+{
+  "id": "curl-http",
+  "name": "轻量接口调试",
+  "version": "1.0.1",
+  "description": "一键解析跨平台 cURL 命令、本地发起 HTTP 极速验证并互转 Fetch / Axios / Python / Go 请求代码",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard",
+    "network"
+  ],
+  "features": [
+    {
+      "code": "curl-http",
+      "explain": "解析 cURL 命令、执行轻量 HTTP 请求或生成多语言请求代码",
+      "cmds": [
+        "curl",
+        "http",
+        "api",
+        "fetch",
+        "postman",
+        "接口调试",
+        "cURL转换"
+      ]
+    }
+  ]
+}

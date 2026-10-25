@@ -1,0 +1,84 @@
+{
+  "id": "browser-bookmarks",
+  "name": "网页书签",
+  "version": "1.0.1",
+  "description": "免锁极速聚合 Edge、Chrome、360安全与极速、QQ浏览器、Firefox 等本地书签，支持汉字、拼音全拼与首字母秒级检索，一键打开或复制链接",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "效率工具",
+    "网络工具"
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "bookmarks-all",
+      "explain": "聚合检索全部浏览器的收藏网页书签",
+      "cmds": [
+        "网页书签",
+        "书签",
+        "浏览器书签",
+        "收藏夹",
+        "bookmarks",
+        "搜索书签"
+      ]
+    },
+    {
+      "code": "bookmarks-edge",
+      "explain": "仅筛选检索 Microsoft Edge 浏览器的收藏书签",
+      "cmds": [
+        "Edge书签",
+        "微软书签",
+        "edge bookmarks"
+      ]
+    },
+    {
+      "code": "bookmarks-chrome",
+      "explain": "仅筛选检索 Google Chrome 浏览器的收藏书签",
+      "cmds": [
+        "Chrome书签",
+        "谷歌书签",
+        "chrome bookmarks"
+      ]
+    },
+    {
+      "code": "bookmarks-domestic",
+      "explain": "筛选检索 360安全浏览器、360极速浏览器与QQ浏览器书签",
+      "cmds": [
+        "360书签",
+        "QQ浏览器书签",
+        "国产浏览器书签"
+      ]
+    },
+    {
+      "code": "bookmarks-firefox",
+      "explain": "筛选检索 Mozilla Firefox 火狐浏览器的收藏书签",
+      "cmds": [
+        "Firefox书签",
+        "火狐书签",
+        "firefox bookmarks"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

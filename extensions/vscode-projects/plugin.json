@@ -1,0 +1,61 @@
+{
+  "id": "vscode-projects",
+  "name": "最近项目",
+  "version": "1.0.1",
+  "description": "聚合检索 VS Code、Cursor、Trae、Windsurf 与 JetBrains 历史项目，实时透视 Git 分支，回车秒开对应 IDE 或终端",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "projects-all",
+      "explain": "聚合浏览所有 IDE 最近打开的项目及本地 Git 仓库",
+      "cmds": [
+        "最近项目",
+        "项目管理",
+        "打开项目",
+        "vscode",
+        "cursor",
+        "projects"
+      ]
+    },
+    {
+      "code": "projects-vscode-cursor",
+      "explain": "仅筛选 VS Code、Cursor、Trae 与 Windsurf 的工程项目",
+      "cmds": [
+        "vscode项目",
+        "cursor项目",
+        "trae项目"
+      ]
+    },
+    {
+      "code": "projects-jetbrains",
+      "explain": "仅筛选 IntelliJ IDEA、WebStorm、PyCharm 等 JetBrains 项目",
+      "cmds": [
+        "idea项目",
+        "webstorm项目",
+        "jetbrains项目"
+      ]
+    }
+  ]
+}

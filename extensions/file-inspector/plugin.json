@@ -1,0 +1,62 @@
+{
+  "id": "file-inspector",
+  "name": "文件透视与转码",
+  "version": "1.0.1",
+  "description": "Magic Bytes 秒破假后缀；精准探测 CSV/TXT 编码，一键转为 Excel 不乱码的 UTF-8-BOM，CRLF/LF 换行符无损统合",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "fs",
+    "shell",
+    "dialog"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "file-inspector-workbench",
+      "explain": "打开文件透视工作台，拖入或选择文件查看真实格式与编码",
+      "cmds": [
+        "文件透视",
+        "文件转码",
+        "文件编码检测",
+        "检查文件",
+        "file inspector"
+      ]
+    },
+    {
+      "code": "file-fix-csv-bom",
+      "explain": "自动识别当前选中或剪贴板中的 CSV 文件，一键转换为带 BOM 的 UTF-8 解决 Excel 乱码",
+      "cmds": [
+        "csv乱码修复",
+        "csv转utf8bom",
+        "解决excel乱码",
+        "修复csv"
+      ]
+    },
+    {
+      "code": "file-fix-extension",
+      "explain": "通过二进制魔数识别真实格式，一键将假后缀（如伪装成jpg的webp）还原为真实扩展名",
+      "cmds": [
+        "修复假后缀",
+        "识别真实文件后缀",
+        "后缀修复",
+        "fix extension"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+export * from "./constants/icons.js";
+export * from "./constants/colors.js";
+export * from "./constants/toast.js";
+export * from "./descriptors/index.js";
+export * from "./api/index.js";
+export { terminateProcess } from "./api/process.js";
+export * from "./runtime/index.js";
+export * from "./utils/index.js";
+import { createElement, Fragment } from "./descriptors/factory.js";
+import { useState, useEffect, useMemo, useCallback, useRef } from "./runtime/hooks.js";
+export declare const React: {
+    createElement: typeof createElement;
+    Fragment: typeof Fragment;
+    useState: typeof useState;
+    useEffect: typeof useEffect;
+    useMemo: typeof useMemo;
+    useCallback: typeof useCallback;
+    useRef: typeof useRef;
+};
+export default React;

@@ -1,0 +1,58 @@
+{
+  "id": "hotkey-radar",
+  "name": "热键侦测",
+  "version": "1.0.1",
+  "description": "检测全局快捷键是否被微信、QQ、输入法或显卡驱动后台抢占；同时内置 Windows、VS Code、Excel、PS 高频快捷键离线速查字典",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "system",
+    "process",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "hotkey-conflict-radar",
+      "explain": "检测指定全局快捷键是否被其他后台软件抢占并排查冲突程序",
+      "cmds": [
+        "热键侦测",
+        "热键冲突",
+        "快捷键冲突",
+        "谁占用了快捷键",
+        "hotkey"
+      ]
+    },
+    {
+      "code": "hotkey-cheatsheet",
+      "explain": "离线速查 Windows、macOS、VS Code、Excel、Photoshop、浏览器高频快捷键",
+      "cmds": [
+        "快捷键速查",
+        "常用快捷键",
+        "excel快捷键",
+        "vscode快捷键",
+        "windows快捷键"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

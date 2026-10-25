@@ -1,0 +1,79 @@
+{
+  "id": "snippets",
+  "name": "快捷短语",
+  "version": "1.2.1",
+  "description": "管理常用开票税号、收件地址、客服话术与常用模板，支持动态日期/时间/剪贴板宏变量，一键穿透上屏或复制",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "效率工具",
+    "办公工具"
+  ],
+  "permissions": [
+    "clipboard",
+    "database",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "snippets-all",
+      "explain": "检索并管理所有快捷短语与常用模板",
+      "cmds": [
+        "快捷短语",
+        "常用语",
+        "话术",
+        "代码片段",
+        "snippets",
+        "常用回复"
+      ]
+    },
+    {
+      "code": "snippets-invoice",
+      "explain": "快速检索并填入公司开票抬头、纳税人识别号与开户行",
+      "cmds": [
+        "开票信息",
+        "公司税号",
+        "开票抬头",
+        "税号",
+        "发票信息"
+      ]
+    },
+    {
+      "code": "snippets-address",
+      "explain": "快速检索收件人、收货地址与联系电话",
+      "cmds": [
+        "常用地址",
+        "收件地址",
+        "寄件地址",
+        "收货信息"
+      ]
+    },
+    {
+      "code": "snippets-new",
+      "explain": "快速新建一条快捷短语或常用模板",
+      "cmds": [
+        "新建短语",
+        "添加常用语",
+        "新建模板",
+        "add snippet"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

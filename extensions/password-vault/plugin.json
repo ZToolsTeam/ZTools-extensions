@@ -1,0 +1,46 @@
+{
+  "id": "password-vault",
+  "name": "密码保险箱",
+  "version": "1.1.0",
+  "description": "100% 本地离线 AES-256-GCM 加密保管账号密码、API Key、服务器密钥与软件激活码，复制后自动清除剪贴板痕迹",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "安全隐私",
+    "效率工具"
+  ],
+  "permissions": [
+    "crypto",
+    "clipboard",
+    "database"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "vault-list",
+      "explain": "解锁并搜索本地加密存储的账号密码、API Key、服务器密钥与私密备忘",
+      "cmds": ["密码保险箱", "加密保险箱", "账号密码", "password vault", "1password", "keepass"]
+    },
+    {
+      "code": "vault-generator",
+      "explain": "一键生成高强度随机密码并存入加密保险箱或复制到剪贴板",
+      "cmds": ["随机密码", "生成密码", "密码生成器"]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

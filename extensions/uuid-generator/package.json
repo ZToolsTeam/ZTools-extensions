@@ -1,0 +1,18 @@
+{
+  "name": "uuid-generator",
+  "version": "1.2.1",
+  "description": "UUID 生成器，支持 v1/v4/v7 算法与多种格式化标准，纯声明式零 CSS 架构",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "^1.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

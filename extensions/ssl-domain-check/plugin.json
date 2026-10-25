@@ -1,0 +1,45 @@
+{
+  "id": "ssl-domain-check",
+  "name": "域名与SSL诊断",
+  "version": "1.0.1",
+  "description": "实时检测域名 HTTPS/TLS 证书有效期倒计时、颁发机构链与 DNS-over-HTTPS (A/AAAA/CNAME/MX/TXT) 解析记录",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard",
+    "network"
+  ],
+  "features": [
+    {
+      "code": "ssl-domain-check",
+      "explain": "查询域名 SSL 证书剩余有效期及 DNS 解析记录",
+      "cmds": [
+        "ssl",
+        "tls",
+        "cert",
+        "dns",
+        "dig",
+        "nslookup",
+        "domain",
+        "证书检测",
+        "域名诊断"
+      ]
+    }
+  ]
+}

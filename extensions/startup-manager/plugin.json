@@ -1,0 +1,66 @@
+{
+  "id": "startup-manager",
+  "name": "启动管理",
+  "description": "穿透扫描注册表开机自启、启动文件夹、第三方后台服务与计划任务，一键禁用流氓软件后台自启并加速开机",
+  "version": "1.0.1",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "system",
+    "shell",
+    "process",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "startup-all",
+      "explain": "聚合管理所有开机自启应用、第三方后台服务与开机计划任务",
+      "cmds": [
+        "启动管理",
+        "开机自启",
+        "自启动管理",
+        "startup",
+        "autoruns"
+      ]
+    },
+    {
+      "code": "startup-services",
+      "explain": "专项排查并禁用第三方软件驻留的开机后台服务",
+      "cmds": [
+        "后台服务管理",
+        "禁用第三方服务",
+        "开机服务精简"
+      ]
+    },
+    {
+      "code": "startup-tasks",
+      "explain": "专项排查并禁用软件偷偷注册的定时与开机计划任务",
+      "cmds": [
+        "计划任务管理",
+        "开机计划任务",
+        "流氓自启清理"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

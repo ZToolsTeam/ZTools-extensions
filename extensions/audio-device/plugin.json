@@ -1,0 +1,70 @@
+{
+  "id": "audio-device",
+  "name": "音频设备切换",
+  "version": "1.0.1",
+  "description": "秒级切换系统默认扬声器、耳机与麦克风，支持音量调节、快速静音与蓝牙/显示器音频直达",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "audio",
+    "system",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "audio-switch",
+      "explain": "查看并一键切换系统音频输出（扬声器/耳机）与输入（麦克风）设备",
+      "cmds": [
+        "音频",
+        "声卡",
+        "耳机",
+        "扬声器",
+        "音响",
+        "audio",
+        "speaker",
+        "headphone"
+      ]
+    },
+    {
+      "code": "audio-input",
+      "explain": "快速切换系统默认麦克风输入设备",
+      "cmds": [
+        "麦克风",
+        "录音设备",
+        "mic",
+        "microphone"
+      ]
+    },
+    {
+      "code": "audio-mute-toggle",
+      "explain": "一键切换当前输出设备静音状态",
+      "cmds": [
+        "静音",
+        "取消静音",
+        "mute",
+        "unmute"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

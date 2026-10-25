@@ -1,0 +1,66 @@
+{
+  "id": "dns-benchmark",
+  "name": "DNS测速",
+  "version": "1.0.1",
+  "description": "一键并发实测阿里、腾讯、114、百度、Cloudflare、Google 等 15 组公共 DNS 对本机的真实解析延迟，按速度排序并一键切换当前网卡 DNS",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "网络工具",
+    "系统工具"
+  ],
+  "permissions": [
+    "network",
+    "system",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "dns-benchmark-run",
+      "explain": "并发实测 15 组公共 DNS 响应延迟并一键切换为最快 DNS",
+      "cmds": [
+        "DNS测速",
+        "切换DNS",
+        "修改DNS",
+        "dns",
+        "dns jumper",
+        "最快dns"
+      ]
+    },
+    {
+      "code": "dns-flush-cache",
+      "explain": "立即清空并刷新本机系统 DNS 解析缓存 (ipconfig /flushdns)",
+      "cmds": [
+        "刷新DNS",
+        "清空DNS缓存",
+        "flushdns"
+      ]
+    },
+    {
+      "code": "dns-reset-dhcp",
+      "explain": "将当前网卡 DNS 恢复为路由器 DHCP 自动获取模式",
+      "cmds": [
+        "恢复默认DNS",
+        "自动获取DNS",
+        "重置DNS"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "id": "ssh-proxy-helper",
+  "name": "主机与代理",
+  "version": "1.0.1",
+  "description": "解析 ~/.ssh/config 一键唤起终端直连或建立端口转发隧道；一键为 Git、NPM、终端开启或关闭本地代理端口",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "ssh-all",
+      "explain": "聚合查看所有 SSH 主机列表、端口转发与开发环境代理状态",
+      "cmds": [
+        "ssh",
+        "主机管理",
+        "ssh连接",
+        "代理管家",
+        "git代理",
+        "proxy"
+      ]
+    },
+    {
+      "code": "ssh-proxy-toggle",
+      "explain": "一键快速切换 Git / NPM / 终端的本地代理开关 (7890/10808)",
+      "cmds": [
+        "切换代理",
+        "开启git代理",
+        "关闭git代理",
+        "终端代理"
+      ]
+    },
+    {
+      "code": "ssh-tunnel",
+      "explain": "基于 SSH 快速建立本地至远程主机的端口转发隧道",
+      "cmds": [
+        "端口转发",
+        "ssh隧道",
+        "建立隧道"
+      ]
+    }
+  ]
+}

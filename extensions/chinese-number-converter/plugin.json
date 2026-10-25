@@ -1,0 +1,29 @@
+{
+  "id": "chinese-number-converter",
+  "name": "大写金额转换",
+  "version": "1.0.2",
+  "revoked": true,
+  "revokedReason": "已合并至内置「计算器」插件与「发票助手」，请改用计算器里的大写金额",
+  "description": "中文数字与阿拉伯数字双向转换，支持银行发票级人民币大写元角分、高精度舍入规则与一键复制，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

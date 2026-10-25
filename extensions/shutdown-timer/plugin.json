@@ -1,0 +1,68 @@
+{
+  "id": "shutdown-timer",
+  "name": "定时关机",
+  "description": "支持按倒计时或指定时间自动关机、重启、睡眠、休眠与锁屏，可随时一键取消计划任务",
+  "version": "1.0.4",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "shell",
+    "child_process"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "keywords": [
+    "定时关机",
+    "倒计时关机",
+    "自动关机",
+    "取消关机",
+    "定时重启",
+    "睡眠",
+    "休眠",
+    "锁屏",
+    "shutdown"
+  ],
+  "features": [
+    {
+      "code": "timer-shutdown",
+      "explain": "设置倒计时或指定时间自动关机",
+      "cmds": [
+        "定时关机",
+        "倒计时关机",
+        "自动关机",
+        "延时关机",
+        "shutdown"
+      ]
+    },
+    {
+      "code": "timer-reboot",
+      "explain": "定时重启、睡眠与立即锁屏",
+      "cmds": [
+        "定时重启",
+        "定时睡眠",
+        "休眠",
+        "锁屏"
+      ]
+    },
+    {
+      "code": "timer-cancel",
+      "explain": "一键取消当前定时关机计划任务",
+      "cmds": [
+        "取消关机",
+        "取消定时关机",
+        "停止关机"
+      ]
+    }
+  ]
+}

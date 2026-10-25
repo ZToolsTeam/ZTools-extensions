@@ -1,0 +1,68 @@
+{
+  "id": "linux-http-dict",
+  "name": "命令与状态码",
+  "version": "1.0.0",
+  "description": "离线Linux高频命令参数实例、HTTP 100~599状态码深度排障指南与常用知名网络端口速查",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "linux-commands",
+      "explain": "查阅 Linux 常用命令的高频实用场景实例（直接复制执行命令）",
+      "cmds": [
+        "linux命令",
+        "linux速查",
+        "tldr",
+        "shell命令",
+        "常用命令",
+        "tar",
+        "find",
+        "awk"
+      ]
+    },
+    {
+      "code": "http-status",
+      "explain": "查阅 HTTP 状态码（100~599）RFC 定义、触发根因与线上排障处置指南",
+      "cmds": [
+        "http状态码",
+        "状态码",
+        "http status",
+        "502排查",
+        "504排查",
+        "403排查"
+      ]
+    },
+    {
+      "code": "port-dict",
+      "explain": "查阅数据库、缓存、网络服务及常用中间件的知名默认端口",
+      "cmds": [
+        "端口速查",
+        "常用端口",
+        "端口号",
+        "port",
+        "3306",
+        "6379",
+        "8080"
+      ]
+    }
+  ]
+}

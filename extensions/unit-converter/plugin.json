@@ -1,0 +1,29 @@
+{
+  "id": "unit-converter",
+  "name": "单位换算",
+  "version": "1.0.1",
+  "revoked": true,
+  "revokedReason": "已合并至内置「计算器」插件与主搜索框内联换算，请改用计算器",
+  "description": "度量衡与物理单位换算，支持长度、面积、体积、质量、速度、温度、角度、数据大小与能量实时互转，纯声明式零CSS架构",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

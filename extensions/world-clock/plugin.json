@@ -1,0 +1,29 @@
+{
+  "id": "world-clock",
+  "name": "世界时钟",
+  "version": "1.0.2",
+  "revoked": true,
+  "revokedReason": "已合并至内置「时间戳转换」插件，请改用时间戳转换里的世界时钟",
+  "description": "全球主流城市实时时间与时区偏移、与本机时区的时差对比，并可按任一城市的指定时间换算各地当地时间",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

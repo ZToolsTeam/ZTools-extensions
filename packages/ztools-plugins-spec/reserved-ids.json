@@ -1,0 +1,33 @@
+{
+  "description": "客户端内置功能占用的插件 ID。社区插件使用这些 ID 时会被客户端隐藏，所以清单校验直接拒绝（已下架的历史条目除外）。",
+  "ids": [
+    "apple-shortcuts",
+    "applications",
+    "clipboard-history",
+    "currency-exchange",
+    "dictionary",
+    "emoji-picker",
+    "everything-search",
+    "github",
+    "google-translate",
+    "homebrew",
+    "navigation",
+    "obsidian",
+    "organizations",
+    "raycast-account",
+    "raycast-core",
+    "raycast-focus",
+    "raycast-settings",
+    "raycast-wrapped",
+    "screenshots",
+    "script-commands",
+    "system",
+    "trial-nudges",
+    "web-searches",
+    "window-management",
+    "windows-run",
+    "windows-shortcuts",
+    "windows-taskbar",
+    "winget"
+  ]
+}
