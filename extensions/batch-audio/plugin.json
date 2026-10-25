@@ -1,8 +1,8 @@
 {
   "id": "batch-audio",
-  "name": "批量音频处理",
-  "description": "支持 MP3/FLAC/WAV/AAC/OGG 批量格式转换、EBU R128 响度均衡、静音裁剪、淡入淡出与多轨合并",
-  "version": "2.0.2",
+  "name": "音频转换",
+  "description": "支持 MP3/FLAC/WAV/AAC 批量格式转换、音量均衡调节、静音片段裁剪与多段音频合并",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

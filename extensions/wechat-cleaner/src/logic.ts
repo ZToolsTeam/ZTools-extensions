@@ -1,6 +1,6 @@
 /**
  * 微信专项深度清理业务逻辑与真实环境契约层 (WechatCleaner Logic - 1:1 完整复刻版)
- * 完整对齐 DLLPlugins/wechat-cleaner/src/wechat_rules.h 的 9 大专项清理分类 (owner 107~115)：
+ * 与 Windows 原生插件规则一致的 9 大专项清理分类 (owner 107~115)：
  * - 穿透扫描 Documents\xwechat_files、WeChat Files、AppData\Roaming\Tencent\xwechat (含多盘符自定义存储目录与符号链接穿透) 与 LocalLow\TENCENT\WeType
  * - 严格保护聊天文字数据库 (MSG*.db / MicroMsg.db / db_storage\*.db)
  * - 支持多微信账号 (wxid) 维度与修改时间范围 (全部/7天前/30天前/半年前) 多维过滤及三级复选框联动
@@ -328,7 +328,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -446,7 +446,7 @@ export function classifyWechatFilePath(
 /**
  * 探测并深度扫描本机真实微信存储路径、微信号账号、9 大专项分类与聊天数据库保护区
  */
-export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<WechatScanSnapshot> {
+export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unknown>): Promise<WechatScanSnapshot> {
   const [documentsDir, appDataDir, homeDir, tempDir, diskRes, mountedDrives] = await Promise.all([
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -786,7 +786,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: any): Promise<Wech
  */
 export async function executeWechatCleanup(
   categoriesOrPaths: WechatCleanCategoryItem[] | string[],
-  hostOverride?: any,
+  hostOverride?: unknown,
   explicitFilePaths?: string[]
 ): Promise<{
   ok: boolean
@@ -823,12 +823,14 @@ export async function executeWechatCleanup(
       }
     }
 
+    let eligibleDirectTargets = 0
     for (const targetPath of directStringPaths) {
       if (FORBIDDEN_TARGET_PATTERN.test(targetPath) || targetPath.toLowerCase().includes('\\db_storage\\')) {
         skippedProtected += 1
         skippedPaths.push(targetPath)
         continue
       }
+      eligibleDirectTargets += 1
       const res = await trashRealItem(targetPath, hostOverride)
       if (res.ok) {
         deletedCount += 1
@@ -837,13 +839,15 @@ export async function executeWechatCleanup(
       }
     }
 
+    const isDirectCleanSuccess = eligibleDirectTargets === 0 || deletedCount > 0 || !isRealElectronHost(hostOverride)
     return {
-      ok: true,
+      ok: isDirectCleanSuccess,
       deletedCount,
       freedBytes,
       skippedProtected,
       deletedPaths,
-      skippedPaths
+      skippedPaths,
+      ...(isDirectCleanSuccess ? {} : { error: '微信缓存清理失败：目标文件无法移入回收站' })
     }
   }
 
@@ -852,6 +856,7 @@ export async function executeWechatCleanup(
     return { ok: true, deletedCount: 0, freedBytes: 0, skippedProtected: 0, deletedPaths: [], skippedPaths: [] }
   }
 
+  let eligibleSampleTargets = 0
   for (const cat of selected) {
     for (const sample of cat.sampleFiles) {
       if (FORBIDDEN_TARGET_PATTERN.test(sample.path) || sample.path.toLowerCase().includes('\\db_storage\\')) {
@@ -859,6 +864,7 @@ export async function executeWechatCleanup(
         skippedPaths.push(sample.path)
         continue
       }
+      eligibleSampleTargets += 1
       const res = await trashRealItem(sample.path, hostOverride)
       if (res.ok) {
         deletedCount += 1
@@ -868,22 +874,24 @@ export async function executeWechatCleanup(
     }
   }
 
+  const isBatchCleanSuccess = eligibleSampleTargets === 0 || deletedCount > 0 || !isRealElectronHost(hostOverride)
   return {
-    ok: true,
+    ok: isBatchCleanSuccess,
     deletedCount,
     freedBytes,
     skippedProtected,
     deletedPaths,
-    skippedPaths
+    skippedPaths,
+    ...(isBatchCleanSuccess ? {} : { error: '微信缓存清理失败：所选分类文件无法移入回收站' })
   }
 }
 
-export async function openWechatDirectory(dirPath: string, hostOverride?: any): Promise<boolean> {
+export async function openWechatDirectory(dirPath: string, hostOverride?: unknown): Promise<boolean> {
   if (!dirPath) return false
   return showRealItemInFolder(dirPath, hostOverride)
 }
 
-export async function openWechatFileDefault(filePath: string, hostOverride?: any): Promise<boolean> {
+export async function openWechatFileDefault(filePath: string, hostOverride?: unknown): Promise<boolean> {
   if (!filePath) return false
   return openRealPath(filePath, hostOverride)
 }

@@ -1,8 +1,8 @@
 {
   "id": "record",
-  "name": "高清屏幕录制与动图工作台",
-  "description": "基于桌面复制 API (DXGI Desktop Duplication) 与硬件编码器的低延迟全屏/区域录屏、系统内录与 GIF 转换工具",
-  "version": "2.0.2",
+  "name": "屏幕录制",
+  "description": "高清全屏、区域与单窗口录屏工具，支持同时录制系统声音与麦克风，可直出 MP4 视频或 GIF 动图",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * 微信多开与运行实例管理中枢 (WechatMulti 2.0 Logic)
  * 真实探测本机微信安装路径与运行中的 WeChat.exe / Weixin.exe / WeChatAppEx.exe 实例，支持拉起真实客户端进程
@@ -91,7 +92,7 @@ const FALLBACK_WECHAT_INSTANCES: WechatInstanceItem[] = [
     role: 'main',
     roleLabel: '微信主进程',
     executablePath: DEFAULT_WECHAT_PATH,
-    dataDir: `${DEFAULT_WECHAT_DATA_DIR}\\wxid_geek_primary`,
+    dataDir: `${DEFAULT_WECHAT_DATA_DIR}\\account_primary`,
     memoryBytes: 428 * 1024 * 1024,
     cpuPercent: 1.4,
     uptimeText: '已运行 04:18:22',
@@ -189,7 +190,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -198,7 +199,7 @@ export async function invokeNativeCapability(
   return invokeDllPluginCapability(DLL_PLUGIN_NAME, method.trim(), params, hostBridge)
 }
 
-function mapProcessToWechatItem(p: any, mainIdxRef: { count: number }, defaultInstallPath: string, dataRootPath: string): WechatInstanceItem {
+function mapProcessToWechatItem(p: DynamicBridge, mainIdxRef: { count: number }, defaultInstallPath: string, dataRootPath: string): WechatInstanceItem {
   const pid = Number(p.pid || 0)
   const rawName = String(p.name || 'WeChat.exe')
   const isMain = p.role === 'main' || /^(?:wechat|weixin)(?:\.exe)?$/i.test(rawName)
@@ -225,7 +226,7 @@ function mapProcessToWechatItem(p: any, mainIdxRef: { count: number }, defaultIn
   }
 }
 
-export async function fetchWechatInstances(hostOverride?: any): Promise<WechatMultiSnapshot> {
+export async function fetchWechatInstances(hostOverride?: DynamicBridge): Promise<WechatMultiSnapshot> {
   const realHost = isRealElectronHost(hostOverride) || Boolean(hostOverride)
   const detected: WechatInstanceItem[] = []
   let installPath = DEFAULT_WECHAT_PATH
@@ -235,7 +236,7 @@ export async function fetchWechatInstances(hostOverride?: any): Promise<WechatMu
 
   if (realHost) {
     // 1. 优先尝试 WeChatMultiPlugin.getStatus
-    const svcRes = await invokePluginService<any>(DLL_PLUGIN_NAME, 'getStatus', {}, hostOverride)
+    const svcRes = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, 'getStatus', {}, hostOverride)
     if (svcRes.ok && svcRes.data) {
       hostResponded = true
       const resolvedInstallPath = svcRes.data.installPath ?? svcRes.data.wechatPath
@@ -260,7 +261,7 @@ export async function fetchWechatInstances(hostOverride?: any): Promise<WechatMu
       }
     } else {
       // 2. 回退使用 process_list 过滤真实进程
-      const procRes = await callHostTransport<Array<any>>('process_list', {}, hostOverride)
+      const procRes = await callHostTransport<Array<DynamicBridge>>('process_list', {}, hostOverride)
       if (procRes.ok && Array.isArray(procRes.data)) {
         hostResponded = true
         const wxProcs = procRes.data.filter((p) =>
@@ -284,7 +285,7 @@ export async function fetchWechatInstances(hostOverride?: any): Promise<WechatMu
     dataDir: dataRootPath
   }
 
-  // 在真实宿主或显式传入 hostOverride 时，严禁混入虚构的 wxid_geek_primary 等假实例
+  // 在真实宿主或显式传入 hostOverride 时，严禁混入虚构的默认假实例
   const items =
     hostResponded || isRealElectronHost(hostOverride)
       ? [launcherAction, ...detected]
@@ -309,15 +310,15 @@ export const fetchWeChatMultiSnapshot = fetchWechatInstances
 
 export async function launchNewWechatInstance(
   countOrExePath: number | string = 1,
-  hostOverride?: any
-): Promise<{ ok: boolean; launchedCount: number; pid?: number; executablePath: string; message: string }> {
+  hostOverride?: DynamicBridge
+): Promise<{ ok: boolean; launchedCount: number; mutexUnlocked?: boolean; pid?: number; executablePath: string; message: string }> {
   const customExePath = typeof countOrExePath === 'string' ? countOrExePath.trim() : ''
   const count = typeof countOrExePath === 'number' ? countOrExePath : 1
   const safeCount = Math.min(5, Math.max(1, Math.floor(count || 1)))
   const targetExe = customExePath || DEFAULT_WECHAT_PATH
 
   if (hostOverride || isRealElectronHost(hostOverride)) {
-    const svcRes = await invokePluginService<any>(
+    const svcRes = await invokePluginService<DynamicBridge>(
       DLL_PLUGIN_NAME,
       'launchInstance',
       { executablePath: customExePath, count: safeCount },
@@ -329,6 +330,7 @@ export async function launchNewWechatInstance(
       return {
         ok: true,
         launchedCount: Number(svcRes.data?.launchedCount ?? safeCount),
+        mutexUnlocked: svcRes.data?.mutexUnlocked !== false,
         ...(pid > 0 ? { pid } : {}),
         executablePath: exePath,
         message: String(svcRes.data?.message || `已启动 ${safeCount} 个新微信客户端实例`)
@@ -343,7 +345,7 @@ export async function launchNewWechatInstance(
       }
     }
 
-    const startRes = await callHostTransport<any>(
+    const startRes = await callHostTransport<DynamicBridge>(
       'process_start',
       { command: targetExe, args: [] },
       hostOverride
@@ -352,10 +354,12 @@ export async function launchNewWechatInstance(
       const pid = Number(startRes.data?.pid || 0)
       return {
         ok: true,
-        launchedCount: safeCount,
+
         ...(pid > 0 ? { pid } : {}),
         executablePath: targetExe,
-        message: `已拉起 ${safeCount} 个新微信客户端实例`
+        launchedCount: 1,
+        mutexUnlocked: false,
+        message: '多开互斥锁未解锁，仅唤起单个微信客户端'
       }
     }
 
@@ -367,9 +371,11 @@ export async function launchNewWechatInstance(
     if (openRes.ok) {
       return {
         ok: true,
-        launchedCount: safeCount,
+
         executablePath: targetExe,
-        message: `已通过系统 Shell 拉起微信客户端实例`
+        launchedCount: 1,
+        mutexUnlocked: false,
+        message: '多开互斥锁未解锁，仅唤起单个微信客户端'
       }
     }
 
@@ -383,17 +389,20 @@ export async function launchNewWechatInstance(
 
   return {
     ok: true,
-    launchedCount: safeCount,
+
     executablePath: targetExe,
+    launchedCount: safeCount,
+    mutexUnlocked: true,
     message: `已突破单实例互斥锁并拉起 ${safeCount} 个新微信客户端实例`
   }
 }
 
 export const launchNewWeChatInstance = launchNewWechatInstance
+export const launchWeChatInstances = launchNewWechatInstance
 
 export async function terminateWechatInstance(
   pid: number,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; message: string }> {
   if (!Number.isInteger(pid) || pid <= 0) {
     return { ok: false, message: '无效的微信进程 PID' }
@@ -412,7 +421,7 @@ export async function terminateWechatInstance(
 
 export async function openWechatInstallLocation(
   filePath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<boolean> {
   return showRealItemInFolder(filePath || DEFAULT_WECHAT_PATH, hostOverride)
 }

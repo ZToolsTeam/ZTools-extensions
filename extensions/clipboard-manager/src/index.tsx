@@ -34,6 +34,7 @@ import {
   toggleClipboardItemPin,
   deleteClipboardItem,
   clearUnpinnedClipboardHistory,
+  restoreClipboardItem,
   pasteSequentialClipboard,
   resetPasteSequence,
   getClipboardPreferences,
@@ -115,6 +116,15 @@ export function getClipboardMarkdown(item: ClipboardItem): string {
   return markdown;
 }
 
+async function handleRestoreClipboardItem(item: ClipboardItem, paste: boolean): Promise<void> {
+  try {
+    await restoreClipboardItem(item, paste);
+    await showToast(Toast.Style.Success, paste ? "已粘贴" : "已复制");
+  } catch (error) {
+    await showToast(Toast.Style.Failure, paste ? "粘贴失败" : "复制失败", error instanceof Error ? error.message : String(error));
+  }
+}
+
 /**
  * 剪贴板条目详情视图
  */
@@ -177,14 +187,14 @@ export function ClipboardDetailView({
       }
       actions={
         <ActionPanel title="条目操作">
-          <Action.Paste
+          <Action
             title="回车粘贴到前台应用 (Paste to Active)"
-            content={item.content}
+            onAction={() => handleRestoreClipboardItem(item, true)}
             icon={Icon.Checkmark}
           />
-          <Action.CopyToClipboard
+          <Action
             title="仅复制到剪贴板"
-            content={item.content}
+            onAction={() => handleRestoreClipboardItem(item, false)}
             icon={Icon.CopyClipboard}
             shortcut={{ modifiers: ["ctrl"], key: "c" }}
           />
@@ -202,7 +212,7 @@ export function ClipboardDetailView({
               icon={Icon.Folder}
               shortcut={{ modifiers: ["ctrl"], key: "o" }}
               onAction={async () => {
-                await showToast(Toast.Style.Success, "定位文件", item.filePaths![0]);
+                await showRealItemInFolder(item.filePaths![0]);
               }}
             />
           ) : null}
@@ -395,19 +405,32 @@ export default function ClipboardHistoryCommand() {
   };
 
   const handleClearUnpinned = async () => {
-    await clearUnpinnedClipboardHistory();
-    const data = await reloadItems();
-    await showToast(Toast.Style.Success, "已清空未置顶历史", `保留了 ${data.filter((i) => i.pinned).length} 条置顶条目`);
+    try {
+      await clearUnpinnedClipboardHistory();
+      const data = await reloadItems();
+      await showToast(Toast.Style.Success, "已清空未置顶历史", `保留了 ${data.filter((i) => i.pinned).length} 条置顶条目`);
+    } catch (error) {
+      await reloadItems();
+      await showToast(Toast.Style.Failure, "清空历史失败", error instanceof Error ? error.message : String(error));
+    }
   };
 
   const handleSyncSystemClipboard = async () => {
-    const res = await syncCurrentSystemClipboard(items);
-    setItems(res.items);
-    await showToast(
-      Toast.Style.Success,
-      res.added ? "已同步当前系统剪贴板" : "系统剪贴板已是最新记录",
-      res.item ? getDisplayTitle(res.item) : "当前系统剪贴板为空"
-    );
+    try {
+      const res = await syncCurrentSystemClipboard(items);
+      setItems(res.items);
+      await showToast(
+        Toast.Style.Success,
+        res.added ? "已同步当前系统剪贴板" : "系统剪贴板已是最新记录",
+        res.item ? getDisplayTitle(res.item) : "当前系统剪贴板为空"
+      );
+    } catch (error) {
+      await showToast(
+        Toast.Style.Failure,
+        "同步系统剪贴板失败",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
   };
 
   const saveFromForm = (original?: ClipboardItem) => async (input: { content: string; pinned: boolean }) => {
@@ -574,15 +597,15 @@ export default function ClipboardHistoryCommand() {
               }
               actions={
                 <ActionPanel title="剪贴板动作">
-                  <Action.Paste
+                  <Action
                     title="回车粘贴到前台应用 (Paste to Active)"
-                    content={item.content}
+                    onAction={() => handleRestoreClipboardItem(item, true)}
                     icon={Icon.Checkmark}
                   />
 
-                  <Action.CopyToClipboard
+                  <Action
                     title="仅复制到剪贴板"
-                    content={item.content}
+                    onAction={() => handleRestoreClipboardItem(item, false)}
                     icon={Icon.CopyClipboard}
                     shortcut={{ modifiers: ["ctrl"], key: "c" }}
                   />

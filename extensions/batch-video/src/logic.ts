@@ -1,6 +1,6 @@
 /**
  * 批量视频转码、裁剪与动图工坊业务逻辑层 (BatchVideo 2.0 Logic)
- * 1:1 复刻 DLLPlugins/batch-video/BatchVideoPlugin/README.md 的 12 大核心视频批处理能力
+ * 通过 Windows 原生插件提供 12 大核心视频批处理能力
  * 真实扫描本机 Videos / Downloads / Desktop 目录下的视频媒体文件，生成工业级 FFmpeg 管线参数
  */
 
@@ -49,7 +49,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\
 export const FORBIDDEN_REASON = '视频批处理输出路径不可指向系统受保护目录或包含路径穿越'
 
 /**
- * 1:1 复刻 DLLPlugins/batch-video/BatchVideoPlugin/README.md 的 12 大视频批处理模式
+ * 通过 Windows 原生插件提供 12 大视频批处理模式
  */
 export const VIDEO_WORKSHOP_MODES: CapabilityActionItem[] = [
   {

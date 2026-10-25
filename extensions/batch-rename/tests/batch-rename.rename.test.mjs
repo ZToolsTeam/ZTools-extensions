@@ -32,7 +32,7 @@ const fail = (code, message) => Object.assign(new Error(message), { code })
 /**
  * 按宿主真实行为搭建 IPC：
  * - filesystem_* / shell_show_item_in_folder 只放行选目录对话框授权过的目录（递归）
- * - filesystem_move_file 只接受 sourcePath / destPath，多余字段 INVALID_REQUEST；目标已存在时直接覆盖（与宿主 fs.rename 一致）
+ * - filesystem_move_file_no_replace 只接受 sourcePath / destPath，多余字段 INVALID_REQUEST；目标已存在时直接覆盖（与宿主 fs.rename 一致）
  */
 async function setupHost(dirs, { dialog = [] } = {}) {
   const host = createHost()
@@ -59,6 +59,7 @@ async function setupHost(dirs, { dialog = [] } = {}) {
     if (!fs.existsSync(target)) throw fail('FILE_NOT_FOUND', '目录不存在')
     return {
       success: true,
+      writeAuthorized: true,
       files: fs.readdirSync(target, { withFileTypes: true }).map((ent) => {
         const st = fs.statSync(path.join(target, ent.name))
         return { name: ent.name, size: ent.isDirectory() ? 0 : st.size, isDirectory: ent.isDirectory(), lastModified: st.mtime.toLocaleString(), attributes: 32 }
@@ -69,13 +70,17 @@ async function setupHost(dirs, { dialog = [] } = {}) {
     requireGrant(target)
     return { success: true, exists: fs.existsSync(target) && fs.statSync(target).isFile() }
   }
-  host.ipc.filesystem_move_file = async (params) => {
+  host.ipc.filesystem_move_file_no_replace = async (params) => {
     const extra = Object.keys(params).filter((k) => k !== 'sourcePath' && k !== 'destPath')
     if (extra.length > 0) throw fail('INVALID_REQUEST', '方法参数包含未知字段')
     requireGrant(params.sourcePath, params.destPath)
     const fault = moveFaults.get(path.basename(params.sourcePath))
     if (fault) throw fault
-    fs.renameSync(params.sourcePath, params.destPath)
+    try { fs.linkSync(params.sourcePath, params.destPath) } catch (error) {
+      if (error.code === 'EEXIST') throw fail('FILE_ALREADY_EXISTS', '目标文件已存在，未覆盖')
+      throw error
+    }
+    fs.unlinkSync(params.sourcePath)
     return { success: true }
   }
   host.ipc.shell_show_item_in_folder = async ({ fullPath }) => {
@@ -93,7 +98,7 @@ async function setupHost(dirs, { dialog = [] } = {}) {
     moveFaults,
     queueDialog: (p) => dialogQueue.push(p),
     revokeGrants: () => grants.splice(0, grants.length),
-    moves: () => host.ipcCalls.filter(([m]) => m === 'filesystem_move_file').map(([, p]) => p)
+    moves: () => host.ipcCalls.filter(([m]) => m === 'filesystem_move_file_no_replace').map(([, p]) => p)
   }
 }
 
@@ -205,14 +210,14 @@ test('改名闭环：执行中授权失效（超时）立即停止并如实报�
   const { root, pictures } = makeDir({ 'a.txt': 'A', 'b.txt': 'B', 'c.txt': 'C' })
   const ctx = await setupHost({ pictures, home: root }, { dialog: [pictures] })
   const view = await openPictures(ctx.host)
-  const realMove = ctx.host.ipc.filesystem_move_file
-  ctx.host.ipc.filesystem_move_file = async (params) => {
+  const realMove = ctx.host.ipc.filesystem_move_file_no_replace
+  ctx.host.ipc.filesystem_move_file_no_replace = async (params) => {
     const res = await realMove(params)
     ctx.revokeGrants() // 第一次成功后授权过期
     return res
   }
   await runAction(view, subItem(view, 'a.txt'), '执行批量重命名')
-  assert.equal(ctx.moves().length, 1)
+  assert.equal(ctx.moves().length, 2) // 第二次调用由宿主拒绝，之后停止
   assert.deepEqual(ls(pictures), ['a_01.txt', 'b.txt', 'c.txt'])
   assert.match(ctx.host.lastToast().title, /已重命名 1\/3 个，2 个失败/)
 
@@ -405,10 +410,11 @@ test('同名冲突：冲突标在会改名的一方且与列表顺序无关；�
   assert.ok(fs.existsSync(path.join(pictures, 'c.txt')))
   assert.match(ctx.host.lastToast().message, /目标文件已存在/)
 
-  // 存在性检查本身失败时拒绝改名
-  ctx.host.ipc.filesystem_file_exists = async () => {
-    throw fail('FILE_ERROR', 'I/O 错误')
+  // 旧宿主没有安全接口时拒绝改名，不回退到可能覆盖目标的旧接口
+  ctx.host.ipc.filesystem_move_file_no_replace = async () => {
+    throw fail('UNKNOWN_METHOD', '请更新客户端')
   }
+  ctx.host.ipc.filesystem_move_file = async () => { throw new Error('不应调用旧移动接口') }
   const res = await logic.executeRealFileRename(path.join(pictures, 'c.txt'), 'e.txt')
   assert.equal(res.ok, false)
   assert.ok(fs.existsSync(path.join(pictures, 'c.txt')))

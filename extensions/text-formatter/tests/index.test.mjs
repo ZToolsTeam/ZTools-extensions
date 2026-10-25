@@ -43,7 +43,7 @@ describe("text-formatter 插件端到端集成测试与健壮性验证", () => {
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     assert.equal(manifest.id, "text-formatter");
-    assert.equal(manifest.name, "文本排版与格式化助手");
+    assert.equal(manifest.name, "文本排版");
     assert.equal(manifest.entry, "dist/index.js");
     assert.equal(manifest.icon, "icon.svg");
     assert.deepEqual(manifest.permissions, ["clipboard"]);

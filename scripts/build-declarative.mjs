@@ -9,7 +9,7 @@
  * - 统一以 ES2022 模块输出（宿主加载器同时兼容 ESM 与 CommonJS，这里固定一种避免各插件 tsconfig 不一致）
  * - .tsx 默认按 React.createElement 输出（插件里 import React from '@ztools/declarative-ui'）
  * - 构建前清空 dist/，避免残留已删除源码的旧产物
- * - shared/ 下的公共源码（hash.ts、native-ipc.ts）以复制方式进入插件，构建前校验副本与源文件一致
+ * - shared/ 下的公共源码（hash.ts、native-ipc.ts、volume-ipc.ts、host-compat.ts）以复制方式进入插件，构建前校验副本与源文件一致
  * - 同一份脚本在内部插件仓库与公开插件仓库（ZTools-extensions，插件位于 extensions/）都能直接运行
  */
 import { execFileSync } from 'node:child_process'
@@ -18,9 +18,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SHARED = ['hash.ts', 'native-ipc.ts']
+const SHARED = ['hash.ts', 'native-ipc.ts', 'volume-ipc.ts', 'host-compat.ts']
 
-// 插件所在目录：内部仓库是根目录本身，公开仓库是 extensions/
+// 插件所在目录：仓库里有 extensions/ 时在 extensions/ 下，否则就是本脚本上一级目录
 const pluginsRoot = fs.existsSync(path.join(root, 'extensions')) ? path.join(root, 'extensions') : root
 const sharedRoot = [path.join(pluginsRoot, 'shared'), path.join(root, 'shared')].find((d) => fs.existsSync(d))
 
@@ -30,7 +30,16 @@ function firstExisting(candidates) {
 
 // 依次在本仓库与上级仓库（内部插件仓库作为子模块时）查找
 const searchRoots = [root, path.resolve(root, '..')]
-const tsc = firstExisting(searchRoots.map((r) => path.join(r, 'node_modules/.bin/tsc')))
+const tscJs = firstExisting(
+  searchRoots.flatMap((r) => [
+    path.join(r, 'node_modules/typescript/bin/tsc'),
+    path.join(r, 'electron-client/node_modules/typescript/bin/tsc'),
+    path.join(r, 'packages/declarative-ui/node_modules/typescript/bin/tsc'),
+    path.join(r, 'frontend/node_modules/typescript/bin/tsc'),
+    path.join(r, 'create-plugin/node_modules/typescript/bin/tsc')
+  ])
+)
+const tsc = tscJs || firstExisting(searchRoots.map((r) => path.join(r, 'node_modules/.bin/tsc')))
 const nodeTypes = firstExisting(
   searchRoots.flatMap((r) => [
     path.join(r, 'node_modules/@types/node'),
@@ -96,19 +105,20 @@ for (const id of ids) {
   const hasTsx = fs.readdirSync(path.join(dir, 'src'), { recursive: true }).some((f) => String(f).endsWith('.tsx'))
   fs.rmSync(path.join(dir, 'dist'), { recursive: true, force: true })
   try {
-    execFileSync(
-      tsc,
-      [
-        '-p', path.join(dir, 'tsconfig.json'),
-        '--module', 'ES2022',
-        '--moduleResolution', 'bundler',
-        ...(hasTsx ? ['--jsx', 'react'] : []),
-        '--typeRoots', path.dirname(nodeTypes),
-        '--types', 'node',
-        '--outDir', path.join(dir, 'dist')
-      ],
-      { stdio: 'inherit' }
-    )
+    const tscArgs = [
+      '-p', path.join(dir, 'tsconfig.json'),
+      '--module', 'ES2022',
+      '--moduleResolution', 'bundler',
+      ...(hasTsx ? ['--jsx', 'react'] : []),
+      '--typeRoots', path.dirname(nodeTypes),
+      '--types', 'node',
+      '--outDir', path.join(dir, 'dist')
+    ]
+    if (tscJs) {
+      execFileSync(process.execPath, [tscJs, ...tscArgs], { stdio: 'inherit' })
+    } else {
+      execFileSync(tsc, tscArgs, { stdio: 'inherit' })
+    }
   } catch {
     console.error(`[${id}] 编译失败`)
     failed++

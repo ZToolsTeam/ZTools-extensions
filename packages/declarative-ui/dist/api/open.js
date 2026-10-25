@@ -4,17 +4,22 @@ import { getDeclarativeBridge } from "./bridge.js";
  */
 export async function open(target) {
     const bridge = getDeclarativeBridge();
-    if (bridge?.openExternal) {
+    if (typeof bridge?.openUrl === "function") {
+        await bridge.openUrl(target);
+        return;
+    }
+    if (typeof bridge?.openExternal === "function") {
         await bridge.openExternal(target);
         return;
     }
-    if (typeof globalThis.window !== "undefined") {
-        const win = globalThis.window;
-        if (win.ztools?.shell?.openExternal) {
+    const globalScope = globalThis;
+    if (typeof globalScope.window !== "undefined") {
+        const win = globalScope.window;
+        if (typeof win.ztools?.shell?.openExternal === "function") {
             await win.ztools.shell.openExternal(target);
             return;
         }
-        if (win.open) {
+        if (typeof win.open === "function") {
             win.open(target, "_blank");
             return;
         }

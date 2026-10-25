@@ -8,11 +8,15 @@ import {
   Toast,
   Clipboard,
   useState,
-  useEffect
+  useEffect,
+  useNavigation
 } from "@ztools/declarative-ui";
 import { parseTimeInput, type ParsedTimeResult } from "./logic.js";
+import WorldClockCommand from "./world-clock.js";
+export { default as tzWorld } from "./world-clock.js";
 
 export default function TimestampCommand() {
+  const { push } = useNavigation();
   const [searchText, setSearchText] = useState<string>("");
   // 留空时展示的“当前时间”与输入内容的相对时间都依赖 now：每秒推进一次，卸载时清理
   const [now, setNow] = useState<number>(() => Date.now());
@@ -45,6 +49,7 @@ export default function TimestampCommand() {
   return List(
     {
       navigationTitle: "时间戳转换助手",
+      actions: ActionPanel({}, [Action({ title: "世界时钟…", icon: Icon.Globe, onAction: () => push(WorldClockCommand) })]),
       searchBarPlaceholder: "输入10/13位时间戳或日期字符串 (留空即实时当前时间)...",
       searchText,
       onSearchTextChange: (text: string) => setSearchText(text)

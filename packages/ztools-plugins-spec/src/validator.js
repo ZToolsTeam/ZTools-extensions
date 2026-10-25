@@ -1,5 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { APP_VERSION_REGEX } from './host-requirements.js'
+
+/** 客户端内置功能占用的插件 ID（见 ../reserved-ids.json）；社区插件用了会被客户端隐藏 */
+export const RESERVED_PLUGIN_IDS = new Set(
+  JSON.parse(fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'reserved-ids.json'), 'utf8')).ids
+)
 
 export const PERMISSIONS = [
   'network',
@@ -24,7 +31,7 @@ export const PERMISSIONS = [
 export const PERMISSION_SET = new Set(PERMISSIONS)
 
 /**
- * 高危敏感权限集合（需触发人工双人审查 Two-Man Rule）
+ * 高危敏感权限集合（需官方人工审核）
  */
 export const HIGH_RISK_PERMISSIONS = new Set([
   'network',
@@ -57,6 +64,12 @@ export const PERMISSION_NODE_MODULE_MAP = {
   v8: 'system',
   vm: 'child_process'
 }
+
+/**
+ * 声明式插件运行时实际提供的 Node 模块（客户端加载器只给这两个精简实现，见 frontend/src/utils/declarativePluginLoader.js）。
+ * 其余 Node 内置模块即使声明了对应权限，运行时也会拒绝加载；读写文件、执行命令请用宿主 API。
+ */
+export const DECLARATIVE_RUNTIME_NODE_MODULES = new Set(['crypto', 'path'])
 
 export const NODE_BUILTIN_MODULES = new Set([
   'assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console',
@@ -152,7 +165,7 @@ function validateTargets(manifest, errors) {
   }
 }
 
-const ID_REGEX = /^[a-z][a-z0-9_-]{1,63}$/
+const ID_REGEX = /^[a-z][a-z0-9-]{1,63}$/
 const SEMVER_REGEX = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 const SAFE_ENTRY_REGEX = /^(?!\/)(?!\\)(?!.*(?:^|[/\\])\.\.(?:[/\\]|$))[a-zA-Z0-9_./-]+\.(?:html|js|mjs)$/
 const SAFE_ICON_REGEX = /^(?!\/)(?!\\)(?!.*(?:^|[/\\])\.\.(?:[/\\]|$))[a-zA-Z0-9_./-]+\.(?:png|svg|jpg|jpeg|webp|ico)$/
@@ -201,12 +214,20 @@ export function validatePluginManifest(manifest, options = {}) {
     }
   }
 
+  // 最低客户端版本（可选；发布脚本还会按插件用到的宿主接口自动提高）
+  if (manifest.minAppVersion !== undefined && (typeof manifest.minAppVersion !== 'string' || !APP_VERSION_REGEX.test(manifest.minAppVersion))) {
+    errors.push(`minAppVersion 格式无效: "${manifest.minAppVersion}"（应为 1.1.8.3 这样的客户端版本号）`)
+  }
+
   // 2. id 校验
   if (manifest.id !== undefined) {
     if (typeof manifest.id !== 'string') {
       errors.push('id 字段必须为字符串')
     } else if (!ID_REGEX.test(manifest.id)) {
-      errors.push(`id 字段格式不符合规范: "${manifest.id}"（必须以小写字母开头，仅允许小写字母、数字、短横线与下划线，长度 2-64）`)
+      errors.push(`id 字段格式不符合规范: "${manifest.id}"（必须以小写字母开头，仅允许小写字母、数字与短横线，长度 2-64）`)
+    } else if (RESERVED_PLUGIN_IDS.has(manifest.id) && manifest.revoked !== true) {
+      // 已下架的历史条目只保留下架记录，不受影响
+      errors.push(`id "${manifest.id}" 与客户端内置功能重名，客户端会隐藏这个插件，请换一个 ID（完整名单见 reserved-ids.json）`)
     }
   }
 
@@ -325,7 +346,8 @@ export function validatePluginManifest(manifest, options = {}) {
   }
 
   // 11. mode 与 alias 校验 (如存在)
-  const VALID_MODES = new Set(['view', 'no-view', 'menu-bar'])
+  // 客户端只实现了 view 与 no-view 两种模式
+  const VALID_MODES = new Set(['view', 'no-view'])
   if (manifest.mode !== undefined) {
     if (typeof manifest.mode !== 'string' || !VALID_MODES.has(manifest.mode)) {
       errors.push(`mode 必须为以下取值之一: ${[...VALID_MODES].join(', ')}`)
@@ -423,6 +445,9 @@ export function validateCatalogPluginItem(item) {
     if (typeof item.size !== 'number' || item.size <= 0 || !Number.isSafeInteger(item.size)) {
       errors.push(`size 必须为正整数字节大小: "${item.size}"`)
     }
+  }
+  if (item.minAppVersion !== undefined && (typeof item.minAppVersion !== 'string' || !APP_VERSION_REGEX.test(item.minAppVersion))) {
+    errors.push(`minAppVersion 格式无效: "${item.minAppVersion}"`)
   }
   if (item.revoked !== undefined && typeof item.revoked !== 'boolean') {
     errors.push('revoked 字段必须为布尔值')

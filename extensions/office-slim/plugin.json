@@ -1,0 +1,68 @@
+{
+  "id": "office-slim",
+  "name": "办公文档瘦身",
+  "version": "1.0.1",
+  "description": "本地离线对 Word、PPT、Excel 文档深度瘦身，内嵌图片无损重压缩，一键擦除作者与修订批注隐私，提取全部原图",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公工具",
+    "效率工具"
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "dialog"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "office-slim-workbench",
+      "explain": "打开办公文档瘦身工作台，拖入或选择 Office 文档进行深度压缩与隐私清理",
+      "cmds": [
+        "文档瘦身",
+        "ppt压缩",
+        "word压缩",
+        "excel压缩",
+        "压缩文档",
+        "office slim"
+      ]
+    },
+    {
+      "code": "office-extract-images",
+      "explain": "直接提取 Word / PPT / Excel 内嵌的全部原始图片并另存到文件夹",
+      "cmds": [
+        "提取ppt图片",
+        "导出word图片",
+        "提取文档图片",
+        "extract doc images"
+      ]
+    },
+    {
+      "code": "office-clean-metadata",
+      "explain": "一键擦除 Office 文档中的作者信息、修改批注与历史编辑痕迹",
+      "cmds": [
+        "清除文档隐私",
+        "擦除作者信息",
+        "删除批注痕迹",
+        "clean office metadata"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

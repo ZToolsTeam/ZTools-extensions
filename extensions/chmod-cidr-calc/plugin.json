@@ -1,0 +1,42 @@
+{
+  "id": "chmod-cidr-calc",
+  "name": "网段与权限计算",
+  "version": "1.0.1",
+  "description": "IPv4 CIDR 子网掩码/可用地址池/32 位二进制掩码计算与 Linux chmod 八进制/符号权限位双向推演工具",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "chmod-cidr-calc",
+      "explain": "计算 IPv4 CIDR 子网掩码范围或双向转换 Linux chmod 权限",
+      "cmds": [
+        "chmod",
+        "cidr",
+        "subnet",
+        "ipcalc",
+        "netmask",
+        "子网计算",
+        "权限计算"
+      ]
+    }
+  ]
+}

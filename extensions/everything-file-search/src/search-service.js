@@ -51,13 +51,13 @@ export const SAMPLE_FILES = [
         pinyin: "ztools architecture"
     },
     {
-        name: "raycast-windows-deep-reverse-analysis.md",
-        path: "E:\\csdwork3\\git\\ZTools\\docs\\raycast-windows-deep-reverse-analysis.md",
+        name: "launcher-design-notes.md",
+        path: "C:\\Users\\Demo\\Projects\\ZTools\\docs\\launcher-design-notes.md",
         isDir: false,
         size: 25451,
         mtime: Date.now() - 3600000 * 5,
-        acronym: "rwdra",
-        pinyin: "raycast windows"
+        acronym: "ldn",
+        pinyin: "launcher design notes"
     },
     {
         name: "Development-Plan-2026.pdf",
@@ -70,7 +70,7 @@ export const SAMPLE_FILES = [
     },
     {
         name: "ztools-indexer.exe",
-        path: "E:\\csdwork3\\git\\ZTools\\electron-client\\out\\native\\win32-x64\\bin\\ztools-indexer.exe",
+        path: "C:\\Users\\Demo\\Projects\\ZTools\\electron-client\\out\\native\\win32-x64\\bin\\ztools-indexer.exe",
         isDir: false,
         size: 891240,
         mtime: Date.now() - 3600000 * 18,
@@ -97,7 +97,7 @@ export const SAMPLE_FILES = [
     },
     {
         name: "indexer.rs",
-        path: "E:\\csdwork3\\git\\ZTools\\electron-client\\native\\indexer\\src\\main.rs",
+        path: "C:\\Users\\Demo\\Projects\\ZTools\\electron-client\\native\\indexer\\src\\main.rs",
         isDir: false,
         size: 14208,
         mtime: Date.now() - 3600000 * 3,
@@ -106,7 +106,7 @@ export const SAMPLE_FILES = [
     },
     {
         name: "architecture-diagram.png",
-        path: "E:\\csdwork3\\git\\ZTools\\docs\\images\\architecture-diagram.png",
+        path: "C:\\Users\\Demo\\Projects\\ZTools\\docs\\images\\architecture-diagram.png",
         isDir: false,
         size: 382910,
         mtime: Date.now() - 3600000 * 8,

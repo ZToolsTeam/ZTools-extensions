@@ -15,8 +15,12 @@ export class HostError extends Error {
   }
 }
 
-export async function callHost<T = any>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-  const methods = (globalThis as any).window?.__ztoolsElectron?.transport?.methods ?? (globalThis as any).__ztoolsElectron?.transport?.methods;
+type HostMethod = (request: { messageId: string; params: Record<string, unknown> }) => Promise<{ success: boolean; data?: unknown; error?: { code?: string; message?: string } }>;
+interface HostRoot { __ztoolsElectron?: { transport?: { methods?: Record<string, HostMethod> } }; window?: HostRoot }
+
+export async function callHost<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  const root = globalThis as unknown as HostRoot;
+  const methods = root.window?.__ztoolsElectron?.transport?.methods ?? root.__ztoolsElectron?.transport?.methods;
   const fn = methods?.[method];
   if (typeof fn !== "function") throw new HostError("HOST_UNAVAILABLE", `当前环境不支持 ${method}`);
   seq = (seq + 1) % 1_000_000;
@@ -28,6 +32,16 @@ export async function callHost<T = any>(method: string, params: Record<string, u
 
 /** 单张图片读取上限：宿主 IPC 单次最多 16 MiB，Base64 会膨胀到 4/3，这里留出余量 */
 export const MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
+
+/** 保存转换后的文本；文件选择器授予当前会话写入权限，取消不创建文件。 */
+export async function saveEncodedText(content: string, defaultName: string): Promise<string | null> {
+  const picked = await callHost<{ canceled: boolean; filePath?: string }>("window_show_save_dialog", {
+    title: "保存 Base64 转换结果", defaultName, filters: "文本文件|txt"
+  });
+  if (!picked || picked.canceled || !picked.filePath) return null;
+  await callHost("filesystem_write_file", { path: picked.filePath, content, encoding: "utf8" });
+  return picked.filePath;
+}
 
 const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 const IMAGE_FILTER = `图片|${IMAGE_EXTENSIONS.join(";")}`;
@@ -51,7 +65,7 @@ export function hasImageExtension(filePath: string): boolean {
 /** 读取一个图片文件的原始字节（Base64），先检查大小，避免把超大文件整段读进内存 */
 async function readImageFile(filePath: string): Promise<LoadedImage> {
   const size = await callHost<{ size?: number } | number>("filesystem_get_file_size", { path: filePath });
-  const bytes = typeof size === "number" ? size : Number((size as any)?.size ?? 0);
+  const bytes = typeof size === "number" ? size : Number(size?.size ?? 0);
   if (bytes > MAX_IMAGE_FILE_BYTES) {
     throw new HostError("FILE_TOO_LARGE", `图片超过 10 MB（${formatMb(bytes)}），请先压缩`);
   }
@@ -98,7 +112,7 @@ export async function readClipboardImageFile(): Promise<LoadedImage | null> {
  * 读取剪贴板里的图片（截图、复制的图片）；剪贴板没有图片时返回 null
  */
 export async function readClipboardImage(): Promise<LoadedImage | null> {
-  const res = await callHost<any>("clipboard_read_image", {});
+  const res = await callHost<{ useTempFile?: boolean; tempFile?: string; size?: number; image?: string }>("clipboard_read_image", {});
   if (res?.useTempFile && typeof res.tempFile === "string") {
     const bytes = Number(res.size);
     if (bytes > MAX_IMAGE_FILE_BYTES) {

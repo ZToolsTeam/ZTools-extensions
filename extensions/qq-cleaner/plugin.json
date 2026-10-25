@@ -1,8 +1,8 @@
 {
   "id": "qq-cleaner",
-  "name": "QQ 专项深度清理",
-  "description": "智能识别腾讯 QQ / NTQQ 本地账号目录，安全清理群聊图片缓存、过期视频、表情包碎片与升级包残留",
-  "version": "2.0.2",
+  "name": "QQ 清理",
+  "description": "专清电脑端 QQ 群聊图片缓存、过期视频与接收文件残留，释放空间且不误删重要聊天记录",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

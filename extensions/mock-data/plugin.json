@@ -1,0 +1,52 @@
+{
+  "id": "mock-data",
+  "name": "测试数据生成",
+  "version": "1.0.0",
+  "description": "一键生成符合国家校验位算法的虚拟测试用18位身份证号、手机号、统一社会信用代码、银行卡号及批量JSON测试数据",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "mock-quick",
+      "explain": "秒级生成并复制常用的单项虚拟合规测试数据（身份证/手机/税号/银行卡/姓名）",
+      "cmds": [
+        "测试数据",
+        "mock数据",
+        "生成身份证",
+        "生成手机号",
+        "生成税号",
+        "生成银行卡",
+        "假数据"
+      ]
+    },
+    {
+      "code": "mock-batch-json",
+      "explain": "一键生成结构化多条模拟用户列表 JSON 数组（适合前端表格与接口 Mock）",
+      "cmds": [
+        "mock json",
+        "生成用户json",
+        "测试数据数组",
+        "批量mock"
+      ]
+    }
+  ]
+}

@@ -198,7 +198,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -214,7 +214,13 @@ const HOST_CHECK_ID_MAP: Record<string, string> = {
   'system-proxy': 'clear-proxy'
 }
 
-export async function runNetworkDiagnostics(hostOverride?: any): Promise<NetworkDiagnosticSnapshot> {
+interface RemoteDiagnosticPayload {
+  latencyMs?: number
+  items?: Array<Record<string, unknown>>
+  checks?: Array<Record<string, unknown>>
+}
+
+export async function runNetworkDiagnostics(hostOverride?: unknown): Promise<NetworkDiagnosticSnapshot> {
   const realHost = isRealElectronHost(hostOverride) || Boolean(hostOverride)
   const items: NetworkRescueItem[] = NETWORK_RESCUE_ITEMS.map((item) => {
     if (isRealElectronHost(hostOverride)) {
@@ -229,13 +235,13 @@ export async function runNetworkDiagnostics(hostOverride?: any): Promise<Network
     return { ...item }
   })
 
-  let latencyMs = 14
+  let latencyMs = isRealElectronHost(hostOverride) ? 0 : 14
 
   if (realHost) {
-    const pluginRes = await invokePluginService<any>(DLL_PLUGIN_NAME, 'diagnose', {}, hostOverride)
+    const pluginRes = await invokePluginService<RemoteDiagnosticPayload>(DLL_PLUGIN_NAME, 'diagnose', {}, hostOverride)
     const diagData = pluginRes.ok && pluginRes.data
       ? pluginRes.data
-      : (await callHostTransport<any>('network_run_diagnostics', {}, hostOverride)).data
+      : (await callHostTransport<RemoteDiagnosticPayload>('network_run_diagnostics', {}, hostOverride)).data
 
     if (diagData) {
       if (typeof diagData.latencyMs === 'number' && diagData.latencyMs >= 0) {
@@ -289,7 +295,7 @@ export const fetchNetworkDiagnostics = runNetworkDiagnostics
 
 export async function executeNetworkRepair(
   itemId: string,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<NetworkRepairResult> {
   const normalizedId = typeof itemId === 'string' ? itemId.trim() : ''
   const mappedId = HOST_CHECK_ID_MAP[normalizedId] || normalizedId
@@ -304,7 +310,7 @@ export async function executeNetworkRepair(
   }
 
   if (hostOverride || isRealElectronHost(hostOverride)) {
-    const pluginRes = await invokePluginService<any>(
+    const pluginRes = await invokePluginService<{ ok?: boolean; message?: string; error?: string }>(
       DLL_PLUGIN_NAME,
       'repair',
       { checkId: target.id, itemId: target.id, command: target.command },
@@ -362,7 +368,7 @@ export async function executeNetworkRepair(
 
 export async function batchExecuteNetworkRepairs(
   itemIds?: string[],
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; repairedCount: number; failedCount?: number; summary: string }> {
   const targets =
     Array.isArray(itemIds) && itemIds.length > 0

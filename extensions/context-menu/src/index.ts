@@ -19,12 +19,17 @@ import {
   filterContextMenuEntries
 } from './logic.js'
 
+import { isRealElectronHost } from './native-ipc.js'
 export * from './logic.js'
 
 export function ContextMenuCommand() {
   const [searchText, setSearchText] = useState('')
   const [filterMode, setFilterMode] = useState<ContextMenuFilterMode>('all')
-  const [entries, setEntries] = useState<ContextMenuEntry[]>(DEFAULT_CONTEXT_MENU_ENTRIES)
+  const [entries, setEntries] = useState<ContextMenuEntry[]>(() =>
+    isRealElectronHost()
+      ? []
+      : DEFAULT_CONTEXT_MENU_ENTRIES
+  )
   const [win11Classic, setWin11Classic] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
 

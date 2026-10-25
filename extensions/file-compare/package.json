@@ -1,6 +1,6 @@
 {
   "name": "file-compare",
-  "version": "1.0.0",
+  "version": "2.0.4",
   "description": "纯声明式文本与代码差异对比工具，支持行级与词级diff、智能空白处理及报告导出",
   "type": "module",
   "main": "dist/index.js",

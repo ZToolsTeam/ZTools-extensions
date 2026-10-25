@@ -149,3 +149,42 @@ test('[todo-1][故障注入] 部分匹配时添加遇到写入失败：已有待
   assert.deepEqual(view.items().map((i) => i.props.id), ['quick-add', 'a'], '失败后输入保留，可重试')
   assert.equal(view.item('a').props.accessories[0].text, '待处理')
 })
+
+test('[回归] 读取失败后禁止添加，恢复读取后保留原待办', async () => {
+  const previous = [createTodo('不能丢失的待办')]
+  seed(previous)
+  host.faults.storageRead = new Error('暂时无法读取')
+  const view = await mount(TodoCommand)
+  await view.search('新待办')
+  assert.equal(view.items().some(i => i.props.id === 'quick-add'), false)
+  await view.run(null, '新建待办事项')
+  assert.equal(host.pushed.length, 0)
+  assert.deepEqual(saved(), previous)
+  host.faults.storageRead = null
+  await view.run(null, '重新读取待办')
+  await tick()
+  await view.run(view.item('quick-add'), '添加待办')
+  assert.deepEqual(saved().map(i => i.title).sort(), ['不能丢失的待办', '新待办'].sort())
+  view.unmount()
+})
+
+test('[回归] 两个窗口同时添加，冲突后重读合并而非覆盖快照', async () => {
+  seed([createTodo('原有待办')])
+  const a = await mount(TodoCommand)
+  const b = await mount(TodoCommand)
+  await a.search('窗口 A')
+  await b.search('窗口 B')
+  await Promise.all([a.run(a.item('quick-add'), '添加待办'), b.run(b.item('quick-add'), '添加待办')])
+  assert.deepEqual(saved().map(i => i.title).sort(), ['原有待办', '窗口 A', '窗口 B'].sort())
+  a.unmount(); b.unmount()
+})
+
+test('[回归] 旧窗口执行标为完成按明确意图更新，不反转其他窗口已完成的状态', async () => {
+  const item = createTodo('同一个任务')
+  seed([item])
+  const a = await mount(TodoCommand), b = await mount(TodoCommand)
+  await a.run(a.item(item.id), '标为已完成')
+  await b.run(b.item(item.id), '标为已完成')
+  assert.equal(saved()[0].completed, true)
+  a.unmount(); b.unmount()
+})

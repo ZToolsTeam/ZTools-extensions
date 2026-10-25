@@ -482,11 +482,10 @@ test('[calendar-11] 删除不再占用 ⌘X，改为 ⌘⇧⌫，且必须确认
   assert.ok(!view.items().some((i) => i.props.id === 'a'))
   assert.equal(host.lastToast().title, '已删除日程: 周会')
 
-  // 顶栏「删除选中日程」同样要确认
-  host.setConfirm(false)
-  await view.tree().props.filterBar.actions.find((a) => a.id === 'delete-selected-event').onAction()
-  await settle()
-  assert.equal(db.length, 1)
+  // 全局栏仅新建和导出，删除只属于列表行，空选择也不留下无效删除按钮。
+  assert.deepEqual(view.tree().props.filterBar.actions.map(a => a.id), ['create-calendar-event', 'export-all-ics'])
+  assert.equal(view.tree().props.filterBar.groups, undefined)
+  assert.ok(view.actions(view.items()[0]).some(a => a.props.title === '删除此日程...'))
   view.unmount()
 })
 

@@ -17,6 +17,7 @@ async function settle() {
 
 /** 与 macOS 真机宿主返回结构一致（get_system_info 没有 osBuild，只有 kernelRelease） */
 function installMacHost(host) {
+  host.ipc.system_list_volumes = async () => ({ volumes: [{ path: '/', label: 'Macintosh HD', fileSystem: 'APFS', totalBytes: 500 * 1024 ** 3, usedBytes: 100 * 1024 ** 3, availableBytes: 400 * 1024 ** 3, capacityGroup: 'disk3' }], partial: false, errors: [] })
   host.ipc.system_get_hardware_summary = async () => ({ platform: 'macos', osVersion: '26.5.1', cpuModels: ['Apple M1 Pro'], logicalCpuCount: 8, totalMemory: 16 * GB })
   host.ipc.get_system_info = async () => ({ success: true, platform: 'macos', osName: 'macOS', osVersion: '26.5.1', kernelRelease: '25.5.0', osArch: 'arm64' })
   host.ipc.system_get_cpu_usage = async () => ({ total: 12.4, perCore: [] })
@@ -155,6 +156,7 @@ test('CPU 负载 0% 与超过 100% 的边界：0 是真实值照常显示，超�
     system_get_memory_usage: async () => ({ total: 8 * GB, used: 0, available: 8 * GB, percent: 0 }),
     system_get_battery_status: async () => ({ percent: 50, isCharging: false }),
     screen_get_all_displays: async () => [],
+    system_list_volumes: async () => ({ volumes: [{ path: '/', label: 'Macintosh HD', fileSystem: 'APFS', totalBytes: 500 * 1024 ** 3, usedBytes: 100 * 1024 ** 3, availableBytes: 400 * 1024 ** 3, capacityGroup: 'disk3' }], partial: false, errors: [] }),
     system_get_disk_usage: async ({ drive }) => (drive === '/' ? { total: 100 * GB, used: 10 * GB, available: 90 * GB, percent: 10 } : { success: false })
   }
   const idle = await fetchHardwareTelemetrySnapshot({ ...base, system_get_cpu_usage: async () => ({ total: 0 }) })
@@ -280,7 +282,7 @@ const UNIMPLEMENTED = /温度|传感器|显卡|GPU|主板|SPD|SMART|HardwareInfo
 
 test('plugin.json / README 只描述实际提供的能力', () => {
   const manifest = JSON.parse(readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
-  assert.equal(manifest.name, '电脑硬件信息')
+  assert.equal(manifest.name, '硬件信息')
   assert.doesNotMatch(manifest.name + manifest.description, UNIMPLEMENTED)
   assert.match(manifest.description, /CPU/)
   assert.match(manifest.description, /内存/)

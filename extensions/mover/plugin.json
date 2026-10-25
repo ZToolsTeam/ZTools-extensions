@@ -1,8 +1,8 @@
 {
   "id": "mover",
-  "name": "C盘大文件无损搬家",
-  "description": "扫描 C 盘 AppData、ProgramData、文档与下载目录中的超大应用数据，通过 NTFS 符号链接 (Junction) 无损迁移至其他分区",
-  "version": "2.0.2",
+  "name": "C盘搬家",
+  "description": "将微信、QQ 及大型软件存放在 C 盘的膨胀数据无损迁移到 D 盘等其他分区，彻底拯救 C 盘空间红线",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

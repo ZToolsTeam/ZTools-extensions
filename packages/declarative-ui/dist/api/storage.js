@@ -1,6 +1,18 @@
 import { getDeclarativeBridge } from "./bridge.js";
+import { ZToolsHostError } from "./host-error.js";
+import { updateStoredItem } from "./storage-update.js";
 const memoryStorage = new Map();
 export const LocalStorage = {
+    async compareAndSet(key, expected, value) {
+        const bridge = getDeclarativeBridge();
+        if (!bridge?.storageCompareAndSet) {
+            throw new ZToolsHostError("HOST_FEATURE_UNAVAILABLE", "当前宿主不支持原子存储，请升级 ZTools");
+        }
+        return bridge.storageCompareAndSet(key, expected, value);
+    },
+    async updateItem(key, update) {
+        return updateStoredItem(LocalStorage, key, update);
+    },
     /**
      * 获取存储项
      */
@@ -16,8 +28,8 @@ export const LocalStorage = {
                     return undefined;
                 return JSON.parse(raw);
             }
-            catch {
-                // fallback to memory
+            catch (err) {
+                console.warn("[LocalStorage] localStorage.getItem 失败，回退内存存储:", err);
             }
         }
         const val = memoryStorage.get(key);
@@ -26,7 +38,8 @@ export const LocalStorage = {
         try {
             return JSON.parse(val);
         }
-        catch {
+        catch (err) {
+            console.warn("[LocalStorage] JSON.parse 失败，返回原始值:", err);
             return val;
         }
     },
@@ -46,8 +59,8 @@ export const LocalStorage = {
                 memoryStorage.set(key, str);
                 return;
             }
-            catch {
-                // fallback to memory
+            catch (err) {
+                console.warn("[LocalStorage] localStorage.setItem 失败，回退内存存储:", err);
             }
         }
         memoryStorage.set(key, str);
@@ -65,8 +78,8 @@ export const LocalStorage = {
             try {
                 localStorage.removeItem(`raycast_${key}`);
             }
-            catch {
-                // ignore
+            catch (err) {
+                console.warn("[LocalStorage] localStorage.removeItem 失败:", err);
             }
         }
         memoryStorage.delete(key);
@@ -93,8 +106,8 @@ export const LocalStorage = {
                     localStorage.removeItem(k);
                 }
             }
-            catch {
-                // ignore
+            catch (err) {
+                console.warn("[LocalStorage] localStorage.clear 失败:", err);
             }
         }
         memoryStorage.clear();
@@ -119,7 +132,8 @@ export const LocalStorage = {
                             try {
                                 result[actualKey] = JSON.parse(raw);
                             }
-                            catch {
+                            catch (err) {
+                                console.warn("[LocalStorage] JSON.parse 失败，返回原始值:", err);
                                 result[actualKey] = raw;
                             }
                         }
@@ -127,15 +141,16 @@ export const LocalStorage = {
                 }
                 return result;
             }
-            catch {
-                // fallback
+            catch (err) {
+                console.warn("[LocalStorage] 读取 localStorage 全量项失败，回退内存存储:", err);
             }
         }
         for (const [k, v] of memoryStorage.entries()) {
             try {
                 result[k] = JSON.parse(v);
             }
-            catch {
+            catch (err) {
+                console.warn("[LocalStorage] 内存存储项 JSON.parse 失败，返回原始值:", err);
                 result[k] = v;
             }
         }

@@ -1,8 +1,8 @@
 {
   "id": "lan-share",
-  "name": "局域网极速文件共享",
-  "description": "一键在本地局域网开启高性能 HTTP 文件/目录传输服务，支持手机扫码直连下载与双向快传",
-  "version": "2.0.2",
+  "name": "局域网传文件",
+  "description": "电脑与手机同一 Wi-Fi 下免数据线互传文件，支持手机扫码直接下载电脑文件或上传照片到电脑",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

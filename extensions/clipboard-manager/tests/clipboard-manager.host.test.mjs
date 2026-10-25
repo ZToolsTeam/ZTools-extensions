@@ -1,6 +1,7 @@
 // 本插件现行代码的宿主集成测试（从 packages/declarative-ui/tests/real-layout1-plugins.test.mjs 按插件拆出，导入改为本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { createHost } from '../../shared/test-harness.mjs'
 import {
   getClipboardHistory,
   syncCurrentSystemClipboard,
@@ -38,6 +39,7 @@ async function withSimulatedRealElectronWindow(methodsMap, fn) {
 }
 
 test('P11 clipboard-history: 真实 SQLite 查询、系统剪贴板同步与空参数/敏感凭据防御测试', async () => {
+  createHost()
   const mockHost = {
     clipboard_history_query: async () => ({
       items: [

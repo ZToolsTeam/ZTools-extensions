@@ -1,6 +1,6 @@
 {
   "name": "crypto-tool",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "description": "散列与对称加解密：MD5、SHA1、SHA256、SHA512、Base64 编解码、AES 加解密，实时计算多哈希对比",
   "type": "module",
   "main": "dist/index.js",

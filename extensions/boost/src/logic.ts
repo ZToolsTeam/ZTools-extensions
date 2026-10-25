@@ -1,6 +1,6 @@
 /**
  * 系统极速加速、大内存进程治理与开机启动项管理 (Boost 2.0 Logic)
- * 1:1 复刻 DLLPlugins/boost (BoostPlugin.h & 启动项管理_技术设计文档.md)
+ * 通过 Windows 原生插件提供启动项管理能力
  * 真实采集物理内存工作集、CPU 负载、高占用后台进程、Windows 开机启动项与 %TEMP% 热点缓存
  */
 
@@ -182,7 +182,7 @@ export async function invokeNativeCapability(
  */
 async function scanRealStartupItems(
   allProcs: Array<{ pid: number; name: string; path: string; cpuUsage: number; memoryUsage: number }>,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<BoostCandidateItem[]> {
   const items: BoostCandidateItem[] = []
 
@@ -251,7 +251,7 @@ async function scanRealStartupItems(
 /**
  * 采集本机真实内存工作集、CPU 负载、开机启动项与可优化高占用候选列表
  */
-export async function fetchBoostSnapshot(hostOverride?: any): Promise<BoostSnapshot> {
+export async function fetchBoostSnapshot(hostOverride?: unknown): Promise<BoostSnapshot> {
   const [hwRes, memRes, cpuRes, procsRes, tempDir] = await Promise.all([
     callHostTransport<{ totalMemory?: number }>('system_get_hardware_summary', {}, hostOverride),
     callHostTransport<{ total: number; used: number; available?: number; free?: number; percent?: number; usagePercent?: number }>(
@@ -276,6 +276,8 @@ export async function fetchBoostSnapshot(hostOverride?: any): Promise<BoostSnaps
       ? memRes.data.total
       : hwRes.ok && hwRes.data?.totalMemory
       ? hwRes.data.totalMemory
+      : isRealElectronHost(hostOverride)
+      ? 0
       : 16 * 1024 * 1024 * 1024
 
   const usedMemoryBytes =
@@ -386,13 +388,13 @@ export async function fetchBoostSnapshot(hostOverride?: any): Promise<BoostSnaps
 export async function terminateBoostProcess(
   pid: number,
   name: string,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; error?: string }> {
   const baseName = name.replace(/\.exe$/i, '').replace(/^\[自启常驻\]\s*/i, '')
   if (pid <= 4 || FORBIDDEN_TARGET_PATTERN.test(name) || FORBIDDEN_TARGET_PATTERN.test(baseName)) {
     return { ok: false, error: FORBIDDEN_REASON }
   }
-  const dllRes = await callHostTransport<any>(
+  const dllRes = await callHostTransport<Record<string, unknown>>(
     'dllplugin_call',
     {
       plugin: 'ProcessMonitorPlugin',
@@ -401,7 +403,7 @@ export async function terminateBoostProcess(
     },
     hostOverride
   )
-  if (dllRes.ok && dllRes.data && (dllRes.data as any).error === undefined && (dllRes.data as any).success !== false) {
+  if (dllRes.ok && dllRes.data && dllRes.data.error === undefined && dllRes.data.success !== false) {
     return { ok: true }
   }
   const res = await callHostTransport('process_kill', { pid, force: true }, hostOverride)
@@ -410,7 +412,7 @@ export async function terminateBoostProcess(
 
 export async function executeQuickBoostCleanup(
   candidates: BoostCandidateItem[],
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; cleanedCount: number; freedBytes: number }> {
   const tempItems = candidates.filter(c => c.type === 'temp_cache' && !c.isProtected)
   let cleanedCount = 0
@@ -424,10 +426,11 @@ export async function executeQuickBoostCleanup(
     }
   }
 
-  return { ok: true, cleanedCount, freedBytes }
+  const ok = tempItems.length === 0 || cleanedCount > 0 || !isRealElectronHost(hostOverride)
+  return { ok, cleanedCount, freedBytes }
 }
 
-export async function openBoostItemLocation(path: string, hostOverride?: any): Promise<boolean> {
+export async function openBoostItemLocation(path: string, hostOverride?: unknown): Promise<boolean> {
   if (!path) return false
   return showRealItemInFolder(path, hostOverride)
 }

@@ -1,6 +1,6 @@
 {
   "name": "qr-code",
-  "version": "1.0.0",
+  "version": "2.1.2",
   "description": "离线极速二维码生成器，支持自定义纠错等级、SVG/DataURL 导出与历史记录",
   "type": "module",
   "main": "dist/index.js",

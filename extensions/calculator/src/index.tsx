@@ -10,7 +10,11 @@ import {
   Toast,
   Clipboard
 } from "@ztools/declarative-ui";
-import { useState, useEffect, useMemo } from "@ztools/declarative-ui";
+import { useState, useEffect, useMemo, useNavigation } from "@ztools/declarative-ui";
+import RmbCommand from "./rmb.js";
+import CurrencyCommand from "./currency.js";
+export { default as calcRmb } from "./rmb.js";
+export { default as calcCurrency } from "./currency.js";
 import {
   evaluateCalculatorQuery,
   evaluateMathExpression,
@@ -76,6 +80,7 @@ const isHistoryItem = (v: unknown): v is CalculatorHistoryItem => {
 const isHistory = (v: unknown): v is CalculatorHistoryItem[] => Array.isArray(v) && v.every(isHistoryItem);
 
 export default function CalculatorCommand() {
+  const { push } = useNavigation();
   // 当前算式与历史随独立窗口带走：新窗口首帧就能显示，不闪空列表
   const [searchText, setSearchText] = usePopoutValue("searchText", () => "", isText);
   // 填入输入框后要选中的结果行 id（受控 selectedItemId）；用户自己输入或移动选中项后清空
@@ -110,8 +115,8 @@ export default function CalculatorCommand() {
     try {
       setHistory(await task());
       return true;
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "历史记录保存失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "历史记录保存失败", err instanceof Error ? err.message : String(err));
       return false;
     }
   };
@@ -163,6 +168,7 @@ export default function CalculatorCommand() {
 
   return (
     <List
+      actions={ActionPanel({}, [Action({ title: "人民币大写…", icon: Icon.Text, onAction: () => push(RmbCommand) }), Action({ title: "汇率换算…", icon: Icon.Globe, onAction: () => push(CurrencyCommand) })])}
       searchBarPlaceholder="输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"
       searchText={searchText}
       onSearchTextChange={handleSearchTextChange}

@@ -29,6 +29,8 @@ import {
   PickedColorResult
 } from "./converter.js";
 
+import { isRealElectronHost } from "./native-ipc.js";
+
 export * from "./converter.js";
 export { convertColor };
 
@@ -170,8 +172,9 @@ export function ColorPickerCommand() {
   const [magnifierZoom, setMagnifierZoom] = useState<"8x" | "16x">("8x");
   const [paletteGroup, setPaletteGroup] = useState<"all" | "recent" | "neutral" | "brand">("all");
   const [includeHashPrefix, setIncludeHashPrefix] = useState<boolean>(true);
-  const [palette, setPalette] = useState<SavedColorItem[]>(DEFAULT_PALETTE_ITEMS);
-  const [checkedIds, setCheckedIds] = useState<string[]>(DEFAULT_PALETTE_ITEMS.map((i) => i.id));
+  const isReal = isRealElectronHost();
+  const [palette, setPalette] = useState<SavedColorItem[]>(isReal ? [] : DEFAULT_PALETTE_ITEMS);
+  const [checkedIds, setCheckedIds] = useState<string[]>(isReal ? [] : DEFAULT_PALETTE_ITEMS.map((i) => i.id));
   const [, setHistory] = useState<PickedColorResult[]>([]);
   useNavigation();
 
@@ -181,8 +184,9 @@ export function ColorPickerCommand() {
         setPalette(items);
         setCheckedIds(items.map((i) => i.id));
       } else {
-        setPalette(DEFAULT_PALETTE_ITEMS);
-        setCheckedIds(DEFAULT_PALETTE_ITEMS.map((i) => i.id));
+        const isRealHost = isRealElectronHost();
+        setPalette(isRealHost ? [] : DEFAULT_PALETTE_ITEMS);
+        setCheckedIds(isRealHost ? [] : DEFAULT_PALETTE_ITEMS.map((i) => i.id));
       }
     });
 
@@ -210,8 +214,8 @@ export function ColorPickerCommand() {
         `取色成功: ${outStr}`,
         picked.source === "native" ? "已通过原生屏幕拾色器拾取" : "高精度放大镜模拟取色"
       );
-    } catch (err: any) {
-      const msg = String(err?.message || "未知异常");
+    } catch (err: unknown) {
+      const msg = String(err instanceof Error ? err.message : err || "未知异常");
       if (msg.includes("SCREEN_RECORDING") || msg.includes("TCC") || msg.includes("屏幕录制")) {
         await showToast(
           Toast.Style.Failure,
@@ -349,7 +353,7 @@ export function ColorPickerCommand() {
         <List.Dropdown
           tooltip="按色彩分组过滤调色板"
           value={paletteGroup}
-          onChange={(val) => setPaletteGroup(val as any)}
+          onChange={(val) => setPaletteGroup(val as "all" | "recent" | "neutral" | "brand")}
         >
           <List.Dropdown.Item title="色彩分组: 全部色彩" value="all" />
           <List.Dropdown.Item title="色彩分组: 近期屏幕拾取" value="recent" />
@@ -389,7 +393,7 @@ export function ColorPickerCommand() {
             label: "默认复制色彩格式",
             type: "select",
             value: copyFormat,
-            onChange: (val) => setCopyFormat(val as any),
+            onChange: (val) => setCopyFormat(val as "hex" | "rgb" | "hsl" | "oklch" | "tailwind"),
             options: [
               { label: "HEX (#RRGGBB)", value: "hex" },
               { label: "RGB (rgb())", value: "rgb" },
@@ -403,7 +407,7 @@ export function ColorPickerCommand() {
             label: "WCAG 无障碍对比度基准",
             type: "select",
             value: wcagStandard,
-            onChange: (val) => setWcagStandard(val as any),
+            onChange: (val) => setWcagStandard(val as "aa" | "aaa"),
             options: [
               { label: "AA 标准 (4.5:1 常规正文)", value: "aa" },
               { label: "AAA 严苛 (7.0:1 增强对比)", value: "aaa" }
@@ -414,7 +418,7 @@ export function ColorPickerCommand() {
             label: "屏幕取色放大镜倍率",
             type: "select",
             value: magnifierZoom,
-            onChange: (val) => setMagnifierZoom(val as any),
+            onChange: (val) => setMagnifierZoom(val as "8x" | "16x"),
             options: [
               { label: "8x 像素级标准网格", value: "8x" },
               { label: "16x 极限亚像素网格", value: "16x" }

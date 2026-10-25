@@ -1,0 +1,51 @@
+{
+  "id": "id-watermark",
+  "name": "防盗水印",
+  "version": "1.0.1",
+  "description": "纯本地离线为身份证、营业执照铺满斜向半透明防盗防篡改水印，零数据外流，保护个人与企业敏感证件安全",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "clipboard",
+    "dialog",
+    "fs"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "id-watermark-workbench",
+      "explain": "打开证件防盗水印工作台，拖入身份证或证件图片一键铺满防盗文字",
+      "cmds": [
+        "防盗水印",
+        "身份证水印",
+        "证件水印",
+        "加水印",
+        "营业执照水印",
+        "watermark"
+      ]
+    },
+    {
+      "code": "id-watermark-clipboard-fast",
+      "explain": "自动读取剪贴板中的证件照片，按默认防冒用模板极速生成水印图片并写入剪贴板",
+      "cmds": [
+        "快速加水印",
+        "剪贴板照片加水印"
+      ]
+    }
+  ]
+}

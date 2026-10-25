@@ -109,10 +109,10 @@ test('batch-rename: 拒绝 macOS 受保护目录（/System、/Library、/usr、~
     assert.ok(!logic.FORBIDDEN_TARGET_PATTERN.test(p), p)
   }
   const host = await setup()
-  host.ipc.filesystem_move_file = async () => ({ success: true })
+  host.ipc.filesystem_move_file_no_replace = async () => ({ success: true })
   const res = await logic.executeRealFileRename('/Library/Developer/x.h', 'y.h')
   assert.equal(res.ok, false)
-  assert.equal(host.ipcCalls.filter(([m]) => m === 'filesystem_move_file').length, 0)
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'filesystem_move_file_no_replace').length, 0)
 })
 
 test('batch-rename 界面：Downloads 不存在时显示空态提示，不列出、不勾选任何文件', async () => {

@@ -1,0 +1,54 @@
+{
+  "id": "lan-scanner",
+  "name": "局域网扫描",
+  "version": "1.0.1",
+  "description": "并发扫描内网在线主机、MAC、设备品牌与开放端口，回车直通服务或一键发送 Wake-on-LAN 魔术包远程开机",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "network",
+    "shell",
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "lan-scan-all",
+      "explain": "并发扫描当前局域网内的所有在线主机与设备详情",
+      "cmds": [
+        "局域网扫描",
+        "扫描ip",
+        "内网设备",
+        "找ip",
+        "lan",
+        "ipscanner"
+      ]
+    },
+    {
+      "code": "lan-wake-on-lan",
+      "explain": "向指定收藏的主机或 MAC 地址发送 Wake-on-LAN 远程唤醒魔术包",
+      "cmds": [
+        "远程开机",
+        "网络唤醒",
+        "wol",
+        "wakeonlan",
+        "唤醒电脑"
+      ]
+    }
+  ]
+}

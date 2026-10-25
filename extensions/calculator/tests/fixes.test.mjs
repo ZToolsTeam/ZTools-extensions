@@ -179,7 +179,7 @@ test('[calculator-7] 界面：负温度显示结果，畸形数字显示错误�
   assert.ok(!view.items().some((it) => it.props.id === 'calc-success'))
   const err = view.item('calc-error')
   assert.match(err.props.subtitle, /数字格式不正确/)
-  assert.equal(view.actions(err).length, 0, '错误行不提供复制动作')
+  assert.equal(view.actions(err).some(action => /复制|粘贴|填入/.test(action.props.title)), false, '错误行不提供结果操作；仍可进入其它计算功能')
   view.unmount()
 })
 

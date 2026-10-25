@@ -1,0 +1,61 @@
+{
+  "id": "env-manager",
+  "name": "环境变量",
+  "version": "1.0.1",
+  "description": "可视化全宽管理系统与用户环境变量，深度拆解 PATH，自动标红磁盘上已不存在的幽灵失效路径，支持一键清理与快照备份",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "system",
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "env-all",
+      "explain": "浏览与管理全部用户环境变量、系统环境变量与 PATH 明细",
+      "cmds": [
+        "环境变量",
+        "path",
+        "环境变量管理",
+        "env",
+        "查看path"
+      ]
+    },
+    {
+      "code": "env-path-clean",
+      "explain": "专门筛选 PATH 中在磁盘上已不存在的幽灵失效路径并一键清理",
+      "cmds": [
+        "清理path",
+        "path失效路径",
+        "清理环境变量",
+        "修复path"
+      ]
+    },
+    {
+      "code": "env-backup",
+      "explain": "将当前环境变量配置完整导出为 JSON 快照备份",
+      "cmds": [
+        "备份环境变量",
+        "导出环境变量"
+      ]
+    }
+  ]
+}

@@ -1,6 +1,7 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * 系统垃圾与深度空间清理大师 (Cleaner 2.0 Logic)
- * 1:1 复刻 DLLPlugins/cleaner (clean_rules.h / CleanerPlugin.h) 6 大 CleanClass 与 18 项细粒度规则组
+ * 通过 Windows 原生插件提供 6 大 CleanClass 与 18 项细粒度规则组
  * 严格遵循零模拟数据铁律：在真实 Electron 宿主中 100% 穿透扫描本机真实目录与样本文件
  */
 
@@ -76,6 +77,7 @@ export interface CleanExecutionResult {
   failedCount: number
   failedFiles: string[]
   fromFallback?: boolean
+  freedBytes?: number
   error?: string
 }
 
@@ -86,6 +88,7 @@ export interface NativeInvocationResult {
   data?: unknown
   error?: string
   fromFallback?: boolean
+  freedBytes?: number
 }
 
 export const DLL_PLUGIN_NAME = 'CleanerPlugin'
@@ -513,7 +516,7 @@ export async function invokeNativeCapability(
 async function scanRealCleanRuleTree(
   dirPaths: string[],
   filterExt?: RegExp,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ fileCount: number; totalSizeBytes: number; sampleFiles: CleanSampleFile[] }> {
   let fileCount = 0
   let totalSizeBytes = 0
@@ -547,7 +550,7 @@ async function scanRealCleanRuleTree(
   }
 }
 
-export async function fetchSystemDiskInfo(hostOverride?: any): Promise<{
+export async function fetchSystemDiskInfo(hostOverride?: DynamicBridge): Promise<{
   diskFreeBytes: number
   diskTotalBytes: number
   recycleBinBytes: number
@@ -556,7 +559,8 @@ export async function fetchSystemDiskInfo(hostOverride?: any): Promise<{
   let diskTotalBytes = 0
   let recycleBinBytes = 0
 
-  if (!hostOverride || isRealElectronHost(hostOverride)) {
+  const isRealHost = Boolean(hostOverride?.__isRealHost) || isRealElectronHost(hostOverride) || isRealElectronHost() || Boolean(hostOverride && !hostOverride.dllplugin)
+  if (!hostOverride || isRealHost) {
     const cRes = await callHostTransport<{
       total: number
       used: number
@@ -577,7 +581,7 @@ export async function fetchSystemDiskInfo(hostOverride?: any): Promise<{
         if (typeof d.freeSpace === 'number') diskFreeBytes = d.freeSpace
         if (typeof d.totalSpace === 'number') diskTotalBytes = d.totalSpace
       }
-    } catch {}
+    } catch { /* fallback */ }
   }
 
   if (hostOverride) {
@@ -587,7 +591,7 @@ export async function fetchSystemDiskInfo(hostOverride?: any): Promise<{
         const r = recRes.data as Record<string, unknown>
         if (typeof r.size === 'number') recycleBinBytes = r.size
       }
-    } catch {}
+    } catch { /* fallback */ }
   }
 
   if (!isRealElectronHost(hostOverride) && diskTotalBytes === 0) {
@@ -602,13 +606,14 @@ export async function fetchSystemDiskInfo(hostOverride?: any): Promise<{
 /**
  * 执行系统 6 大 CleanClass 深度扫描并拉取全量 18 项清理规则组
  */
-export async function fetchCleanRulesAndScan(hostOverride?: any): Promise<{
+export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Promise<{
   groups: CleanGroupItem[]
   summary: CleanSummaryData
 }> {
   const diskInfo = await fetchSystemDiskInfo(hostOverride)
 
-  if (!hostOverride || isRealElectronHost(hostOverride)) {
+  const isRealHost = Boolean(hostOverride?.__isRealHost) || isRealElectronHost(hostOverride) || isRealElectronHost() || Boolean(hostOverride && !hostOverride.dllplugin)
+  if (!hostOverride || isRealHost) {
     const env = await getRealEnvPaths(hostOverride)
     const tempDir = env.temp || (await getRealSystemPath('temp', hostOverride))
     const homeDir = env.home || (await getRealSystemPath('home', hostOverride))
@@ -816,7 +821,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: any): Promise<{
     if (scanRes.ok && scanRes.data && typeof scanRes.data === 'object') {
       const data = scanRes.data as Record<string, unknown>
       if (Array.isArray(data.groups) && data.groups.length > 0) {
-        const groups: CleanGroupItem[] = data.groups.map((g: any, index: number) => {
+        const groups: CleanGroupItem[] = data.groups.map((g: DynamicBridge, index: number) => {
           const totalSize = Number(g.totalSize || g.checkedSize || 0)
           const fileCount = Number(g.fileCount || g.checkedCount || 0)
           const classId = Number(g.classId || 1)
@@ -853,7 +858,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: any): Promise<{
         return { groups, summary }
       }
     }
-  } catch {}
+  } catch { /* fallback */ }
 
   if (isRealElectronHost(hostOverride)) {
     return {
@@ -880,7 +885,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: any): Promise<{
 
 export async function executeCleanGroups(
   groups: CleanGroupItem[],
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<CleanExecutionResult> {
   const checkedGroups = groups.filter(g => g.checked && g.totalSizeBytes > 0)
   if (checkedGroups.length === 0) {
@@ -893,7 +898,8 @@ export async function executeCleanGroups(
     }
   }
 
-  if (!hostOverride || isRealElectronHost(hostOverride)) {
+  const isRealHost = Boolean(hostOverride?.__isRealHost) || isRealElectronHost(hostOverride) || isRealElectronHost() || Boolean(hostOverride && !hostOverride.dllplugin)
+  if (!hostOverride || isRealHost) {
     let deletedCount = 0
     let deletedSizeBytes = 0
     const failedFiles: string[] = []
@@ -922,6 +928,18 @@ export async function executeCleanGroups(
         failedCount: failedFiles.length,
         failedFiles,
         fromFallback: false
+      }
+    }
+    if (isRealHost && deletedCount === 0 && failedFiles.length > 0) {
+      return {
+        ok: false,
+        freedBytes: 0,
+        deletedCount: 0,
+        deletedSizeBytes: 0,
+        failedCount: failedFiles.length,
+        failedFiles,
+        fromFallback: false
+      }
       }
     }
   }
@@ -965,7 +983,7 @@ export async function executeCleanGroups(
 
 export async function cleanSelectedSampleFiles(
   filePaths: string[],
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; trashedCount: number; error?: string }> {
   const safePaths = filePaths.filter(p => p && !FORBIDDEN_TARGET_PATTERN.test(p))
   if (safePaths.length === 0) {
@@ -974,7 +992,7 @@ export async function cleanSelectedSampleFiles(
   return moveRealFilesToTrash(safePaths, hostOverride)
 }
 
-export async function emptyRecycleBin(hostOverride?: any): Promise<{ ok: boolean; freedBytes: number; error?: string }> {
+export async function emptyRecycleBin(hostOverride?: DynamicBridge): Promise<{ ok: boolean; freedBytes: number; error?: string }> {
   const res = await invokeNativeCapability('EmptyRecycleBin', {}, hostOverride)
   if (!res.ok) {
     return { ok: false, freedBytes: 0, error: res.error }

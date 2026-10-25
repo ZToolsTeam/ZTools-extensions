@@ -177,7 +177,7 @@ test('[异常] 只载入一侧时：右侧取消选择、文件读取失败、�
   assert.equal(view.items()[0].props.id, 'need-other')
 })
 
-test('[边界] 交换后变成只缺左侧；表单只填一侧；单侧超过行数上限时立即提示；清空回到首屏', async () => {
+test('[边界] 交换后变成只缺左侧；表单空侧视为已提交；单侧超过行数上限时立即提示；清空回到首屏', async () => {
   const fs = fakeFiles({ '/left.txt': 'a\n', '/huge.txt': 'x\n'.repeat(MAX_DIFF_LINES + 1) })
   const view = await mount(FileCompareCommand)
   fs.pickNext('/left.txt')
@@ -193,10 +193,11 @@ test('[边界] 交换后变成只缺左侧；表单只填一侧；单侧超过�
   await form.fill('left', 'only left')
   await form.run(null, '开始对比')
   await tick()
-  assert.equal(view.item('need-other').props.title, '还需要右侧（新文）才能对比')
-  assert.equal(titles(view, view.item('need-other'))[0], '编辑两段文本…')
+  assert.equal(view.item('hunk-0').props.subtitle, '删除 1 行')
+  await view.run(view.item('hunk-0'), '复制差异报告')
+  assert.match(host.clipboard.text, /-only left/)
 
-  await view.run(view.item('need-other'), '清空')
+  await view.run(view.item('hunk-0'), '清空')
   fs.pickNext('/huge.txt')
   await view.run(view.item('start-file'), '选择文件作为左侧…')
   assert.match(view.item('error').props.title, new RegExp(`huge\\.txt 超过 ${MAX_DIFF_LINES} 行`))

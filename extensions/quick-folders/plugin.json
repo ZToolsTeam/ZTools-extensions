@@ -1,8 +1,8 @@
 {
   "id": "quick-folders",
   "name": "常用文件夹",
-  "description": "桌面、下载、文档、应用数据与临时目录等常用文件夹一键直达（Windows / macOS）",
-  "version": "1.1.0",
+  "description": "一键打开桌面、下载、文档、AppData 与系统临时目录等高频文件夹，免去层层翻找",
+  "version": "1.1.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -1,8 +1,8 @@
 {
   "id": "screenshot",
-  "name": "截图历史与回贴",
-  "description": "浏览本机截图目录，一键回贴、复制、定位与清理截图；可立即截取全部屏幕并复制到剪贴板",
-  "version": "2.0.2",
+  "name": "截图历史",
+  "description": "快速全屏或区域截图，集中浏览近期截图历史，支持一键复制、置顶贴图与批量清理",
+  "version": "2.0.6",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -1,12 +1,14 @@
 export declare const LocalStorage: {
+    compareAndSet(key: string, expected: unknown, value: unknown): Promise<boolean>;
+    updateItem<T>(key: string, update: (current: unknown) => T): Promise<T>;
     /**
      * 获取存储项
      */
-    getItem<T = any>(key: string): Promise<T | undefined>;
+    getItem<T = unknown>(key: string): Promise<T | undefined>;
     /**
      * 写入存储项
      */
-    setItem(key: string, value: any): Promise<void>;
+    setItem(key: string, value: unknown): Promise<void>;
     /**
      * 删除存储项
      */
@@ -18,5 +20,5 @@ export declare const LocalStorage: {
     /**
      * 获取所有存储项
      */
-    allItems<T = any>(): Promise<Record<string, T>>;
+    allItems<T = unknown>(): Promise<Record<string, T>>;
 };

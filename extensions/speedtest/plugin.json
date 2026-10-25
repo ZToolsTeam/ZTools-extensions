@@ -1,0 +1,57 @@
+{
+  "id": "speedtest",
+  "name": "网络测速",
+  "version": "1.1.1",
+  "description": "实测宽带下载与上传带宽、网络延迟与抖动，并并发诊断路由器网关、国内核心网站与 GitHub 等国际节点的连通状态",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "网络工具",
+    "系统工具"
+  ],
+  "permissions": [
+    "network",
+    "system",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "speedtest-full",
+      "explain": "实测宽带上下行网速并全面诊断内网网关、国内与国际节点延迟",
+      "cmds": [
+        "网络测速",
+        "测网速",
+        "宽带测速",
+        "speedtest",
+        "网速测试"
+      ]
+    },
+    {
+      "code": "speedtest-ping-check",
+      "explain": "秒级检测路由器网关、微信、淘宝、B站、GitHub、Cloudflare 延迟与通断状态",
+      "cmds": [
+        "网络诊断",
+        "检查网络",
+        "ping测试",
+        "网络延迟"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

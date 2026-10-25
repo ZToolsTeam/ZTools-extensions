@@ -15,7 +15,7 @@ describe("uuid-generator 插件规范与端到端集成测试", () => {
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
     assert.equal(manifest.id, "uuid-generator");
-    assert.equal(manifest.name, "UUID生成器");
+    assert.equal(manifest.name, "UUID 生成");
     assert.equal(manifest.entry, "dist/index.js");
     assert.equal(manifest.icon, "icon.svg");
     assert.deepEqual(manifest.permissions, ["clipboard"]);

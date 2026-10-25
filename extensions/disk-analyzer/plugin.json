@@ -1,8 +1,8 @@
 {
   "id": "disk-analyzer",
-  "name": "磁盘空间透视分析器",
-  "description": "极速扫描磁盘分区空间分布，按目录层级、文件扩展名与超大文件排行可视化定位空间占用元凶",
-  "version": "2.0.2",
+  "name": "磁盘空间分析",
+  "description": "快速分析各磁盘分区空间占用，按文件夹大小与大文件排行直观找出占满硬盘的文件",
+  "version": "2.0.6",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

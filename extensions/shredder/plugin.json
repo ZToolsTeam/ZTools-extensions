@@ -1,8 +1,8 @@
 {
   "id": "shredder",
-  "name": "文件解锁与强力粉碎机",
-  "description": "强制解除进程文件句柄占用锁，采用 DoD 5220.22-M 多轮随机覆写算法彻底粉碎敏感机密文件，防止数据恢复",
-  "version": "2.0.2",
+  "name": "文件粉碎",
+  "description": "强力解除文件占用并彻底粉碎机密文件与顽固文件夹，防止被任何数据恢复软件还原",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

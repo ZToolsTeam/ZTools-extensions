@@ -28,13 +28,13 @@ export interface JsonValidationResult {
   valid: boolean;
   error?: string;
   errorInfo?: JsonErrorInfo;
-  parsed?: any;
+  parsed?: unknown;
   stats?: JsonStats;
 }
 
 export interface JsonPathItem {
   path: string;
-  value: any;
+  value: unknown;
   displayValue: string;
   type: "string" | "number" | "boolean" | "null" | "array" | "object";
 }
@@ -240,7 +240,7 @@ function astOfText(raw: string): JsonNode {
 }
 
 /** 已解析的 JS 值转语法树（兼容旧调用方传对象） */
-function valueToAst(v: any): JsonNode {
+function valueToAst(v: unknown): JsonNode {
   if (v === null || v === undefined) return { kind: "null" };
   if (typeof v === "boolean") return { kind: "boolean", value: v };
   if (typeof v === "number") return Number.isFinite(v) ? { kind: "number", raw: String(v) } : { kind: "null" };
@@ -258,13 +258,13 @@ function valueToAst(v: any): JsonNode {
   return { kind: "null" };
 }
 
-function toAst(input: string | any): JsonNode {
+function toAst(input: unknown): JsonNode {
   return typeof input === "string" ? astOfText(input) : valueToAst(input);
 }
 
 /** 对象的有效键值对：重复键取最后一个值、保留首次出现的位置（与 JSON.parse 一致） */
-function entriesOf(node: { entries: Array<[string, JsonNode]> }): Array<[string, JsonNode]> {
-  const map = new Map<string, JsonNode>();
+function entriesOf<T>(node: { entries: Array<[string, T]> }): Array<[string, T]> {
+  const map = new Map<string, T>();
   for (const [k, v] of node.entries) map.set(k, v);
   return [...map.entries()];
 }
@@ -300,12 +300,12 @@ export function validateJson(raw: string): JsonValidationResult {
     };
   }
 
-  let parsed: any;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (err: any) {
+  } catch (err: unknown) {
     let offset = 0;
-    let message = err?.message || "JSON 语法错误";
+    let message = err instanceof Error ? err.message : "JSON 语法错误";
     try {
       astOfText(raw);
     } catch (e) {
@@ -381,7 +381,7 @@ function reformatJsonText(raw: string, indentUnit: string | null): string {
 /**
  * JSON 格式化与美化 (支持 2 空格、4 空格、Tab 制表符)；非法 JSON 原样返回
  */
-export function formatJson(raw: string | any, indent: number | "tab" | string = 2): string {
+export function formatJson(raw: unknown, indent: number | "tab" | string = 2): string {
   const unit = indent === "tab" || indent === "\t" ? "\t" : " ".repeat(Number(indent) || 2);
   if (typeof raw !== "string") return JSON.stringify(raw, null, unit);
   try {
@@ -395,7 +395,7 @@ export function formatJson(raw: string | any, indent: number | "tab" | string = 
 /**
  * 压缩 JSON 为单行；非法 JSON 原样返回
  */
-export function minifyJson(raw: string | any): string {
+export function minifyJson(raw: unknown): string {
   if (typeof raw !== "string") return JSON.stringify(raw);
   try {
     JSON.parse(raw);
@@ -479,14 +479,66 @@ function isUnsafeInteger(raw: string): boolean {
   return v > BigInt(Number.MAX_SAFE_INTEGER) || v < -BigInt(Number.MAX_SAFE_INTEGER);
 }
 
-/** 数组元素的代表：全是数字时取最宽的数字类型（如 [1, 2.5] 按小数），否则取第一个元素 */
-function representative(items: JsonNode[]): JsonNode {
-  if (items.length > 0 && items.every((x) => x.kind === "number")) {
-    return items.reduce((best, x) =>
-      NUM_RANK[numberKind((x as any).raw)] > NUM_RANK[numberKind((best as any).raw)] ? x : best
-    );
+/**
+ * 类型推导用的合并结果：在 JsonNode 基础上多两种信息
+ * - nullable：样本里同时出现 null 和某个具体类型（如 `[1, null]`、某字段有时为 null）
+ * - optional：对象数组里有的元素缺这个字段
+ */
+type ShapeNode =
+  | { kind: "object"; entries: Array<[string, ShapeNode]>; optional?: ReadonlySet<string> }
+  | { kind: "array"; items: ShapeNode[] }
+  | { kind: "nullable"; inner: ShapeNode }
+  | Exclude<JsonNode, { kind: "object" } | { kind: "array" }>;
+
+/**
+ * 仅合并能由同一结构无损表示的样本；不兼容时返回空，由目标语言使用通用 JSON 类型。
+ * null 与具体类型合并为可空；对象按字段并集合并，部分元素缺失的字段记为可选。
+ */
+function representative(items: ShapeNode[]): ShapeNode | undefined {
+  let nullable = false;
+  const concrete: ShapeNode[] = [];
+  for (const item of items) {
+    if (item.kind === "null") nullable = true;
+    else if (item.kind === "nullable") { nullable = true; concrete.push(item.inner); }
+    else concrete.push(item);
   }
-  return items[0];
+  if (concrete.length === 0) return items.length ? { kind: "null" } : undefined;
+  const merged = mergeConcrete(concrete);
+  if (!merged) return undefined;
+  return nullable ? { kind: "nullable", inner: merged } : merged;
+}
+
+function mergeConcrete(items: ShapeNode[]): ShapeNode | undefined {
+  const first = items[0];
+  if (items.some(item => item.kind !== first.kind)) return undefined;
+  if (first.kind === "number") {
+    const numbers = items.filter((item): item is Extract<JsonNode, { kind: "number" }> => item.kind === "number");
+    // 负整数和大于 i64 的正整数没有共同的 64 位整数类型。
+    if (numbers.some(item => numberKind(item.raw) === "uint") && numbers.some(item => item.raw.startsWith("-"))) return undefined;
+    return numbers.reduce((best, item) => NUM_RANK[numberKind(item.raw)] > NUM_RANK[numberKind(best.raw)] ? item : best);
+  }
+  if (first.kind === "array") {
+    const nested = items.flatMap(item => item.kind === "array" ? item.items : []);
+    if (nested.length === 0) return first;
+    const element = representative(nested);
+    return element ? { kind: "array", items: [element] } : undefined;
+  }
+  if (first.kind === "object") {
+    const objects = items.map(item => new Map(item.kind === "object" ? entriesOf(item) : []));
+    // 字段顺序按首次出现的位置
+    const keys = [...new Set(objects.flatMap(fields => [...fields.keys()]))];
+    const merged: Array<[string, ShapeNode]> = [];
+    const optional = new Set<string>();
+    for (const key of keys) {
+      const samples = objects.flatMap(fields => fields.has(key) ? [fields.get(key)!] : []);
+      if (samples.length < objects.length) optional.add(key);
+      const sample = representative(samples);
+      if (!sample) return undefined;
+      merged.push([key, sample]);
+    }
+    return optional.size ? { kind: "object", entries: merged, optional } : { kind: "object", entries: merged };
+  }
+  return first;
 }
 
 /** 键名转 PascalCase：只保留 ASCII 字母数字片段；返回空串表示键名里没有可用字符 */
@@ -574,26 +626,29 @@ class TypeTable {
 /**
  * 递归将 JSON 结构推导为 TypeScript Interface
  */
-export function jsonToTsInterface(raw: string | any, rootName = "RootObject"): string {
+export function jsonToTsInterface(raw: unknown, rootName = "RootObject"): string {
   try {
     const root = toAst(raw);
     const table = new TypeTable(rootName);
 
-    const tsObjectBody = (node: { entries: Array<[string, JsonNode]> }, selfBase: string): string =>
+    const tsObjectBody = (node: Extract<ShapeNode, { kind: "object" }>, selfBase: string): string =>
       entriesOf(node)
         .map(([key, val]) => {
           const safeKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+          const mark = node.optional?.has(key) ? "?" : "";
           const note = val.kind === "number" && isUnsafeInteger(val.raw) ? " // 超出 JS 安全整数范围，JSON.parse 会丢精度" : "";
-          return `  ${safeKey}: ${tsType(val, key, selfBase)};${note}`;
+          return `  ${safeKey}${mark}: ${tsType(val, key, selfBase)};${note}`;
         })
         .join("\n");
     const renderInterface = (body: string) => (name: string) =>
       body ? `export interface ${name} {\n${body}\n}` : `export interface ${name} {}`;
 
-    const tsType = (node: JsonNode, key: string, parentBase: string): string => {
+    const tsType = (node: ShapeNode, key: string, parentBase: string): string => {
       switch (node.kind) {
         case "null":
-          return "any";
+          return "null";
+        case "nullable":
+          return `${tsType(node.inner, key, parentBase)} | null`;
         case "string":
           return "string";
         case "boolean":
@@ -603,13 +658,21 @@ export function jsonToTsInterface(raw: string | any, rootName = "RootObject"): s
         case "array": {
           if (node.items.length === 0) return "any[]";
           const elem = representative(node.items);
-          if (elem.kind === "object") {
+          if (!elem) {
+            const types = [...new Set(node.items.map(item => tsType(item, singular(key) + "Item", parentBase)))];
+            return `(${types.join(" | ")})[]`;
+          }
+          const inner = elem.kind === "nullable" ? elem.inner : elem;
+          let t: string;
+          if (inner.kind === "object") {
             const base = typeNameOf(singular(key), "") + "Item";
             const order = table.ticket();
-            const body = tsObjectBody(elem, base);
-            return `${table.claim(order, base, parentBase, body, renderInterface(body))}[]`;
+            const body = tsObjectBody(inner, base);
+            t = table.claim(order, base, parentBase, body, renderInterface(body));
+          } else {
+            t = tsType(inner, key, parentBase);
           }
-          return `${tsType(elem, key, parentBase)}[]`;
+          return elem.kind === "nullable" ? `(${t} | null)[]` : `${t}[]`;
         }
         case "object": {
           const base = typeNameOf(key);
@@ -630,8 +693,8 @@ export function jsonToTsInterface(raw: string | any, rootName = "RootObject"): s
       table.addRaw(order, `export type ${rootName} = ${t};`);
     }
     return table.output().join("\n\n");
-  } catch (err: any) {
-    return `// 无法生成 TypeScript Interface：${err?.message || "JSON 无效"}`;
+  } catch (err: unknown) {
+    return `// 无法生成 TypeScript Interface：${err instanceof Error ? err.message : "JSON 无效"}`;
   }
 }
 
@@ -678,7 +741,7 @@ function rustFieldName(key: string, used: Set<string>): string {
 /**
  * 递归将 JSON 结构推导为 Rust Struct (serde)
  */
-export function jsonToRustStruct(raw: string | any, rootName = "RootObject"): string {
+export function jsonToRustStruct(raw: unknown, rootName = "RootObject"): string {
   try {
     const root = toAst(raw);
     const table = new TypeTable(rootName);
@@ -687,15 +750,20 @@ export function jsonToRustStruct(raw: string | any, rootName = "RootObject"): st
       return n === "Self" ? "SelfObject" : n;
     };
 
-    const structBody = (node: { entries: Array<[string, JsonNode]> }, selfBase: string): string => {
+    const structBody = (node: Extract<ShapeNode, { kind: "object" }>, selfBase: string): string => {
       const used = new Set<string>();
       const lines: string[] = [];
       for (const [key, val] of entriesOf(node)) {
         const field = rustFieldName(key, used);
         if (field.replace(/^r#/, "") !== key) lines.push(`    #[serde(rename = ${rustStringLiteral(key)})]`);
-        const type = rustType(val, key, selfBase);
+        let type = rustType(val, key, selfBase);
         if (type.includes("serde_json::Value") && hasBigNumber(val)) {
           lines.push("    // 数值超出 64 位整数范围：需启用 serde_json 的 arbitrary_precision 特性才能保留原值");
+        }
+        if (node.optional?.has(key)) {
+          // 部分样本缺这个字段：缺失时反序列化为 None，序列化时省略
+          if (!type.startsWith("Option<")) type = `Option<${type}>`;
+          lines.push(`    #[serde(default, skip_serializing_if = "Option::is_none")]`);
         }
         lines.push(`    pub ${field}: ${type},`);
       }
@@ -704,10 +772,12 @@ export function jsonToRustStruct(raw: string | any, rootName = "RootObject"): st
     const renderStruct = (body: string) => (name: string) =>
       `#[derive(Default, Debug, Clone, PartialEq, Serialize, Deserialize)]\npub struct ${name} {${body ? `\n${body}\n` : ""}}`;
 
-    const rustType = (node: JsonNode, key: string, parentBase: string): string => {
+    const rustType = (node: ShapeNode, key: string, parentBase: string): string => {
       switch (node.kind) {
         case "null":
           return "Option<serde_json::Value>";
+        case "nullable":
+          return `Option<${rustType(node.inner, key, parentBase)}>`;
         case "boolean":
           return "bool";
         case "string":
@@ -717,13 +787,18 @@ export function jsonToRustStruct(raw: string | any, rootName = "RootObject"): st
         case "array": {
           if (node.items.length === 0) return "Vec<serde_json::Value>";
           const elem = representative(node.items);
-          if (elem.kind === "object") {
+          if (!elem) return "Vec<serde_json::Value>";
+          const inner = elem.kind === "nullable" ? elem.inner : elem;
+          let t: string;
+          if (inner.kind === "object") {
             const base = rustTypeName(singular(key), "") + "Item";
             const order = table.ticket();
-            const body = structBody(elem, base);
-            return `Vec<${table.claim(order, base, parentBase, body, renderStruct(body))}>`;
+            const body = structBody(inner, base);
+            t = table.claim(order, base, parentBase, body, renderStruct(body));
+          } else {
+            t = rustType(inner, key, parentBase);
           }
-          return `Vec<${rustType(elem, key, parentBase)}>`;
+          return elem.kind === "nullable" ? `Vec<Option<${t}>>` : `Vec<${t}>`;
         }
         case "object": {
           const base = rustTypeName(key);
@@ -743,14 +818,15 @@ export function jsonToRustStruct(raw: string | any, rootName = "RootObject"): st
       table.addRaw(order, `pub type ${rootName} = ${rustType(root, rootName, "")};`);
     }
     return "use serde::{Deserialize, Serialize};\n\n" + table.output().join("\n\n");
-  } catch (err: any) {
-    return `// 无法生成 Rust Struct：${err?.message || "JSON 无效"}`;
+  } catch (err: unknown) {
+    return `// 无法生成 Rust Struct：${err instanceof Error ? err.message : "JSON 无效"}`;
   }
 }
 
-function hasBigNumber(node: JsonNode): boolean {
+function hasBigNumber(node: ShapeNode): boolean {
   if (node.kind === "number") return numberKind(node.raw) === "big";
-  if (node.kind === "array" && node.items.length > 0) return hasBigNumber(representative(node.items));
+  if (node.kind === "nullable") return hasBigNumber(node.inner);
+  if (node.kind === "array") return node.items.some(hasBigNumber);
   return false;
 }
 
@@ -766,23 +842,28 @@ function isValidGoTagName(key: string): boolean {
 /**
  * 递归将 JSON 结构推导为 Go Struct
  */
-export function jsonToGoStruct(raw: string | any, rootName = "RootObject"): string {
+export function jsonToGoStruct(raw: unknown, rootName = "RootObject"): string {
   try {
     const root = toAst(raw);
     const table = new TypeTable(rootName);
     let usesJsonNumber = false;
+    let usesRawMessage = false;
 
-    const structBody = (node: { entries: Array<[string, JsonNode]> }, selfBase: string): string => {
+    // 可空 / 可选用指针区分「null 或不存在」与零值；interface{}、json.RawMessage 本身就能表示 nil
+    const goNilable = (t: string) => (t === "interface{}" || t === "json.RawMessage" || t.startsWith("*") ? t : `*${t}`);
+
+    const structBody = (node: Extract<ShapeNode, { kind: "object" }>, selfBase: string): string => {
       const used = new Set<string>();
       return entriesOf(node)
         .map(([key, val]) => {
           const p = pascalCase(key);
           const field = uniqueName(!p ? "Field" : /^\d/.test(p) ? "Field" + p : p, used, (b, k) => `${b}${k}`);
-          const type = goType(val, key, selfBase);
+          const optional = node.optional?.has(key) ?? false;
+          const type = optional ? goNilable(goType(val, key, selfBase)) : goType(val, key, selfBase);
           if (!isValidGoTagName(key)) {
             return `\t${field}\t${type}\t// 原始键 ${JSON.stringify(key)} 含 struct tag 不支持的字符，需要自定义 UnmarshalJSON`;
           }
-          const tagName = key === "-" ? "-," : key;
+          const tagName = (key === "-" ? "-," : key) + (optional ? (key === "-" ? "omitempty" : ",omitempty") : "");
           return `\t${field}\t${type}\t\`json:"${tagName}"\``;
         })
         .join("\n");
@@ -790,10 +871,12 @@ export function jsonToGoStruct(raw: string | any, rootName = "RootObject"): stri
     const renderStruct = (body: string) => (name: string) =>
       body ? `type ${name} struct {\n${body}\n}` : `type ${name} struct{}`;
 
-    const goType = (node: JsonNode, key: string, parentBase: string): string => {
+    const goType = (node: ShapeNode, key: string, parentBase: string): string => {
       switch (node.kind) {
         case "null":
           return "interface{}";
+        case "nullable":
+          return goNilable(goType(node.inner, key, parentBase));
         case "boolean":
           return "bool";
         case "string":
@@ -806,13 +889,18 @@ export function jsonToGoStruct(raw: string | any, rootName = "RootObject"): stri
         case "array": {
           if (node.items.length === 0) return "[]interface{}";
           const elem = representative(node.items);
-          if (elem.kind === "object") {
+          if (!elem) { usesRawMessage = true; return "[]json.RawMessage"; }
+          const inner = elem.kind === "nullable" ? elem.inner : elem;
+          let t: string;
+          if (inner.kind === "object") {
             const base = typeNameOf(singular(key), "") + "Item";
             const order = table.ticket();
-            const body = structBody(elem, base);
-            return `[]${table.claim(order, base, parentBase, body, renderStruct(body))}`;
+            const body = structBody(inner, base);
+            t = table.claim(order, base, parentBase, body, renderStruct(body));
+          } else {
+            t = goType(inner, key, parentBase);
           }
-          return `[]${goType(elem, key, parentBase)}`;
+          return `[]${elem.kind === "nullable" ? goNilable(t) : t}`;
         }
         case "object": {
           const base = typeNameOf(key);
@@ -832,9 +920,9 @@ export function jsonToGoStruct(raw: string | any, rootName = "RootObject"): stri
       table.addRaw(order, `type ${rootName} ${goType(root, rootName, "")}`);
     }
     const code = table.output().join("\n\n");
-    return usesJsonNumber ? `import "encoding/json"\n\n${code}` : code;
-  } catch (err: any) {
-    return `// 无法生成 Go Struct：${err?.message || "JSON 无效"}`;
+    return usesJsonNumber || usesRawMessage ? `import "encoding/json"\n\n${code}` : code;
+  } catch (err: unknown) {
+    return `// 无法生成 Go Struct：${err instanceof Error ? err.message : "JSON 无效"}`;
   }
 }
 
@@ -845,7 +933,7 @@ export function jsonToGoStruct(raw: string | any, rootName = "RootObject"): stri
 /**
  * 抽取扁平化的 JSONPath 路径列表（如 $.data.users[0].id）；传入文本时数字按原文展示
  */
-export function extractJsonPaths(input: string | any, prefix = "$", maxItems = 150): JsonPathItem[] {
+export function extractJsonPaths(input: unknown, prefix = "$", maxItems = 150): JsonPathItem[] {
   const items: JsonPathItem[] = [];
   let root: JsonNode;
   try {

@@ -1,8 +1,8 @@
 {
   "id": "screen-color-picker",
-  "name": "屏幕像素级取色放大镜",
-  "description": "提供跟随鼠标的像素网格放大镜，一键拾取屏幕任意位置色彩并实时转换 HEX / RGB / HSL / CMYK 与 Tailwind 色值",
-  "version": "2.0.2",
+  "name": "屏幕取色",
+  "description": "鼠标跟随像素级放大镜取色器，一键拾取屏幕任意位置颜色并复制 HEX / RGB / HSL 色值",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

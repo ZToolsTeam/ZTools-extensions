@@ -1,8 +1,8 @@
 {
   "id": "batch-video",
-  "name": "批量视频处理",
-  "description": "支持 H.264/HEVC 批量视频压缩、分辨率缩放、画幅裁剪、加水印、GIF 动图转换与倍速处理",
-  "version": "2.0.2",
+  "name": "视频转码",
+  "description": "支持 MP4/MOV/MKV 批量视频压缩瘦身、格式转换、分辨率调整、提取音频与转 GIF 动图",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

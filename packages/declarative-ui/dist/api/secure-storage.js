@@ -1,3 +1,4 @@
+import { updateStoredItem } from "./storage-update.js";
 import { getDeclarativeBridge } from "./bridge.js";
 import { ZToolsHostError } from "./host-error.js";
 /** 与宿主 credential_v1_* 的 key 规则一致 */
@@ -34,6 +35,16 @@ export const SecureStorage = {
         if (!impl?.setItem)
             throw unavailable();
         return impl.setItem(key, value);
+    },
+    async compareAndSet(key, expected, value) {
+        assertSecureStorageKey(key);
+        const impl = implementation();
+        if (!impl?.compareAndSet)
+            throw unavailable();
+        return impl.compareAndSet(key, expected, value);
+    },
+    async updateItem(key, update) {
+        return updateStoredItem(SecureStorage, key, update);
     },
     async removeItem(key) {
         assertSecureStorageKey(key);

@@ -199,6 +199,7 @@ export default function EverythingFileSearchCommand() {
     isRealElectronHost() ? [] : SAMPLE_FILES
   );
   const [isLoading, setIsLoading] = useState<boolean>(() => isRealElectronHost());
+  const [searchError, setSearchError] = useState("");
   // 每次检索递增；慢的旧请求晚返回时序号已过期，结果直接丢弃，不能覆盖新关键词的结果
   const searchSeqRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -210,12 +211,14 @@ export default function EverythingFileSearchCommand() {
     debounceTimerRef.current = setTimeout(async () => {
       debounceTimerRef.current = null;
       let results: FileRecord[] = [];
+      let failure = "";
       try {
         results = await searchLocalFiles(text, 50);
       } catch (err) {
-        console.warn("[EverythingFileSearch] 检索失败:", err);
+        failure = err instanceof Error ? err.message : String(err);
       }
       if (seq !== searchSeqRef.current) return;
+      setSearchError(failure);
       setAllFiles(results);
       setIsLoading(false);
     }, delayMs);
@@ -276,7 +279,7 @@ export default function EverythingFileSearchCommand() {
       searchBarPlaceholder="搜索文件名、拼音或扩展名..."
       onSearchTextChange={handleSearchTextChange}
       filterBar={{
-        summaryText: `当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
+        summaryText: searchError ? `搜索失败：${searchError}` : `当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
       }}
       searchBarAccessory={
         <List.Dropdown
@@ -310,6 +313,7 @@ export default function EverythingFileSearchCommand() {
         </List.Dropdown>
       }
     >
+      {searchError && <List.Item id="search-error" title="读取文件索引失败" subtitle={searchError} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title="重新搜索" onAction={() => runSearch(query, 0)} /></ActionPanel>} />}
       {displayedFiles.map((file) => {
         const isDir = file.isDir;
         const category = getFileCategory(file.name, isDir);

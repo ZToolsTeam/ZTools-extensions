@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * ZTools 2.0 标杆原生插件: 误删文件与回收站深度恢复工坊 (Data Recovery 2.0)
  *
@@ -126,7 +127,7 @@ export function validateInvocationPayload(
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   const validation = validateInvocationPayload(method, params);
   if (!validation.valid) {
@@ -226,7 +227,7 @@ function classifyRecoveryExt(extRaw: string): RecoveryCategoryMeta {
 
 export async function fetchRecoverableFiles(
   scanMode: ScanDepthMode = "quick_recycle",
-  hostBridge?: any
+  hostBridge?: DynamicBridge
 ): Promise<DataRecoverySnapshot> {
   const initial = createInitialRecoverySnapshot();
   const isRealHost = Boolean(hostBridge) || isRealElectronHost(hostBridge) || isRealElectronHost();
@@ -235,7 +236,7 @@ export async function fetchRecoverableFiles(
     const restoreTargetDir = `${paths.desktop || "C:\\Users\\Default\\Desktop"}\\ZToolsRecovered`;
 
     const [hostScanRes, tempScan] = await Promise.all([
-      invokeHostCapability<any>("recovery.scanDeletedFiles", { scanMode }, hostBridge),
+      invokeHostCapability<DynamicBridge>("recovery.scanDeletedFiles", { scanMode }, hostBridge),
       scanRealDirectoryTree(paths.temp, { maxDepth: 2, maxFiles: 30 }, hostBridge)
     ]);
 
@@ -248,7 +249,7 @@ export async function fetchRecoverableFiles(
           : Array.isArray(hostScanRes.data.files)
             ? hostScanRes.data.files
             : [];
-      rawItems.forEach((raw: any, idx: number) => {
+      rawItems.forEach((raw: DynamicBridge, idx: number) => {
         const name = String(raw.name || raw.fileName || `recovered_${idx}`);
         const extMatch = name.match(/\.[^.]+$/);
         const cat = classifyRecoveryExt(extMatch ? extMatch[0] : "");
@@ -268,7 +269,10 @@ export async function fetchRecoverableFiles(
       });
     }
 
-    const discovered: RecoverableFileItem[] = tempScan.files.slice(0, 20).map((entry, idx) => {
+    const discovered: RecoverableFileItem[] = (isRealHost && hostScanRes.ok && hostScanRes.data ? [] : tempScan.files)
+      .filter((entry) => /\.(bak|tmp)$/i.test(entry.name) || entry.name.startsWith("~$"))
+      .slice(0, 20)
+      .map((entry, idx) => {
       const cat = classifyRecoveryExt(entry.ext);
       return {
         id: `rec_real_${idx}`,
@@ -279,8 +283,9 @@ export async function fetchRecoverableFiles(
         categoryName: cat.name,
         sizeBytes: Math.max(1, entry.sizeBytes),
         deletedAt: entry.mtimeMs > 0 ? new Date(entry.mtimeMs).toLocaleTimeString() : "近期缓存",
-        integrityScore: 1,
-        integrityLabel: "完整度 100% (可恢复)"
+
+        integrityScore: 0.75,
+        integrityLabel: "临时备份缓存 (待校验)"
       };
     });
 
@@ -310,10 +315,12 @@ export async function fetchRecoverableFiles(
   }
 }
 
+export const scanRecoverableFiles = fetchRecoverableFiles;
+
 export async function restoreSelectedFiles(
   items: RecoverableFileItem[],
   restoreDir: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; restoredCount: number; restoredBytes: number; message: string }> {
   const destDir = String(restoreDir || "").trim();
   if (!destDir || FORBIDDEN_TARGET_PATTERN.test(destDir)) {
@@ -390,7 +397,7 @@ export async function restoreSelectedFiles(
   };
 }
 
-export async function openRecoveryLocation(targetPath: string, hostBridge?: any): Promise<boolean> {
+export async function openRecoveryLocation(targetPath: string, hostBridge?: DynamicBridge): Promise<boolean> {
   if (!targetPath) return false;
   const shown = await showRealItemInFolder(targetPath, hostBridge);
   if (shown) return true;

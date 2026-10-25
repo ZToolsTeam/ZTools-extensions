@@ -38,14 +38,17 @@ import {
   terminateProcess,
   openFileLocation,
   getResourceFocus,
-  filterProcesses
+  filterProcesses,
+  fetchProcessPorts,
+  filterProcessesByPort,
+  type ProcessPort
 } from './logic.js'
 
 import { isRealElectronHost } from './native-ipc.js'
 
 export * from './logic.js'
 
-type ProcessViewFilter = 'memory' | 'cpu' | 'high-load' | 'system' | 'user' | 'name' | 'pid'
+type ProcessViewFilter = 'port' | 'memory' | 'cpu' | 'high-load' | 'system' | 'user' | 'name' | 'pid'
 
 /**
  * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
@@ -64,11 +67,11 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   await showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
 }
 
-export default function ProcessMonitorCommand() {
+export default function ProcessMonitorCommand({ initialView = 'memory' }: { initialView?: ProcessViewFilter } = {}) {
   const { push } = useNavigation()
   const inRealHost = isRealElectronHost()
   const [searchText, setSearchText] = useState('')
-  const [viewFilter, setViewFilter] = useState<ProcessViewFilter>('memory')
+  const [viewFilter, setViewFilter] = useState<ProcessViewFilter>(initialView)
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true)
   const [processes, setProcesses] = useState<ProcessItem[]>(inRealHost ? [] : getMockProcesses())
   const [systemInfo, setSystemInfo] = useState<SystemInfoData>(
@@ -87,6 +90,9 @@ export default function ProcessMonitorCommand() {
         }
       : getMockSystemInfo()
   )
+  const [loadError, setLoadError] = useState('')
+  const [portsError, setPortsError] = useState('')
+  const [ports, setPorts] = useState<ProcessPort[]>([])
   const [isLoading, setIsLoading] = useState(inRealHost)
   const [details, setDetails] = useState<Record<number, ProcessDetailInfo>>(() => {
     const initDetails: Record<number, ProcessDetailInfo> = {}
@@ -103,6 +109,9 @@ export default function ProcessMonitorCommand() {
     return initServices
   })
   const refreshingRef = useRef(false)
+  const refreshSequenceRef = useRef(0)
+  const refreshPortsRef = useRef<(() => Promise<void>) | null>(null)
+  const portsQueryRef = useRef<string | null>(null)
   const terminatingRef = useRef(false)
   const detailLoadedRef = useRef<Record<number, boolean>>({})
 
@@ -169,11 +178,14 @@ export default function ProcessMonitorCommand() {
   async function refreshData(showIndicator = false) {
     if (refreshingRef.current) return
     refreshingRef.current = true
+    const request = ++refreshSequenceRef.current
     if (showIndicator) setIsLoading(true)
     try {
       const [newProcs, newSys] = await Promise.all([fetchProcesses(), fetchSystemInfo()])
+      if (request !== refreshSequenceRef.current) return
+      setLoadError('')
+      setProcesses(newProcs)
       if (newProcs.length > 0) {
-        setProcesses(newProcs)
         const focus = getResourceFocus(newProcs)
         const candidates: ProcessItem[] = []
         if (focus.topCpu) candidates.push(focus.topCpu)
@@ -192,29 +204,74 @@ export default function ProcessMonitorCommand() {
         }
       }
       if (newSys) setSystemInfo(newSys)
+    } catch (error) {
+      if (request !== refreshSequenceRef.current) return
+      const message = error instanceof Error ? error.message : String(error)
+      setLoadError(message)
+      if (showIndicator) await showToast({ style: Toast.Style.Failure, title: '刷新失败', message })
     } finally {
-      refreshingRef.current = false
-      setIsLoading(false)
+      if (request === refreshSequenceRef.current) {
+        refreshingRef.current = false
+        setIsLoading(false)
+      }
     }
   }
 
+  async function handleRefresh() {
+    await Promise.all([refreshData(true), refreshPortsRef.current?.()])
+  }
+
   useEffect(() => {
-    void refreshData(false)
-    if (!autoRefresh) return undefined
-    const timer = setInterval(() => {
-      void refreshData(false)
-    }, 2000)
-    if (typeof (timer as any)?.unref === 'function') {
-      ;(timer as any).unref()
-    }
+    if (autoRefresh) void refreshData(false)
+    const timer = autoRefresh ? setInterval(() => { void refreshData(false) }, 2000) : undefined
+    const backgroundTimer = timer as unknown as { unref?: () => void } | undefined
+    backgroundTimer?.unref?.()
     return () => {
       clearInterval(timer)
+      refreshSequenceRef.current++
+      refreshingRef.current = false
     }
   }, [autoRefresh])
+
+  useEffect(() => {
+    const portMode = viewFilter === 'port' || /^port:/i.test(searchText)
+    const query = portMode ? JSON.stringify([viewFilter, searchText]) : null
+    const queryChanged = query !== portsQueryRef.current
+    portsQueryRef.current = query
+    if (!portMode) return
+    let active = true
+    let sequence = 0
+    let inFlight = false
+    const load = async (manual = false) => {
+      if (inFlight && !manual) return
+      const request = ++sequence
+      inFlight = true
+      try {
+        const rows = await fetchProcessPorts()
+        if (active && request === sequence) { setPorts(rows); setPortsError('') }
+      } catch (error) {
+        if (active && request === sequence) { setPorts([]); setPortsError(error instanceof Error ? error.message : String(error)) }
+      } finally {
+        if (request === sequence) inFlight = false
+      }
+    }
+    refreshPortsRef.current = () => load(true)
+    // 暂停仅冻结定时更新；首次进入或查询变化仍读取一次。
+    if (autoRefresh || queryChanged) void load()
+    const timer = autoRefresh ? setInterval(() => { void load() }, 2000) : undefined
+    const backgroundTimer = timer as unknown as { unref?: () => void } | undefined
+    backgroundTimer?.unref?.()
+    return () => {
+      active = false
+      refreshPortsRef.current = null
+      clearInterval(timer)
+    }
+  }, [viewFilter, searchText, autoRefresh])
 
   function handleToggleAutoRefresh() {
     const next = !autoRefresh
     setAutoRefresh(next)
+    if (!next) setIsLoading(false)
     showToast({
       style: Toast.Style.Success,
       title: next ? '已开启 2 秒实时自动刷新' : '已暂停实时自动刷新',
@@ -353,7 +410,8 @@ export default function ProcessMonitorCommand() {
       ? 'pid'
       : 'memory'
 
-  const baseFiltered = filterProcesses(processes, searchText, tab, sortBy)
+  const portMode = viewFilter === 'port' || /^port:/i.test(searchText)
+  const baseFiltered = portMode ? filterProcessesByPort(processes, ports, searchText) : filterProcesses(processes, searchText, tab, sortBy)
   const filtered =
     viewFilter === 'high-load'
       ? baseFiltered.filter(
@@ -375,7 +433,7 @@ export default function ProcessMonitorCommand() {
 
   return List({
     navigationTitle: `进程监控 (${DLL_PLUGIN_NAME})`,
-    searchBarPlaceholder: '搜索进程名称、PID、完整路径、厂商或服务描述...',
+    searchBarPlaceholder: portMode ? '输入本地端口号，例如 8080' : '搜索进程、PID 或输入 port:8080 查询端口占用',
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
@@ -384,6 +442,7 @@ export default function ProcessMonitorCommand() {
       value: viewFilter,
       onChange: (val: string) => setViewFilter(val as ProcessViewFilter),
       children: [
+        List.Dropdown.Item({ title: '本地端口占用', value: 'port' }),
         List.Dropdown.Item({ title: '全部进程 · 按内存排序 (Memory)', value: 'memory' }),
         List.Dropdown.Item({ title: '全部进程 · 按 CPU 排序 (CPU)', value: 'cpu' }),
         List.Dropdown.Item({ title: '仅高负载进程 (High Load)', value: 'high-load' }),
@@ -394,7 +453,7 @@ export default function ProcessMonitorCommand() {
       ]
     }),
     filterBar: {
-      summaryText: `CPU 负载 ${totalCpuPercent}% · 物理内存已用 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%) · 活动进程 ${filtered.length} 个`,
+      summaryText: loadError ? `数据不可用或已过期：${loadError}` : portMode ? (portsError ? `端口读取失败：${portsError}` : `本地端口匹配 ${filtered.length} 个进程`) : `CPU 负载 ${totalCpuPercent}% · 物理内存已用 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%) · 活动进程 ${filtered.length} 个`,
       actions: [
         {
           id: 'refresh-list',
@@ -402,7 +461,7 @@ export default function ProcessMonitorCommand() {
           title: '刷新列表',
           style: 'secondary',
           onAction: () => {
-            void refreshData(true)
+            void handleRefresh()
           }
         },
         {
@@ -432,6 +491,7 @@ export default function ProcessMonitorCommand() {
             title: `${proc.name} [PID: ${proc.pid}]`,
             subtitle: [
               `PID: ${proc.pid}`,
+              ...(portMode ? [`端口 ${[...new Set(ports.filter(p => p.pid === proc.pid).map(p => p.localPort))].join(", ")}`] : []),
               ...(proc.threadCount ? [`线程 ${proc.threadCount}`] : []),
               ...(svcHint ? [svcHint] : []),
               proc.path || proc.commandLine || '系统内核进程'
@@ -516,7 +576,7 @@ export default function ProcessMonitorCommand() {
                   title: '刷新列表',
                   icon: Icon.ArrowClockwise,
                   shortcut: { modifiers: ['ctrl'], key: 'r' },
-                  onAction: () => refreshData(true)
+                  onAction: handleRefresh
                 })
               ]
             })
@@ -526,3 +586,6 @@ export default function ProcessMonitorCommand() {
     ]
   })
 }
+
+/** 插件清单 port-lookup 子命令由宿主按导出名选择。 */
+export function portLookup() { return ProcessMonitorCommand({ initialView: 'port' }) }

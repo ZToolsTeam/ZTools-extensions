@@ -8,6 +8,7 @@ import * as diskAnalyzer from '../dist/logic.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function createRealHostStub(handlers = {}) {
+  handlers = { system_list_volumes: async () => ({ volumes: [{ path: '/', label: 'Macintosh HD', fileSystem: 'APFS', totalBytes: 500 * 1024 ** 3, usedBytes: 100 * 1024 ** 3, availableBytes: 400 * 1024 ** 3, capacityGroup: 'disk3' }], partial: false, errors: [] }), ...handlers }
   const calls = []
   const dispatch = async (method, params) => {
     calls.push({ channel: method, payload: params })

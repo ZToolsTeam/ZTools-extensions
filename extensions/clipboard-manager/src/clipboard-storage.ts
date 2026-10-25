@@ -1,6 +1,7 @@
 import { LocalStorage } from "@ztools/declarative-ui";
 import { getDeclarativeBridge } from "@ztools/declarative-ui";
 import { Clipboard } from "@ztools/declarative-ui";
+import { hostUpgradeError, isHostMethodMissing, updateStorageItem } from "./host-compat.js";
 import {
   callHostTransport,
   isRealElectronHost,
@@ -392,6 +393,7 @@ export class PasteSequenceManager {
   private offset = 0;
   private lastInvocation: number | null = null;
   private topItemId: string | null = null;
+  private lastPastedId: string | null = null;
   private timeoutSeconds = 60;
 
   constructor(timeoutSeconds = 60) {
@@ -413,22 +415,26 @@ export class PasteSequenceManager {
     const now = Date.now();
     if (this.lastInvocation && now - this.lastInvocation > this.timeoutSeconds * 1000) {
       this.offset = 0;
+      this.lastPastedId = null;
     }
 
     const topItem = items[0] ?? null;
-    if (topItem && topItem.id !== this.topItemId) {
-      this.offset = 0;
-      this.topItemId = topItem.id;
-    }
+    this.topItemId = topItem?.id ?? null;
     this.lastInvocation = now;
 
-    if (this.offset >= items.length) {
+    // 按上一次粘贴的条目定位下一条，防止新条目插入顶部或粘贴恢复重排后重复粘贴同一条
+    const lastIndex = this.lastPastedId ? items.findIndex((i) => i.id === this.lastPastedId) : -1;
+    const currentIndex = lastIndex >= 0 ? lastIndex + 1 : this.offset;
+
+    if (currentIndex >= items.length) {
       this.offset = 0;
+      this.lastPastedId = null;
       return { item: null, remaining: 0, offset: 0 };
     }
 
-    const item = items[this.offset];
-    this.offset += 1;
+    const item = items[currentIndex];
+    this.lastPastedId = item.id;
+    this.offset = currentIndex + 1;
     const remaining = items.length - this.offset;
     return { item, remaining, offset: this.offset };
   }
@@ -437,6 +443,7 @@ export class PasteSequenceManager {
     this.offset = 0;
     this.lastInvocation = null;
     this.topItemId = null;
+    this.lastPastedId = null;
   }
 
   public getState(): PasteSequenceState {
@@ -451,6 +458,14 @@ export class PasteSequenceManager {
 export const pasteSequenceManager = new PasteSequenceManager();
 
 const HOST_MASKED_PREVIEW = /^•+ \[高熵敏感机密已脱敏\]$/;
+
+function parseHistoryFilePaths(content: string): string[] {
+  const parsed: unknown = JSON.parse(content);
+  if (!Array.isArray(parsed) || !parsed.every((file): file is string => typeof file === "string" && file.length > 0)) {
+    throw new Error("剪贴板文件历史格式无效");
+  }
+  return parsed;
+}
 
 function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
   const content = String(r?.content ?? r?.text ?? "");
@@ -480,7 +495,7 @@ function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
     lineCount: Number(r?.line_count ?? r?.lineCount ?? content.split(/\r?\n/).length),
     sourceAppName: r?.source_app_name ?? r?.sourceAppName ?? undefined,
     sourceAppPath: r?.source_app_path ?? r?.sourceAppPath ?? undefined,
-    filePaths: Array.isArray(r?.filePaths) ? r.filePaths : undefined
+    filePaths: Array.isArray(r?.filePaths) ? r.filePaths : formatType === "files" ? parseHistoryFilePaths(content) : undefined
   };
 }
 
@@ -502,15 +517,33 @@ function isUserLocalRecord(item: any): item is ClipboardItem {
   );
 }
 
-async function readStoredRecords(): Promise<any[] | null> {
+function decodeStoredRecords(raw: unknown): ClipboardItem[] | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const parsed: unknown = typeof raw === "string" ? JSON.parse(raw) : raw;
+  if (!Array.isArray(parsed) || parsed.some((item: unknown) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+    const row = item as Record<string, unknown>;
+    return typeof row.id !== "string" || !row.id || typeof row.content !== "string" ||
+      (row.pinned !== undefined && typeof row.pinned !== "boolean");
+  })) throw new Error("剪贴板本地历史格式损坏");
+  return parsed;
+}
+
+async function readStoredRecords(strict = false): Promise<ClipboardItem[] | null> {
   try {
-    const raw = await LocalStorage.getItem(STORAGE_KEY);
-    if (raw === undefined || raw === null || raw === "") return null;
-    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
+    return decodeStoredRecords(await LocalStorage.getItem(STORAGE_KEY));
+  } catch (error) {
+    if (strict) throw error;
     return [];
   }
+}
+
+/** 变更只作用于 CAS 重读的最新列表；解析或读取失败时禁止覆盖未知数据。 */
+async function updateStoredRecords(update: (items: ClipboardItem[]) => ClipboardItem[]): Promise<ClipboardItem[]> {
+  const raw = await updateStorageItem(LocalStorage, STORAGE_KEY, (current) =>
+    JSON.stringify(update(decodeStoredRecords(current) ?? []))
+  );
+  return decodeStoredRecords(raw) ?? [];
 }
 
 /** 读出插件自己存的记录（不含示例数据、不含旧版本误存进来的宿主记录） */
@@ -518,9 +551,15 @@ async function readLocalRecords(): Promise<ClipboardItem[]> {
   return ((await readStoredRecords()) ?? []).filter(isUserLocalRecord);
 }
 
-/** 插件存储里只写插件自己的记录；宿主历史库里的记录由宿主保存，不能复制进来，否则会互相覆盖 */
-async function writeLocalRecords(items: ClipboardItem[]): Promise<void> {
-  await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(items.filter((i) => isLocalRecordId(i?.id))));
+/** 补记文本只新增或更新该内容的时间，不回写调用方的历史快照。 */
+async function rememberLocalText(content: string, offline: boolean, idPrefix?: string): Promise<ClipboardItem[]> {
+  const candidate = buildLocalRecord(content, { idPrefix });
+  return updateStoredRecords((stored) => {
+    const local = offline ? stored : stored.filter(isUserLocalRecord);
+    const existing = local.find((item) => item.content === content);
+    const item = existing ? { ...existing, copiedAt: candidate.copiedAt } : candidate;
+    return [item, ...local.filter((entry) => entry.id !== item.id)];
+  });
 }
 
 function hostResultSucceeded(res: { ok: boolean; data?: any }): boolean {
@@ -659,8 +698,7 @@ export async function getClipboardHistory(hostOverride?: any): Promise<Clipboard
       const liveText = await readRealClipboardText(hostOverride);
       const trimmed = (liveText || "").trim();
       if (trimmed && !realStored.some((item) => item.content === liveText)) {
-        realStored = [buildLocalRecord(liveText, { idPrefix: "clip-live-" }), ...realStored];
-        await writeLocalRecords(realStored);
+        realStored = await rememberLocalText(liveText, false, "clip-live-");
       }
     } catch {
       // ignore
@@ -672,8 +710,10 @@ export async function getClipboardHistory(hostOverride?: any): Promise<Clipboard
   try {
     const stored = await readStoredRecords();
     if (stored === null) {
-      await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(SAMPLE_CLIPBOARD_ITEMS));
-      return SAMPLE_CLIPBOARD_ITEMS;
+      const raw = await updateStorageItem(LocalStorage, STORAGE_KEY, (current) =>
+        decodeStoredRecords(current) === null ? JSON.stringify(SAMPLE_CLIPBOARD_ITEMS) : current
+      );
+      return decodeStoredRecords(raw) ?? [];
     }
     return stored;
   } catch {
@@ -689,7 +729,7 @@ export function buildLocalRecord(
   options: { id?: string; pinned?: boolean; sourceAppName?: string; idPrefix?: string } = {}
 ): ClipboardItem {
   return {
-    id: options.id || `${options.idPrefix || "clip-"}${Date.now()}`,
+    id: options.id || `${options.idPrefix || "clip-"}${globalThis.crypto.randomUUID()}`,
     type: detectClipboardContentType(content),
     content,
     preview: content.trim().replace(/\s+/g, " ").slice(0, 100),
@@ -711,7 +751,29 @@ export async function syncCurrentSystemClipboard(
   hostOverride?: any,
   waitOptions?: HostRecordWaitOptions
 ): Promise<{ added: boolean; item?: ClipboardItem; items: ClipboardItem[] }> {
-  const liveText = await readRealClipboardText(hostOverride);
+  let liveText = "";
+  if (hostOverride || isRealElectronHost(hostOverride)) {
+    const hasReadMock = Boolean(
+      hostOverride &&
+        typeof hostOverride === "object" &&
+        ("clipboard_read_text" in hostOverride || "transport" in hostOverride)
+    );
+    const clipRes = await callHostTransport<string | { text?: string }>("clipboard_read_text", {}, hostOverride);
+    if (clipRes.ok && clipRes.data !== undefined && clipRes.data !== null) {
+      liveText =
+        typeof clipRes.data === "string"
+          ? clipRes.data
+          : typeof clipRes.data?.text === "string"
+            ? clipRes.data.text
+            : "";
+    } else if (!clipRes.ok && (isRealElectronHost(hostOverride) || hasReadMock) && !isHostMethodMissing(clipRes.error)) {
+      throw new Error(clipRes.error || "读取系统剪贴板失败");
+    } else {
+      liveText = await readRealClipboardText(hostOverride);
+    }
+  } else {
+    liveText = await readRealClipboardText(hostOverride);
+  }
   if (!liveText || !liveText.trim()) {
     return { added: false, items: currentItems };
   }
@@ -722,21 +784,10 @@ export async function syncCurrentSystemClipboard(
     return { added: !alreadyListed, item: record, items: await getClipboardHistory(hostOverride) };
   }
 
-  let item: ClipboardItem;
-  if (hostAvailable || hostOverride || isRealElectronHost(hostOverride)) {
-    const local = await readLocalRecords();
-    const existing = local.find((i) => i.content === liveText);
-    item = existing ? { ...existing, copiedAt: Date.now() } : buildLocalRecord(liveText);
-    await writeLocalRecords([item, ...local.filter((i) => i.id !== item.id)]);
-    return { added: !alreadyListed, item, items: await getClipboardHistory(hostOverride) };
-  }
-
-  // 离线环境：currentItems 就是插件存储里的全部记录
-  const existing = currentItems.find((i) => i.content === liveText);
-  item = existing ? { ...existing, copiedAt: Date.now() } : buildLocalRecord(liveText);
-  const next = [item, ...currentItems.filter((i) => i.id !== item.id)];
-  await saveClipboardHistory(next);
-  return { added: !existing, item, items: next };
+  const offline = !hostAvailable && !hostOverride && !isRealElectronHost(hostOverride);
+  const next = await rememberLocalText(liveText, offline);
+  const item = next[0];
+  return { added: !alreadyListed, item, items: offline ? next : await getClipboardHistory(hostOverride) };
 }
 
 /**
@@ -757,6 +808,14 @@ export async function saveEditedClipboardItem(
 
   const removeOriginal = async (keepId: string) => {
     if (!original || original.id === keepId) return true;
+    if (isLocalRecordId(original.id)) {
+      return updateLocalRecord(original.id, (latest) => {
+        if (latest.content !== original.content || Boolean(latest.pinned) !== Boolean(original.pinned)) {
+          throw new Error("旧历史记录已变化");
+        }
+        return null;
+      });
+    }
     return deleteClipboardItem(original.id, hostOverride);
   };
 
@@ -770,56 +829,61 @@ export async function saveEditedClipboardItem(
       }
       item = { ...record, pinned };
     }
-    await removeOriginal(record.id);
+    if (!await removeOriginal(record.id)) {
+      return { persisted: false, items: await getClipboardHistory(hostOverride), message: "新内容已保存，但旧记录已变化或无法移除，请刷新后检查" };
+    }
     return { persisted: true, where: "host", item, items: await getClipboardHistory(hostOverride) };
   }
 
   try {
-    const local = (await readStoredRecords()) ?? [];
     const keepOriginalId = original && isLocalRecordId(original.id) ? original.id : undefined;
-    const item = buildLocalRecord(content, {
+    const candidate = buildLocalRecord(content, {
       id: keepOriginalId,
       pinned,
       sourceAppName: original?.sourceAppName || "ZTools Editor"
     });
-    const rest = local.filter((i: any) => i && i.id !== item.id);
     const isOffline = !hostOverride && !isRealElectronHost(hostOverride);
-    // 离线环境插件存储就是全部数据（含示例），原样保留；真实宿主下只保留插件自己的记录
-    await LocalStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(isOffline ? [item, ...rest] : [item, ...rest.filter(isUserLocalRecord)])
-    );
-    if (original && !isLocalRecordId(original.id)) await removeOriginal(item.id);
+    const next = await updateStoredRecords((stored) => {
+      const latest = keepOriginalId ? stored.find((entry) => entry.id === keepOriginalId) : undefined;
+      if (keepOriginalId && (!latest || latest.content !== original?.content)) {
+        throw new Error("历史记录已被修改或删除，请刷新后重试");
+      }
+      // 表单没有改置顶时，保留另一窗口刚更新的置顶状态。
+      const item = latest && pinned === original?.pinned ? { ...candidate, pinned: latest.pinned } : candidate;
+      const rest = stored.filter((entry) => entry && entry.id !== item.id);
+      return isOffline ? [item, ...rest] : [item, ...rest.filter(isUserLocalRecord)];
+    });
+    const item = next[0];
+    if (original && !isLocalRecordId(original.id) && !await removeOriginal(item.id)) {
+      return { persisted: false, items: await getClipboardHistory(hostOverride), message: "新内容已保存，但旧记录无法移除，请刷新后检查" };
+    }
     return { persisted: true, where: "local", item, items: await getClipboardHistory(hostOverride) };
-  } catch (err: any) {
-    return { persisted: false, items: [], message: err?.message || "插件存储写入失败" };
+  } catch (err: unknown) {
+    return { persisted: false, items: [], message: err instanceof Error ? err.message : "插件存储写入失败" };
   }
 }
 
-/**
- * 保存剪贴板历史列表到本地缓存（只写插件自己的记录，宿主历史库的记录不复制进来）
- */
+/** 合并尚未保存的本地记录；更新与删除走专门动作，旧列表不能覆盖最新记录。 */
 export async function saveClipboardHistory(items: ClipboardItem[]): Promise<void> {
-  await writeLocalRecords(items);
+  await updateStoredRecords((stored) => {
+    const local = stored.filter((item) => isLocalRecordId(item?.id));
+    const ids = new Set(local.map((item) => item.id));
+    return [...local, ...items.filter((item) => isLocalRecordId(item?.id) && !ids.has(item.id))];
+  });
 }
 
 async function updateLocalRecord(id: string, fn: (item: ClipboardItem) => ClipboardItem | null): Promise<boolean> {
   try {
-    const stored = (await readStoredRecords()) ?? (await getClipboardHistory());
     let found = false;
-    const next: ClipboardItem[] = [];
-    for (const item of stored) {
-      if (item && item.id === id) {
-        found = true;
+    await updateStoredRecords((stored) => {
+      found = stored.some((item) => item?.id === id);
+      return stored.flatMap((item) => {
+        if (item?.id !== id) return [item];
         const updated = fn(item);
-        if (updated) next.push(updated);
-      } else {
-        next.push(item);
-      }
-    }
-    if (!found) return false;
-    await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    return true;
+        return updated ? [updated] : [];
+      });
+    });
+    return found;
   } catch {
     return false;
   }
@@ -850,26 +914,45 @@ export async function deleteClipboardItem(id: string, hostOverride?: any): Promi
 /**
  * 清空所有未置顶历史（宿主历史库与插件存储都清），返回清掉的条数
  */
-export async function clearUnpinnedClipboardHistory(hostOverride?: any): Promise<number> {
-  let removed = 0;
+export async function clearUnpinnedClipboardHistory(hostOverride?: unknown): Promise<number> {
+  // 先读本地数据；读取失败不能把未知内容当成空历史覆盖。
+  await readStoredRecords(true);
   const hostRes = await callHistoryHost("clipboard_history_clear_unpinned", {}, hostOverride);
-  if (hostRes.ok) {
-    const d = hostRes.data;
-    removed += Number(typeof d === "number" ? d : d?.count ?? d?.clearedCount ?? 0) || 0;
+  if (!hostRes.ok && (hostOverride || isRealElectronHost())) {
+    throw new Error("宿主剪贴板历史清空失败，请重试");
   }
-  try {
-    const stored = await readStoredRecords();
-    if (stored && stored.length > 0) {
-      const kept = stored.filter((item: any) => item?.pinned);
-      // 宿主历史库可用时插件存储里只有插件自己的记录算数；离线环境插件存储就是全部数据
-      const countable = hostRes.ok ? isUserLocalRecord : () => true;
-      removed += stored.filter(countable).length - kept.filter(countable).length;
-      await LocalStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
-    }
-  } catch {
-    // ignore
-  }
+  const data = hostRes.data;
+  let removed = hostRes.ok ? Number(typeof data === "number" ? data : data?.count ?? data?.clearedCount ?? 0) || 0 : 0;
+  let localRemoved = 0;
+  await updateStoredRecords((stored) => {
+    const kept = stored.filter((item) => item?.pinned);
+    const countable = hostRes.ok ? isUserLocalRecord : () => true;
+    localRemoved = stored.filter(countable).length - kept.filter(countable).length;
+    return kept;
+  });
+  removed += localRemoved;
   return removed;
+}
+
+/** 宿主记录按 ID 恢复原始类型；手工保存的文本仍通过 SDK 写入。 */
+export async function restoreClipboardItem(item: ClipboardItem, paste = false, hostOverride?: unknown): Promise<void> {
+  if (!isLocalRecordId(item.id) && (hostOverride || isRealElectronHost())) {
+    const res = await callHostTransport("clipboard_history_restore", { id: item.id, paste }, hostOverride);
+    if (res.ok && res.data?.success !== false) return;
+    // 旧客户端没有按 ID 恢复的接口：文本仍可由 SDK 写入，图片与文件只能提示升级
+    if (!res.ok && isHostMethodMissing(res.error)) {
+      if (item.type === "image" || item.type === "files") throw hostUpgradeError("恢复图片和文件历史");
+      if (paste) await Clipboard.paste(item.content);
+      else await Clipboard.copy(item.content);
+      return;
+    }
+    throw new Error(res.error || "恢复剪贴板历史失败");
+  }
+  if (item.type === "image" || (item.type === "files" && item.filePaths?.length)) {
+    throw new Error("图片与文件历史需要由客户端宿主恢复");
+  }
+  if (paste) await Clipboard.paste(item.content);
+  else await Clipboard.copy(item.content);
 }
 
 /**
@@ -879,6 +962,18 @@ export async function pasteSequentialClipboard(
   items: ClipboardItem[],
   options: { addNewLine?: boolean; timeoutSeconds?: number } = {}
 ): Promise<{ success: boolean; item?: ClipboardItem; remaining: number; offset: number; message?: string; pasteFailed?: boolean }> {
+  if (isRealElectronHost()) {
+    const res = await callHostTransport("clipboard_history_paste_sequential");
+    if (!res.ok) return { success: false, pasteFailed: true, remaining: items.length, offset: 0, message: res.error || "流水粘贴失败" };
+    const data = res.data;
+    return {
+      success: data?.success === true,
+      ...(data?.item ? { item: mapRawClipboardRecord(data.item) } : {}),
+      remaining: Math.max(0, Number(data?.total ?? 0) - Number(data?.sequenceIndex ?? 0)),
+      offset: Number(data?.sequenceIndex ?? 0),
+      ...(data?.success === false ? { pasteFailed: Boolean(data.item), message: String(data.message || "流水粘贴失败") } : {})
+    };
+  }
   // 宿主已取到条目但粘贴失败（如 macOS 未授权辅助功能）：如实返回失败，不能再走本地回退把它报成成功
   const hostPasteFailure = (res: any) =>
     res && res.success === false && res.item && typeof res.message === "string"
@@ -941,7 +1036,7 @@ export async function pasteSequentialClipboard(
     textToPaste += "\n";
   }
 
-  await Clipboard.paste(textToPaste);
+  await restoreClipboardItem({ ...result.item, content: textToPaste }, true);
   return {
     success: true,
     item: result.item,

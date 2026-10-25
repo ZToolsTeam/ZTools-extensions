@@ -16,7 +16,9 @@ import {
   SAMPLE_PNG_DATA_URI,
   type ParsedImageResult
 } from "./logic.js";
-import { pickImageFile, readClipboardImage, readClipboardImageFile } from "./host.js";
+import { pickImageFile, readClipboardImage, readClipboardImageFile, saveEncodedText, HostError } from "./host.js";
+
+export const MAX_COPY_BYTES = 8 * 1024 * 1024;
 
 interface LoadedSource {
   name: string;
@@ -39,9 +41,23 @@ export default function Base64ImageCommand() {
   }
 
   const handleCopy = async (content: string, label: string) => {
-    await Clipboard.copy(content);
-    await showToast(Toast.Style.Success, `已复制 ${label}`);
+    try {
+      if (new TextEncoder().encode(content).byteLength > MAX_COPY_BYTES) throw new Error("结果超过 8 MiB，请使用保存为文本文件");
+      await Clipboard.copy(content);
+      await showToast(Toast.Style.Success, `已复制 ${label}`);
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "复制失败", err instanceof Error ? err.message : String(err));
+    }
   };
+
+  const handleSave = (content: string, name: string) => runExclusive(async () => {
+    try {
+      const path = await saveEncodedText(content, `${name}.txt`);
+      if (path) await showToast(Toast.Style.Success, "已保存转换结果", path);
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "保存失败", err instanceof Error ? err.message : String(err));
+    }
+  });
 
   // 校验图片格式后展示
   const showImage = async (image: { name: string; base64: string }) => {
@@ -73,8 +89,8 @@ export default function Base64ImageCommand() {
       try {
         const image = await pickImageFile();
         if (image) await showImage(image);
-      } catch (err: any) {
-        await showToast(Toast.Style.Failure, "读取图片失败", err?.message || String(err));
+      } catch (err: unknown) {
+        await showToast(Toast.Style.Failure, "读取图片失败", err instanceof Error ? err.message : String(err));
       }
     });
 
@@ -85,20 +101,20 @@ export default function Base64ImageCommand() {
       let image: { name: string; base64: string } | null;
       try {
         image = await readClipboardImageFile();
-      } catch (err: any) {
-        await showToast(Toast.Style.Failure, "读取复制的图片文件失败", err?.message || String(err));
+      } catch (err: unknown) {
+        await showToast(Toast.Style.Failure, "读取复制的图片文件失败", err instanceof Error ? err.message : String(err));
         return;
       }
       if (!image) {
         try {
           image = await readClipboardImage();
-        } catch (err: any) {
+        } catch (err: unknown) {
           // 截图 / 复制的图片会被系统重新编码成 PNG，体积可能远大于原文件，原文件可改用选择文件
-          const detail = err?.message || String(err);
+          const detail = err instanceof Error ? err.message : String(err);
           await showToast(
             Toast.Style.Failure,
             "读取剪贴板图片失败",
-            err?.code === "FILE_TOO_LARGE" ? `${detail}；原图文件可改用「选择图片文件」` : detail
+            err instanceof HostError && err.code === "FILE_TOO_LARGE" ? `${detail}；原图文件可改用「选择图片文件」` : detail
           );
           return;
         }
@@ -115,8 +131,8 @@ export default function Base64ImageCommand() {
           return;
         }
         await showToast(Toast.Style.Failure, "剪贴板里没有图片或文字");
-      } catch (err: any) {
-        await showToast(Toast.Style.Failure, "读取剪贴板失败", err?.message || String(err));
+      } catch (err: unknown) {
+        await showToast(Toast.Style.Failure, "读取剪贴板失败", err instanceof Error ? err.message : String(err));
       }
     });
 
@@ -137,22 +153,23 @@ export default function Base64ImageCommand() {
       })
     : undefined;
 
-  const exportItem = (id: string, title: string, value: string | undefined, label: string, icon: any) =>
+  const exportItem = (id: string, title: string, value: string | undefined, label: string, icon: typeof Icon[keyof typeof Icon]) =>
     value
       ? List.Item({
           id,
           title,
-          subtitle: value.length > 60 ? value.slice(0, 60) + "…" : value,
+          subtitle: value.length > MAX_COPY_BYTES ? "结果超过剪贴板上限，按回车保存为文本文件" : value.length > 60 ? value.slice(0, 60) + "…" : value,
           icon,
           detail: previewDetail,
           actions: ActionPanel({ title: label }, [
-            Action({ title: `复制${label}`, icon: Icon.CopyClipboard, onAction: () => handleCopy(value, label) }),
+            ...(value.length <= MAX_COPY_BYTES ? [Action({ title: `复制${label}`, icon: Icon.CopyClipboard, onAction: () => handleCopy(value, label) })] : []),
+            Action({ title: "保存为文本文件…", icon: Icon.Document, onAction: () => handleSave(value, id) }),
             ...sourceActions
           ])
         })
       : null;
 
-  let sections: any[];
+  let sections: ReturnType<typeof List.Section>[];
   if (parsed.valid) {
     sections = [
       List.Section({ title: loaded ? `已载入 ${loaded.name}` : "转换结果（按回车复制）" }, [
@@ -161,7 +178,7 @@ export default function Base64ImageCommand() {
         exportItem("export-markdown", "Markdown", parsed.markdown, " Markdown", Icon.Document),
         exportItem("export-html", "HTML <img>", parsed.html, " HTML", Icon.Code),
         exportItem("export-css", "CSS 背景图", parsed.cssBackground, " CSS", Icon.Brush)
-      ].filter(Boolean) as any[])
+      ].filter((item): item is ReturnType<typeof List.Item> => item !== null))
     ];
   } else if (source) {
     sections = [

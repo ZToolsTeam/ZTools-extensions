@@ -32,6 +32,7 @@ import {
   type SourceScope
 } from "./logic.js";
 import { usePopoutValue } from "./popout-state.js";
+import { hostUpgradeError } from "./host-compat.js";
 
 type SourceDirScope = SourceScope | "custom";
 
@@ -322,6 +323,10 @@ export function BatchRenameCommand() {
     setIsLoading(true);
     try {
       const startListing = listingRef.current;
+      if (startListing?.hostOutdated) {
+        toast("failure", "无法改名", hostUpgradeError("批量改名").message);
+        return;
+      }
       let plan = targets;
       if (!startListing?.authorized) {
         const dir = startListing?.directory || targets[0].parentDir;
@@ -458,7 +463,9 @@ export function BatchRenameCommand() {
     if (conflictCount > 0) summaryParts.push(`${conflictCount} 项同名冲突（不会执行）`);
     if (undoStack.length > 0) summaryParts.push(`可撤销 ${undoStack.length} 项`);
     if (listing && listing.truncated) summaryParts.push(`仅显示前 ${MAX_RENAME_FILES} 个（共 ${listing.totalFiles} 个）`);
-    if (listing && !listing.authorized && listing.files.length > 0 && isRealElectronHost()) {
+    if (listing?.hostOutdated && isRealElectronHost()) {
+      summaryParts.push("改名需要新版 ZTools");
+    } else if (listing && !listing.authorized && listing.files.length > 0 && isRealElectronHost()) {
       summaryParts.push(listing.partial ? "预览可能不完整，执行时需授权文件夹" : "执行时需授权文件夹");
     }
   }

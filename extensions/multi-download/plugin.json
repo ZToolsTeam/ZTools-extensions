@@ -1,8 +1,8 @@
 {
   "id": "multi-download",
-  "name": "多线程极速下载器",
-  "description": "内置 Aria2 高性能多连接分片下载引擎，支持 HTTP/HTTPS/FTP/磁力链接与 BT 种子断点续传加速",
-  "version": "2.0.2",
+  "name": "多线程下载",
+  "description": "高速多线程下载工具，支持 HTTP 直链、磁力链接与 BT 种子大文件断点续传加速",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -27,6 +27,7 @@ function installGrantHost() {
   const grants = new Map() // path -> { trash }
   const existing = new Set([BIG, ZIP, SUBDIR, DOWNLOADS])
   const calls = { trash: [], revealed: [], opened: [] }
+  host.ipc.system_list_volumes = async () => ({ volumes: [{ path: '/', label: 'Macintosh HD', fileSystem: 'APFS', totalBytes: 500 * 1024 ** 3, usedBytes: 100 * 1024 ** 3, availableBytes: 400 * 1024 ** 3, capacityGroup: 'disk3' }], partial: false, errors: [] })
   host.ipc.system_get_disk_usage = async ({ drive, path }) => {
     if ((drive || path) === '/') return { total: 500 * 1024 * MB, used: 100 * 1024 * MB, available: 400 * 1024 * MB, percent: 20 }
     throw deny('NOT_A_DRIVE', 'FILE_ERROR')

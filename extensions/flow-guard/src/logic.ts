@@ -1,6 +1,6 @@
 /**
  * 网络流量监控、进程连接审计与防火墙卫士 (FlowGuard 2.0 Logic)
- * 1:1 复刻 DLLPlugins/flow-guard (FlowGuardPlugin.h)
+ * 通过 Windows 原生插件提供网络流量管控能力
  * 真实聚合 process_list_ports (TCP/UDP 五元组套接字) 与 process_list (进程路径/内存/CPU)
  */
 

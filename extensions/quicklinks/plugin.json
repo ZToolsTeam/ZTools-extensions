@@ -1,0 +1,68 @@
+{
+  "id": "quicklinks",
+  "name": "网页快开",
+  "version": "1.1.1",
+  "description": "聚合多平台快捷搜索与工作流网址组批量打开，支持自定义 {query} 变量与热键直达",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "shell",
+    "clipboard"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "quicklinks-all",
+      "explain": "查看与搜索所有已配置的快捷链接和工作流网址组",
+      "cmds": [
+        "网页快开",
+        "快捷链接",
+        "quicklinks",
+        "常用网址",
+        "wk"
+      ]
+    },
+    {
+      "code": "quicklinks-search-engines",
+      "explain": "在知乎、GitHub、B站、谷歌、小红书等指定平台带参搜索",
+      "cmds": [
+        "聚合搜索",
+        "平台搜索",
+        "多搜"
+      ]
+    },
+    {
+      "code": "quicklinks-open-groups",
+      "explain": "一键并发打开早晨工作、项目跟进或特定场景的一组网页",
+      "cmds": [
+        "打开网址组",
+        "工作流网页",
+        "一键打开网址"
+      ]
+    },
+    {
+      "code": "quicklinks-new",
+      "explain": "快速新建一个自定义快捷链接或批量网址组",
+      "cmds": [
+        "添加快捷链接",
+        "新建网址快开",
+        "添加快开"
+      ]
+    }
+  ]
+}

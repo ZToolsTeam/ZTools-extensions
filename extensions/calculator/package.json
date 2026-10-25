@@ -1,6 +1,6 @@
 {
   "name": "calculator",
-  "version": "1.0.0",
+  "version": "2.1.2",
   "description": "极简即时计算器，支持算式实时求值、常用数学函数与历史记录",
   "type": "module",
   "main": "dist/index.js",

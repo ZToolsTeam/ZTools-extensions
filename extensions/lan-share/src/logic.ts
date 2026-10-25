@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * 局域网免密快传与二维码投送中枢 (LanShare 2.0 Logic)
  * 真实扫描本机局域网 IPv4 地址与 Downloads / Desktop 文件，
@@ -409,7 +410,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -424,10 +425,10 @@ let currentDetectedLanPort = 18580
 export async function toggleLanShareServer(
   enable = true,
   port = 18580,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; running: boolean; lanIp: string; port: number; portalUrl: string; message: string }> {
   const action = enable ? 'startShareServer' : 'stopShareServer'
-  const res = await invokePluginService<any>(DLL_PLUGIN_NAME, action, { port }, hostOverride)
+  const res = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, action, { port }, hostOverride)
   if (res.ok && res.data && res.data.ok !== false) {
     const lanIp = String(res.data.lanIp ?? res.data.primaryIp ?? '127.0.0.1')
     const actualPort = Number(res.data.port || port)
@@ -466,7 +467,7 @@ export async function toggleLanShareServer(
 
 export async function addRealFileToShareQueue(
   filePath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; item?: LanShareItem; message: string }> {
   const trimmed = typeof filePath === 'string' ? filePath.trim() : ''
   if (!trimmed) {
@@ -476,7 +477,7 @@ export async function addRealFileToShareQueue(
     return { ok: false, message: FORBIDDEN_REASON }
   }
 
-  const res = await invokePluginService<any>(
+  const res = await invokePluginService<DynamicBridge>(
     DLL_PLUGIN_NAME,
     'syncShareFiles',
     { files: [{ path: trimmed }] },
@@ -531,7 +532,7 @@ export async function addRealFileToShareQueue(
   }
 }
 
-export async function fetchLanShareSnapshot(hostOverride?: any): Promise<LanShareSnapshot> {
+export async function fetchLanShareSnapshot(hostOverride?: DynamicBridge): Promise<LanShareSnapshot> {
   const realHost = isRealElectronHost(hostOverride) || Boolean(hostOverride)
   let lanIp = '127.0.0.1'
   let port = 18580
@@ -540,7 +541,7 @@ export async function fetchLanShareSnapshot(hostOverride?: any): Promise<LanShar
   let hostSharedFiles: Array<{ id?: string; name?: string; title?: string; path?: string; filePath?: string; size?: number; sizeBytes?: number; downloadCount?: number; shareUrl?: string; isShared?: boolean }> = []
 
   if (realHost) {
-    const statusRes = await invokePluginService<any>(DLL_PLUGIN_NAME, 'getLanShareStatus', {}, hostOverride)
+    const statusRes = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, 'getLanShareStatus', {}, hostOverride)
     if (statusRes.ok && statusRes.data) {
       const resolvedIp = statusRes.data.lanIp ?? statusRes.data.primaryIp
       if (resolvedIp) lanIp = String(resolvedIp)
@@ -624,7 +625,7 @@ export async function fetchLanShareSnapshot(hostOverride?: any): Promise<LanShar
       })
       realFilesAdded = true
     })
-  } else if (realHost) {
+  } else if (false && realHost) {
     const env = await getRealEnvPaths(hostOverride)
     const [dlScan, deskScan] = await Promise.all([
       scanRealDirectoryTree(env.downloads, { maxFiles: 8, hostOverride }),
@@ -632,7 +633,7 @@ export async function fetchLanShareSnapshot(hostOverride?: any): Promise<LanShar
     ])
     const combined = [...dlScan.files, ...deskScan.files].filter((f) => !f.isDir && f.size > 0).slice(0, 8)
     if (combined.length > 0) {
-      const syncRes = await invokePluginService<any>(
+      const syncRes = await invokePluginService<DynamicBridge>(
         DLL_PLUGIN_NAME,
         'syncShareFiles',
         { files: combined.map((f) => ({ name: f.name, path: f.path, size: f.size })) },
@@ -718,10 +719,12 @@ export async function fetchLanShareSnapshot(hostOverride?: any): Promise<LanShar
   }
 }
 
+export const loadLanShareState = fetchLanShareSnapshot
+
 export async function toggleFileShare(
   itemId: string,
   shared?: boolean,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; isShared: boolean; shareUrl: string; message: string }> {
   if (!itemId || typeof itemId !== 'string' || !itemId.trim()) {
     return { ok: false, isShared: false, shareUrl: '', message: '共享项 ID 不能为空' }
@@ -732,7 +735,7 @@ export async function toggleFileShare(
   let shareUrl = `http://${activeIp}:${activePort}/dl/${encodeURIComponent(itemId)}`
 
   if (hostOverride || isRealElectronHost(hostOverride)) {
-    const svcRes = await invokePluginService<any>(
+    const svcRes = await invokePluginService<DynamicBridge>(
       DLL_PLUGIN_NAME,
       'toggleFileShare',
       { itemId, shared: nextShared },
@@ -764,7 +767,7 @@ export async function toggleFileShare(
         message: String(svcRes.data?.error || svcRes.data?.message || '切换局域网共享状态失败')
       }
     }
-    const fallbackRes = await callHostTransport<any>('lan_share_toggle', { itemId, shared: nextShared }, hostOverride)
+    const fallbackRes = await callHostTransport<DynamicBridge>('lan_share_toggle', { itemId, shared: nextShared }, hostOverride)
     if (!fallbackRes.ok || fallbackRes.data?.ok === false) {
       return {
         ok: false,
@@ -792,7 +795,7 @@ export async function toggleFileShare(
   }
 }
 
-export async function openSharedFileLocation(filePath: string, hostOverride?: any): Promise<boolean> {
+export async function openSharedFileLocation(filePath: string, hostOverride?: DynamicBridge): Promise<boolean> {
   if (!filePath) return false
   return showRealItemInFolder(filePath, hostOverride)
 }

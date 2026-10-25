@@ -1,8 +1,8 @@
 {
   "id": "context-menu",
-  "name": "系统右键菜单管理",
-  "description": "扫描并管理 Windows 资源管理器文件、目录、桌面与背景右键扩展菜单，解决右键卡顿与菜单臃肿",
-  "version": "2.0.2",
+  "name": "右键菜单管理",
+  "description": "管理文件与桌面右键菜单项，一键禁用第三方软件塞入的多余菜单，解决右键弹窗卡顿",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

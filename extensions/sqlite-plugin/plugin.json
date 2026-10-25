@@ -1,8 +1,8 @@
 {
   "id": "sqlite-plugin",
-  "name": "SQLite 本地数据库安全探查器",
-  "description": "基于只读事务与 NOMUTEX 安全模式的本地 SQLite 数据库表结构查看、索引分析与受控 SELECT 查询工具",
-  "version": "2.0.2",
+  "name": "SQLite 查看器",
+  "description": "打开并浏览本地 SQLite 数据库文件，支持查看表结构、检索数据行与导出 CSV / JSON / SQL",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

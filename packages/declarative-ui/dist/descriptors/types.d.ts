@@ -64,7 +64,6 @@ export interface ActionOpenWithProps extends BaseProps {
     path?: string;
     icon?: IconResolvable;
     shortcut?: KeyboardShortcut;
-    application?: string;
 }
 export interface ActionShowInFinderProps extends BaseProps {
     title?: string;
@@ -246,7 +245,6 @@ export interface SubListProps {
     checked?: boolean | "indeterminate";
     onCheckChange?: (checked: boolean) => void;
     items?: ViewDescriptor<ListItemProps>[];
-    sections?: ViewDescriptor<ListSectionProps>[];
 }
 export interface ListProps extends BaseProps {
     isLoading?: boolean;

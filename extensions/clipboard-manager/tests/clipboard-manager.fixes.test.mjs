@@ -62,6 +62,12 @@ function installHistoryHost(rows = []) {
     db.rows = db.rows.filter((r) => r.id !== id)
     return { success: db.rows.length < before }
   }
+  host.ipc.clipboard_history_restore = async ({ id }) => {
+    const row = db.rows.find((r) => r.id === id)
+    if (!row) return { success: false, error: '记录已不存在' }
+    host.clipboard.text = row.content
+    return { success: true }
+  }
   host.ipc.clipboard_history_clear_unpinned = async () => {
     const before = db.rows.length
     db.rows = db.rows.filter((r) => r.is_pinned)

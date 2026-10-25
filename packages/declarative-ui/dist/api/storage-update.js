@@ -1,0 +1,15 @@
+import { ZToolsHostError } from "./host-error.js";
+/** 更新函数只描述本次修改；冲突后会重新执行，不应有外部副作用。 */
+export async function updateStoredItem(storage, key, update) {
+    for (let attempt = 0; attempt < 8; attempt++) {
+        const current = await storage.getItem(key);
+        const before = JSON.stringify(current);
+        const expected = before === undefined ? undefined : JSON.parse(before);
+        const next = update(current);
+        if (JSON.stringify(next) === before)
+            return next;
+        if (await storage.compareAndSet(key, expected, next))
+            return next;
+    }
+    throw new ZToolsHostError("STORAGE_CONFLICT", "数据正在被其他窗口修改，请重试");
+}

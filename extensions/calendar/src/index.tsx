@@ -1068,7 +1068,7 @@ export function CalendarCommand() {
                 <List.Item.Detail.Metadata.Label title="地点" text={evt.location || "-"} icon={Icon.Globe} />
                 {evt.conferenceUrl && (
                   <List.Item.Detail.Metadata.TagList title="会议状态">
-                    <List.Item.Detail.Metadata.TagList.Item text="可一键入会 (Join Ready)" color={Color.Green} />
+                    <List.Item.Detail.Metadata.TagList.Item text="可一键入会 (Join Ready)"  />
                   </List.Item.Detail.Metadata.TagList>
                 )}
               </List.Item.Detail.Metadata>
@@ -1089,22 +1089,6 @@ export function CalendarCommand() {
       onSelectionChange={setSelectedId}
       filterBar={{
         summaryText,
-        groups: [
-          {
-            id: "calendar-scope",
-            value: scope,
-            onChange: (val) => setScope(val as CalendarFilterScope),
-            options: [
-              { title: "全部日程", value: "all", count: events.length },
-              { title: "即将开始", value: "upcoming", count: events.length },
-              {
-                title: "视频会议",
-                value: "meetings",
-                count: events.filter((e) => Boolean(e.conferenceUrl)).length
-              }
-            ]
-          }
-        ],
         actions: [
           {
             id: "create-calendar-event",
@@ -1122,26 +1106,6 @@ export function CalendarCommand() {
             style: "secondary",
             onAction: () => handleExportFile(displayedEvents)
           },
-          {
-            id: "copy-event-summary",
-            label: "复制日程摘要",
-            title: "复制日程摘要",
-            style: "secondary",
-            onAction: async () => {
-              if (activeEvent) await copySummary(activeEvent);
-            }
-          },
-          {
-            id: "delete-selected-event",
-            label: "删除选中日程",
-            title: "删除选中日程",
-            style: "danger",
-            onAction: async () => {
-              if (activeEvent) {
-                await handleDelete(activeEvent);
-              }
-            }
-          }
         ]
       }}
       searchBarAccessory={

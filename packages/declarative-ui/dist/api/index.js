@@ -6,9 +6,8 @@ export * from "./navigation.js";
 export * from "./open.js";
 export * from "./hud.js";
 export * from "./alert.js";
-export * from "./environment.js";
-export * from "./preferences.js";
-export * from "./cache.js";
+// createScopedCacheClass 仅供包内使用，不从入口导出
+export { Cache } from "./cache.js";
 export * from "./host-error.js";
 export * from "./secure-storage.js";
 export * from "./process.js";

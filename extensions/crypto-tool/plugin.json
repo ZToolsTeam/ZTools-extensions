@@ -1,11 +1,12 @@
 {
   "id": "crypto-tool",
-  "name": "加解密与散列",
-  "version": "1.0.2",
-  "description": "实时计算 MD5 / SHA-1 / SHA-256 / SHA-512 与 Base64、URL 编码，支持 AES 加解密与 HMAC",
+  "name": "编码与加密",
+  "version": "1.1.2",
+  "description": "支持 Base64 / URL / Unicode / Hex 编码互转、MD5 / SHA 哈希计算、AES 加解密与 UUID 批量生成",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
+  "alias": "enc",
   "permissions": [
     "clipboard",
     "crypto"
@@ -35,7 +36,93 @@
     "hmac",
     "加密",
     "解密",
-    "base64"
+    "base64",
+    "url编码",
+    "编码转换",
+    "unicode",
+    "uuid",
+    "guid"
+  ],
+  "features": [
+    {
+      "code": "codec-base64",
+      "explain": "Base64 编码与解码",
+      "mode": "view",
+      "cmds": [
+        "base64",
+        "base64解码",
+        "base64编码",
+        "编码转换",
+        "文本转码"
+      ]
+    },
+    {
+      "code": "codec-url",
+      "explain": "URL 组件编码与解码 (encodeURIComponent)",
+      "mode": "view",
+      "cmds": [
+        "url编码",
+        "url解码",
+        "urlencode",
+        "urldecode",
+        "转义"
+      ]
+    },
+    {
+      "code": "hash-digest",
+      "explain": "计算 MD5 / SHA256 哈希摘要",
+      "mode": "view",
+      "cmds": [
+        "md5",
+        "sha1",
+        "sha256",
+        "sha512",
+        "哈希",
+        "散列",
+        "摘要",
+        "hash"
+      ]
+    },
+    {
+      "code": "cipher-aes",
+      "explain": "AES 对称加密与解密",
+      "mode": "view",
+      "cmds": [
+        "aes",
+        "aes加密",
+        "aes解密",
+        "hmac",
+        "加密解密"
+      ]
+    },
+    {
+      "code": "codec-unicode",
+      "explain": "Unicode 编码与解码",
+      "mode": "view",
+      "cmds": [
+        "unicode编码",
+        "unicode解码"
+      ]
+    },
+    {
+      "code": "codec-hex",
+      "explain": "UTF-8 Hex 编码与解码",
+      "mode": "view",
+      "cmds": [
+        "hex编码",
+        "hex解码"
+      ]
+    },
+    {
+      "code": "gen-uuid",
+      "explain": "UUID v4 批量生成",
+      "mode": "view",
+      "cmds": [
+        "uuid",
+        "guid",
+        "生成uuid"
+      ]
+    }
   ],
   "category": [
     "开发工具"

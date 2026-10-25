@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 import { callHostTransport, isRealElectronHost, showRealItemInFolder } from "./native-ipc.js";
 
 export interface ProcessInfo {
@@ -93,7 +94,7 @@ export function getKillCommandLine(pid: number, mode: KillMode, isPosix?: boolea
   }
 }
 
-function mapRawToProcessInfo(raw: any): ProcessInfo {
+function mapRawToProcessInfo(raw: DynamicBridge): ProcessInfo {
   const pid = Number(raw?.pid);
   const safePid = Number.isFinite(pid) && pid >= 0 ? Math.floor(pid) : 0;
   const name = typeof raw?.name === "string" && raw.name.trim() ? raw.name.trim() : `PID-${safePid}`;
@@ -140,9 +141,9 @@ function mapRawToProcessInfo(raw: any): ProcessInfo {
 /**
  * 从真实宿主拉取系统进程列表 (支持 ProcessMonitorPlugin 与 process_list 兜底)
  */
-export async function fetchRealProcesses(hostOverride?: any): Promise<ProcessInfo[]> {
+export async function fetchRealProcesses(hostOverride?: DynamicBridge): Promise<ProcessInfo[]> {
   const realHost = isRealElectronHost(hostOverride);
-  const host = hostOverride ?? (globalThis as any).window?.ztools ?? (globalThis as any).ztools;
+  const host = hostOverride ?? (globalThis as DynamicBridge).window?.ztools ?? (globalThis as DynamicBridge).ztools;
 
   // 1. 尝试直接调用 host.dllplugin.call (独立 try/catch 隔离，防止未加载 DLL 抛错中断后续 IPC)
   if (host && typeof host?.dllplugin?.call === "function" && hostOverride) {
@@ -157,7 +158,8 @@ export async function fetchRealProcesses(hostOverride?: any): Promise<ProcessInf
       if (list.length > 0) {
         return list.map(mapRawToProcessInfo);
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ProcessManager] Host call failed:", err);
       // DLL 未加载或调用失败，继续尝试后续通道
     }
   }
@@ -165,7 +167,7 @@ export async function fetchRealProcesses(hostOverride?: any): Promise<ProcessInf
   // 2. 尝试通过 Preload Transport 调用 process_list 与 dllplugin_call
   if (!hostOverride || realHost || typeof hostOverride?.transport?.call === "function" || typeof hostOverride?.process_list === "function" || typeof hostOverride?.dllplugin_call === "function") {
     try {
-      const fallbackRes = await callHostTransport<any>(
+      const fallbackRes = await callHostTransport<DynamicBridge>(
         "process_list",
         {},
         hostOverride
@@ -185,12 +187,13 @@ export async function fetchRealProcesses(hostOverride?: any): Promise<ProcessInf
           return list.map(mapRawToProcessInfo);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ProcessManager] Host call failed:", err);
       // 忽略异常继续尝试
     }
 
     try {
-      const res = await callHostTransport<any>(
+      const res = await callHostTransport<DynamicBridge>(
         "dllplugin_call",
         {
           plugin: "ProcessMonitorPlugin",
@@ -211,7 +214,8 @@ export async function fetchRealProcesses(hostOverride?: any): Promise<ProcessInf
           return list.map(mapRawToProcessInfo);
         }
       }
-    } catch {
+    } catch (err) {
+      console.warn("[ProcessManager] Host call failed:", err);
       // 忽略异常
     }
   }
@@ -229,7 +233,7 @@ export async function terminateProcess(
   proc: ProcessInfo | { pid: number; name: string; path?: string },
   mode: KillMode = "force",
   allowCriticalKill = false,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ success: boolean; command: string; error?: string; message: string }> {
   const isCritical =
     (proc.name ? isSystemCriticalProcess(proc.name) : false) || isSystemCriticalProcess(proc.pid);
@@ -243,15 +247,23 @@ export async function terminateProcess(
     };
   }
 
-  const isPosixProc = typeof (proc as any).path === "string" && (proc as any).path.startsWith("/") ? true : undefined;
+  if (!Number.isFinite(proc.pid) || proc.pid <= 0) {
+    return {
+      success: false,
+      command: "",
+      error: "INVALID_PID",
+      message: "无效的进程 PID"
+    };
+  }
+  const isPosixProc = typeof (proc as DynamicBridge).path === "string" && (proc as DynamicBridge).path.startsWith("/") ? true : undefined;
   const cmd = getKillCommandLine(proc.pid, mode, isPosixProc);
   const realHost = isRealElectronHost(hostOverride);
 
   // 1. 优先检查自定义 executeCommand 钩子
-  if (typeof (globalThis as any).window?.ztools?.executeCommand === "function") {
+  if (typeof (globalThis as DynamicBridge).window?.ztools?.executeCommand === "function") {
     try {
-      await (globalThis as any).window.ztools.executeCommand(cmd);
-    } catch (err: any) {
+      await (globalThis as DynamicBridge).window.ztools.executeCommand(cmd);
+    } catch (err: DynamicBridge) {
       return {
         success: false,
         command: cmd,
@@ -261,7 +273,7 @@ export async function terminateProcess(
     }
   } else {
     // 2. 检查注入的 hostOverride 或真实 Electron 宿主通道
-    const host = hostOverride ?? (globalThis as any).window?.ztools ?? (globalThis as any).ztools;
+    const host = hostOverride ?? (globalThis as DynamicBridge).window?.ztools ?? (globalThis as DynamicBridge).ztools;
     let handledByDll = false;
 
     if (host && typeof host?.dllplugin?.call === "function" && Number.isFinite(proc.pid) && proc.pid > 0) {
@@ -284,7 +296,8 @@ export async function terminateProcess(
         } else {
           handledByDll = true;
         }
-      } catch (err: any) {
+      } catch (err: DynamicBridge) {
+        console.warn("[ProcessManager] TerminateProcessByPID failed:", err);
         if (!realHost) {
           return {
             success: false,
@@ -297,7 +310,7 @@ export async function terminateProcess(
     }
 
     if (!handledByDll && (hostOverride || realHost) && Number.isFinite(proc.pid) && proc.pid > 0) {
-      const killRes = await callHostTransport<any>(
+      const killRes = await callHostTransport<DynamicBridge>(
         "process_kill",
         {
           pid: proc.pid,
@@ -307,7 +320,7 @@ export async function terminateProcess(
         hostOverride
       );
       if (!killRes.ok) {
-        const dllRes = await callHostTransport<any>(
+        const dllRes = await callHostTransport<DynamicBridge>(
           "dllplugin_call",
           {
             plugin: "ProcessMonitorPlugin",
@@ -339,13 +352,16 @@ export async function terminateProcess(
 /**
  * 在资源管理器中定位可执行文件
  */
+export const killProcessById = terminateProcess;
+
 export async function revealProcessInExplorer(filePath: string): Promise<boolean> {
   if (!filePath) return false;
-  if (typeof (globalThis as any).window?.ztools?.revealInExplorer === "function") {
+  if (typeof (globalThis as DynamicBridge).window?.ztools?.revealInExplorer === "function") {
     try {
-      await (globalThis as any).window.ztools.revealInExplorer(filePath);
+      await (globalThis as DynamicBridge).window.ztools.revealInExplorer(filePath);
       return true;
-    } catch {
+    } catch (err) {
+      console.warn("[ProcessManager] Host call failed:", err);
       return false;
     }
   }

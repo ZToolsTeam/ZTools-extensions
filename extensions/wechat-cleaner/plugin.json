@@ -1,8 +1,8 @@
 {
   "id": "wechat-cleaner",
-  "name": "微信专项深度清理",
-  "description": "深度扫描微信 PC 版 FileStorage 目录下的群聊缓存、朋友圈图片视频、自动下载重复文件与旧版本残留，保护核心聊天记录",
-  "version": "2.0.2",
+  "name": "微信清理",
+  "description": "专清微信电脑版群聊图片视频缓存、朋友圈垃圾与重复接收文件，大幅释放空间且保留文字聊天记录",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

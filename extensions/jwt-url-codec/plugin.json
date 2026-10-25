@@ -1,0 +1,44 @@
+{
+  "id": "jwt-url-codec",
+  "name": "JWT与URL解析",
+  "version": "1.0.1",
+  "description": "离线解析 JWT Token（Header/Payload/生命周期倒计时/HMAC-SHA256 验签与签发）与深度 URL Query 参数拆解重组工具",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard",
+    "crypto"
+  ],
+  "features": [
+    {
+      "code": "jwt-url-codec",
+      "explain": "解析 JWT Token 载荷、校验 HMAC 签名或深度拆解 URL 参数",
+      "cmds": [
+        "jwt",
+        "token",
+        "url",
+        "urlencode",
+        "urldecode",
+        "querystring",
+        "JWT解析",
+        "URL解析"
+      ]
+    }
+  ]
+}

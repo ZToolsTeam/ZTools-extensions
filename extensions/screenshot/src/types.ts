@@ -1,8 +1,7 @@
 /**
  * Windows Screenshots (截图历史与文字识别 OCR 中枢) 类型定义
  * 
- * 逆向参考依据：
- * - 源码提取自 Raycast Windows backend/index.mjs (key: screenshots)
+ * 设计说明：
  * - 偏好字段：columnCount, includeAllMedia, textRecognitionEnabled, storageDuration
  * - 核心动作：searchScreenshots, pasteLatestScreenshot, copyFile, copyOcrText, deleteScreenshot
  */

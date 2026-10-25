@@ -1,40 +1,43 @@
 # 贡献指南
 
-欢迎通过 Issue 和 Pull Request 改进插件与开发工具。创建插件、编译和单插件测试的命令见 [README](README.md#开发插件)。
+欢迎通过 Issue 和 Pull Request 改进插件与开发工具。第一次写插件请先看 [开发入门](docs/getting-started.md)。
 
-## 插件要求
+## 提交前检查清单
 
-- 插件放在 `extensions/<plugin-id>/`，目录名与 `plugin.json` 的 `id` 一致，ID 不得重复。
-- 提交 `src/`、清单、图标与测试。插件的 `dist/` 由构建生成，不提交编译产物。
-- 界面使用 `@ztools/declarative-ui` 组件，不直接操作 HTML DOM 或注入自定义 CSS。
-- 清单声明所用权限和 `targets`；只声明实际验证过的平台。跨平台插件应在 Windows 和 macOS 分别测试。
-- 修改已有插件的非文档内容时提高 `version`。仅修改文档或仅标记下架的情况按检查脚本规则处理。
-- 下架插件保留目录，在清单中填写 `revoked: true` 与 `revokedReason`。
-- 存在 `extensions/shared/` 源文件副本时，保持副本一致。
+- [ ] 插件放在 `extensions/<id>/`，目录名与 `plugin.json` 的 `id` 一致，ID 不与已有插件重复。
+- [ ] 提交了 `src/`、清单、图标和测试；没有提交 `dist/`、本机路径、凭据或构建缓存。
+- [ ] 界面只用 `@ztools/declarative-ui` 组件，按 [界面规范](docs/ui-guidelines.md) 做完「提交前自检」6 条。
+- [ ] 只声明用到的权限，并在 PR 里说明每个权限的用途（[权限说明](docs/api.md#权限)）。
+- [ ] `targets` 只写实际测试过的平台，并在那些平台的 ZTools 客户端里试用过正常、空结果和出错三种情况（[试用方法](docs/getting-started.md#7-在-ztools-客户端里试用)）。
+- [ ] 修改已有插件时升高了 `version`；没做完的标了 `draft`；要下架的写 `revoked` 而不是删目录（[发布规则](docs/publishing.md)）。
+- [ ] 复制了 `extensions/shared/` 里的文件时，副本与原文件一致。
+- [ ] 本地跑过下面的检查并全部通过。
 
-清单字段与校验规则见 [`packages/ztools-plugins-spec/`](packages/ztools-plugins-spec/)。
+审核人员会看什么见 [审核标准](docs/review.md)。
 
-## 本地检查与 CI
+## 本地检查
 
-先按 README 对改动的插件进行构建、清单与安全扫描、自带测试，再在 ZTools 客户端验证正常和异常场景。
-
-将改动提交到自己的分支后，在仓库根目录运行：
+开发中针对单个插件：
 
 ```bash
-# 将本地 refs/remotes/upstream/main 更新为官方 main，Fork 仓库也可使用
-# 如果已有名为 upstream 的远端，可改为 git fetch upstream main
-git fetch https://github.com/ZToolsTeam/ZTools-extensions.git main:refs/remotes/upstream/main
-node scripts/verify-changed-plugins.mjs --base refs/remotes/upstream/main
+node scripts/build-declarative.mjs <id>
+node scripts/scan-plugin-security.mjs extensions/<id>
+node --test extensions/<id>/tests/*.test.mjs
 ```
 
-该脚本以基线与当前分支 **HEAD 的已提交差异**确定受影响插件，不以未提交改动计算检查范围；构建、扫描和测试读取当前工作区。请先提交改动并保持工作区干净，避免漏检或结果与提交不一致。它会检查插件 ID、版本、源码编译、清单、安全规则以及 `tests/*.test.mjs`；仅文档修改不触发插件检查。修改共享源码会扩大检查范围，修改构建脚本等基础设施会触发全部插件检查。
-
-`npm test` 使用同一个脚本，但基线固定为 `origin/main`；仅在该引用对应官方主分支时使用。PR 的 CI 还会运行规范包测试：
+提交到自己的分支后，运行和 CI 相同的合并前检查：
 
 ```bash
+# 把官方 main 拉到本地 refs/remotes/upstream/main（Fork 仓库也可以用）
+git fetch https://github.com/ZToolsTeam/ZTools-extensions.git main:refs/remotes/upstream/main
+node scripts/verify-changed-plugins.mjs --base refs/remotes/upstream/main
 node --test packages/ztools-plugins-spec/tests/*.test.mjs
 ```
 
+`verify-changed-plugins.mjs` 只看已提交的改动，先提交、保持工作区干净再运行，详见 [发布规则 · 合并前检查](docs/publishing.md#合并前检查)。
+
 ## 提交 Pull Request
 
-说明改动目的、涉及的插件、测试命令与结果，以及已经验证的系统和必要运行依赖。避免提交本机路径、凭据、日志中的个人信息或构建缓存。维护者审查合并后安排发布，PR 合并不等于客户端市场已经更新。
+按 PR 模板填写：改了什么、涉及哪些插件、在哪些系统上验证过、运行了哪些检查、为什么需要这些权限。维护者审核通过后合并，PR 合并后由官方发布到插件市场。
+
+改的是开发工具（`scripts/`、`packages/`）时，CI 会重新检查全部插件，请在 PR 里说明影响范围。客户端本身的问题请到 [ZTools 仓库](https://github.com/ZToolsTeam/ZTools) 提交。

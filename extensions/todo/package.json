@@ -1,6 +1,6 @@
 {
   "name": "todo",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "极速记录个人待办、状态过滤、优先级标记与 LocalStorage 本地持久化",
   "type": "module",
   "main": "dist/index.js",

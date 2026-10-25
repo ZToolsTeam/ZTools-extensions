@@ -1,3 +1,4 @@
+import { probeRealDiskDrives, uniqueCapacityDrives } from './volume-ipc.js'
 /**
  * 电脑硬件信息 (HardwareInfo 2.0 Logic)
  * 通过宿主通用系统接口读取 CPU 型号/线程/负载、物理内存、系统版本、磁盘容量、显示器与电源状态，
@@ -10,7 +11,7 @@ import {
   formatBytes,
   invokeDllPluginCapability,
   isRealElectronHost,
-  probeRealDiskDrives,
+
   RealDriveUsageInfo
 } from './native-ipc.js'
 
@@ -416,7 +417,7 @@ ${failureLine ? `- **${failureLine}**\n` : ''}
 
 ---
 
-### 2. 全盘物理存储池 (${snap.driveCount} 个挂载卷 · 共 ${formatBytes(snap.totalDiskBytes)})
+### 2. 已挂载卷容量（共享容器去重） (${snap.driveCount} 个挂载卷 · 共 ${formatBytes(snap.totalDiskBytes)})
 ${driveMd}
 
 ---
@@ -469,7 +470,7 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
       displayFrequency?: number | null
       colorDepth?: number | null
     }>>('screen_get_all_displays', {}, hostOverride),
-    probeRealDiskDrives(['C', 'D', 'E', 'F', 'G'], hostOverride)
+    probeRealDiskDrives([], hostOverride).catch(() => [])
   ])
 
   const failures: string[] = []
@@ -513,9 +514,10 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
 
   // 任何电脑至少有一个卷：一个都没读到就是读取失败
   if (drives.length === 0) failures.push('磁盘容量')
-  const totalDiskBytes = drives.reduce((s, d) => s + d.totalBytes, 0)
-  const usedDiskBytes = drives.reduce((s, d) => s + d.usedBytes, 0)
-  const availableDiskBytes = drives.reduce((s, d) => s + d.availableBytes, 0)
+  const capacityDrives = uniqueCapacityDrives(drives)
+  const totalDiskBytes = capacityDrives.reduce((s, d) => s + d.totalBytes, 0)
+  const usedDiskBytes = capacityDrives.reduce((s, d) => s + d.usedBytes, 0)
+  const availableDiskBytes = capacityDrives.reduce((s, d) => s + d.availableBytes, 0)
 
   const scenarios =
     logicalCpuCount !== null && totalMemoryBytes !== null
@@ -562,7 +564,7 @@ export async function fetchHardwareTelemetrySnapshot(hostOverride?: any): Promis
 - **当前瞬时总利用率**: \`${percentOrFailed(cpuUsagePercent)}\`
 
 > [!TIP]
-> 以上数据由本机 Win32 \`GetSystemInfo\` 与 \`GetSystemTimes\` 实时硬件采样生成。`
+> 以上数据来自宿主的本机硬件与系统负载采样。`
     },
     {
       id: 'hw-mem-spec',

@@ -1,8 +1,8 @@
 {
   "id": "ocr",
-  "name": "离线图片文字识别 (OCR)",
-  "description": "基于本地 PaddleOCR 引擎的高精度中英日韩多语种文字提取、截图即识与表格排版结构化识别工具",
-  "version": "2.0.2",
+  "name": "图片识字",
+  "description": "离线识别截图与图片中的中英日韩文字及表格内容，支持一键复制提取纯文本",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

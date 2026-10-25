@@ -1,0 +1,65 @@
+{
+  "id": "git-helper",
+  "name": "Git救命锦囊",
+  "version": "1.0.0",
+  "description": "大白话场景检索Git回滚自救命令、交互式规范提交(Conventional Commits)生成器与多语言.gitignore模板合成",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "git-emergency",
+      "explain": "大白话检索 Git 翻车现场自救回滚命令（撤销提交/找回代码/合并冲突等）",
+      "cmds": [
+        "git救命",
+        "撤销commit",
+        "git回滚",
+        "恢复分支",
+        "找回代码",
+        "git reset",
+        "git revert"
+      ]
+    },
+    {
+      "code": "git-commit-builder",
+      "explain": "交互式生成符合团队规范的 Conventional Commits 结构化提交信息",
+      "cmds": [
+        "git规范提交",
+        "commit规范",
+        "commit生成器",
+        "cz",
+        "feat",
+        "fix"
+      ]
+    },
+    {
+      "code": "gitignore-generator",
+      "explain": "按技术栈与操作系统组合生成标准 .gitignore 忽略文件内容",
+      "cmds": [
+        "gitignore",
+        "忽略文件",
+        "git忽略",
+        "gitignore生成",
+        "node gitignore"
+      ]
+    }
+  ]
+}

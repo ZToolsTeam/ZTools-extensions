@@ -1,8 +1,8 @@
 {
   "id": "data-recovery",
-  "name": "误删数据恢复向导",
-  "description": "基于底层扇区与 NTFS MFT/FAT 文件分配表扫描技术，深度找回误清空回收站或格式化丢失的文档与照片",
-  "version": "2.0.2",
+  "name": "数据恢复",
+  "description": "深度扫描硬盘与 U 盘，快速找回误删、清空回收站或格式化丢失的办公文档、照片与视频",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

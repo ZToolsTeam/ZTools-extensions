@@ -1,8 +1,8 @@
 {
   "id": "wechat-multi",
-  "name": "微信多开与账号管理助手",
-  "description": "通过底层互斥体安全脱钩实现微信 PC 版无限多开，支持多账号实例状态监控、备注管理与一键聚焦切换窗口",
-  "version": "2.0.2",
+  "name": "微信多开",
+  "description": "电脑端微信多账号同时登录工具，支持一键启动新微信、多开窗口备注管理与快速切换",
+  "version": "2.0.4",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -153,6 +153,7 @@ export function ScreenshotsCommand() {
   const [items, setItems] = useState<ScreenshotItem[]>(() => initialList);
   // 默认不勾选任何截图：批量清理是破坏性操作，必须由用户主动勾选
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
+  const [scanError, setScanError] = useState("");
   const [searchText, setSearchText] = useState("");
   const [category, setCategory] = useState<ScreenshotCategory>("all");
   const [copyAfterCapture, setCopyAfterCapture] = useState<"copy" | "none">("copy");
@@ -161,6 +162,7 @@ export function ScreenshotsCommand() {
 
   const applyList = (list: ScreenshotItem[]) => {
     const nextList = list.length > 0 ? list : isRealElectronHost() ? [] : [...INITIAL_SCREENSHOTS];
+    setScanError("");
     setItems(nextList);
     // 重新扫描后只保留仍存在的勾选项
     const alive = new Set(nextList.map((s) => s.id));
@@ -171,14 +173,18 @@ export function ScreenshotsCommand() {
     let active = true;
     defaultScreenshotsManager.loadScreenshots().then((list) => {
       if (active) applyList(list);
-    });
+    }).catch((error) => { if (active) setScanError(error instanceof Error ? error.message : String(error)); });
     return () => {
       active = false;
     };
   }, [refreshCount]);
 
   const reloadScreenshots = (force = false) => {
-    defaultScreenshotsManager.loadScreenshots(force).then(applyList);
+    defaultScreenshotsManager.loadScreenshots(force).then(applyList).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      setScanError(message);
+      void showToast({ style: Toast.Style.Failure, title: "截图扫描失败", message });
+    });
   };
 
   const handleCaptureScreenNow = async () => {
@@ -441,7 +447,7 @@ export function ScreenshotsCommand() {
       onSearchTextChange={setSearchText}
       onSelectionChange={setSelectedId}
       filterBar={{
-        summaryText: `截图队列共 ${filtered.length} 张 (${formatTotalBytes(totalBytes)}) · 已置顶 ${pinnedCount} 张${filtered[0] ? ` · 最新: ${filtered[0].filename}` : ""}`,
+        summaryText: scanError ? `截图列表不可用或已过期：${scanError}` : `截图队列共 ${filtered.length} 张 (${formatTotalBytes(totalBytes)}) · 已置顶 ${pinnedCount} 张${filtered[0] ? ` · 最新: ${filtered[0].filename}` : ""}`,
         actions: [
           {
             id: "paste-latest",

@@ -30,10 +30,8 @@ export function formatDateTime(d: Date): string {
 }
 
 export function formatBeijingTime(d: Date): string {
-  // UTC+8 偏移计算
-  const utc = d.getTime() + d.getTimezoneOffset() * 60000;
-  const beijingDate = new Date(utc + 3600000 * 8);
-  return formatDateTime(beijingDate);
+  // 只读 UTC 字段，避免本地 DST 偏移在加八小时后发生变化。
+  return new Date(d.getTime() + 3600000 * 8).toISOString().slice(0, 19).replace("T", " ");
 }
 
 export function getRelativeTime(d: Date, now: Date = new Date()): string {
@@ -235,7 +233,7 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
   }
 
   // 边界保护：检查年份合理范围 (1970 ~ 2100)
-  const fullYear = date.getFullYear();
+  const fullYear = date.getUTCFullYear();
   if (fullYear < 1970 || fullYear > 2200) {
     return {
       valid: false,

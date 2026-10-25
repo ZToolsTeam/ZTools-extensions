@@ -1,11 +1,12 @@
 {
   "id": "json-format",
   "name": "JSON 格式化",
-  "version": "2.0.2",
-  "description": "校验 JSON 并定位错误，一键美化、压缩，生成 TypeScript / Go / Rust 类型；长整数不丢精度",
+  "version": "2.1.2",
+  "description": "JSON 语法校验、高亮美化与压缩转义，支持一键生成 TypeScript / Go / Rust 数据结构定义",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
+  "alias": "json",
   "permissions": [
     "clipboard"
   ],
@@ -30,7 +31,32 @@
     "format",
     "minify",
     "压缩",
-    "校验"
+    "校验",
+    "json转ts"
+  ],
+  "features": [
+    {
+      "code": "json-beautify",
+      "explain": "JSON 美化与语法校验",
+      "mode": "view",
+      "cmds": [
+        "json格式化",
+        "json美化",
+        "json校验",
+        "json"
+      ]
+    },
+    {
+      "code": "json-codegen",
+      "explain": "JSON 生成 TypeScript / Go / Rust 类型",
+      "mode": "view",
+      "cmds": [
+        "json转ts",
+        "json转go",
+        "生成类型",
+        "interface生成"
+      ]
+    }
   ],
   "category": [
     "开发工具"

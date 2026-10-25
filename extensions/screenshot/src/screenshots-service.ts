@@ -611,10 +611,8 @@ export class ScreenshotsManager {
     // 1. 优先尝试通过宿主 IPC 通道 screenshots_scan 获取跨平台截图列表
     try {
       if (strictReal) {
-        let scanRes = await callHostTransport<any>("screenshots_scan", { forceRefresh }, hostOverride);
-        if (!scanRes.ok) {
-          scanRes = await callHostTransport<any>("screenshots_search", { forceRefresh }, hostOverride);
-        }
+        // 宿主只提供 screenshots_scan；失败时如实报告它的错误，不再回退到不存在的方法（会把真实原因覆盖掉）
+        const scanRes = await callHostTransport("screenshots_scan", { forceRefresh }, hostOverride);
         if (scanRes.ok && scanRes.data) {
           const rawList = Array.isArray(scanRes.data)
             ? scanRes.data
@@ -625,7 +623,7 @@ export class ScreenshotsManager {
                 : Array.isArray(scanRes.data?.files)
                   ? scanRes.data.files
                   : [];
-          if (rawList.length > 0) {
+          if (Array.isArray(scanRes.data) || Array.isArray(scanRes.data?.screenshots) || Array.isArray(scanRes.data?.items) || Array.isArray(scanRes.data?.files)) {
             const mapped: ScreenshotItem[] = [];
             for (const r of rawList) {
               const hasDims = Number(r?.width) > 0 && Number(r?.height) > 0;
@@ -637,48 +635,10 @@ export class ScreenshotsManager {
           }
         }
 
-        // 若 screenshots_scan 未返回结果，扫描用户真实的 Pictures / Desktop 目录中的图片文件
-        if (!loadedFromHost) {
-          const [picturesDir, desktopDir] = await Promise.all([
-            getRealSystemPath("pictures", hostOverride),
-            getRealSystemPath("desktop", hostOverride)
-          ]);
-          const candidateDirs = [
-            picturesDir ? (picturesDir.startsWith("/") ? `${picturesDir}/Screenshots` : `${picturesDir}\\Screenshots`) : "",
-            picturesDir,
-            desktopDir
-          ].filter(Boolean);
-          const dirLists = await Promise.all(candidateDirs.map((d) => readRealDirectory(d, hostOverride)));
-          const discoveredReal: ScreenshotItem[] = [];
-          const seenPaths = new Set<string>();
-          for (const entries of dirLists) {
-            for (const entry of entries) {
-              if (entry.isDir || !entry.path || seenPaths.has(entry.path)) continue;
-              const dotIdx = entry.name.lastIndexOf(".");
-              const ext = (entry.ext || (dotIdx >= 0 ? entry.name.slice(dotIdx) : "")).toLowerCase();
-              if (ext === ".png" || ext === ".jpg" || ext === ".jpeg" || ext === ".webp" || ext === ".bmp" || ext === ".gif") {
-                seenPaths.add(entry.path);
-                const dims = await probeImageDimensions(entry.path, hostOverride, deniedDirs);
-                discoveredReal.push(
-                  this.mapHostScreenshot(
-                    {
-                      filename: entry.name,
-                      path: entry.path,
-                      sizeBytes: entry.size,
-                      modifiedAt: entry.mtimeMs
-                    },
-                    dims
-                  )
-                );
-              }
-            }
-          }
-          this.items = discoveredReal;
-          loadedFromHost = true;
-        }
+        if (!loadedFromHost) throw new Error(scanRes.error || "截图扫描结果无效")
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      if (strictReal) throw error
     }
 
     // 2. 在非显式 hostOverride 模式下尝试读取本地文件系统真实系统截图

@@ -1,0 +1,63 @@
+{
+  "id": "sql-helper",
+  "name": "SQL格式化转换",
+  "version": "1.0.0",
+  "description": "SQL一键美化与压缩、MyBatis日志带问号参数自动拼合为完整SQL、CREATE TABLE建表语句转TS/Go/Java实体类",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "features": [
+    {
+      "code": "sql-formatter",
+      "explain": "SQL语句一键美化对齐（关键字大写/自动缩进）与压缩为单行",
+      "cmds": [
+        "sql格式化",
+        "sql美化",
+        "sql压缩",
+        "format sql",
+        "美化sql"
+      ]
+    },
+    {
+      "code": "mybatis-merge",
+      "explain": "自动提取 MyBatis 日志中的 Preparing 与 Parameters 并拼合为完整可执行 SQL",
+      "cmds": [
+        "mybatis日志",
+        "mybatis还原",
+        "mybatis sql",
+        "参数拼合",
+        "sql问号替换"
+      ]
+    },
+    {
+      "code": "ddl-to-entity",
+      "explain": "粘贴 CREATE TABLE 建表语句，一键生成 TypeScript / Go / Java 实体模型代码",
+      "cmds": [
+        "ddl转实体",
+        "sql转实体",
+        "建表转java",
+        "sql转ts",
+        "sql转go",
+        "create table转实体"
+      ]
+    }
+  ]
+}

@@ -22,10 +22,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
 /**
- * 极简零依赖 .env 文件解析器（自动从 backend/.env 补充环境变量）
+ * 极简零依赖 .env 文件解析器：本地手动发布时可把 OSS 凭据写在仓库根目录 .env（已被 .gitignore 忽略），
+ * CI 里直接用环境变量，不需要这个文件
  */
 export function loadEnvFile(envPath) {
-  const target = envPath || path.join(rootDir, 'backend', '.env')
+  const target = envPath || path.join(rootDir, '.env')
   if (!fs.existsSync(target)) return {}
   const content = fs.readFileSync(target, 'utf8')
   const env = {}

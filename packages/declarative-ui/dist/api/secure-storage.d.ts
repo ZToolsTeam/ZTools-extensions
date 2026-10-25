@@ -22,6 +22,8 @@ export interface SecureStorageApi {
     status(): Promise<SecureStorageStatus>;
     getItem<T = unknown>(key: string): Promise<T | undefined>;
     setItem(key: string, value: unknown): Promise<void>;
+    compareAndSet(key: string, expected: unknown, value: unknown): Promise<boolean>;
+    updateItem<T>(key: string, update: (current: unknown) => T): Promise<T>;
     removeItem(key: string): Promise<void>;
     /** 把 LocalStorage 里的明文条目搬进加密存储：写入 → 读回校验 → 删除明文（宿主库 + 浏览器旧键）→ 压缩 */
     importFromLocalStorage(key: string, options?: {

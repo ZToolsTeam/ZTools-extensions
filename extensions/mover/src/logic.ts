@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * ZTools 2.0 标杆原生插件: C盘大目录无感乾坤大挪移 (Mover 2.0 - NTFS Junction 符号链接无感迁移引擎)
  *
@@ -13,7 +14,7 @@ import {
   invokeHostCapability,
   invokePluginService,
   isRealElectronHost,
-  openRealPath,
+
   probeRealDiskDrives,
   readRealDirectory,
   resolveRealSpecialPaths,
@@ -132,7 +133,7 @@ export function validateInvocationPayload(
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   const validation = validateInvocationPayload(method, params);
   if (!validation.valid) {
@@ -242,7 +243,7 @@ export function createInitialMoverSnapshot(): MoverSnapshot {
   };
 }
 
-export async function fetchMoverSnapshot(hostBridge?: any): Promise<MoverSnapshot> {
+export async function fetchMoverSnapshot(hostBridge?: DynamicBridge): Promise<MoverSnapshot> {
   const initial = createInitialMoverSnapshot();
   const isRealHost = Boolean(hostBridge) || isRealElectronHost(hostBridge) || isRealElectronHost();
   try {
@@ -413,7 +414,7 @@ export async function fetchMoverSnapshot(hostBridge?: any): Promise<MoverSnapsho
       return {
         cDriveTotalBytes: cDrive?.totalBytes || 0,
         cDriveFreeBytes: cDrive?.availableBytes || 0,
-        targetDrives: targetDrives.length > 0 ? targetDrives : DEFAULT_TARGET_DRIVES,
+        targetDrives: isRealHost ? targetDrives : (targetDrives.length > 0 ? targetDrives : DEFAULT_TARGET_DRIVES),
         folders,
         totalMovableBytes,
         updatedAt: new Date().toLocaleTimeString()
@@ -424,7 +425,7 @@ export async function fetchMoverSnapshot(hostBridge?: any): Promise<MoverSnapsho
     return {
       cDriveTotalBytes: cDrive?.totalBytes || initial.cDriveTotalBytes,
       cDriveFreeBytes: cDrive?.availableBytes || initial.cDriveFreeBytes,
-      targetDrives: targetDrives.length > 0 ? targetDrives : DEFAULT_TARGET_DRIVES,
+      targetDrives: isRealHost ? targetDrives : (targetDrives.length > 0 ? targetDrives : DEFAULT_TARGET_DRIVES),
       folders: finalFolders,
       totalMovableBytes: finalFolders
         .filter((f) => !f.isSystemLocked)
@@ -436,7 +437,7 @@ export async function fetchMoverSnapshot(hostBridge?: any): Promise<MoverSnapsho
       return {
         cDriveTotalBytes: 0,
         cDriveFreeBytes: 0,
-        targetDrives: DEFAULT_TARGET_DRIVES,
+        targetDrives: [],
         folders: [],
         totalMovableBytes: 0,
         updatedAt: new Date().toLocaleTimeString()
@@ -449,7 +450,7 @@ export async function fetchMoverSnapshot(hostBridge?: any): Promise<MoverSnapsho
 export async function executeDirectoryMove(
   items: MovableFolderItem[],
   targetRoot: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; movedCount: number; freedBytes: number; message: string }> {
   if (!targetRoot || FORBIDDEN_TARGET_PATTERN.test(targetRoot)) {
     return { ok: false, movedCount: 0, freedBytes: 0, message: FORBIDDEN_REASON };
@@ -508,17 +509,17 @@ export async function executeDirectoryMove(
   };
 }
 
-export async function openMoverFolderLocation(folderPath: string, hostBridge?: any): Promise<boolean> {
+export async function openMoverFolderLocation(folderPath: string, hostBridge?: DynamicBridge): Promise<boolean> {
   if (!folderPath) return false;
   const shown = await showRealItemInFolder(folderPath, hostBridge);
   if (shown) return true;
-  return openRealPath(folderPath, hostBridge);
+  return shown;
 }
 
 export async function invokeMoverAction(
   actionId: string,
   targetRoot: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   return invokePluginService(
     DLL_PLUGIN_NAME,

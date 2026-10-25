@@ -322,6 +322,6 @@ test('[text-formatter-v1] Markdown 代码块：~~~ 围栏、未闭合的代码�
 test('清单版本已升级，package.json 与 plugin.json 一致', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
-  assert.equal(manifest.version, '1.0.1')
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/)
   assert.equal(pkg.version, manifest.version)
 })

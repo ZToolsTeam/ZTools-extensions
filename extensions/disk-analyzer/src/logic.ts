@@ -1,3 +1,5 @@
+import { scanRealDirectoryTree } from './directory-scan.js'
+import { probeRealDiskDrives, uniqueCapacityDrives } from './volume-ipc.js'
 /**
  * 磁盘空间深度分析业务逻辑与真实环境契约层 (DiskAnalyzer Logic - 1:1 完整复刻版)
  * 对接 Electron 真实磁盘分区探针 (system_get_disk_usage)、MFT + 真实目录深度扫描、
@@ -11,8 +13,8 @@ import {
   invokeDllPluginCapability,
   isRealElectronHost,
   listRealDirectoryContents,
-  probeRealDiskDrives,
-  scanRealDirectoryTree,
+
+
   searchRealIndexedFiles,
   showRealItemInFolder,
   trashRealItem,
@@ -51,7 +53,7 @@ export interface DiskDriveItem {
 }
 
 /**
- * 对应原版 DLLPlugins/disk-analyzer/src/file_type_rules.cpp 的 10 大官方文件类型分组
+ * 与 Windows 原生插件一致的 10 大官方文件类型分组
  */
 export type OfficialFileTypeGroupId = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 99
 
@@ -508,11 +510,11 @@ function extractDrivePrefix(filePath: string): string {
  */
 export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<DiskAnalysisSnapshot> {
   // 1. 探测真实磁盘分区 (C:/ ~ G:/)
-  const rawDrives = await probeRealDiskDrives(['C', 'D', 'E', 'F', 'G'], hostOverride)
+  const rawDrives = await probeRealDiskDrives([], hostOverride)
   const drives: DiskDriveItem[] = rawDrives.map(d => ({
     drive: d.drive,
-    label: d.drive === 'C:' ? '系统主分区 (C:)' : d.drive === '/' ? '启动磁盘 (/)' : `本地数据卷 (${d.drive})`,
-    fileSystem: d.drive.startsWith('/') ? 'APFS' : 'NTFS',
+    label: d.label || d.drive,
+    fileSystem: d.fileSystem || '未知',
     totalBytes: d.totalBytes,
     usedBytes: d.usedBytes,
     availableBytes: d.availableBytes,
@@ -533,6 +535,16 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   const homeDir = downloadsDir.startsWith('/') ? await getRealSystemPath('home', hostOverride) : ''
   const macCachesDir = homeDir.startsWith('/') ? `${homeDir.replace(/\/+$/, '')}/Library/Caches` : ''
   const scanDirs = [downloadsDir, documentsDir, desktopDir, videosDir, tempDir, macCachesDir].filter(Boolean)
+  const volumeRoots = rawDrives.map(({ drive }) => {
+    const posix = drive.startsWith('/')
+    const root = posix ? drive.replace(/\/+$/, '') || '/' : drive.replace(/[\\/]+$/, '').replace(/\//g, '\\')
+    return { drive, root, posix }
+  }).sort((a, b) => b.root.length - a.root.length)
+  const driveForPath = (filePath: string) => volumeRoots.find(({ root, posix }) => {
+    const candidate = posix ? filePath : filePath.replace(/\//g, '\\').toLowerCase()
+    const base = posix ? root : root.toLowerCase()
+    return candidate === base || candidate.startsWith(base === '/' ? base : `${base}${posix ? '/' : '\\'}`)
+  })?.drive || extractDrivePrefix(filePath)
   const files: DiskFileEntry[] = []
   const seenPaths = new Set<string>()
 
@@ -550,7 +562,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
       name,
       path: cleanPath,
       parentDir,
-      drive: extractDrivePrefix(cleanPath),
+      drive: driveForPath(cleanPath),
       extension: cls.extension,
       category: cls.category,
       groupId: cls.groupId,
@@ -581,7 +593,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   if (supportsDeepScan) {
     // 在真实 Electron 宿主或支持 dir: 深度扫描的环境中，直接并发调用 dir: 深度目录树扫描（基于本机真实挂载盘符与系统用户目录，严禁硬编码路径）
     const driveRoots = !hostOverride
-      ? rawDrives.map(d => (d.drive.startsWith('/') ? d.drive : `${d.drive}\\`))
+      ? volumeRoots.map(({ root, posix }) => posix ? root : `${root}\\`)
       : []
     const realTargetDirs = Array.from(new Set([...scanDirs, ...driveRoots])).filter(Boolean)
 
@@ -603,7 +615,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
           topDirectories.push({
             name: sub.name || splitNativePath(cleanSub).name || cleanSub,
             path: cleanSub,
-            drive: extractDrivePrefix(cleanSub),
+            drive: driveForPath(cleanSub),
             sizeBytes: sub.totalBytes,
             fileCount: sub.fileCount || 0,
             ...(sub.approximate ? { approximate: true } : {})
@@ -635,9 +647,10 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   const extStats = computeExtStats(files)
   const groupStats = computeGroupStats(files)
 
-  const totalCapacityBytes = drives.reduce((s, d) => s + d.totalBytes, 0)
-  const totalUsedBytes = drives.reduce((s, d) => s + d.usedBytes, 0)
-  const totalAvailableBytes = drives.reduce((s, d) => s + d.availableBytes, 0)
+  const capacityDrives = uniqueCapacityDrives(rawDrives)
+  const totalCapacityBytes = capacityDrives.reduce((s, d) => s + d.totalBytes, 0)
+  const totalUsedBytes = capacityDrives.reduce((s, d) => s + d.usedBytes, 0)
+  const totalAvailableBytes = capacityDrives.reduce((s, d) => s + d.availableBytes, 0)
 
   return {
     drives,

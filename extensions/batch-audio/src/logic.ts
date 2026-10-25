@@ -1,6 +1,6 @@
 /**
  * 批量音频转换、响度标准化与音效工坊业务逻辑层 (BatchAudio 2.0 Logic)
- * 1:1 复刻 DLLPlugins/batch-audio/PluginTest/README.md 的 12 大核心音频批处理能力
+ * 通过 Windows 原生插件提供 12 大核心音频批处理能力
  * 真实扫描本机 Music / Downloads / Desktop 目录下的音频与媒体文件，对接 BatchAudioPlugin 与 FFmpeg 声学滤镜链
  */
 
@@ -47,7 +47,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\
 export const FORBIDDEN_REASON = '音频批处理输出路径不可指向系统受保护目录或包含路径穿越'
 
 /**
- * 1:1 复刻 DLLPlugins/batch-audio/PluginTest/README.md 的 12 大核心音频处理模式
+ * 通过 Windows 原生插件提供 12 大核心音频处理模式
  */
 export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = [
   {

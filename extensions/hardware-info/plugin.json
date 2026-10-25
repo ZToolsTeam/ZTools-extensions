@@ -1,8 +1,8 @@
 {
   "id": "hardware-info",
-  "name": "电脑硬件信息",
-  "description": "查看本机 CPU 型号与负载、物理内存、系统版本、磁盘容量、显示器与电源状态，给出 4 个常见场景的估算评分，并可导出 Markdown / JSON / TXT 配置报告",
-  "version": "2.0.2",
+  "name": "硬件信息",
+  "description": "查看电脑 CPU、内存、磁盘容量、显示器与电源状态，支持导出硬件配置报告",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

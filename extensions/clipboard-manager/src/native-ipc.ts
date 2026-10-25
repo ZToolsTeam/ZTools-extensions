@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>
 /**
  * ZTools 真实宿主 IPC 与系统能力桥接层 (Real Host IPC Bridge)
  *
@@ -20,7 +21,7 @@ export function nextMessageId(prefix = 'ipc'): string {
 export function isRealElectronHost(hostOverride?: unknown): boolean {
   if (hostOverride) return false
   if (typeof window === 'undefined') return false
-  const w = window as any
+  const w = window as DynamicBridge
   return Boolean(
     w.__ztoolsElectron?.transport?.methods ||
     w.ztools?.transport?.call ||
@@ -44,7 +45,7 @@ function normalizeMethodParams(method: string, params: Record<string, unknown>):
   return next
 }
 
-function normalizeMethodResult(method: string, payload: any): any {
+function normalizeMethodResult(method: string, payload: DynamicBridge): DynamicBridge {
   if (!payload || typeof payload !== 'object') return payload
 
   if (method === 'system_get_disk_usage') {
@@ -90,7 +91,7 @@ function normalizeMethodResult(method: string, payload: any): any {
       : Array.isArray(payload.displays)
       ? payload.displays
       : []
-    return list.map((d: any) => ({
+    return list.map((d: DynamicBridge) => ({
       ...d,
       label: d?.label || d?.name || `Display #${d?.id ?? 1}`
     }))
@@ -99,7 +100,7 @@ function normalizeMethodResult(method: string, payload: any): any {
   return payload
 }
 
-function unwrapTransportResponse(method: string, raw: any): { ok: boolean; data?: any; error?: string } {
+function unwrapTransportResponse(method: string, raw: DynamicBridge): { ok: boolean; data?: DynamicBridge; error?: string } {
   if (raw === null || raw === undefined) {
     return { ok: false, error: 'EMPTY_IPC_RESPONSE' }
   }
@@ -136,10 +137,10 @@ function unwrapTransportResponse(method: string, raw: any): { ok: boolean; data?
 /**
  * 调用 Electron Preload Transport 方法（自动封装合法的 alphanumeric messageId 与双层解包）
  */
-export async function callHostTransport<T = any>(
+export async function callHostTransport<T = DynamicBridge>(
   method: string,
   params: Record<string, unknown> = {},
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; data?: T; error?: string }> {
   const normalizedParams = normalizeMethodParams(method, params)
 
@@ -150,7 +151,7 @@ export async function callHostTransport<T = any>(
         const res = await hostOverride[method](normalizedParams)
         const unwrapped = unwrapTransportResponse(method, res)
         return unwrapped as { ok: boolean; data?: T; error?: string }
-      } catch (err: any) {
+      } catch (err: DynamicBridge) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
@@ -159,7 +160,7 @@ export async function callHostTransport<T = any>(
         const res = await hostOverride.transport.call(method, normalizedParams)
         const unwrapped = unwrapTransportResponse(method, res)
         return unwrapped as { ok: boolean; data?: T; error?: string }
-      } catch (err: any) {
+      } catch (err: DynamicBridge) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
     }
@@ -169,7 +170,7 @@ export async function callHostTransport<T = any>(
     return { ok: false, error: 'NO_WINDOW_ENV' }
   }
 
-  const w = window as any
+  const w = window as DynamicBridge
   const methods = w.__ztoolsElectron?.transport?.methods || w.ztools?.transport?.methods
   const fn = methods?.[method]
 
@@ -178,7 +179,7 @@ export async function callHostTransport<T = any>(
       const messageId = nextMessageId(method.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 24))
       const raw = await fn({ messageId, params: normalizedParams })
       return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string }
-    } catch (err: any) {
+    } catch (err: DynamicBridge) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }
@@ -187,7 +188,7 @@ export async function callHostTransport<T = any>(
     try {
       const raw = await w.ztools.transport.call(method, normalizedParams)
       return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string }
-    } catch (err: any) {
+    } catch (err: DynamicBridge) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }
@@ -208,7 +209,7 @@ export interface RealDiskDriveInfo {
  */
 export async function probeRealDiskDrives(
   candidateLetters: string[] = ['C', 'D', 'E', 'F', 'G'],
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<RealDiskDriveInfo[]> {
   const drives: RealDiskDriveInfo[] = []
   const results = await Promise.all(
@@ -279,9 +280,9 @@ export async function probeRealDiskDrives(
  */
 export async function getRealSystemPath(
   name: 'home' | 'appData' | 'userData' | 'desktop' | 'documents' | 'downloads' | 'music' | 'pictures' | 'videos' | 'temp' | 'cache',
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<string> {
-  const res = await callHostTransport<any>('system_get_path', { name }, hostOverride)
+  const res = await callHostTransport<DynamicBridge>('system_get_path', { name }, hostOverride)
   if (res.ok && res.data) {
     if (typeof res.data === 'string' && res.data.trim().length > 0) {
       return res.data.trim()
@@ -377,7 +378,7 @@ export interface ScanDirectoryTreeOptions {
   maxFiles?: number
   collectTopN?: number
   filterExt?: RegExp
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 }
 
 function extractFileExt(fileNameOrPath: string): string {
@@ -386,7 +387,7 @@ function extractFileExt(fileNameOrPath: string): string {
   return dotIdx > 0 ? base.slice(dotIdx).toLowerCase() : ''
 }
 
-function normalizeIndexedFileEntry(f: any): RealIndexedFileEntry {
+function normalizeIndexedFileEntry(f: DynamicBridge): RealIndexedFileEntry {
   const p = String(f?.path || '')
   const name = String(f?.name || p.split(/[\\/]/).pop() || '')
   const sz = Number(f?.size ?? f?.sizeBytes ?? 0)
@@ -437,14 +438,14 @@ function makeScanResult(
 export async function searchRealIndexedFiles(
   query: string,
   limit = 40,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<RealIndexedFileEntry[]> {
   if (!query || !query.trim()) return []
   const q = query.trim()
   const safeLimit = Math.min(200, Math.max(1, Math.floor(limit || 40)))
 
   try {
-    const res = await callHostTransport<{ files?: any[] }>(
+    const res = await callHostTransport<{ files?: DynamicBridge[] }>(
       'system_search_files',
       { query: q, limit: safeLimit },
       hostOverride
@@ -454,7 +455,7 @@ export async function searchRealIndexedFiles(
     }
 
     if (!hostOverride && typeof window !== 'undefined') {
-      const w = window as any
+      const w = window as DynamicBridge
       if (typeof w.__ztoolsLauncher?.searchFiles === 'function') {
         const rawOuter = await w.__ztoolsLauncher.searchFiles(q, safeLimit)
         const raw = rawOuter && typeof rawOuter === 'object' && 'data' in rawOuter && rawOuter.data ? rawOuter.data : rawOuter
@@ -476,7 +477,7 @@ export async function searchRealIndexedFiles(
 export async function scanRealDirectoryTree(
   dirPath: string,
   limitOrOptions: number | ScanDirectoryTreeOptions = 160,
-  hostOverrideArg?: any
+  hostOverrideArg?: DynamicBridge
 ): Promise<RealDirectoryScanResult> {
   return (await scanDirectoryTreeWithError(dirPath, limitOrOptions, hostOverrideArg)).scan
 }
@@ -485,7 +486,7 @@ export async function scanRealDirectoryTree(
 async function scanDirectoryTreeWithError(
   dirPath: string,
   limitOrOptions: number | ScanDirectoryTreeOptions,
-  hostOverrideArg?: any
+  hostOverrideArg?: DynamicBridge
 ): Promise<{ scan: RealDirectoryScanResult; error?: string }> {
   const empty = makeScanResult([], 0, 0, [])
   if (!dirPath || !dirPath.trim()) return { scan: empty, error: 'EMPTY_DIRECTORY_PATH' }
@@ -503,8 +504,8 @@ async function scanDirectoryTreeWithError(
   const dirQuery = `dir:${targetDir}`
 
   try {
-    let rawPayload: any = null
-    const res = await callHostTransport<any>(
+    let rawPayload: DynamicBridge = null
+    const res = await callHostTransport<DynamicBridge>(
       'system_search_files',
       { query: dirQuery, limit: safeLimit },
       hostOverride
@@ -513,7 +514,7 @@ async function scanDirectoryTreeWithError(
       rawPayload = res.data
     }
     if (!rawPayload && !hostOverride && typeof window !== 'undefined') {
-      const w = window as any
+      const w = window as DynamicBridge
       if (typeof w.__ztoolsLauncher?.searchFiles === 'function') {
         const rawOuter = await w.__ztoolsLauncher.searchFiles(dirQuery, safeLimit)
         rawPayload =
@@ -560,7 +561,7 @@ async function scanDirectoryTreeWithError(
         files = files.slice(0, opts.collectTopN)
       }
       const subdirs: RealDirectorySubdirSummary[] = Array.isArray(rawPayload.subdirs)
-        ? rawPayload.subdirs.map((s: any) => ({
+        ? rawPayload.subdirs.map((s: DynamicBridge) => ({
             name: String(s.name || ''),
             path: String(s.path || ''),
             fileCount: Number(s.file_count ?? s.fileCount ?? 0),
@@ -666,10 +667,10 @@ function joinChildPath(dirPath: string, name: string): string {
  */
 async function listDirectoryViaFilesystem(
   dirPath: string,
-  hostOverride: any,
+  hostOverride: DynamicBridge,
   options: { withSizes?: boolean; limit?: number } = {}
 ): Promise<{ ok: boolean; entries: RealIndexedFileEntry[]; error?: string }> {
-  const res = await callHostTransport<any>('filesystem_get_directory_contents', { path: dirPath }, hostOverride)
+  const res = await callHostTransport<DynamicBridge>('filesystem_get_directory_contents', { path: dirPath }, hostOverride)
   if (!res.ok) return { ok: false, entries: [], error: res.error || 'DIRECTORY_READ_FAILED' }
   const data = res.data
   const rawList: unknown[] | null = Array.isArray(data) ? data : Array.isArray(data?.files) ? data.files : null
@@ -694,8 +695,8 @@ async function listDirectoryViaFilesystem(
         size: sz,
         mtime: nowSec
       })
-    } else if (item && typeof item === 'object' && typeof (item as any).name === 'string') {
-      const raw = item as any
+    } else if (item && typeof item === 'object' && typeof (item as DynamicBridge).name === 'string') {
+      const raw = item as DynamicBridge
       const rawName = raw.name.trim()
       if (!rawName || rawName === '.' || rawName === '..') continue
       // 只接受文件名，或确实位于该目录下的完整路径，拒绝越界路径
@@ -724,7 +725,7 @@ async function listDirectoryViaFilesystem(
  */
 export async function listRealDirectoryContentsResult(
   dirPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<RealDirectoryListingResult> {
   if (!dirPath || !dirPath.trim()) return { entries: [], error: 'EMPTY_DIRECTORY_PATH' }
   const targetDir = dirPath.trim()
@@ -752,7 +753,7 @@ export async function listRealDirectoryContentsResult(
  */
 export async function listRealDirectoryContents(
   dirPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<string[]> {
   return (await listRealDirectoryContentsResult(dirPath, hostOverride)).entries
 }
@@ -763,7 +764,7 @@ export async function listRealDirectoryContents(
  */
 export async function listDirectChildren(
   dirPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<RealDirectChildrenResult> {
   if (!dirPath || !dirPath.trim()) return { entries: [], partial: false, error: 'EMPTY_DIRECTORY_PATH' }
   const targetDir = dirPath.trim()
@@ -819,7 +820,7 @@ export async function listDirectChildren(
  */
 export async function getRealFileSize(
   filePath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<number> {
   if (!filePath) return 0
   if (!hostOverride && realFileSizeCache.has(filePath)) {
@@ -839,7 +840,7 @@ export async function getRealFileSize(
  */
 export async function showRealItemInFolder(
   fullPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<boolean> {
   if (!fullPath) return false
   const res = await callHostTransport('shell_show_item_in_folder', { fullPath }, hostOverride)
@@ -853,7 +854,7 @@ export async function showRealItemInFolder(
  */
 export async function openRealPath(
   fullPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<boolean> {
   if (!fullPath) return false
   const res = await callHostTransport('shell_open_path', { fullPath }, hostOverride)
@@ -865,14 +866,14 @@ export async function openRealPath(
  */
 export async function trashRealItem(
   fullPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; error?: string }> {
   if (!fullPath) return { ok: false, error: '路径不能为空' }
   const res = await callHostTransport('shell_trash_item', { fullPath }, hostOverride)
   return { ok: res.ok, error: res.error }
 }
 
-export interface NativeInvocationResult<T = any> {
+export interface NativeInvocationResult<T = DynamicBridge> {
   ok: boolean
   code: number
   message: string
@@ -880,7 +881,7 @@ export interface NativeInvocationResult<T = any> {
   error?: string
 }
 
-export interface DllCapabilityResponse<T = any> {
+export interface DllCapabilityResponse<T = DynamicBridge> {
   ok: boolean
   code: number
   data: T | null
@@ -891,11 +892,11 @@ export interface DllCapabilityResponse<T = any> {
   fromFallback?: boolean
 }
 
-export async function invokeDllPluginCapability<T = any>(
+export async function invokeDllPluginCapability<T = DynamicBridge>(
   pluginName: string,
   method: string,
-  params: Record<string, any> = {},
-  hostBridge?: any,
+  params: Record<string, DynamicBridge> = {},
+  hostBridge?: DynamicBridge,
   offlineFallback?: () => T | Promise<T>
 ): Promise<DllCapabilityResponse<T>> {
   if (!method || typeof method !== 'string' || method.trim().length === 0) {
@@ -913,7 +914,7 @@ export async function invokeDllPluginCapability<T = any>(
   const trimmedMethod = method.trim()
 
   const unwrapDllRawPayload = (raw: unknown, unwrapDataProperty: boolean): DllCapabilityResponse<T> => {
-    let parsed: any = raw
+    let parsed: DynamicBridge = raw
     if (typeof raw === 'string') {
       try {
         parsed = JSON.parse(raw)
@@ -1010,13 +1011,11 @@ export async function invokeDllPluginCapability<T = any>(
     }
   }
 
-  const ipcRes = await callHostTransport<any>(
+  const ipcRes = await callHostTransport<DynamicBridge>(
     'dllplugin_call',
     {
       plugin: pluginName,
-      pluginName,
       func: trimmedMethod,
-      method: trimmedMethod,
       params
     },
     hostBridge
@@ -1035,7 +1034,7 @@ export async function invokeDllPluginCapability<T = any>(
   if (
     isRealElectronHost(hostBridge) ||
     isRealElectronHost() ||
-    Boolean((hostBridge as any)?.__isRealHost) ||
+    Boolean((hostBridge as DynamicBridge)?.__isRealHost) ||
     isExplicitTransportFailure
   ) {
     const errMsg =
@@ -1064,10 +1063,13 @@ export async function invokeDllPluginCapability<T = any>(
     }
   }
 
+  const unavailableMsg = `HOST_UNAVAILABLE: ${pluginName}.${trimmedMethod} 宿主接口未就绪`
   return {
-    ok: true,
-    code: 0,
-    data: { simulated: true, method: trimmedMethod, params } as unknown as T,
+    ok: false,
+    code: -1,
+    data: null,
+    message: unavailableMsg,
+    error: unavailableMsg,
     pluginName,
     method: trimmedMethod,
     fromFallback: true
@@ -1110,7 +1112,7 @@ export interface RealEnvPaths {
   music: string
 }
 
-export async function getRealEnvPaths(hostOverride?: any): Promise<RealEnvPaths> {
+export async function getRealEnvPaths(hostOverride?: DynamicBridge): Promise<RealEnvPaths> {
   const [homeRaw, appData, downloads, documents, desktop, pictures, videos, music] = await Promise.all([
     getRealSystemPath('home', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -1158,7 +1160,7 @@ export const resolveRealSpecialPaths = getRealEnvPaths
 
 export async function readRealDirectory(
   dirPath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<RealIndexedFileEntry[]> {
   if (!dirPath) return []
   const tree = await scanRealDirectoryTree(dirPath, { maxFiles: 120, hostOverride })
@@ -1184,7 +1186,7 @@ export async function readRealDirectory(
 
 export async function moveRealFilesToTrash(
   paths: string[],
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<{
   ok: boolean
   trashedCount: number
@@ -1229,10 +1231,10 @@ const CAPABILITY_TO_PLUGIN_MAP: Record<string, { plugin: string; func: string }>
   'sqlite.inspectWorkspace': { plugin: 'SqlitePlugin', func: 'inspectWorkspace' }
 }
 
-export async function invokeHostCapability<T = any>(
+export async function invokeHostCapability<T = DynamicBridge>(
   capability: string,
   params: Record<string, unknown> = {},
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult<T>> {
   const normalizedMethod = capability.replace(/\./g, '_')
 
@@ -1333,11 +1335,11 @@ export async function invokeHostCapability<T = any>(
   }
 }
 
-export async function invokePluginService<T = any>(
+export async function invokePluginService<T = DynamicBridge>(
   pluginName: string,
   action: string,
   params: Record<string, unknown> = {},
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult<T>> {
   // 1. 若测试注入了专门拦截 plugin_invoke 的 mock，支持调用
   if (hostOverride && typeof hostOverride.plugin_invoke === 'function') {
@@ -1356,7 +1358,7 @@ export async function invokePluginService<T = any>(
   }
 
   // 2. 优先走真实 Electron IPC 的 dllplugin_call 通道
-  const dllRes = await callHostTransport<any>(
+  const dllRes = await callHostTransport<DynamicBridge>(
     'dllplugin_call',
     { plugin: pluginName, func: action, params },
     hostOverride
@@ -1397,7 +1399,7 @@ export async function invokePluginService<T = any>(
   }
 
   // 4. 兼容旧版 globalThis.ztools.dllplugin.call
-  const g = globalThis as any
+  const g = globalThis as DynamicBridge
   if (!hostOverride && typeof g?.ztools?.dllplugin?.call === 'function') {
     try {
       const raw = await g.ztools.dllplugin.call(pluginName, action, params)
@@ -1411,7 +1413,7 @@ export async function invokePluginService<T = any>(
       }
       const data = raw && typeof raw === 'object' && 'data' in raw ? raw.data : raw
       return { ok: true, code: 0, message: 'OK', data: data as T }
-    } catch (err: any) {
+    } catch (err: DynamicBridge) {
       return {
         ok: false,
         code: -1,
@@ -1527,18 +1529,18 @@ export function computeRealSha256Hex(input: string | Uint8Array): string {
  */
 export async function computeRealFileSha256(
   filePath: string,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<string> {
   if (!filePath || !filePath.trim()) return ''
   const target = filePath.trim()
 
-  const shaRes = await callHostTransport<any>('filesearch_sha256', { path: target }, hostOverride)
+  const shaRes = await callHostTransport<DynamicBridge>('filesearch_sha256', { fullPath: target }, hostOverride)
   if (shaRes.ok && shaRes.data) {
     const hash = typeof shaRes.data === 'string' ? shaRes.data : String(shaRes.data?.sha256 || shaRes.data?.hash || '')
     if (/^[0-9a-f]{64}$/i.test(hash)) return hash.toLowerCase()
   }
 
-  const dllRes = await invokePluginService<any>('FileComparePlugin', 'computeFileSha256', { path: target }, hostOverride)
+  const dllRes = await invokePluginService<DynamicBridge>('FileComparePlugin', 'computeFileSha256', { path: target }, hostOverride)
   if (dllRes.ok && dllRes.data) {
     const hash = typeof dllRes.data === 'string' ? dllRes.data : String(dllRes.data?.sha256 || dllRes.data?.hash || '')
     if (/^[0-9a-f]{64}$/i.test(hash)) return hash.toLowerCase()
@@ -1547,8 +1549,8 @@ export async function computeRealFileSha256(
   return ''
 }
 
-export async function readRealClipboardText(hostOverride?: any): Promise<string> {
-  const res = await callHostTransport<any>('clipboard_read_text', {}, hostOverride)
+export async function readRealClipboardText(hostOverride?: DynamicBridge): Promise<string> {
+  const res = await callHostTransport<DynamicBridge>('clipboard_read_text', {}, hostOverride)
   if (res.ok && res.data !== undefined && res.data !== null) {
     if (typeof res.data === 'string') return res.data
     if (typeof res.data?.text === 'string') return res.data.text
@@ -1563,9 +1565,12 @@ export async function readRealClipboardText(hostOverride?: any): Promise<string>
   return ''
 }
 
-export async function writeRealClipboardText(text: string, hostOverride?: any): Promise<boolean> {
-  const res = await callHostTransport('clipboard_write_text', { text: String(text || '') }, hostOverride)
+export async function writeRealClipboardText(text: string, hostOverride?: DynamicBridge): Promise<boolean> {
+  const payload = { text: String(text || '') }
+  const res = await callHostTransport('clipboard_copy_text', payload, hostOverride)
   if (res.ok) return true
+  const fallbackRes = await callHostTransport('clipboard_write_text', payload, hostOverride)
+  if (fallbackRes.ok) return true
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(String(text || ''))

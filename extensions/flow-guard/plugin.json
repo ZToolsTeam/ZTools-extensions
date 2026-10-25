@@ -1,8 +1,8 @@
 {
   "id": "flow-guard",
-  "name": "网络流量实时监控与防火墙",
-  "description": "按进程实时监控上传/下载带宽速率、活跃 TCP/UDP 远端连接，支持一键阻断偷跑流量进程与上传限速",
-  "version": "2.0.2",
+  "name": "流量监控",
+  "description": "实时查看各软件上传与下载网速、排查后台联网连接，支持一键限制软件网速或禁止联网",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

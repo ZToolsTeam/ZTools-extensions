@@ -50,6 +50,15 @@ export function installSecureStorage(host, { status = { available: true } } = {}
       if (Buffer.byteLength(text, 'utf8') > MAX_BYTES) throw new ZToolsHostError('FILE_TOO_LARGE', `「${key}」超过 64 KiB，无法保存到加密存储`)
       secure.set(key, text)
     },
+    async compareAndSet(key, expected, value) {
+      const readFault = pick(faults.get, key)
+      if (readFault) throw readFault
+      const current = secure.has(key) ? JSON.parse(secure.get(key)) : undefined
+      if (JSON.stringify(current) !== JSON.stringify(expected)) return false
+      // Same turn: api.setItem performs its map write before yielding.
+      await api.setItem(key, value)
+      return true
+    },
     async removeItem(key) {
       calls.push(['remove', key])
       secure.delete(key)

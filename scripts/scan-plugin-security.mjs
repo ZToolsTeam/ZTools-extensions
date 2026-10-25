@@ -2,13 +2,16 @@
 
 /**
  * scan-plugin-security.mjs
- * ZTools GitOps 插件安全 AST 扫描器与 Two-Man Rule 门禁
+ * ZTools 插件清单校验与源码 AST 安全扫描器
  *
  * 功能：
  * 1. 扫描插件源码抽象语法树 (AST)；
- * 2. 严禁动态 eval()、动态 new Function()、十六进制字符串混淆、未声明的 Node 原生模块；
- * 3. 对高危敏感权限（如 network、child_process）自动标记触发双人人工审查 (Two-Man Rule)；
- * 4. 具备 CLI 命令行独立运行与库模块调用能力。
+ * 2. 严禁动态 eval()、动态 new Function()、十六进制字符串混淆、未声明的 Node 原生模块，
+ *    以及声明式运行时不提供的 Node 模块（只能引入 crypto 与 path，声明权限也不行）；
+ * 3. 对高危敏感权限（如 network、child_process）与敏感调用标记为「需要重点人工审核」，并列出原因；
+ *    结果字段沿用 requiresTwoManReview / twoManReviewReasons 的名字（兼容已有调用方），含义就是需要重点人工审核；
+ * 4. 声明式界面规范提示（UI_*，只是 warning，规则说明见插件仓库 docs/ui-guidelines.md）；
+ * 5. 具备 CLI 命令行独立运行与库模块调用能力。
  */
 
 import fs from 'node:fs'
@@ -18,7 +21,8 @@ import {
   validatePluginManifest,
   HIGH_RISK_PERMISSIONS,
   PERMISSION_NODE_MODULE_MAP,
-  NODE_BUILTIN_MODULES
+  NODE_BUILTIN_MODULES,
+  DECLARATIVE_RUNTIME_NODE_MODULES
 } from '../packages/ztools-plugins-spec/src/index.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -413,8 +417,16 @@ async function scanCodeAst({
     // --- C. 严禁未声明的 Node 原生模块及动态计算 require ---
     let requiredModuleName = null
 
-    // import ... from 'fs' / import 'node:fs'
-    if (node.type === 'ImportDeclaration' && node.source) {
+    // import ... from 'fs' / import 'node:fs'；纯类型引入（import type）编译后不存在，不算引入模块
+    if (node.type === 'ImportDeclaration' && node.source && node.importKind !== 'type') {
+      requiredModuleName = node.source.value
+    }
+    // export { x } from 'fs' / export * from 'fs'：同样会在运行时加载该模块
+    if (
+      (node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') &&
+      node.source &&
+      node.exportKind !== 'type'
+    ) {
       requiredModuleName = node.source.value
     }
     // require(...)
@@ -453,6 +465,17 @@ async function scanCodeAst({
     if (requiredModuleName && typeof requiredModuleName === 'string') {
       const cleanMod = requiredModuleName.replace(/^node:/, '')
       if (NODE_BUILTIN_MODULES.has(cleanMod)) {
+        // 运行时只提供 crypto 与 path：其余内置模块即使声明了权限也加载不了，提交时就报错，不要等到用户运行才发现
+        if (!DECLARATIVE_RUNTIME_NODE_MODULES.has(cleanMod)) {
+          violations.push({
+            rule: 'UNSUPPORTED_RUNTIME_MODULE',
+            severity: 'error',
+            file: relPath,
+            line: loc.line,
+            column: loc.column,
+            message: `声明式插件运行时不提供 Node 模块 "${requiredModuleName}"（只能引入 crypto 与 path），声明权限也无法使用；读写文件、执行命令等请改用宿主 API`
+          })
+        }
         const neededPerm = PERMISSION_NODE_MODULE_MAP[cleanMod]
         if (neededPerm) {
           if (!declaredPermissions.has(neededPerm)) {
@@ -465,7 +488,7 @@ async function scanCodeAst({
               message: `使用了未在 plugin.json 声明的 Node 原生模块 "${requiredModuleName}"，缺少 "${neededPerm}" 权限授权`
             })
           } else {
-            // 如果已声明敏感权限，记录双人复核原因
+            // 已声明敏感权限：记录需要重点人工审核的原因
             if (HIGH_RISK_PERMISSIONS.has(neededPerm)) {
               twoManReviewReasons.add(`代码引入了敏感原生模块 "${requiredModuleName}"（已声明 "${neededPerm}" 权限）`)
             }
@@ -474,7 +497,7 @@ async function scanCodeAst({
       }
     }
 
-    // --- D. 高危敏感操作探测与 Two-Man Rule 标记 ---
+    // --- D. 高危敏感操作探测：标记需要重点人工审核 ---
     // 检查网络请求调用 (fetch, XMLHttpRequest, WebSocket)
     if (node.type === 'CallExpression' && node.callee) {
       let isNetworkCall = false
@@ -659,11 +682,12 @@ export async function scanCodeSnippet(code, declaredPermissions = []) {
  * }>}
  */
 /**
- * 声明式 UI 规范检查（AGENTS.md「三大标准布局范式」与 6 条红线）
+ * 声明式 UI 规范检查（插件界面「三大标准布局范式」与红线，规则说明见插件仓库 docs/ui-guidelines.md）
  *
  * 目前只产出 warning，不影响 passed：先摸清存量插件的违规情况，存量改完后再升级为 error。
  * 只检查源码（存在 src/ 时跳过 dist/ 构建产物，避免同一问题报两次）。
  */
+const UI_GUIDELINES_HINT = '规则说明详见 docs/ui-guidelines.md'
 const COLORFUL_EMOJI_PATTERN = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u
 const RAINBOW_COLOR_PATTERN = /\b(?:tintColor|color)\s*:\s*Color\.(Blue|Green|Orange|Purple|Yellow|Magenta)\b/
 
@@ -871,13 +895,13 @@ async function runCli() {
 
 选项:
   --json           以 JSON 格式输出扫描结果
-  --two-man-rule   检查是否触发人工双人审查 (Two-Man Rule) 门禁
+  --two-man-rule   （兼容旧参数，无额外作用）报告里总会列出需要重点人工审核的原因
   --help, -h       显示此帮助信息
 
 示例:
   node scripts/scan-plugin-security.mjs
-  node scripts/scan-plugin-security.mjs plugins/timestamp
-  node scripts/scan-plugin-security.mjs plugins/ --json
+  node scripts/scan-plugin-security.mjs extensions/timestamp
+  node scripts/scan-plugin-security.mjs extensions --json
     `.trim())
     process.exit(0)
   }
@@ -947,21 +971,23 @@ async function runCli() {
       if (layoutWarnings.length > 0) {
         console.log(`⚠️ 声明式 UI 规范提示 ${layoutWarnings.length} 项（暂不拦截）:`)
         for (const v of layoutWarnings) console.log(`   - [${v.rule}] ${v.file}:${v.line} -> ${v.message}`)
+        console.log(`   ${UI_GUIDELINES_HINT}`)
       }
     } else {
       console.log(`❌ AST 安全静态分析: 未通过 (FAILED) - 发现 ${res.violations.length} 项违规:`)
       for (const v of res.violations) {
         console.log(`   - [${v.rule}] ${v.file}:${v.line}:${v.column} -> ${v.message}`)
       }
+      if (layoutWarnings.length > 0) console.log(`   UI_* 为界面规范提示（不拦截），${UI_GUIDELINES_HINT}`)
     }
 
     if (res.requiresTwoManReview) {
-      console.log('⚠️ 【Two-Man Rule 门禁触发】: 该插件包含高危权限或敏感系统操作，需双人代码复核通过后方可合并/发布:')
+      console.log('⚠️ 需要重点人工审核：该插件申请了高危权限或包含敏感系统操作，审核时请逐项说明用途:')
       for (const reason of res.twoManReviewReasons) {
-        console.log(`   - 审核原因: ${reason}`)
+        console.log(`   - 原因: ${reason}`)
       }
     } else {
-      console.log('🛡️  无需触发人工双人审查 (标准安全级别)')
+      console.log('🛡️  未发现高危权限或敏感操作，按常规审核')
     }
   }
   console.log('\n======================================================================')

@@ -1,0 +1,59 @@
+{
+  "id": "pomodoro-focus",
+  "name": "番茄倒数",
+  "version": "1.0.1",
+  "description": "25分钟极简番茄专注工作钟，结合重要日程、发薪日、版本上线倒数日管理，原生系统通知提醒",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "notification"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "pomodoro-main",
+      "explain": "查看当前番茄钟状态，或浏览重要日程倒数日",
+      "cmds": [
+        "番茄倒数",
+        "番茄钟",
+        "专注",
+        "倒数日",
+        "pomodoro",
+        "focus"
+      ]
+    },
+    {
+      "code": "pomodoro-start",
+      "explain": "立即开启一轮 25 分钟极简专注番茄钟",
+      "cmds": [
+        "开始专注",
+        "开启番茄钟",
+        "开始工作"
+      ]
+    },
+    {
+      "code": "pomodoro-new-countdown",
+      "explain": "新建一个重要日程、发薪日或上线发布倒数日",
+      "cmds": [
+        "新建倒数日",
+        "添加倒数日",
+        "添加纪念日"
+      ]
+    }
+  ]
+}

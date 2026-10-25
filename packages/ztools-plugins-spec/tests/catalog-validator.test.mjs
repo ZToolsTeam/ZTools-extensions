@@ -264,6 +264,44 @@ describe('Store Catalog & Plugin Item Validator (Beyond Happy Path)', () => {
       }
     })
 
+    it('mode 只接受客户端已实现的 view / no-view：menu-bar 与大小写变体被拒绝，Schema 枚举与校验器一致', () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-spec-test-'))
+      try {
+        fs.mkdirSync(path.join(tmpDir, 'dist'), { recursive: true })
+        fs.writeFileSync(path.join(tmpDir, 'dist/index.js'), 'export default {}')
+        fs.writeFileSync(path.join(tmpDir, 'icon.png'), 'png')
+        const manifest = {
+          id: 'mode-plugin',
+          name: '模式插件',
+          version: '1.0.0',
+          description: '校验 mode 取值',
+          author: { name: 'ZTools' },
+          entry: 'dist/index.js',
+          icon: 'icon.png',
+          permissions: [],
+          targets: buildPlatformTargets(['windows', 'macos']),
+          nativeComponents: []
+        }
+        for (const mode of ['view', 'no-view']) {
+          const ok = validatePluginManifest({ ...manifest, mode, features: [{ code: 'a', explain: '命令', mode }] }, { baseDir: tmpDir })
+          assert.equal(ok.valid, true, ok.errors.join('; '))
+        }
+        for (const mode of ['menu-bar', 'Menu-Bar', 'VIEW', '', 1, null]) {
+          const top = validatePluginManifest({ ...manifest, mode }, { baseDir: tmpDir })
+          assert.equal(top.valid, false, `顶层 mode=${JSON.stringify(mode)} 应被拒绝`)
+          assert.ok(top.errors.some((e) => e.startsWith('mode 必须为以下取值之一: view, no-view')), top.errors.join('; '))
+          const feat = validatePluginManifest({ ...manifest, features: [{ code: 'a', explain: '命令', mode }] }, { baseDir: tmpDir })
+          assert.equal(feat.valid, false, `features[0].mode=${JSON.stringify(mode)} 应被拒绝`)
+          assert.ok(feat.errors.some((e) => e.startsWith('features[0].mode 必须为以下取值之一')), feat.errors.join('; '))
+        }
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true })
+      }
+      const schema = JSON.parse(fs.readFileSync(new URL('../plugin.schema.json', import.meta.url), 'utf8'))
+      assert.deepEqual(schema.properties.mode.enum, ['view', 'no-view'])
+      assert.deepEqual(schema.properties.features.items.properties.mode.enum, ['view', 'no-view'])
+    })
+
     it('安全与边界拦截: 拦截 entry/icon/main 路径穿越、非法权限与缺失 targets', () => {
       const badManifest = {
         id: 'evil-plugin',

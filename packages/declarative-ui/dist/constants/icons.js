@@ -103,6 +103,7 @@ export var Icon;
     Icon["StarDisabled"] = "star-disabled";
     Icon["Info"] = "info";
     Icon["Unlock"] = "unlock";
+    Icon["LockUnlocked"] = "unlock";
     Icon["Person"] = "person";
     Icon["Signal3"] = "signal-3";
     Icon["EyeDisabled"] = "eye-disabled";

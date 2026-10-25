@@ -1,8 +1,8 @@
 {
   "id": "batch-rename",
   "name": "批量重命名",
-  "description": "文件批量替换、前后缀、大小写与序号排版",
-  "version": "2.0.2",
+  "description": "批量修改文件名，支持关键词替换、添加前后缀、日期编号排序与扩展名统一转换",
+  "version": "2.0.6",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

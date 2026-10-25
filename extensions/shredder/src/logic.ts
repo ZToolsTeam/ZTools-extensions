@@ -1,3 +1,4 @@
+type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * ZTools 2.0 标杆原生插件: 军工级文件粉碎机 (Shredder 2.0 - DoD 5220.22-M / Gutmann 多轮扇区覆写不可逆销毁引擎)
  *
@@ -16,7 +17,7 @@ import {
   invokeHostCapability,
   invokePluginService,
   isRealElectronHost,
-  openRealPath,
+
   resolveRealSpecialPaths,
   scanRealDirectoryTree,
   showRealItemInFolder,
@@ -133,7 +134,7 @@ export function validateInvocationPayload(
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostOverride?: any
+  hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult> {
   const validation = validateInvocationPayload(method, params);
   if (!validation.valid) {
@@ -215,7 +216,7 @@ export function createInitialShredderSnapshot(): ShredderSnapshot {
   };
 }
 
-export async function fetchShredCandidates(hostBridge?: any): Promise<ShredderSnapshot> {
+export async function fetchShredCandidates(hostBridge?: DynamicBridge): Promise<ShredderSnapshot> {
   const initial = createInitialShredderSnapshot();
   const isRealHost = Boolean(hostBridge) || isRealElectronHost(hostBridge) || isRealElectronHost();
   try {
@@ -273,8 +274,8 @@ export async function fetchShredCandidates(hostBridge?: any): Promise<ShredderSn
 export async function executeSecureShred(
   items: ShredCandidateItem[],
   standardId: ShredStandardId,
-  hostOverride?: any
-): Promise<{ ok: boolean; shreddedCount: number; shreddedBytes: number; message: string }> {
+  hostOverride?: DynamicBridge
+): Promise<{ ok: boolean; shreddedCount: number; shreddedBytes: number; failedPaths?: string[]; message: string }> {
   const standard = SHRED_STANDARDS.find((s) => s.id === standardId) || SHRED_STANDARDS[0];
   const safeTargets = (items || []).filter(
     (item) => item && !item.isSystemLocked && !FORBIDDEN_TARGET_PATTERN.test(item.path)
@@ -288,6 +289,8 @@ export async function executeSecureShred(
     };
   }
 
+  const realHost = Boolean(hostOverride) || isRealElectronHost(hostOverride) || isRealElectronHost();
+  const failedPaths: string[] = [];
   let shreddedCount = 0;
   let shreddedBytes = 0;
   let lastError = "";
@@ -308,6 +311,11 @@ export async function executeSecureShred(
       shreddedBytes += item.sizeBytes;
       continue;
     }
+    if (realHost) {
+      failedPaths.push(item.path);
+      lastError = wipeRes.error || wipeRes.message || `安全覆写擦除失败: ${item.path}`;
+      continue;
+    }
     const delRes = await callHostTransport(
       "filesystem_delete_file",
       { path: item.path },
@@ -317,16 +325,18 @@ export async function executeSecureShred(
       shreddedCount += 1;
       shreddedBytes += item.sizeBytes;
     } else {
+      failedPaths.push(item.path);
       lastError = delRes.error || wipeRes.error || wipeRes.message || `粉碎文件失败: ${item.path}`;
     }
   }
 
-  if (shreddedCount === 0) {
+  if (shreddedCount === 0 && failedPaths.length > 0) {
     return {
       ok: false,
       shreddedCount: 0,
       shreddedBytes: 0,
-      message: lastError || "文件粉碎失败：宿主未能擦除或删除目标文件"
+      failedPaths,
+      message: lastError || "文件粉碎失败：宿主未能执行安全覆写擦除"
     };
   }
 
@@ -334,13 +344,14 @@ export async function executeSecureShred(
     ok: true,
     shreddedCount,
     shreddedBytes,
+    failedPaths,
     message: `已按「${standard.name}」完成 ${shreddedCount} 个文件 (${formatBytes(shreddedBytes)}) 的扇区多轮覆写与彻底销毁`
   };
 }
 
-export async function openShredCandidateLocation(targetPath: string, hostBridge?: any): Promise<boolean> {
+export async function openShredCandidateLocation(targetPath: string, hostBridge?: DynamicBridge): Promise<boolean> {
   if (!targetPath) return false;
   const shown = await showRealItemInFolder(targetPath, hostBridge);
   if (shown) return true;
-  return openRealPath(targetPath, hostBridge);
+  return shown;
 }

@@ -86,15 +86,15 @@ export const SAMPLE_FILES: FileRecord[] = [
     pinyin: "ztools architecture"
   },
   {
-    name: "raycast-windows-deep-reverse-analysis.md",
-    path: "E:\\csdwork3\\git\\ZTools\\docs\\raycast-windows-deep-reverse-analysis.md",
+    name: "launcher-design-notes.md",
+    path: "C:\\Users\\Demo\\Projects\\ZTools\\docs\\launcher-design-notes.md",
     isDir: false,
     size: 25451,
     mtime: Date.now() - 3600000 * 5,
     category: "document",
     extension: "md",
-    acronym: "rwdra",
-    pinyin: "raycast windows"
+    acronym: "ldn",
+    pinyin: "launcher design notes"
   },
   {
     name: "Development-Plan-2026.pdf",
@@ -109,7 +109,7 @@ export const SAMPLE_FILES: FileRecord[] = [
   },
   {
     name: "architecture-diagram.png",
-    path: "E:\\csdwork3\\git\\ZTools\\docs\\images\\architecture-diagram.png",
+    path: "C:\\Users\\Demo\\Projects\\ZTools\\docs\\images\\architecture-diagram.png",
     isDir: false,
     size: 382910,
     mtime: Date.now() - 3600000 * 8,
@@ -153,7 +153,7 @@ export const SAMPLE_FILES: FileRecord[] = [
   },
   {
     name: "indexer.rs",
-    path: "E:\\csdwork3\\git\\ZTools\\electron-client\\native\\indexer\\src\\main.rs",
+    path: "C:\\Users\\Demo\\Projects\\ZTools\\electron-client\\native\\indexer\\src\\main.rs",
     isDir: false,
     size: 14208,
     mtime: Date.now() - 3600000 * 3,
@@ -164,7 +164,7 @@ export const SAMPLE_FILES: FileRecord[] = [
   },
   {
     name: "ztools-indexer.exe",
-    path: "E:\\csdwork3\\git\\ZTools\\electron-client\\out\\native\\win32-x64\\bin\\ztools-indexer.exe",
+    path: "C:\\Users\\Demo\\Projects\\ZTools\\electron-client\\out\\native\\win32-x64\\bin\\ztools-indexer.exe",
     isDir: false,
     size: 891240,
     mtime: Date.now() - 3600000 * 18,
@@ -267,7 +267,7 @@ export async function searchLocalFiles(
   limit = 50,
   hostOverride?: any
 ): Promise<FileRecord[]> {
-  const trimmed = (query || "").trim().toLowerCase();
+  const trimmed = (query || "").trim();
   const realHost = isRealElectronHost(hostOverride);
 
   // 1. 若在真实宿主环境或注入了 hostOverride，优先调度底层 Rust 侧车 ztools-indexer / filesearch_query。
@@ -276,29 +276,18 @@ export async function searchLocalFiles(
   try {
     let rawFiles: any[] = [];
     if (hostOverride || realHost) {
-      const fsQueryRes = await callHostTransport<any>(
-        "filesearch_query",
-        { query: trimmed, limit },
-        hostOverride
-      );
-      if (fsQueryRes.ok && fsQueryRes.data) {
-        if (Array.isArray(fsQueryRes.data)) rawFiles = fsQueryRes.data;
-        else if (Array.isArray(fsQueryRes.data?.files)) rawFiles = fsQueryRes.data.files;
-        else if (Array.isArray(fsQueryRes.data?.items)) rawFiles = fsQueryRes.data.items;
+      const errors: string[] = [];
+      for (const method of ["filesearch_query", "system_search_files"]) {
+        // 空关键词原样发送：宿主把空查询当作「最近文件」（Spotlight 最近修改 / 用户目录最近文件）；
+        // 改成 "." 会被当成普通关键词去匹配文件名里的点号，首屏就成了无关文件
+        const result = await callHostTransport<unknown>(method, { query: trimmed, limit }, hostOverride);
+        const data = result.data;
+        const record = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
+        const files = Array.isArray(data) ? data : Array.isArray(record?.files) ? record.files : Array.isArray(record?.items) ? record.items : null;
+        if (result.ok && files) return files.map(mapRawFileToRecord);
+        errors.push(result.error || `${method} 返回无效结果`);
       }
-
-      if (rawFiles.length === 0) {
-        const ipcRes = await callHostTransport<any>(
-          "system_search_files",
-          { query: trimmed || ".", limit },
-          hostOverride
-        );
-        if (ipcRes.ok && ipcRes.data) {
-          if (Array.isArray(ipcRes.data)) rawFiles = ipcRes.data;
-          else if (Array.isArray(ipcRes.data?.files)) rawFiles = ipcRes.data.files;
-          else if (Array.isArray(ipcRes.data?.items)) rawFiles = ipcRes.data.items;
-        }
-      }
+      throw new Error(`文件搜索不可用：${errors.join("；")}`);
     } else {
       const launcher = (globalThis as any).__ztoolsLauncher;
       const system = (globalThis as any).ztools?.system;
@@ -318,41 +307,10 @@ export async function searchLocalFiles(
       return rawFiles.map(mapRawFileToRecord);
     }
 
-    // 在真实宿主环境下，如果索引查询为空（例如空关键词刚打开或索引尚未构建完成），读取真实的用户常用目录
-    if (realHost) {
-      const [downloadsDir, desktopDir, documentsDir] = await Promise.all([
-        getRealSystemPath("downloads", hostOverride),
-        getRealSystemPath("desktop", hostOverride),
-        getRealSystemPath("documents", hostOverride)
-      ]);
-      const dirs = [downloadsDir, desktopDir, documentsDir].filter(Boolean);
-      const lists = await Promise.all(dirs.map((d) => readRealDirectory(d, hostOverride)));
-      const seen = new Set<string>();
-      const collected: FileRecord[] = [];
-      for (const entries of lists) {
-        for (const entry of entries) {
-          if (!entry.path || seen.has(entry.path)) continue;
-          const rec = mapRawFileToRecord(entry);
-          if (
-            !trimmed ||
-            rec.name.toLowerCase().includes(trimmed) ||
-            rec.path.toLowerCase().includes(trimmed) ||
-            (rec.extension && rec.extension.toLowerCase().includes(trimmed))
-          ) {
-            seen.add(rec.path);
-            collected.push(rec);
-            if (collected.length >= limit) break;
-          }
-        }
-        if (collected.length >= limit) break;
-      }
-      return collected;
-    }
+
   } catch (err) {
     console.warn("[EverythingFileSearch] 调用宿主 Rust 索引引擎异常，转入回退引擎:", err);
-    if (realHost) {
-      return [];
-    }
+    if (hostOverride || realHost) throw err;
   }
 
   // 2. 离线/测试/降级兜底引擎 (仅在非真实宿主环境下启用)

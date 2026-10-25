@@ -61,8 +61,8 @@ export function previewMarkdown(content: string, lv: QrErrorCorrectionLevel): Pr
       ok: true,
       markdown: `![二维码](${dataUrl})\n\n${detectQrContentType(content).label} · ${new TextEncoder().encode(content).length} 字节 · 版本 ${qr.version}（${qr.size}×${qr.size}）· 纠错 ${LEVEL_LABEL[lv]}`
     };
-  } catch (err: any) {
-    result = { ok: false, error: err?.message || String(err) };
+  } catch (err: unknown) {
+    result = { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
   previewCache.set(key, result);
   previewCacheChars += previewSize(result);
@@ -86,7 +86,7 @@ export function resetPreviewCache() {
 
 function newItem(content: string, level: QrErrorCorrectionLevel, title?: string): QrItem {
   return {
-    id: `qr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    id: `qr_${globalThis.crypto.randomUUID()}`,
     title: title || content.slice(0, 40),
     content,
     level,
@@ -108,12 +108,12 @@ export function WifiQrForm({ onCreated }: { onCreated: (item: QrItem) => Promise
   const submit = async () => {
     let payload: string;
     try {
-      payload = buildWifiPayload(ssid.trim(), password, security, hidden);
-    } catch (err: any) {
-      setError(err?.message);
+      payload = buildWifiPayload(ssid, password, security, hidden);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
       return;
     }
-    if (await onCreated(newItem(payload, "M", `Wi-Fi：${ssid.trim()}`))) pop();
+    if (await onCreated(newItem(payload, "M", `Wi-Fi：${ssid}`))) pop();
   };
 
   return Form(
@@ -128,7 +128,7 @@ export function WifiQrForm({ onCreated }: { onCreated: (item: QrItem) => Promise
       Form.TextField({ id: "ssid", title: "Wi-Fi 名称", placeholder: "区分大小写", value: ssid, error, onChange: (v: string) => { setSsid(v); setError(undefined); } }),
       Form.PasswordField({ id: "password", title: "密码", placeholder: "无密码网络可留空", value: password, onChange: (v: string) => { setPassword(v); setError(undefined); } }),
       Form.Dropdown(
-        { id: "security", title: "加密方式", value: security, onChange: (v: string) => setSecurity(v as any) },
+        { id: "security", title: "加密方式", value: security, onChange: (v: string) => setSecurity(v === "WEP" || v === "nopass" ? v : "WPA") },
         [
           Form.Dropdown.Item({ title: "WPA / WPA2 / WPA3", value: "WPA" }),
           Form.Dropdown.Item({ title: "WEP", value: "WEP" }),
@@ -151,7 +151,7 @@ export default function QrCodeCommand() {
     let cancelled = false;
     getQrHistory()
       .then((items) => { if (!cancelled) setHistory(items); })
-      .catch((err: any) => showToast(Toast.Style.Failure, "读取历史失败", err?.message || String(err)))
+      .catch((err: unknown) => showToast(Toast.Style.Failure, "读取历史失败", err instanceof Error ? err.message : String(err)))
       .finally(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, []);
@@ -161,8 +161,8 @@ export default function QrCodeCommand() {
       setHistory(await fn());
       if (success) await showToast(Toast.Style.Success, success);
       return true;
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "保存失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "保存失败", err instanceof Error ? err.message : String(err));
       return false;
     }
   };
@@ -172,8 +172,8 @@ export default function QrCodeCommand() {
       await copyPngToClipboard(generateQrPngBase64(content, lv));
       await showToast(Toast.Style.Success, "已复制二维码图片", "可以直接粘贴到聊天或文档里");
       if (remember) await run(() => saveQrItem(newItem(content, lv)), "");
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "复制图片失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "复制图片失败", err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -181,8 +181,8 @@ export default function QrCodeCommand() {
     try {
       const path = await savePngFile(generateQrPngBase64(content, lv), "qrcode.png");
       if (path) await showToast(Toast.Style.Success, "已保存", path);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "保存图片失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "保存图片失败", err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -209,8 +209,8 @@ export default function QrCodeCommand() {
       await clearQrHistory();
       setHistory([]);
       await showToast(Toast.Style.Success, "已清空历史");
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "清空失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "清空失败", err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -227,7 +227,7 @@ export default function QrCodeCommand() {
     Action({ title: "生成 Wi-Fi 二维码…", icon: Icon.Shield, onAction: openWifiForm })
   ];
 
-  const sections: any[] = [];
+  const sections: ReturnType<typeof List.Section>[] = [];
   const text = searchText.trim();
   if (text) {
     const p = preview(text, level);

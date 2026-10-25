@@ -1,0 +1,63 @@
+{
+  "id": "media-metadata",
+  "name": "EXIF隐私抹除",
+  "version": "1.0.1",
+  "description": "无损解析照片 EXIF 与音视频流参数，一键彻底擦除照片中记录的 GPS 经纬度位置与设备隐私，绝不破坏原图画质",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [
+    "fs",
+    "shell",
+    "dialog",
+    "clipboard"
+  ],
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "features": [
+    {
+      "code": "media-metadata-workbench",
+      "explain": "打开 EXIF 与媒体透视工作台，拖入照片或音视频查看详情与抹除隐私",
+      "cmds": [
+        "exif查看",
+        "清除照片隐私",
+        "删除gps定位",
+        "照片信息",
+        "exif",
+        "mediainfo"
+      ]
+    },
+    {
+      "code": "media-clean-gps-fast",
+      "explain": "自动识别剪贴板或拖入的照片，一键无损擦除 GPS 经纬度位置并另存",
+      "cmds": [
+        "清除gps",
+        "抹除照片位置",
+        "删除拍照定位"
+      ]
+    },
+    {
+      "code": "media-stream-info",
+      "explain": "透视音视频文件的真实封装格式、编码标准（H264/HEVC/ProRes）、帧率与色彩深度",
+      "cmds": [
+        "视频参数查看",
+        "查看视频编码",
+        "视频帧率",
+        "音频参数"
+      ]
+    }
+  ]
+}

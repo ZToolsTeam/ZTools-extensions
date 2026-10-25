@@ -1,14 +1,56 @@
 {
   "id": "window-manager",
-  "name": "窗口句柄与置顶分屏管理器",
-  "description": "基于 Win32 原生窗口 API 枚举全部活动桌面窗口，支持一键窗口置顶 (Always on Top)、透明度调节、尺寸锁定与极速分屏贴靠",
-  "version": "2.0.2",
+  "name": "窗口管理",
+  "description": "快速管理桌面活动窗口，支持左右分屏贴靠、一键窗口置顶、透明度调节与尺寸居中",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具",
     "办公效率"
+  ],
+  "keywords": [
+    "窗口管理",
+    "窗口分屏",
+    "窗口置顶",
+    "窗口切换",
+    "左右分屏",
+    "透明度",
+    "always on top",
+    "window"
+  ],
+  "features": [
+    {
+      "code": "win-snap-half",
+      "explain": "窗口左右分屏贴靠与居中排版",
+      "cmds": [
+        "窗口分屏",
+        "左右分屏",
+        "左半屏",
+        "右半屏",
+        "窗口居中"
+      ]
+    },
+    {
+      "code": "win-topmost",
+      "explain": "窗口一键置顶与透明度调节",
+      "cmds": [
+        "窗口置顶",
+        "置顶窗口",
+        "always on top",
+        "窗口透明度"
+      ]
+    },
+    {
+      "code": "win-switch",
+      "explain": "活动桌面窗口快速检索与切换",
+      "cmds": [
+        "窗口切换",
+        "切换窗口",
+        "活动窗口"
+      ]
+    }
   ],
   "permissions": [
     "system",

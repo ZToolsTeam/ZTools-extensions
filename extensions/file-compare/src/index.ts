@@ -50,7 +50,7 @@ export function EditTextsForm({ left, right, onSave }: { left: Side; right: Side
           title: '开始对比',
           icon: Icon.Check,
           onSubmit: () => {
-            onSave(a === left.text ? left : { name: '左侧', text: a, source: 'text' }, b === right.text ? right : { name: '右侧', text: b, source: 'text' })
+            onSave(a === left.text && left.source ? left : { name: '左侧', text: a, source: 'text' }, b === right.text && right.source ? right : { name: '右侧', text: b, source: 'text' })
             pop()
           }
         })
@@ -71,8 +71,8 @@ export function FileCompareCommand() {
   const { push } = useNavigation()
 
   // 两侧都有内容才对比；只有一侧时进入「待选另一侧」状态，不拿空文本做整篇删除的假差异
-  const hasLeft = left.text.length > 0
-  const hasRight = right.text.length > 0
+  const hasLeft = left.source !== undefined || left.text.length > 0
+  const hasRight = right.source !== undefined || right.text.length > 0
   const ready = hasLeft && hasRight
   // 只在输入变化时重新计算（交换、忽略空白、载入新内容），其余重渲染直接复用结果
   const { result, error, report } = useMemo(() => {
@@ -80,8 +80,8 @@ export function FileCompareCommand() {
     try {
       const r = diffText(left.text, right.text, { ignoreWhitespace })
       return { result: r as DiffResult | null, error: '', report: formatUnifiedDiff(r, left.name, right.name) }
-    } catch (err: any) {
-      return { result: null as DiffResult | null, error: String(err?.message || err), report: '' }
+    } catch (err: unknown) {
+      return { result: null as DiffResult | null, error: err instanceof Error ? err.message : String(err), report: '' }
     }
   }, [ready, left.text, right.text, left.name, right.name, ignoreWhitespace])
 
@@ -103,8 +103,8 @@ export function FileCompareCommand() {
       const file = await pickTextFile(side === 'left' ? '选择左侧（原文）文件' : '选择右侧（新文）文件')
       if (!file) return
       side === 'left' ? setLeft({ name: file.name, text: file.text, source: 'file' }) : setRight({ name: file.name, text: file.text, source: 'file' })
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, '读取文件失败', err?.message || String(err))
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, '读取文件失败', err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -123,7 +123,7 @@ export function FileCompareCommand() {
     ? [Action({ title: '复制差异报告', icon: Icon.CopyClipboard, onAction: async () => { await Clipboard.copy(report); await showToast(Toast.Style.Success, '已复制差异报告（unified diff）') } })]
     : []
 
-  let sections: any[]
+  let sections: ReturnType<typeof List.Section>[]
   if (hasLeft !== hasRight) {
     // 只载入了一侧：主动作沿用已载入一侧的来源补另一侧，次动作换另一种来源，其余收进 ⌘K
     const loaded = hasLeft ? left : right

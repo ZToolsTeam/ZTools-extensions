@@ -1,6 +1,6 @@
 /**
  * 批量文件重命名工作台业务逻辑与真实文件系统契约层 (BatchRename 2.0 Logic)
- * 1:1 复刻 DLLPlugins/batch-rename/BatchRenamePlugin/产品设计文档.md
+ * 通过 Windows 原生插件提供批量重命名能力
  * 完整支持 10 大替换/追加/序号规则、4 种智能排序、重命名同名冲突检测、真实原子改名与一键撤销回滚 (Undo)
  */
 
@@ -12,6 +12,7 @@ import {
   isRealElectronHost,
   listDirectChildren
 } from './native-ipc.js'
+import { hostUpgradeError, isHostMethodMissing } from './host-compat.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -330,6 +331,8 @@ export interface DirectoryFilesResult {
   occupiedNames: string[]
   /** true = 通过已授权的 filesystem 接口读取（完整、可直接改名）；false = 未授权，只读预览 */
   authorized: boolean
+  /** 客户端版本过低：目录读取结果里没有写入授权信息，无法安全改名 */
+  hostOutdated?: boolean
   /** 未授权时宿主扫描只返回了部分直接子项 */
   partial: boolean
   /** 可改名文件总数（截断前） */
@@ -487,12 +490,14 @@ export async function fetchDirectoryFiles(dirPath: string, hostOverride?: any): 
   let raw: RawDirEntry[]
   let authorized = false
   let partial = false
+  let hostOutdated = false
   const listing = await callHostTransport<any>('filesystem_get_directory_contents', { path: directory }, hostOverride)
   if (listing.ok) {
     const parsed = parseDirectoryContents(directory, listing.data)
     if (!parsed) return empty('INVALID_DIRECTORY_PAYLOAD', true)
     raw = parsed
-    authorized = true
+    authorized = listing.data?.writeAuthorized === true
+    hostOutdated = typeof listing.data?.writeAuthorized !== 'boolean'
   } else if (isPermissionError(listing.error)) {
     const scan = await listDirectChildren(directory, hostOverride)
     raw = scan.entries.map(e => ({
@@ -518,6 +523,7 @@ export async function fetchDirectoryFiles(dirPath: string, hostOverride?: any): 
     totalFiles: files.length,
     truncated: files.length > MAX_RENAME_FILES
   }
+  if (hostOutdated) result.hostOutdated = true
   if (files.length === 0) result.error = 'DIRECTORY_EMPTY_OR_UNREADABLE'
   return result
 }
@@ -652,20 +658,11 @@ function parentDirOfPath(p: string): { dir: string; sep: string } {
   return { dir: idx > 0 ? p.slice(0, idx) : idx === 0 ? p.slice(0, 1) : '', sep }
 }
 
-/**
- * 安全移动：目标已存在时拒绝（宿主 move 会静默覆盖已有文件）。
- * 仅大小写不同的改名（同一文件）跳过存在性检查。
- */
-async function safeMove(sourcePath: string, destPath: string, hostOverride?: any): Promise<{ ok: boolean; error?: string }> {
-  if (sourcePath.toLowerCase() !== destPath.toLowerCase()) {
-    const exists = await callHostTransport<any>('filesystem_file_exists', { path: destPath }, hostOverride)
-    if (!exists.ok) return { ok: false, error: exists.error || '无法确认目标文件是否已存在' }
-    const flag = typeof exists.data === 'boolean' ? exists.data : exists.data?.exists
-    if (typeof flag !== 'boolean') return { ok: false, error: '无法确认目标文件是否已存在' }
-    if (flag) return { ok: false, error: '目标文件已存在，已跳过以免覆盖' }
-  }
-  const res = await callHostTransport('filesystem_move_file', { sourcePath, destPath }, hostOverride)
-  return { ok: res.ok, error: res.ok ? undefined : res.error || '改名失败' }
+/** 仅调用宿主的原子不覆盖接口；旧宿主失败时不能回退到普通 move。 */
+async function safeMove(sourcePath: string, destPath: string, hostOverride?: unknown): Promise<{ ok: boolean; error?: string }> {
+  const res = await callHostTransport('filesystem_move_file_no_replace', { sourcePath, destPath }, hostOverride)
+  if (res.ok) return { ok: true }
+  return { ok: false, error: isHostMethodMissing(res.error) ? hostUpgradeError('安全改名').message : res.error || '安全改名失败，请重试' }
 }
 
 export async function executeRealFileRename(

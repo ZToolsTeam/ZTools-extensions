@@ -1,11 +1,20 @@
 {
   "id": "everything-file-search",
-  "name": "Everything 文件秒搜",
-  "version": "2.0.2",
-  "description": "基于自研 MFT / USN 硬件级极速文件检索",
+  "name": "文件秒搜",
+  "version": "2.0.7",
+  "description": "毫秒级全盘文件搜索，支持按文件名、后缀名与路径快速定位本机任意文件",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
+  "keywords": [
+    "文件秒搜",
+    "文件搜索",
+    "找文件",
+    "everything",
+    "mft",
+    "usn",
+    "全盘搜索"
+  ],
   "permissions": [
     "clipboard",
     "fs"

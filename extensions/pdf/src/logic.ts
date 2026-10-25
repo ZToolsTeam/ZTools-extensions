@@ -1,6 +1,6 @@
 /**
  * PDF 多功能转换、合并拆分与加密工具箱业务逻辑层 (Pdf 2.0 Logic)
- * 1:1 复刻 DLLPlugins/pdf/PdfPlugin/产品设计文档.md 的 3 大分类 12 项核心 PDF 工具能力
+ * 通过 Windows 原生插件提供 3 大分类 12 项核心 PDF 工具能力
  * 真实扫描本机 Documents / Downloads / Desktop 目录下的 PDF、Office 文档与图片，对接 PdfPlugin 与 image_to_pdf 宿主能力
  */
 
@@ -53,7 +53,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\
 export const FORBIDDEN_REASON = 'PDF 转换输出路径禁止包含目录穿越或覆盖系统核心目录'
 
 /**
- * 1:1 复刻 DLLPlugins/pdf/PdfPlugin/产品设计文档.md 的 3 大分类 12 项核心工具
+ * 通过 Windows 原生插件提供 3 大分类 12 项核心工具
  */
 export const PDF_TOOLBOX_MODES: CapabilityActionItem[] = [
   // 1. PDF 转其他格式 (PRD 2.1)

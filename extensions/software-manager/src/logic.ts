@@ -1,6 +1,6 @@
 /**
  * 软件管理、智能分类、活跃度画像与卸载残留中心 (SoftwareManager 2.0 Logic)
- * 1:1 复刻 DLLPlugins/software-manager (registry_helper.h / software_classifier.h / usage_analyzer.h / software_uninstaller.h)
+ * 通过 Windows 原生插件提供软件扫描、分类、使用分析与卸载能力
  * 严格遵循零模拟数据铁律：在真实 Electron 宿主中 100% 读取真实注册表已安装应用与真实 AppData 目录
  */
 
@@ -38,49 +38,49 @@ export const SOFTWARE_SMART_CATEGORIES: SoftwareSmartCategoryMeta[] = [
     id: 'dev_geek',
     name: '开发与极客工具',
     shortName: '开发极客',
-    color: '#3b82f6',
+    color: 'secondaryText',
     description: 'IDE 编辑器、编译器、SDK、Git、容器虚拟化与终端工具'
   },
   {
     id: 'browser_net',
     name: '浏览器与社交通讯',
     shortName: '浏览社交',
-    color: '#10b981',
+    color: 'secondaryText',
     description: '现代浏览器、即时通讯 (微信/QQ/钉钉/飞书)、远程控制与下载工具'
   },
   {
     id: 'media_design',
     name: '影音娱乐与创意设计',
     shortName: '影音设计',
-    color: '#a855f7',
+    color: 'secondaryText',
     description: '音视频播放器、流媒体音乐、剪辑转码、3D 建模与平面设计套件'
   },
   {
     id: 'office_doc',
     name: '办公文档与效率工具',
     shortName: '办公效率',
-    color: '#f59e0b',
+    color: 'secondaryText',
     description: 'Office/WPS 办公套件、PDF 阅读处理、笔记知识库与解压缩工具'
   },
   {
     id: 'game_platform',
     name: '游戏娱乐与外设平台',
     shortName: '游戏外设',
-    color: '#ec4899',
+    color: 'secondaryText',
     description: 'Steam/Epic 游戏发行平台、电竞外设驱动中心与独立游戏客户端'
   },
   {
     id: 'security_driver',
     name: '系统安全与硬件驱动',
     shortName: '安全驱动',
-    color: '#06b6d4',
+    color: 'secondaryText',
     description: '显卡/声卡/网卡底层硬件驱动、安全防护软件与主板芯片组组件'
   },
   {
     id: 'runtime_system',
     name: '运行库与系统组件',
     shortName: '运行库',
-    color: '#64748b',
+    color: 'secondaryText',
     description: 'Visual C++ Redistributable、.NET Runtime、WebView2 与系统基础框架'
   }
 ]
@@ -439,12 +439,27 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(value >= 100 || i === 0 ? 0 : 1)} ${units[i]}`
 }
 
+interface NativeHostBridge {
+  invokePlugin?: (
+    plugin: string,
+    method: string,
+    params: Record<string, unknown>
+  ) => Promise<Record<string, unknown> | null | undefined>
+  __isRealHost?: boolean
+  invoke?: unknown
+  send?: unknown
+}
+
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown> = {},
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<NativeInvocationResult> {
-  const host = hostOverride || (typeof window !== 'undefined' ? (window as any).ztools?.nativeHost : undefined)
+  const winZtools =
+    typeof window !== 'undefined'
+      ? ((window as unknown as Record<string, unknown>).ztools as { nativeHost?: NativeHostBridge } | undefined)
+      : undefined
+  const host = (hostOverride as NativeHostBridge | undefined) || winZtools?.nativeHost
 
   if (host && typeof host.invokePlugin === 'function') {
     try {
@@ -455,11 +470,11 @@ export async function invokeNativeCapability(
           pluginName: DLL_PLUGIN_NAME,
           method,
           data: res.data !== undefined ? res.data : res,
-          error: res.error,
+          error: typeof res.error === 'string' ? res.error : undefined,
           fromFallback: false
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.warn(`[software-manager] Native invoke failed for ${method}:`, err)
       return {
         ok: false,
@@ -471,7 +486,7 @@ export async function invokeNativeCapability(
     }
   }
 
-  const transportRes = await callHostTransport<any>(
+  const transportRes = await callHostTransport<unknown>(
     'dllplugin_call',
     { plugin: DLL_PLUGIN_NAME, func: method, params },
     hostOverride
@@ -496,10 +511,12 @@ export async function invokeNativeCapability(
     }
   }
 
+  const overrideObj =
+    hostOverride && typeof hostOverride === 'object' ? (hostOverride as NativeHostBridge) : undefined
   if (
     isRealElectronHost(hostOverride) ||
     isRealElectronHost() ||
-    Boolean(hostOverride?.__isRealHost || hostOverride?.invoke || hostOverride?.send)
+    Boolean(overrideObj?.__isRealHost || overrideObj?.invoke || overrideObj?.send)
   ) {
     return {
       ok: false,
@@ -535,7 +552,7 @@ function resolveMockData(method: string): unknown {
   }
 }
 
-export function mapRecordToSoftwareItem(rec: any, index: number): SoftwareItem {
+export function mapRecordToSoftwareItem(rec: Record<string, unknown>, index: number): SoftwareItem {
   const name = String(rec.name || rec.DisplayName || '').trim()
   const isSystem = Boolean(rec.isSystemComponent || rec.SystemComponent || PROTECTED_SYSTEM_SOFTWARE_PATTERN.test(name))
   const rawSize = typeof rec.estimatedSize === 'number' && rec.estimatedSize > 0
@@ -549,7 +566,7 @@ export function mapRecordToSoftwareItem(rec: any, index: number): SoftwareItem {
     category = 'store'
   }
 
-  let launchPath = rec.launchPath
+  let launchPath = typeof rec.launchPath === 'string' ? rec.launchPath : undefined
   if (!launchPath && rec.installLocation && typeof rec.installLocation === 'string') {
     if (rec.installLocation.toLowerCase().endsWith('.exe')) {
       launchPath = rec.installLocation
@@ -559,6 +576,7 @@ export function mapRecordToSoftwareItem(rec: any, index: number): SoftwareItem {
   const publisher = String(rec.publisher || rec.Publisher || '未知开发商')
   const installLocation = String(rec.installLocation || rec.InstallLocation || '')
   const uninstallString = String(rec.uninstallString || rec.UninstallString || '')
+  const quietRaw = rec.quietUninstallString || rec.QuietUninstallString
 
   return enrichSoftwareItem({
     id: String(rec.id || `app-${index}-${encodeURIComponent(name).slice(0, 16)}`),
@@ -569,36 +587,46 @@ export function mapRecordToSoftwareItem(rec: any, index: number): SoftwareItem {
     estimatedSize: rawSize,
     installLocation,
     uninstallString,
-    quietUninstallString: rec.quietUninstallString || rec.QuietUninstallString || undefined,
+    quietUninstallString: typeof quietRaw === 'string' && quietRaw ? quietRaw : undefined,
     category,
     isSystem,
     launchPath,
-    launchCount: rec.launchCount,
-    lastUsedTime: rec.lastUsedTime
+    launchCount: typeof rec.launchCount === 'number' ? rec.launchCount : undefined,
+    lastUsedTime: typeof rec.lastUsedTime === 'number' ? rec.lastUsedTime : undefined
   })
 }
 
 /**
  * 拉取本机已安装软件列表
  */
-export async function fetchSoftwareList(host?: any, forceRefresh = false): Promise<SoftwareItem[]> {
+export async function fetchSoftwareList(host?: unknown, forceRefresh = false): Promise<SoftwareItem[]> {
   if (!host || isRealElectronHost(host)) {
-    const ipcRes = await callHostTransport<any[]>(
+    const ipcRes = await callHostTransport<Array<Record<string, unknown>>>(
       'applications_list',
       { forceRefresh, includeSystemComponents: true },
       host
     )
     if (ipcRes.ok && Array.isArray(ipcRes.data) && ipcRes.data.length > 0) {
-      return ipcRes.data.map((item: any, idx: number) => mapRecordToSoftwareItem(item, idx))
+      return ipcRes.data.map((item, idx) => mapRecordToSoftwareItem(item, idx))
     }
   }
 
   try {
-    const ztools = typeof window !== 'undefined' ? (window as any).ztools : undefined
+    const ztools =
+      typeof window !== 'undefined'
+        ? ((window as unknown as Record<string, unknown>).ztools as
+            | {
+                applications_list?: (opts: {
+                  forceRefresh: boolean
+                  includeSystemComponents: boolean
+                }) => Promise<Array<Record<string, unknown>>>
+              }
+            | undefined)
+        : undefined
     if (typeof ztools?.applications_list === 'function') {
       const list = await ztools.applications_list({ forceRefresh, includeSystemComponents: true })
       if (Array.isArray(list) && list.length > 0) {
-        return list.map((item: any, idx: number) => mapRecordToSoftwareItem(item, idx))
+        return list.map((item, idx) => mapRecordToSoftwareItem(item, idx))
       }
     }
   } catch (err) {
@@ -607,8 +635,13 @@ export async function fetchSoftwareList(host?: any, forceRefresh = false): Promi
 
   try {
     const res = await invokeNativeCapability('GetAllSoftware', { forceRefresh }, host)
-    if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object' && Array.isArray((res.data as any).software)) {
-      return ((res.data as any).software as any[]).map((item, idx) => mapRecordToSoftwareItem(item, idx))
+    if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
+      const softwareArr = (res.data as { software?: unknown }).software
+      if (Array.isArray(softwareArr)) {
+        return (softwareArr as Array<Record<string, unknown>>).map((item, idx) =>
+          mapRecordToSoftwareItem(item, idx)
+        )
+      }
     }
   } catch (err) {
     console.warn('[software-manager] fetchSoftwareList DLL invoke failed:', err)
@@ -718,7 +751,7 @@ export async function fetchSoftwareList(host?: any, forceRefresh = false): Promi
  */
 export async function probeSoftwareAppDataResiduals(
   softwareList: SoftwareItem[],
-  host?: any
+  host?: unknown
 ): Promise<AppDataResidualItem[]> {
   if (host && !isRealElectronHost(host)) {
     return []
@@ -825,7 +858,7 @@ export async function probeSoftwareAppDataResiduals(
 
 export async function cleanAppDataResiduals(
   items: AppDataResidualItem[],
-  host?: any
+  host?: unknown
 ): Promise<{ ok: boolean; cleanedCount: number; freedBytes: number; error?: string }> {
   if (!Array.isArray(items) || items.length === 0) {
     return { ok: false, cleanedCount: 0, freedBytes: 0, error: '未勾选任何残留目录' }
@@ -837,7 +870,7 @@ export async function cleanAppDataResiduals(
     const res = await moveRealFilesToTrash(paths, host)
     return {
       ok: res.ok,
-      cleanedCount: res.trashedCount || paths.length,
+      cleanedCount: res.ok ? (res.trashedCount || paths.length) : 0,
       freedBytes: res.ok ? freedBytes : 0,
       error: res.error
     }
@@ -848,7 +881,7 @@ export async function cleanAppDataResiduals(
 /**
  * 拉取统计概览
  */
-export async function fetchSoftwareSummary(host?: any, list?: SoftwareItem[]): Promise<SoftwareSummaryData> {
+export async function fetchSoftwareSummary(host?: unknown, list?: SoftwareItem[]): Promise<SoftwareSummaryData> {
   let items = list
   if (!items || items.length === 0) {
     items = await fetchSoftwareList(host, false)
@@ -886,7 +919,7 @@ export async function fetchSoftwareSummary(host?: any, list?: SoftwareItem[]): P
 export async function uninstallSoftware(
   item: SoftwareItem,
   isQuiet = false,
-  host?: any
+  host?: unknown
 ): Promise<{ ok: boolean; error?: string }> {
   if (FORBIDDEN_SOFTWARE_PATTERN.test(item.name)) {
     return { ok: false, error: FORBIDDEN_UNINSTALL_REASON }
@@ -919,12 +952,12 @@ export async function uninstallSoftware(
       return { ok: true }
     }
     return { ok: false, error: res.error || '卸载程序启动失败或被用户取消' }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
-export async function openSoftwareLocation(installLocation: string, host?: any): Promise<boolean> {
+export async function openSoftwareLocation(installLocation: string, host?: unknown): Promise<boolean> {
   if (!installLocation) return false
   if (!host || isRealElectronHost(host)) {
     const ok = await showRealItemInFolder(installLocation, host)
@@ -940,7 +973,7 @@ export async function openSoftwareLocation(installLocation: string, host?: any):
   }
 }
 
-export async function launchSoftware(launchPath: string, host?: any): Promise<boolean> {
+export async function launchSoftware(launchPath: string, host?: unknown): Promise<boolean> {
   if (!launchPath) return false
   if (!host || isRealElectronHost(host)) {
     const ok = await openRealPath(launchPath, host)

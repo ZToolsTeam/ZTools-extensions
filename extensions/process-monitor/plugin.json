@@ -1,13 +1,55 @@
 {
   "id": "process-monitor",
-  "name": "系统进程与服务深度监控",
-  "description": "实时枚举系统进程树、CPU/内存占用、签名状态与关联 Windows 服务，支持定位文件与强制结束异常进程",
-  "version": "2.0.2",
+  "name": "进程监控",
+  "description": "实时查看系统进程 CPU 与内存占用、排查本地端口占用，支持定位文件与一键结束卡死进程",
+  "version": "2.0.6",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
+  ],
+  "keywords": [
+    "进程监控",
+    "任务管理器",
+    "结束进程",
+    "杀进程",
+    "端口占用",
+    "查端口",
+    "port",
+    "process",
+    "kill",
+    "cpu",
+    "内存占用"
+  ],
+  "features": [
+    {
+      "code": "kill-high-cpu",
+      "explain": "排查并结束高 CPU / 内存占用进程",
+      "cmds": [
+        "进程监控",
+        "结束进程",
+        "杀进程",
+        "任务管理器",
+        "卡死",
+        "高cpu",
+        "内存占用"
+      ]
+    },
+    {
+      "code": "port-lookup",
+      "explain": "本地网络端口占用查询与进程释放",
+      "cmds": [
+        "端口占用",
+        "查端口",
+        "端口查询",
+        "释放端口",
+        "port",
+        "netstat",
+        "8080",
+        "3000"
+      ]
+    }
   ],
   "permissions": [
     "system",

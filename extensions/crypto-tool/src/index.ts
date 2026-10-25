@@ -7,6 +7,8 @@ import {
   showToast,
   Toast,
   useState,
+  useRef,
+  useEffect,
   useNavigation
 } from "@ztools/declarative-ui";
 import {
@@ -20,16 +22,19 @@ import {
   type MultiHashResult
 } from "./logic.js";
 import { usePopoutValue } from "./popout-state.js";
+import { encodeText, decodeText, type CodecMode } from "./codecs.js";
+import GenUuidCommand from "./uuid.js";
+export { default as genUuid } from "./uuid.js";
 
 interface HashDisplayItem {
   id: string;
   title: string;
   subtitle: string;
   value: string;
-  icon: any;
+  icon: typeof Icon[keyof typeof Icon];
 }
 
-type Mode = "hash" | "base64-decode";
+type Mode = "hash" | "base64-decode" | CodecMode;
 type AesDirection = "encrypt" | "decrypt";
 const HMAC_ALGORITHMS: readonly HashAlgorithm[] = ["sha256", "sha512", "sha1", "md5"];
 
@@ -52,7 +57,7 @@ const DEFAULT_HMAC_DRAFT: HmacDraft = { algorithm: "sha256", text: "" };
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isText = (v: unknown): v is string => typeof v === "string";
-const isMode = (v: unknown): v is Mode => v === "hash" || v === "base64-decode";
+const isMode = (v: unknown): v is Mode => v === "hash" || v === "base64-decode" || v === "url" || v === "unicode" || v === "hex";
 const isAesDraft = (v: unknown): v is AesDraft =>
   isPlainObject(v) && (v.direction === "encrypt" || v.direction === "decrypt") && isText(v.text) && isText(v.iv);
 const isHmacDraft = (v: unknown): v is HmacDraft =>
@@ -72,6 +77,8 @@ export function AesForm({ draft = DEFAULT_AES_DRAFT, onDraftChange }: DraftProps
   const [iv, setIvState] = useState(draft.iv);
   const [result, setResult] = useState("");
   const [error, setError] = useState<string | undefined>(undefined);
+  const requestVersion = useRef(0);
+  useEffect(() => () => { requestVersion.current++; }, []);
 
   // 草稿回写根页面：独立窗口弹出时由根页面带走
   const saveDraft = (patch: Partial<AesDraft>) => onDraftChange?.({ direction, text, iv, ...patch });
@@ -81,15 +88,18 @@ export function AesForm({ draft = DEFAULT_AES_DRAFT, onDraftChange }: DraftProps
 
   // 输入一变，旧结果就不再对应当前输入，必须清空
   const resetResult = () => {
+    requestVersion.current++;
     setResult("");
     setError(undefined);
   };
 
   const run = async () => {
+    const version = ++requestVersion.current;
     setError(undefined);
     const res = direction === "encrypt"
       ? await aesEncrypt(text, key, { iv: iv || undefined })
       : await aesDecrypt(text, key, { iv: iv || undefined });
+    if (version !== requestVersion.current) return;
     if (!res.success) {
       setResult("");
       setError(res.error);
@@ -169,16 +179,26 @@ export function HmacForm({ draft = DEFAULT_HMAC_DRAFT, onDraftChange }: DraftPro
 }
 
 export default function CryptoToolCommand() {
+  const winRecord =
+    typeof window !== "undefined" ? (window as unknown as Record<string, unknown>) : {};
+  const launchCtx = isPlainObject(winRecord.__ztoolsLaunchContext)
+    ? winRecord.__ztoolsLaunchContext
+    : {};
+  const initialFeature =
+    typeof launchCtx.featureCode === "string" ? launchCtx.featureCode.trim() : "";
+  const featureMode: Record<string, Mode> = { "codec-base64": "base64-decode", "codec-url": "url", "codec-unicode": "unicode", "codec-hex": "hex" };
+  const defaultMode: Mode = Object.prototype.hasOwnProperty.call(featureMode, initialFeature) ? featureMode[initialFeature] : "hash";
   // 根页面持有全部可带走的状态：散列页输入与模式，以及两个二级表单的草稿
   const [inputText, setInputText] = usePopoutValue("inputText", () => "", isText);
-  const [mode, setMode] = usePopoutValue<Mode>("mode", () => "hash", isMode);
+  const [mode, setMode] = usePopoutValue<Mode>("mode", () => defaultMode, isMode);
   const [aesDraft, setAesDraft] = usePopoutValue("aesDraft", () => DEFAULT_AES_DRAFT, isAesDraft);
   const [hmacDraft, setHmacDraft] = usePopoutValue("hmacDraft", () => DEFAULT_HMAC_DRAFT, isHmacDraft);
   const { push } = useNavigation();
 
   const globalActions = [
     Action({ title: "AES 加解密…", icon: Icon.Lock, onAction: () => push(() => AesForm({ draft: aesDraft, onDraftChange: setAesDraft })) }),
-    Action({ title: "HMAC 计算…", icon: Icon.Key, onAction: () => push(() => HmacForm({ draft: hmacDraft, onDraftChange: setHmacDraft })) })
+    Action({ title: "HMAC 计算…", icon: Icon.Key, onAction: () => push(() => HmacForm({ draft: hmacDraft, onDraftChange: setHmacDraft })) }),
+    Action({ title: "UUID 批量生成…", icon: Icon.Key, onAction: () => push(GenUuidCommand) })
   ];
 
   const commonItemActions = (value: string, label: string) =>
@@ -188,8 +208,17 @@ export default function CryptoToolCommand() {
       Action({ title: "清空输入", icon: Icon.Trash, onAction: () => setInputText("") })
     ]);
 
-  let items: any[];
-  if (mode === "base64-decode") {
+  let items: ReturnType<typeof List.Item>[];
+  if (mode === "url" || mode === "unicode" || mode === "hex") {
+    items = !inputText ? [List.Item({ id: "empty", title: "输入文字或编码内容", subtitle: "编码与解码结果分别显示", icon: Icon.Text })] : (["encode", "decode"] as const).map(direction => {
+      try {
+        const value = direction === "encode" ? encodeText(inputText, mode) : decodeText(inputText, mode);
+        return List.Item({ id: direction, title: value || "（空文本）", subtitle: `${mode.toUpperCase()} ${direction === "encode" ? "编码" : "解码"}`, icon: Icon.Text, detail: List.Item.Detail({ markdown: valueMarkdown(value) }), actions: commonItemActions(value, direction === "encode" ? "编码结果" : "解码结果") });
+      } catch (err: unknown) {
+        return List.Item({ id: `${direction}-error`, title: direction === "encode" ? "无法编码" : "无法解码", subtitle: err instanceof Error ? err.message : String(err), icon: Icon.ExclamationMark });
+      }
+    });
+  } else if (mode === "base64-decode") {
     const decoded = decodeBase64(inputText);
     items = !inputText.trim()
       ? [List.Item({ id: "empty", title: "在上方粘贴 Base64 字符串", subtitle: "支持标准与 URL-safe 两种写法", icon: Icon.Text, actions: ActionPanel({ title: "操作" }, globalActions) })]
@@ -246,18 +275,23 @@ export default function CryptoToolCommand() {
       navigationTitle: "加解密与散列助手",
       // 只有存在结果时才开右侧预览；空状态、解码失败等提示行没有 detail，自动保持全宽
       isShowingDetail: Boolean(inputText),
-      searchBarPlaceholder: mode === "hash" ? "输入要计算散列或编码的文字..." : "粘贴要解码的 Base64...",
+      searchBarPlaceholder: mode === "hash" ? "输入要计算散列或编码的文字..." : mode === "base64-decode" ? "粘贴要解码的 Base64..." : "输入文字或编码内容…",
       searchText: inputText,
       onSearchTextChange: (text: string) => setInputText(text),
       searchBarAccessory: List.Dropdown(
         { tooltip: "模式", value: mode, onChange: (v: string) => setMode(isMode(v) ? v : "hash") },
         [
           List.Dropdown.Item({ title: "散列与编码", value: "hash" }),
-          List.Dropdown.Item({ title: "Base64 解码", value: "base64-decode" })
+          List.Dropdown.Item({ title: "Base64 解码", value: "base64-decode" }),
+          List.Dropdown.Item({ title: "URL 编解码", value: "url" }),
+          List.Dropdown.Item({ title: "Unicode 编解码", value: "unicode" }),
+          List.Dropdown.Item({ title: "Hex 编解码（UTF-8）", value: "hex" })
         ]
       ),
       actions: ActionPanel({ title: "全局操作" }, globalActions)
     },
-    [List.Section({ title: mode === "hash" ? `散列与编码（输入 ${inputText.length} 字符）` : "Base64 解码" }, items)]
+    [List.Section({ title: mode === "hash" ? `散列与编码（输入 ${inputText.length} 字符）` : mode === "base64-decode" ? "Base64 解码" : `${mode.toUpperCase()} 编解码` }, items)]
   );
 }
+
+export { AesForm as cipherAes };

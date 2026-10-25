@@ -1,6 +1,6 @@
 /**
  * QQ / NTQQ / TIM 专项深度清理业务逻辑与真实环境契约层 (QQCleaner Logic - 1:1 完整复刻版)
- * 完整对齐 DLLPlugins/qq-cleaner/qq_core/include/qq_rules.h 的 12 大官方专项分组 (Group 201~213) + 999 聊天数据库保护区：
+ * 与 Windows 原生插件规则一致的 12 大官方专项分组 (Group 201~213) + 999 聊天数据库保护区：
  * - 穿透扫描 Documents\Tencent Files、AppData\Roaming\Tencent (Users / QQ / TIM / Logs，含多盘符自定义存储目录与符号链接穿透)、
  *   AppData\Roaming\QQ (NTQQ) 与 AppData\Local\Tencent
  * - 自动识别本机全部真实登录 QQ 号 (UIN)
@@ -44,7 +44,7 @@ export interface NativeInvocationResult {
 }
 
 /**
- * 对应原版 DLLPlugins/qq-cleaner/qq_core/include/qq_rules.h 的官方清理分组 ID (201~213) + 999 聊天核心数据库保护区
+ * 与 Windows 原生插件一致的官方清理分组 ID (201~213) + 999 聊天核心数据库保护区
  */
 export type QQGroupId = 201 | 202 | 203 | 204 | 205 | 206 | 207 | 208 | 209 | 211 | 212 | 213 | 999
 
@@ -379,7 +379,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -562,7 +562,7 @@ export function classifyQQFilePath(fullPath: string): {
 /**
  * 探测并深度扫描本机真实 QQ / NTQQ / TIM 存储路径、登录 QQ 号 (UIN)、12 大官方清理分组与核心聊天数据库保护区
  */
-export async function fetchQQCleanSnapshot(hostOverride?: any): Promise<QQScanSnapshot> {
+export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown>): Promise<QQScanSnapshot> {
   const [documentsDir, appDataDir, homeDir, tempDir, diskRes, mountedDrives] = await Promise.all([
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -866,7 +866,7 @@ export async function fetchQQCleanSnapshot(hostOverride?: any): Promise<QQScanSn
  */
 export async function executeQQCleanup(
   categoriesOrPaths: QQCleanCategoryItem[] | string[],
-  hostOverride?: any,
+  hostOverride?: unknown,
   explicitFilePaths?: string[]
 ): Promise<{
   ok: boolean
@@ -903,6 +903,7 @@ export async function executeQQCleanup(
       }
     }
 
+    let attemptedQqItems = 0
     for (const targetPath of directStringPaths) {
       const cls = classifyQQFilePath(targetPath)
       if (FORBIDDEN_TARGET_PATTERN.test(targetPath) || cls.isProtected || cls.groupId === 999) {
@@ -910,6 +911,7 @@ export async function executeQQCleanup(
         skippedPaths.push(targetPath)
         continue
       }
+      attemptedQqItems += 1
       const res = await trashRealItem(targetPath, hostOverride)
       if (res.ok) {
         deletedCount += 1
@@ -918,13 +920,15 @@ export async function executeQQCleanup(
       }
     }
 
+    const directOk = attemptedQqItems === 0 || deletedCount > 0 || !isRealElectronHost(hostOverride)
     return {
-      ok: true,
+      ok: directOk,
       deletedCount,
       freedBytes,
       skippedProtected,
       deletedPaths,
-      skippedPaths
+      skippedPaths,
+      ...(directOk ? {} : { error: 'QQ 缓存清理失败：未能将目标文件移入回收站' })
     }
   }
 
@@ -940,6 +944,7 @@ export async function executeQQCleanup(
     }
   }
 
+  let attemptedCategoryItems = 0
   for (const cat of selected) {
     for (const sample of cat.sampleFiles) {
       const cls = classifyQQFilePath(sample.path)
@@ -948,6 +953,7 @@ export async function executeQQCleanup(
         skippedPaths.push(sample.path)
         continue
       }
+      attemptedCategoryItems += 1
       const res = await trashRealItem(sample.path, hostOverride)
       if (res.ok) {
         deletedCount += 1
@@ -957,22 +963,24 @@ export async function executeQQCleanup(
     }
   }
 
+  const categoryOk = attemptedCategoryItems === 0 || deletedCount > 0 || !isRealElectronHost(hostOverride)
   return {
-    ok: true,
+    ok: categoryOk,
     deletedCount,
     freedBytes,
     skippedProtected,
     deletedPaths,
-    skippedPaths
+    skippedPaths,
+    ...(categoryOk ? {} : { error: 'QQ 缓存清理失败：未能将选中分类的文件移入回收站' })
   }
 }
 
-export async function openQQDirectory(dirPath: string, hostOverride?: any): Promise<boolean> {
+export async function openQQDirectory(dirPath: string, hostOverride?: unknown): Promise<boolean> {
   if (!dirPath) return false
   return showRealItemInFolder(dirPath, hostOverride)
 }
 
-export async function openQQFileDefault(filePath: string, hostOverride?: any): Promise<boolean> {
+export async function openQQFileDefault(filePath: string, hostOverride?: unknown): Promise<boolean> {
   if (!filePath) return false
   return openRealPath(filePath, hostOverride)
 }

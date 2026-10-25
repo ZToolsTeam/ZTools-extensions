@@ -1,8 +1,8 @@
 {
   "id": "memo",
   "name": "便签",
-  "description": "随手记，支持 Markdown 与标签，按标题或正文搜索",
-  "version": "1.0.2",
+  "description": "轻量随手记便签，支持 Markdown 排版、分类标签筛选与全文快速搜索",
+  "version": "1.0.3",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

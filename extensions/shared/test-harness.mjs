@@ -47,6 +47,13 @@ export function createHost() {
       if (faults.storageRead) throw faults.storageRead
       return storage.has(key) ? JSON.parse(storage.get(key)) : undefined
     },
+    async storageCompareAndSet(key, expected, value) {
+      if (faults.storageRead) throw faults.storageRead
+      if (faults.storageWrite) throw faults.storageWrite
+      if (storage.get(key) !== JSON.stringify(expected)) return false
+      storage.set(key, JSON.stringify(value))
+      return true
+    },
     async storageSetItem(key, value) {
       if (faults.storageWrite) throw faults.storageWrite
       storage.set(key, JSON.stringify(value))

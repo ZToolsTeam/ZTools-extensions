@@ -1,6 +1,6 @@
 {
   "name": "google-auth",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "2FA TOTP 动态口令验证器，支持密钥与二维码URL解析、30秒倒计时刷新、多账号管理与一键复制口令",
   "type": "module",
   "main": "dist/index.js",

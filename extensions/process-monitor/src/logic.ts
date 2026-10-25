@@ -81,12 +81,12 @@ export interface ProcessDetailInfo {
   productName: string
   signerName: string
   startTime: string
-  handleCount: number
-  peakMemoryBytes: number
+  handleCount: number | null
+  peakMemoryBytes: number | null
   memoryBytes: number
-  privateBytes: number
-  threadCount: number
-  parentPid: number
+  privateBytes: number | null
+  threadCount: number | null
+  parentPid: number | null
 }
 
 export interface ResourceFocusSummary {
@@ -553,14 +553,12 @@ export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
   // 2. 兼容通过 Preload Transport 调用 process_list 获取进程列表
   if (host || isRealElectronHost(host)) {
     const ipcRes = await callHostTransport<Array<any>>('process_list', {}, host)
-    if (ipcRes.ok && Array.isArray(ipcRes.data) && ipcRes.data.length > 0) {
+    if (ipcRes.ok && Array.isArray(ipcRes.data)) {
       return ipcRes.data.map((p) => normalizeProcessItem(p))
     }
   }
 
-  if (isRealElectronHost(host)) {
-    return []
-  }
+  if (host || isRealElectronHost()) throw new Error('无法读取进程列表')
   return getMockProcesses()
 }
 
@@ -627,6 +625,7 @@ export async function fetchSystemInfo(host?: any): Promise<SystemInfoData> {
     }
   }
 
+  if (host || isRealElectronHost()) throw new Error('无法读取系统负载，请检查宿主能力后重试')
   return getMockSystemInfo()
 }
 
@@ -650,12 +649,12 @@ export async function fetchProcessDetail(pid: number, host?: any): Promise<Proce
           productName: String(raw.productName || ''),
           signerName: String(raw.signerName || ''),
           startTime: String(raw.startTime || ''),
-          handleCount: Number(raw.handleCount ?? 0),
-          peakMemoryBytes: Number(raw.peakMemoryBytes ?? mem),
+          handleCount: (raw.handleCount == null ? null : Number(raw.handleCount)),
+          peakMemoryBytes: (raw.peakMemoryBytes == null ? null : Number(raw.peakMemoryBytes)),
           memoryBytes: mem,
-          privateBytes: Number(raw.privateBytes ?? mem),
-          threadCount: Number(raw.threadCount ?? 0),
-          parentPid: Number(raw.parentPid ?? 0)
+          privateBytes: (raw.privateBytes == null ? null : Number(raw.privateBytes)),
+          threadCount: (raw.threadCount == null ? null : Number(raw.threadCount)),
+          parentPid: (raw.parentPid == null ? null : Number(raw.parentPid))
         }
       }
     }
@@ -691,14 +690,14 @@ export async function fetchProcessDetail(pid: number, host?: any): Promise<Proce
         signerName: '',
         startTime: '',
         memoryBytes: mem,
-        privateBytes: Number(infoRes.data.privateBytes ?? mem),
-        peakMemoryBytes: Number(infoRes.data.peakMemoryBytes ?? mem),
-        handleCount: Number(infoRes.data.handleCount ?? 0),
-        threadCount: Number(infoRes.data.threadCount ?? 0),
-        parentPid: Number(infoRes.data.parentPid ?? 0)
+        privateBytes: (infoRes.data.privateBytes == null ? null : Number(infoRes.data.privateBytes)),
+        peakMemoryBytes: (infoRes.data.peakMemoryBytes == null ? null : Number(infoRes.data.peakMemoryBytes)),
+        handleCount: (infoRes.data.handleCount == null ? null : Number(infoRes.data.handleCount)),
+        threadCount: (infoRes.data.threadCount == null ? null : Number(infoRes.data.threadCount)),
+        parentPid: (infoRes.data.parentPid == null ? null : Number(infoRes.data.parentPid))
       }
     }
-    if (isRealElectronHost(host)) {
+    if (host || isRealElectronHost()) {
       return null
     }
   }
@@ -1031,4 +1030,24 @@ export function describeProcessProfile(
     add(`托管服务 ${id}`, [display && display !== id ? display : '', status].filter(Boolean).join(' · ') || id)
   }
   return fields
+}
+
+export interface ProcessPort { pid: number; localPort: number; protocol: string; localAddress: string; processName: string }
+export async function fetchProcessPorts(host?: unknown): Promise<ProcessPort[]> {
+  const result = await callHostTransport<unknown>('process_list_ports', {}, host)
+  const payload = result.data
+  const rows = Array.isArray(payload) ? payload : payload && typeof payload === 'object' && 'data' in payload ? payload.data : undefined
+  if (!result.ok || !Array.isArray(rows)) throw new Error(result.error || '无法读取端口占用')
+  return rows.flatMap((value: unknown) => {
+    if (!value || typeof value !== 'object') return []
+    const row = value as Record<string, unknown>
+    if (typeof row.pid !== 'number' || !Number.isInteger(row.pid) || row.pid <= 0 || typeof row.localPort !== 'number' || !Number.isInteger(row.localPort) || row.localPort <= 0 || row.localPort > 65535) return []
+    return [{ pid: row.pid, localPort: row.localPort, protocol: String(row.protocol || ''), localAddress: String(row.localAddress || ''), processName: String(row.processName || '') }]
+  })
+}
+export function filterProcessesByPort(processes: ProcessItem[], ports: ProcessPort[], query: string): ProcessItem[] {
+  const value = query.trim().replace(/^port:/i, '')
+  if (value && !/^\d{1,5}$/.test(value)) return []
+  const pids = new Set(ports.filter(p => !value || p.localPort === Number(value)).map(p => p.pid))
+  return processes.filter(p => pids.has(p.pid))
 }

@@ -1,8 +1,8 @@
 {
   "id": "clipboard-manager",
   "name": "剪贴板历史",
-  "description": "剪贴板历史记录搜索、Pin 置顶收藏与快速复制",
-  "version": "2.0.2",
+  "description": "自动记录复制过的文本、图片与文件历史，支持关键词搜索、置顶收藏与一键粘贴",
+  "version": "2.0.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

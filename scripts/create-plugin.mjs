@@ -2,14 +2,16 @@
 
 /**
  * create-plugin.mjs
- * ZTools 官方一键插件脚手架生成工具
+ * ZTools 声明式插件脚手架
  *
- * 功能：
- * 1. 规范化校验插件 ID 与参数合法性；
- * 2. 检查目录冲突保护，严防意外覆盖；
- * 3. 自动生成符合 packages/ztools-plugins-spec 规约的标准工程；
- * 4. 采用现代声明式 UI 体系（零 DOM / 零 CSS / 语义化组件）；
- * 5. 支持命令行快速调用与交互式问答模式。
+ * 生成的工程与插件仓库里的现有插件结构一致：
+ * 1. plugin.json：只写宿主实际读取的字段（id、name、version、description、author、entry、icon、mode、
+ *    permissions、targets、nativeComponents），符合 packages/ztools-plugins-spec/plugin.schema.json；
+ * 2. src/：源码，SDK 一律从 '@ztools/declarative-ui' 引入；
+ * 3. 不单独装 TypeScript，统一用仓库的 scripts/build-declarative.mjs 编译到 dist/（dist/ 不提交）；
+ * 4. tests/：一份小测试（清单、过滤逻辑含异常输入、渲染结果）。
+ *
+ * 默认生成位置：仓库里有 extensions/（插件仓库）时放到 extensions/<id>，否则放到 plugins/<id>。
  */
 
 import fs from 'node:fs'
@@ -21,7 +23,19 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rootDir = path.resolve(__dirname, '..')
 
-export const PLUGIN_ID_REGEX = /^[a-z][a-z0-9_-]{1,63}$/
+/** 插件 ID：小写字母开头，只含小写字母、数字、短横线；构建脚本 build-declarative.mjs 不接受下划线 */
+export const PLUGIN_ID_REGEX = /^[a-z][a-z0-9-]{1,63}$/
+
+export const DEFAULT_AUTHOR = 'ZTools Developer'
+const DEFAULT_DESCRIPTION = '一个 ZTools 声明式插件'
+
+/**
+ * 默认生成目录：仓库里有 extensions/ 时生成到 extensions/，否则生成到 plugins/
+ * @param {string} [repoRoot]
+ */
+export function defaultTargetDir(repoRoot = rootDir) {
+  return fs.existsSync(path.join(repoRoot, 'extensions')) ? 'extensions' : 'plugins'
+}
 
 /**
  * 校验插件 ID 是否合法
@@ -42,7 +56,7 @@ export function validatePluginId(pluginId) {
   if (!PLUGIN_ID_REGEX.test(trimmed)) {
     return {
       valid: false,
-      error: `插件 ID 格式不符合规范: "${trimmed}"（必须以小写字母开头，仅允许小写字母、数字、短横线与下划线，长度 2-64 字符，例如: 'quick-notes'）`
+      error: `插件 ID 格式不符合规范: "${trimmed}"（必须以小写字母开头，只能用小写字母、数字和短横线，长度 2-64 字符，例如: 'quick-notes'）`
     }
   }
   return { valid: true }
@@ -65,13 +79,46 @@ export function parsePlatformOption(value) {
   return [...new Set(platforms)]
 }
 
+function cleanText(value, fallback) {
+  return typeof value === 'string' && value.trim() ? value.trim() : fallback
+}
+
+function toPosix(p) {
+  return p.split(path.sep).join('/')
+}
+
+/**
+ * 编译与检查命令提示：构建脚本只认它所在仓库的插件目录（extensions/ 或 plugins/）
+ * @param {string} pluginDir
+ */
+export function describeNextSteps(pluginDir, repoRoot = rootDir) {
+  const candidates = [
+    { script: 'scripts/build-declarative.mjs', pluginsRoot: path.join(repoRoot, 'extensions') },
+    { script: 'plugins/scripts/build-declarative.mjs', pluginsRoot: path.join(repoRoot, 'plugins') }
+  ].filter((c) => fs.existsSync(path.join(repoRoot, c.script)) && fs.existsSync(c.pluginsRoot))
+  const rel = toPosix(path.relative(repoRoot, pluginDir))
+  const id = path.basename(pluginDir)
+  const build = candidates.find((c) => path.dirname(pluginDir) === c.pluginsRoot)
+  return {
+    inRepo: Boolean(build),
+    commands: build
+      ? [
+          `node ${build.script} ${id}`,
+          `node scripts/scan-plugin-security.mjs ${rel}`,
+          `node --test ${rel}/tests/*.test.mjs`
+        ]
+      : []
+  }
+}
+
 /**
  * 核心创建插件工程函数
  * @param {object} options
  * @param {string} options.pluginId - 插件唯一 ID
  * @param {string} [options.title] - 插件显示名称
  * @param {string} [options.description] - 插件功能描述
- * @param {string} [options.targetDir] - 插件放置根目录（默认 'plugins'）
+ * @param {string} [options.author] - 作者
+ * @param {string} [options.targetDir] - 插件放置根目录（默认见 defaultTargetDir）
  * @param {boolean} [options.force] - 是否覆盖已存在的目录
  * @param {string[]} [options.platforms] - 支持的平台（'windows' / 'macos' 的子集），默认跨平台
  * @returns {Promise<{ success: boolean, pluginDir: string, createdFiles: string[] }>}
@@ -80,7 +127,8 @@ export async function createPlugin({
   pluginId,
   title,
   description,
-  targetDir = 'plugins',
+  author,
+  targetDir = defaultTargetDir(),
   force = false,
   platforms = [...SUPPORTED_PLATFORMS]
 }) {
@@ -92,84 +140,61 @@ export async function createPlugin({
     throw new Error(idCheck.error)
   }
 
-  const normalizedTitle = (title && typeof title === 'string' && title.trim())
-    ? title.trim()
-    : pluginId
-  const normalizedDesc = (description && typeof description === 'string' && description.trim())
-    ? description.trim()
-    : '基于 ZTools 声明式 UI 架构构建的极速效率插件，纯语义化零 CSS 零 DOM 操作'
+  const normalizedTitle = cleanText(title, pluginId)
+  const normalizedDesc = cleanText(description, DEFAULT_DESCRIPTION)
+  const normalizedAuthor = cleanText(author, DEFAULT_AUTHOR)
+  if (normalizedTitle.length > 50) throw new Error(`插件名称不能超过 50 个字符（当前 ${normalizedTitle.length} 个）`)
+  if (normalizedDesc.length > 500) throw new Error(`插件描述不能超过 500 个字符（当前 ${normalizedDesc.length} 个）`)
+  if (normalizedAuthor.length > 100) throw new Error(`作者不能超过 100 个字符（当前 ${normalizedAuthor.length} 个）`)
 
   // 2. 目标路径与冲突保护
   const absTargetDir = path.isAbsolute(targetDir) ? targetDir : path.resolve(rootDir, targetDir)
   const pluginDir = path.join(absTargetDir, pluginId)
 
-  if (fs.existsSync(pluginDir)) {
-    if (!force) {
-      throw new Error(`目标插件目录已存在: "${pluginDir}"。若要强制覆盖，请指定 --force 标志。`)
-    }
+  if (fs.existsSync(pluginDir) && !force) {
+    throw new Error(`目标插件目录已存在: "${pluginDir}"。若要强制覆盖，请指定 --force 标志。`)
   }
 
-  // 3. 递归创建目录
+  // 3. 创建目录（覆盖时清掉旧的 dist/，避免残留旧产物）
+  fs.rmSync(path.join(pluginDir, 'dist'), { recursive: true, force: true })
   fs.mkdirSync(path.join(pluginDir, 'src'), { recursive: true })
-  fs.mkdirSync(path.join(pluginDir, 'dist'), { recursive: true })
   fs.mkdirSync(path.join(pluginDir, 'tests'), { recursive: true })
 
   const createdFiles = []
 
   function writeFileLf(relPath, content) {
     const fullPath = path.join(pluginDir, relPath)
-    // 强制转换为 LF 换行符
-    const lfContent = content.replace(/\r\n/g, '\n')
-    fs.writeFileSync(fullPath, lfContent, 'utf8')
+    fs.writeFileSync(fullPath, content.replace(/\r\n/g, '\n'), 'utf8')
     createdFiles.push(relPath)
   }
 
-  // 4. 生成 plugin.json
+  // 4. plugin.json（只写宿主读取的字段；单命令插件不需要 features，默认导出就是入口）
   const manifest = {
     id: pluginId,
     name: normalizedTitle,
     version: '1.0.0',
     description: normalizedDesc,
-    author: 'ZTools Developer',
+    author: normalizedAuthor,
     entry: 'dist/index.js',
     icon: 'icon.svg',
+    mode: 'view',
+    // 示例用到了剪贴板；按插件实际功能增删
     permissions: ['clipboard'],
     // 支持的平台：客户端安装时据此判断当前系统能否运行，市场显示「跨平台 / 仅 Windows / 仅 macOS」
     targets,
-    nativeComponents: [],
-    commands: [
-      {
-        name: 'index',
-        title: normalizedTitle,
-        description: normalizedDesc,
-        mode: 'view'
-      }
-    ]
+    nativeComponents: []
   }
   writeFileLf('plugin.json', JSON.stringify(manifest, null, 2) + '\n')
 
-  // 5. 生成 package.json
-  const pkgJson = {
-    name: pluginId,
-    version: '1.0.0',
-    description: normalizedDesc,
-    type: 'module',
-    main: 'dist/index.js',
-    scripts: {
-      build: 'tsc',
-      dev: 'tsc --watch',
-      test: 'node --test tests/*.test.mjs'
-    },
-    dependencies: {
-      '@ztools/declarative-ui': '^1.0.0'
-    },
-    devDependencies: {
-      typescript: '^5.8.0'
-    }
-  }
-  writeFileLf('package.json', JSON.stringify(pkgJson, null, 2) + '\n')
+  // 5. package.json：只用来把 dist/*.js 标成 ES 模块，不装依赖、不放构建脚本
+  writeFileLf('package.json', JSON.stringify({ name: pluginId, version: '1.0.0', private: true, type: 'module' }, null, 2) + '\n')
 
-  // 6. 生成 tsconfig.json
+  // 6. tsconfig.json：build-declarative.mjs 会统一覆盖 module / outDir 等选项。
+  //    paths 指向仓库里的 SDK 类型声明；生成到仓库外时按标准位置 <仓库>/extensions/<id> 写，移进仓库后即可编译
+  const insideRepo = !path.relative(rootDir, pluginDir).startsWith('..') && !path.isAbsolute(path.relative(rootDir, pluginDir))
+  const sdkTypes = insideRepo
+    ? path.join(rootDir, 'packages', 'declarative-ui', 'dist', 'index.d.ts')
+    : path.join(pluginDir, '..', '..', 'packages', 'declarative-ui', 'dist', 'index.d.ts')
   const tsconfig = {
     compilerOptions: {
       target: 'ES2022',
@@ -184,338 +209,210 @@ export async function createPlugin({
       outDir: './dist',
       rootDir: './src',
       paths: {
-        '@ztools/declarative-ui': ['../../packages/declarative-ui/dist/index.d.ts']
+        '@ztools/declarative-ui': [toPosix(path.relative(pluginDir, sdkTypes))]
       }
     },
     include: ['src/**/*']
   }
   writeFileLf('tsconfig.json', JSON.stringify(tsconfig, null, 2) + '\n')
 
-  // 7. 生成 icon.svg
-  const iconSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
-  <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#3B82F6" />
-      <stop offset="100%" stop-color="#1D4ED8" />
-    </linearGradient>
-  </defs>
-  <rect width="64" height="64" rx="14" fill="url(#grad)" />
-  <path d="M20 22h24v4L28 38h16v4H20v-4l16-12H20v-4z" fill="#FFFFFF" />
+  // 7. icon.svg（单色）
+  writeFileLf(
+    'icon.svg',
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <rect width="64" height="64" rx="14" fill="#4B5563" />
+  <path d="M18 22h28v4H18zM18 30h28v4H18zM18 38h18v4H18z" fill="#FFFFFF" />
 </svg>
 `
-  writeFileLf('icon.svg', iconSvg)
+  )
 
-  // 8. 生成 src/index.tsx (教科书级声明式代码)
-  const indexTsx = `import {
-  List,
-  ActionPanel,
-  Action,
-  Icon,
-  Color,
-  showToast,
-  Toast,
-  Clipboard,
-  useState,
-  React
-} from "@ztools/declarative-ui";
-
-interface FeatureItem {
+  // 8. src/items.ts：数据与过滤逻辑，和界面分开便于测试
+  writeFileLf(
+    'src/items.ts',
+    `export interface Phrase {
   id: string;
   title: string;
-  subtitle: string;
-  accessory: string;
-  icon: string;
+  content: string;
+  category: string;
 }
 
-const INITIAL_FEATURES: FeatureItem[] = [
-  {
-    id: "feature-declarative",
-    title: "纯声明式架构",
-    subtitle: "零原生 DOM / 零 CSS，由宿主统一渲染沉浸式 Fluent / Mica 亚克力视觉",
-    accessory: "核心哲学",
-    icon: Icon.Star
-  },
-  {
-    id: "feature-keyboard",
-    title: "纯粹键盘优先交互",
-    subtitle: "方向键聚焦，Enter 激活首要动作，Ctrl+K 唤起 ActionPanel 动作面板",
-    accessory: "极客规范",
-    icon: Icon.Key
-  },
-  {
-    id: "feature-native",
-    title: "硬件级毫秒响应",
-    subtitle: "依托高性能 Native 侧车与 SQLite WAL 强缓存，冷出窗严格 <100ms",
-    accessory: "SLA < 100ms",
-    icon: Icon.CheckCircle
-  }
+// 示例数据，换成插件自己的内容
+export const SAMPLE_ITEMS: readonly Phrase[] = [
+  { id: "thanks", title: "收到，谢谢", content: "收到，谢谢！", category: "回复" },
+  { id: "later", title: "稍后回复", content: "我稍后回复你。", category: "回复" },
+  { id: "signature", title: "邮件落款", content: "祝好\\n张三", category: "签名" }
 ];
+
+/** 按标题、内容、分类过滤；关键字为空或不是字符串时返回全部 */
+export function filterItems(items: readonly Phrase[], query: unknown): Phrase[] {
+  const keyword = typeof query === "string" ? query.trim().toLowerCase() : "";
+  if (!keyword) return [...items];
+  return items.filter((item) =>
+    [item.title, item.content, item.category].some((text) => text.toLowerCase().includes(keyword))
+  );
+}
+`
+  )
+
+  // 9. src/index.tsx：单栏列表；第 1 个 Action 是回车主动作，第 2 个是次动作，其余进动作面板
+  writeFileLf(
+    'src/index.tsx',
+    `import React, { List, ActionPanel, Action, Icon, Clipboard, showToast, Toast, useState } from "@ztools/declarative-ui";
+import { SAMPLE_ITEMS, filterItems } from "./items.js";
 
 export default function Command() {
   const [searchText, setSearchText] = useState<string>("");
-
-  const filteredItems = INITIAL_FEATURES.filter((item) =>
-    item.title.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.subtitle.toLowerCase().includes(searchText.toLowerCase())
-  );
-
-  const handleCopy = async (content: string, label: string) => {
-    await Clipboard.copy(content);
-    await showToast(Toast.Style.Success, \`已复制 \${label}: \${content}\`);
-  };
+  const items = filterItems(SAMPLE_ITEMS, searchText);
 
   return (
     <List
-      navigationTitle="${normalizedTitle}"
-      searchBarPlaceholder="搜索特性或输入关键字过滤..."
+      navigationTitle={${JSON.stringify(normalizedTitle)}}
+      searchBarPlaceholder="搜索短语"
       searchText={searchText}
       onSearchTextChange={setSearchText}
     >
-      <List.Section title={\`特性概览 (\${filteredItems.length})\`}>
-        {filteredItems.map((item) => (
-          <List.Item
-            key={item.id}
-            id={item.id}
-            title={item.title}
-            subtitle={item.subtitle}
-            icon={item.icon}
-            accessories={[{ text: item.accessory }]}
-            actions={
-              <ActionPanel title="操作面板">
-                <Action
-                  title="复制特性描述"
-                  icon={Icon.CopyClipboard}
-                  onAction={() => handleCopy(item.subtitle, item.title)}
-                />
-                <Action
-                  title="清空搜索栏"
-                  icon={Icon.Trash}
-                  onAction={() => setSearchText("")}
-                />
-              </ActionPanel>
-            }
-          />
-        ))}
-      </List.Section>
+      {items.map((item) => (
+        <List.Item
+          key={item.id}
+          id={item.id}
+          title={item.title}
+          subtitle={item.content}
+          icon={Icon.Text}
+          accessories={[{ tag: item.category }]}
+          actions={
+            <ActionPanel>
+              <Action.CopyToClipboard title="复制内容" content={item.content} />
+              <Action
+                title="复制标题"
+                icon={Icon.CopyClipboard}
+                onAction={async () => {
+                  await Clipboard.copy(item.title);
+                  await showToast(Toast.Style.Success, "已复制标题");
+                }}
+              />
+            </ActionPanel>
+          }
+        />
+      ))}
     </List>
   );
 }
 `
-  writeFileLf('src/index.tsx', indexTsx)
+  )
 
-  // 9. 生成 dist/index.js (开箱即用的构建产物，满足清单校验与直接运行)
-  const distIndexJs = `import {
-  List,
-  ActionPanel,
-  Action,
-  Icon,
-  Color,
-  showToast,
-  Toast,
-  Clipboard,
-  useState,
-  React
-} from "@ztools/declarative-ui";
-
-const INITIAL_FEATURES = [
-  {
-    id: "feature-declarative",
-    title: "纯声明式架构",
-    subtitle: "零原生 DOM / 零 CSS，由宿主统一渲染沉浸式 Fluent / Mica 亚克力视觉",
-    accessory: "核心哲学",
-    icon: Icon.Star
-  },
-  {
-    id: "feature-keyboard",
-    title: "纯粹键盘优先交互",
-    subtitle: "方向键聚焦，Enter 激活首要动作，Ctrl+K 唤起 ActionPanel 动作面板",
-    accessory: "极客规范",
-    icon: Icon.Key
-  },
-  {
-    id: "feature-native",
-    title: "硬件级毫秒响应",
-    subtitle: "依托高性能 Native 侧车与 SQLite WAL 强缓存，冷出窗严格 <100ms",
-    accessory: "SLA < 100ms",
-    icon: Icon.CheckCircle
-  }
-];
-
-export default function Command() {
-  const [searchText, setSearchText] = useState("");
-
-  const filteredItems = INITIAL_FEATURES.filter((item) =>
-    item.title.toLowerCase().includes(searchText.toLowerCase()) ||
-    item.subtitle.toLowerCase().includes(searchText.toLowerCase())
-  );
-
-  const handleCopy = async (content, label) => {
-    await Clipboard.copy(content);
-    await showToast(Toast.Style.Success, \`已复制 \${label}: \${content}\`);
-  };
-
-  return List(
-    {
-      navigationTitle: "${normalizedTitle}",
-      searchBarPlaceholder: "搜索特性或输入关键字过滤...",
-      searchText,
-      onSearchTextChange: (text) => setSearchText(text)
-    },
-    [
-      List.Section(
-        { title: \`特性概览 (\${filteredItems.length})\` },
-        filteredItems.map((item) =>
-          List.Item({
-            id: item.id,
-            title: item.title,
-            subtitle: item.subtitle,
-            icon: item.icon,
-            accessories: [{ text: item.accessory }],
-            actions: ActionPanel({ title: "操作面板" }, [
-              Action({
-                title: "复制特性描述",
-                icon: Icon.CopyClipboard,
-                onAction: () => handleCopy(item.subtitle, item.title)
-              }),
-              Action({
-                title: "清空搜索栏",
-                icon: Icon.Trash,
-                onAction: () => setSearchText("")
-              })
-            ])
-          })
-        )
-      )
-    ]
-  );
-}
-`
-  writeFileLf('dist/index.js', distIndexJs)
-
-  // 10. 生成 tests/index.test.mjs (开箱即用的自动化测试)
-  const testIndexMjs = `import { test, describe } from "node:test";
+  // 10. tests/index.test.mjs：先编译（dist/）再运行
+  writeFileLf(
+    'tests/index.test.mjs',
+    `import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderDeclarativeRoot } from "@ztools/declarative-ui";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const pluginDir = path.resolve(__dirname, "..");
+const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const manifest = JSON.parse(fs.readFileSync(path.join(pluginDir, "plugin.json"), "utf8"));
 
-describe("插件自动化验证: ${pluginId}", () => {
-  test("1. plugin.json 清单结构与规范校验", () => {
-    const manifestPath = path.join(pluginDir, "plugin.json");
-    assert.ok(fs.existsSync(manifestPath), "plugin.json 必须存在");
+async function load(rel) {
+  const file = path.join(pluginDir, "dist", rel);
+  assert.ok(fs.existsSync(file), \`缺少 dist/\${rel}，请先在仓库根目录运行 node scripts/build-declarative.mjs \${manifest.id}\`);
+  return import(pathToFileURL(file).href);
+}
 
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-    assert.equal(manifest.id, "${pluginId}");
-    assert.equal(manifest.name, "${normalizedTitle}");
-    assert.equal(manifest.version, "1.0.0");
-    assert.ok(manifest.description, "description 不能为空");
-    assert.equal(manifest.entry, "dist/index.js");
-    assert.equal(manifest.icon, "icon.svg");
-    assert.ok(Array.isArray(manifest.permissions), "permissions 必须为数组");
-    assert.ok(Array.isArray(manifest.targets) && manifest.targets.length > 0, "targets 必须声明支持的平台");
+test("清单：id 与目录名一致，入口和图标文件存在", () => {
+  assert.equal(manifest.id, path.basename(pluginDir));
+  for (const key of ["name", "version", "description", "author", "entry", "icon"]) assert.ok(manifest[key], \`缺少 \${key}\`);
+  assert.ok(Array.isArray(manifest.permissions));
+  assert.ok(Array.isArray(manifest.targets) && manifest.targets.length > 0, "targets 至少声明一个平台");
+  assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)), "图标文件不存在");
+  assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)), "入口文件不存在，请先编译");
+});
 
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)), "声明的 icon 文件必须存在");
-    assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)), "声明的 entry 入口文件必须存在");
-  });
+test("过滤：空关键字返回全部，大小写不敏感，无匹配返回空数组", async () => {
+  const { SAMPLE_ITEMS, filterItems } = await load("items.js");
+  assert.equal(filterItems(SAMPLE_ITEMS, "").length, SAMPLE_ITEMS.length);
+  assert.equal(filterItems(SAMPLE_ITEMS, "   ").length, SAMPLE_ITEMS.length);
+  assert.notEqual(filterItems(SAMPLE_ITEMS, ""), SAMPLE_ITEMS, "返回新数组，不能把原数组交出去");
+  assert.deepEqual(filterItems(SAMPLE_ITEMS, "签名").map((item) => item.id), ["signature"]);
+  assert.deepEqual(filterItems([{ id: "a", title: "Hello", content: "", category: "" }], "HELLO").map((item) => item.id), ["a"]);
+  assert.deepEqual(filterItems(SAMPLE_ITEMS, "不存在的关键字"), []);
+});
 
-  test("2. 声明式规范与无原生 DOM/CSS 审计", () => {
-    const srcFile = path.join(pluginDir, "src", "index.tsx");
-    assert.ok(fs.existsSync(srcFile), "src/index.tsx 源码文件必须存在");
+test("[异常输入] 关键字不是字符串时不报错，按空关键字处理", async () => {
+  const { SAMPLE_ITEMS, filterItems } = await load("items.js");
+  for (const bad of [undefined, null, 42, {}, ["签名"]]) {
+    assert.equal(filterItems(SAMPLE_ITEMS, bad).length, SAMPLE_ITEMS.length, String(bad));
+  }
+  assert.deepEqual(filterItems([], "任意"), []);
+});
 
-    const srcCode = fs.readFileSync(srcFile, "utf8");
-    assert.doesNotMatch(srcCode, /\\beval\\s*\\(/, "严禁包含动态 eval");
-    assert.doesNotMatch(srcCode, /<style\\b/i, "严禁书写原生 <style> 标签");
-    assert.doesNotMatch(srcCode, /document\\.createElement\\s*\\(['"]style['"]\\)/, "严禁动态注入样式");
-    assert.doesNotMatch(srcCode, /\\.style\\.[a-zA-Z]/, "严禁直接操纵 DOM style 属性");
-  });
-
-  test("3. 声明式组件挂载与视图描述符渲染验证", async () => {
-    const entryPath = path.join(pluginDir, "dist", "index.js");
-    const mod = await import(\`file://\${entryPath.replace(/\\\\/g, "/")}\`);
-    const Command = mod.default;
-
-    assert.equal(typeof Command, "function", "默认导出必须为一个渲染函数");
-
-    const root = renderDeclarativeRoot(Command);
-    const desc = root.getLatest();
-
-    assert.ok(desc, "渲染结果不能为空");
-    assert.equal(desc.type, "List", "顶层组件必须为 List 描述符");
-    assert.equal(desc.props.navigationTitle, "${normalizedTitle}");
-    assert.ok(desc.children.length > 0, "List 下必须包含子节点 (如 List.Section)");
-
+test("渲染：顶层是 List，每条都有回车主动作", async () => {
+  const { default: Command } = await load("index.js");
+  const { SAMPLE_ITEMS } = await load("items.js");
+  const root = renderDeclarativeRoot(Command);
+  try {
+    const view = root.getLatest();
+    assert.equal(view.type, "List");
+    assert.equal(view.props.navigationTitle, manifest.name);
+    const rows = view.children.filter((child) => child && child.type === "List.Item");
+    assert.equal(rows.length, SAMPLE_ITEMS.length);
+    const firstAction = rows[0].props.actions.children[0];
+    assert.equal(firstAction.type, "Action.CopyToClipboard");
+    assert.equal(firstAction.props.content, SAMPLE_ITEMS[0].content);
+  } finally {
     root.unmount();
-  });
+  }
 });
 `
-  writeFileLf('tests/index.test.mjs', testIndexMjs)
+  )
 
-  // 11. 生成 README.md
-  const readmeMd = `# ${normalizedTitle} (\`${pluginId}\`)
+  // 11. README.md
+  writeFileLf(
+    'README.md',
+    `# ${normalizedTitle}
 
-> ${normalizedDesc}
+${normalizedDesc}
 
----
+## 目录
 
-## 核心设计哲学 (声明式 UI 规范)
-1. **纯声明式 UI**：严禁直接编写原生 HTML 标签与 CSS 样式。所有界面均基于 \`@ztools/declarative-ui\` 提供的语义化组件（\`<List>\`, \`<Detail>\`, \`<Form>\`, \`<ActionPanel>\`, \`<Action>\`），由宿主统一呈现沉浸式 Fluent / Mica 亚克力亚态视觉；
-2. **纯粹键盘优先**：上下键浏览切换、\`Enter\` 触发首要动作、\`Ctrl+K\` 呼出动作面板、\`Esc\` 返回上级栈；
-3. **安全与轻量**：严格通过 AST 静态语法树门禁，严禁代码混淆、动态 \`eval\` 与越权访问。
+| 路径 | 说明 |
+| --- | --- |
+| \`plugin.json\` | 插件清单：名称、版本、入口、图标、权限、支持的平台 |
+| \`src/index.tsx\` | 界面（声明式组件，从 \`@ztools/declarative-ui\` 引入） |
+| \`src/items.ts\` | 数据与过滤逻辑 |
+| \`tests/index.test.mjs\` | 测试，运行前先编译 |
+| \`icon.svg\` | 图标 |
 
----
+\`dist/\` 是编译产物，不提交。
 
-## 目录结构
-\`\`\`text
-${pluginId}/
-├── plugin.json         # 插件清单（声明权限、图标、入口及指令）
-├── package.json        # 依赖与编译脚本
-├── tsconfig.json       # TypeScript 编译配置
-├── icon.svg            # 矢量图标
-├── src/
-│   └── index.tsx       # 声明式 UI 核心源码
-├── dist/
-│   └── index.js        # 编译后标准 ES 模块入口
-├── tests/
-│   └── index.test.mjs  # 自动化集成测试
-└── README.md           # 开发说明文档
-\`\`\`
+## 编译与检查
 
----
+在插件仓库根目录执行：
 
-## 常用命令
-
-### 1. 运行测试
 \`\`\`bash
-npm test
+node scripts/build-declarative.mjs ${pluginId}
+node scripts/scan-plugin-security.mjs extensions/${pluginId}
+node --test extensions/${pluginId}/tests/*.test.mjs
 \`\`\`
 
-### 2. 编译 TypeScript
-\`\`\`bash
-npm run build
-\`\`\`
-
-### 3. 监听模式开发 (热重载)
-\`\`\`bash
-npm run dev
-\`\`\`
-
-### 4. AST 静态安全门禁自测
-在 ZTools 根目录下执行：
-\`\`\`bash
-npm run scan-plugins plugins/${pluginId}
-\`\`\`
+在 ZTools 客户端里试用、界面规范和提交流程见 [开发入门](https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/getting-started.md)。
 `
-  writeFileLf('README.md', readmeMd)
+  )
 
   return {
     success: true,
     pluginDir,
     createdFiles
   }
+}
+
+/** 取 --flag <value>；value 缺失或是另一个选项时返回 { missing: true } */
+function readOption(args, flag) {
+  const index = args.indexOf(flag)
+  if (index === -1) return { index }
+  const value = args[index + 1]
+  if (value === undefined || value.startsWith('-')) return { index, missing: true }
+  return { index, value }
 }
 
 /**
@@ -526,84 +423,62 @@ async function runCli() {
 
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-🚀 ZTools 官方插件一键脚手架工具
+ZTools 插件脚手架
 
 用法:
   node scripts/create-plugin.mjs <plugin-id> [title] [description] [选项]
 
 参数:
-  <plugin-id>       插件唯一标识符 (小写字母开头，仅允许小写字母、数字、短横线与下划线，2-64位)
-  [title]           插件显示名称 (可选，默认为插件 ID)
-  [description]     插件功能描述 (可选)
+  <plugin-id>       插件 ID（小写字母开头，只能用小写字母、数字和短横线，2-64 位）
+  [title]           插件显示名称（可选，默认为插件 ID）
+  [description]     插件功能描述（可选）
 
 选项:
-  --force, -f       若目标插件目录已存在，强制覆盖
-  --target-dir <dir> 指定生成的父级目录 (默认: "plugins")
-  --platform <p>    支持的平台：cross（跨平台，默认）/ windows / macos
-  --help, -h        显示此帮助信息
+  --platform <p>     支持的平台：cross（跨平台，默认）/ windows / macos
+  --author <name>    作者（默认 "${DEFAULT_AUTHOR}"）
+  --target-dir <dir> 生成到哪个目录（默认 "${defaultTargetDir()}"）
+  --force, -f        目标目录已存在时覆盖
+  --help, -h         显示此帮助信息
 
 示例:
-  node scripts/create-plugin.mjs quick-notes "极速便签" "随时记录灵感的极简便签"
-  npm run create-plugin timestamp-tool "时间转换"
-  npm run create-plugin wifi-tool "Wi-Fi 工具" --platform windows
+  npm run create-plugin -- quick-notes "便签" "记录一段文字"
+  npm run create-plugin -- wifi-tool "Wi-Fi 工具" --platform windows
     `.trim())
     process.exit(0)
   }
 
   const force = args.includes('--force') || args.includes('-f')
-
-  let targetDir = 'plugins'
-  const targetDirIndex = args.indexOf('--target-dir')
-  if (targetDirIndex !== -1 && args[targetDirIndex + 1]) {
-    targetDir = args[targetDirIndex + 1]
+  const options = { '--target-dir': readOption(args, '--target-dir'), '--platform': readOption(args, '--platform'), '--author': readOption(args, '--author') }
+  for (const [flag, opt] of Object.entries(options)) {
+    if (opt.missing) {
+      console.error(flag === '--platform' ? '错误: --platform 需要指定 cross / windows / macos' : `错误: ${flag} 需要一个值`)
+      process.exit(1)
+    }
   }
-
-  const platformIndex = args.indexOf('--platform')
-  let platformOption = platformIndex !== -1 ? args[platformIndex + 1] : undefined
-  if (platformIndex !== -1 && (!platformOption || platformOption.startsWith('-'))) {
-    console.error('❌ 错误: --platform 需要指定 cross / windows / macos')
-    process.exit(1)
-  }
-
-  const positionalArgs = args.filter(
-    (arg, i) =>
-      !arg.startsWith('-') &&
-      (targetDirIndex === -1 || (i !== targetDirIndex && i !== targetDirIndex + 1)) &&
-      (platformIndex === -1 || (i !== platformIndex && i !== platformIndex + 1))
-  )
+  const optionIndexes = new Set(Object.values(options).flatMap((opt) => (opt.index === -1 ? [] : [opt.index, opt.index + 1])))
+  const positionalArgs = args.filter((arg, i) => !arg.startsWith('-') && !optionIndexes.has(i))
 
   let pluginId = positionalArgs[0]
   let title = positionalArgs[1]
   let description = positionalArgs[2]
+  let platformOption = options['--platform'].value
 
-  // 如果没有参数且处于终端交互环境下，启用交互式提示
+  // 没有参数且处于终端交互环境时，逐项询问
   if (!pluginId) {
     if (process.stdin.isTTY) {
-      const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-      })
-
-      console.log('\n✨ 欢迎使用 ZTools 插件脚手架向导！\n')
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
       try {
-        const idInput = await rl.question('? 请输入插件 ID (如 my-tool, 必填): ')
-        pluginId = idInput.trim()
-
-        const titleInput = await rl.question('? 请输入插件显示名称 (留空则默认为 ID): ')
-        title = titleInput.trim() || pluginId
-
-        const descInput = await rl.question('? 请输入插件描述 (留空则使用默认): ')
-        description = descInput.trim()
-
+        pluginId = (await rl.question('? 插件 ID（如 my-tool，必填）: ')).trim()
+        title = (await rl.question('? 显示名称（留空则使用 ID）: ')).trim() || pluginId
+        description = (await rl.question('? 功能描述（可留空）: ')).trim()
         if (platformOption === undefined) {
-          const platformInput = await rl.question('? 支持哪些平台？[1] 跨平台（默认）[2] 仅 Windows [3] 仅 macOS: ')
-          platformOption = platformInput.trim()
+          platformOption = (await rl.question('? 支持哪些平台？[1] 跨平台（默认）[2] 仅 Windows [3] 仅 macOS: ')).trim()
         }
       } finally {
         rl.close()
       }
     } else {
-      console.error('❌ 错误: 缺少必填参数 <plugin-id>！')
+      console.error('错误: 缺少必填参数 <plugin-id>')
       console.error('用法: node scripts/create-plugin.mjs <plugin-id> [title] [description]')
       console.error('查看帮助: node scripts/create-plugin.mjs --help\n')
       process.exit(1)
@@ -612,30 +487,33 @@ async function runCli() {
 
   try {
     const platforms = parsePlatformOption(platformOption)
-    console.log(`\n⏳ 正在生成插件工程: "${pluginId}"（${describePlatforms(platforms)}）...`)
+    console.log(`\n正在生成插件工程: "${pluginId}"（${describePlatforms(platforms)}）...`)
     const result = await createPlugin({
       pluginId,
       title,
       description,
-      targetDir,
+      author: options['--author'].value,
+      targetDir: options['--target-dir'].value ?? defaultTargetDir(),
       force,
       platforms
     })
 
-    console.log(`\n🎉 插件工程创建成功！`)
-    console.log(`📂 目录路径: ${result.pluginDir}`)
-    console.log(`📄 生成文件:`)
-    for (const f of result.createdFiles) {
-      console.log(`   - ${f}`)
+    console.log('\n插件工程创建成功')
+    console.log(`目录: ${result.pluginDir}`)
+    console.log(`文件: ${result.createdFiles.join(', ')}`)
+    const next = describeNextSteps(result.pluginDir)
+    if (next.inRepo) {
+      console.log('\n下一步（在仓库根目录执行）:')
+      console.log(`  1. ${next.commands[0]}    # 编译到 dist/`)
+      console.log(`  2. ${next.commands[1]}    # 清单校验与安全扫描`)
+      console.log(`  3. ${next.commands[2]}    # 运行插件测试`)
+    } else {
+      console.log('\n提示: 这个目录不在仓库的插件目录下，构建脚本找不到它；把它移到 extensions/ 下再编译。')
     }
-    console.log('\n💡 下一步快速指引:')
-    console.log(`   1. cd ${path.relative(rootDir, result.pluginDir) || result.pluginDir}`)
-    console.log(`   2. npm test                          # 运行自动化测试`)
-    console.log(`   3. npm run dev                       # 启动 TypeScript 监听开发`)
-    console.log(`   4. npm run scan-plugins              # 在根目录验证 AST 安全门禁\n`)
+    console.log('详细说明: https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/getting-started.md\n')
     process.exit(0)
   } catch (err) {
-    console.error(`\n❌ 创建插件失败: ${err.message}\n`)
+    console.error(`\n创建插件失败: ${err.message}\n`)
     process.exit(1)
   }
 }

@@ -1,0 +1,60 @@
+{
+  "id": "hosts-switcher",
+  "name": "域名映射",
+  "version": "1.0.1",
+  "description": "多套 Hosts 环境方案自由组合切换，一键管理员提权写入系统 hosts 并自动静默刷新 DNS 缓存",
+  "author": "ZTools Official",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "system"
+  ],
+  "features": [
+    {
+      "code": "hosts-all",
+      "explain": "查看全部 Hosts 方案、当前激活状态与系统 hosts 合并预览",
+      "cmds": [
+        "hosts",
+        "hosts切换",
+        "域名映射",
+        "switchhosts",
+        "dns映射"
+      ]
+    },
+    {
+      "code": "hosts-flush-dns",
+      "explain": "一键刷新本机系统 DNS 解析缓存 (ipconfig /flushdns)",
+      "cmds": [
+        "刷新dns",
+        "flushdns",
+        "清理dns缓存"
+      ]
+    },
+    {
+      "code": "hosts-new-profile",
+      "explain": "新建一套自定义 Hosts 环境映射方案",
+      "cmds": [
+        "新建hosts方案",
+        "添加hosts",
+        "添加域名映射"
+      ]
+    }
+  ]
+}

@@ -85,6 +85,7 @@ export default function DiskAnalyzerCommand() {
     Array<{ name: string; path: string; drive: string; sizeBytes: number; fileCount: number; approximate?: boolean }>
   >([])
   // 宿主目录扫描达到条目上限时，大文件列表只是抽样结果，界面不能标成「全盘」「按体积降序」
+  const [scanError, setScanError] = useState('')
   const [sampledScan, setSampledScan] = useState<{ sampled: boolean; scannedEntries: number }>({ sampled: false, scannedEntries: 0 })
   const [totalCapacity, setTotalCapacity] = useState(0)
   const [totalUsed, setTotalUsed] = useState(0)
@@ -111,6 +112,7 @@ export default function DiskAnalyzerCommand() {
         })
       }
       const snap = await fetchDiskAnalysisSnapshot()
+      setScanError('')
       setDrives(snap.drives)
       setFiles(snap.files)
       setTopDirectories(Array.isArray(snap.topDirectories) ? snap.topDirectories : [])
@@ -128,6 +130,7 @@ export default function DiskAnalyzerCommand() {
         })
       }
     } catch (err) {
+      setScanError(err instanceof Error ? err.message : String(err))
       await progressToast?.hide()
       showToast({
         style: Toast.Style.Failure,
@@ -617,7 +620,7 @@ ${extRows}
       ]
     }),
     filterBar: {
-      summaryText: `全盘总容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)} · 右侧共 ${finalFilteredFiles.length} 个大文件${sampledScan.sampled ? ` · 抽样结果（已扫描 ${sampledScan.scannedEntries} 项）` : ''}${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
+      summaryText: scanError ? `扫描失败，显示内容可能已过期：${scanError}` : `已挂载卷容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)} · 右侧共 ${finalFilteredFiles.length} 个大文件${sampledScan.sampled ? ` · 抽样结果（已扫描 ${sampledScan.scannedEntries} 项）` : ''}${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
       actions: [
         {
           id: 'act-rescan',

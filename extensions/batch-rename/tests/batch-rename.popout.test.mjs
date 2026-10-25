@@ -91,6 +91,7 @@ async function setupHost(dirs, { dialog = [] } = {}) {
     requireGrant(target)
     return {
       success: true,
+      writeAuthorized: true,
       files: fs.readdirSync(target, { withFileTypes: true }).map((ent) => {
         const st = fs.statSync(path.join(target, ent.name))
         return { name: ent.name, size: ent.isDirectory() ? 0 : st.size, isDirectory: ent.isDirectory(), lastModified: st.mtime.toLocaleString(), attributes: 32 }
@@ -101,9 +102,10 @@ async function setupHost(dirs, { dialog = [] } = {}) {
     requireGrant(target)
     return { success: true, exists: fs.existsSync(target) && fs.statSync(target).isFile() }
   }
-  host.ipc.filesystem_move_file = async ({ sourcePath, destPath }) => {
+  host.ipc.filesystem_move_file_no_replace = async ({ sourcePath, destPath }) => {
     requireGrant(sourcePath, destPath)
-    fs.renameSync(sourcePath, destPath)
+    fs.linkSync(sourcePath, destPath)
+    fs.unlinkSync(sourcePath)
     return { success: true }
   }
   return {
@@ -123,7 +125,7 @@ async function setupHost(dirs, { dialog = [] } = {}) {
       host.dialogCalls = undefined
       host.ipcCalls.length = 0
     },
-    moves: () => host.ipcCalls.filter(([m]) => m === 'filesystem_move_file').map(([, p]) => p)
+    moves: () => host.ipcCalls.filter(([m]) => m === 'filesystem_move_file_no_replace').map(([, p]) => p)
   }
 }
 
