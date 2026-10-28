@@ -119,7 +119,8 @@ test('-1 在 Finder 中定位：以 filesearch_reveal 的真实结果为准（�
 
 // ---------------- -17 Quick Look ----------------
 
-test('-17 Quick Look：宿主返回失败时显示失败提示（列表与即时预览页），成功时才显示成功', async () => {
+test('-17 Quick Look：宿主返回失败时显示失败提示（列表与即时预览页），成功时才显示成功', async (t) => {
+  t.mock.getter(globalThis, 'navigator', () => ({ platform: 'MacIntel' }))
   const host = setupHost()
   installChunkReader(host)
   host.ipc.filesearch_sha256 = async () => ({ success: false, error: '文件不存在' })
@@ -182,7 +183,7 @@ test('-4 即时预览：超过 200 行或超过 64KB 时截断并标注；64KB �
   assert.equal(long.content.split('\n').length, 200)
   const cut = await getFileQuickLook(rec(cutTxt))
   assert.equal(cut.truncated, true)
-  assert.equal(cut.content.includes('�'), false)
+  assert.equal(cut.content.includes('\uFFFD'), false)
 })
 
 test('-4 即时预览异常路径：未授权 / 文件已删除 / 返回结构错误 / 非法 base64 都显示读取异常，不冒充二进制', async () => {

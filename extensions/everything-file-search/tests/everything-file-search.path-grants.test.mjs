@@ -153,7 +153,8 @@ test('授权内：打开 / 定位 / 计算哈希 / 确认后移入回收站都�
   assert.equal(rejections.length, 0)
 })
 
-test('异常：授权过期（或换了窗口）后打开 / 定位 / 哈希 / 快速预览都提示重新搜索，不提示成功', async () => {
+test('异常：授权过期（或换了窗口）后打开 / 定位 / 哈希 / 快速预览都提示重新搜索，不提示成功', async (t) => {
+  t.mock.getter(globalThis, 'navigator', () => ({ platform: 'MacIntel' }))
   const { grants, calls } = installGrantHost()
   const view = await mountList()
   grants.clear()
