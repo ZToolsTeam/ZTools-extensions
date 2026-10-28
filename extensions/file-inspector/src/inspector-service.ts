@@ -1,16 +1,30 @@
-import { callHostTransport } from './native-ipc'
+import { callHostTransport } from './native-ipc.js'
 import type {
   DecodedPreviewLine,
   FileDiagnosticResult,
   LineEndingType,
   TargetEncodingType
-} from './types'
+} from './types.js'
 
 export function toHexHeaderPreview(bytes: Uint8Array, maxBytes = 16): string {
   const slice = bytes.subarray(0, Math.min(bytes.byteLength, maxBytes))
   return Array.from(slice)
     .map((b) => b.toString(16).toUpperCase().padStart(2, '0'))
     .join(' ')
+}
+
+function asciiAt(bytes: Uint8Array, offset: number, length = 4): string {
+  return String.fromCharCode(...bytes.subarray(offset, offset + length))
+}
+
+/** 读取开头的 ftyp 盒：主品牌（第 8~11 字节）或兼容品牌列表里出现 avif / avis 即为 AVIF */
+function isAvifFileTypeBox(bytes: Uint8Array): boolean {
+  if (bytes.byteLength < 16 || asciiAt(bytes, 4) !== 'ftyp') return false
+  const boxSize = ((bytes[0]! << 24) >>> 0) + (bytes[1]! << 16) + (bytes[2]! << 8) + bytes[3]!
+  const end = Math.min(bytes.byteLength, boxSize >= 16 ? boxSize : 16)
+  const brands = [asciiAt(bytes, 8)]
+  for (let offset = 16; offset + 4 <= end; offset += 4) brands.push(asciiAt(bytes, offset))
+  return brands.some((brand) => brand === 'avif' || brand === 'avis')
 }
 
 export function detectMagicSignature(
@@ -60,6 +74,11 @@ export function detectMagicSignature(
     return { realMimeType: 'image/webp', realExtension: 'webp', isKnownBinary: true }
   }
 
+  // AVIF: ISO BMFF 容器，第 4~7 字节为 ftyp，主品牌或兼容品牌含 avif / avis
+  if (isAvifFileTypeBox(bytes)) {
+    return { realMimeType: 'image/avif', realExtension: 'avif', isKnownBinary: true }
+  }
+
   // GIF: 47 49 46 38
   if (
     bytes.byteLength >= 4 &&
@@ -105,14 +124,14 @@ export function detectMagicSignature(
 export function detectTextEncodingAndBom(bytes: Uint8Array): {
   isText: boolean
   detectedEncoding: string
-  confidence: number
+  detectionBasis: string
   hasBom: boolean
 } {
   if (!bytes || bytes.byteLength === 0) {
     return {
       isText: false,
       detectedEncoding: 'Empty',
-      confidence: 100,
+      detectionBasis: '空文件',
       hasBom: false
     }
   }
@@ -122,7 +141,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-8-BOM',
-      confidence: 100,
+      detectionBasis: '按文件开头的 BOM 判断',
       hasBom: true
     }
   }
@@ -132,7 +151,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-16LE',
-      confidence: 100,
+      detectionBasis: '按文件开头的 BOM 判断',
       hasBom: true
     }
   }
@@ -142,7 +161,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-16BE',
-      confidence: 100,
+      detectionBasis: '按文件开头的 BOM 判断',
       hasBom: true
     }
   }
@@ -160,7 +179,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: false,
       detectedEncoding: 'Binary',
-      confidence: 99,
+      detectionBasis: '含空字节或较多控制字符，按二进制文件处理',
       hasBom: false
     }
   }
@@ -168,19 +187,19 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
   // Try strict UTF-8 decode first
   try {
     const strictUtf8 = new TextDecoder('utf-8', { fatal: true })
-    strictUtf8.decode(bytes.subarray(0, sampleLen))
+    strictUtf8.decode(bytes)
     return {
       isText: true,
       detectedEncoding: 'UTF-8',
-      confidence: 98,
+      detectionBasis: '全文是合法的 UTF-8',
       hasBom: false
     }
   } catch {
-    // Non-UTF8 high bytes -> GBK / GB18030
+    // 不是合法 UTF-8 时只能推测，这里一律按 GBK / GB18030 处理，界面如实写明是推测
     return {
       isText: true,
       detectedEncoding: 'GBK',
-      confidence: 94,
+      detectionBasis: '不是合法的 UTF-8，按 GBK / GB18030 推测',
       hasBom: false
     }
   }
@@ -241,7 +260,7 @@ export function inspectFileFromBuffer(
     ? {
         isText: false,
         detectedEncoding: 'Binary',
-        confidence: 100,
+        detectionBasis: `按文件头识别为 ${magic.realMimeType}`,
         hasBom: false
       }
     : detectTextEncodingAndBom(bytes)
@@ -315,7 +334,7 @@ export function inspectFileFromBuffer(
     extensionMismatch,
     isText: encInfo.isText,
     detectedEncoding: encInfo.detectedEncoding,
-    confidence: encInfo.confidence,
+    detectionBasis: encInfo.detectionBasis,
     hasBom: encInfo.hasBom,
     lineEnding,
     hexHeaderPreview: toHexHeaderPreview(bytes, 16),
@@ -332,7 +351,12 @@ export function convertTextBufferEncoding(
   if (!bytes || bytes.byteLength === 0) {
     throw new Error('EMPTY_FILE_BUFFER: 空文件无法执行字符集转码')
   }
-  let text = decodeTextBufferWithEncoding(bytes, sourceEncoding)
+  if (targetEncoding !== 'utf-8' && targetEncoding !== 'utf-8-bom') {
+    throw new Error('不支持的目标编码，请选择 UTF-8 或 UTF-8-BOM')
+  }
+  const source = sourceEncoding.toLowerCase().replace('utf-8-bom', 'utf-8')
+  // 保存时严格解码，避免把替换字符写入文件，造成不可逆的数据丢失。
+  let text = new TextDecoder(source === 'gbk' ? 'gb18030' : source, { fatal: true }).decode(bytes)
   if (targetLineEnding === 'CRLF') {
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n/g, '\r\n')
   } else if (targetLineEnding === 'LF') {
@@ -351,82 +375,103 @@ export function convertTextBufferEncoding(
   return utf8Body
 }
 
+interface FileOperationResult {
+  ok: boolean
+  canceled?: boolean
+  error?: string
+}
+
 export async function fixFileExtension(
   filePath: string,
   correctExt: string,
   hostOverride?: unknown
-): Promise<{ ok: boolean; newPath?: string; error?: string }> {
-  const res = await callHostTransport<{ newPath?: string; error?: string }>(
-    'dllplugin_call',
-    {
-      plugin: 'FileInspectorPlugin',
-      func: 'fixExtension',
-      params: { filePath, correctExt }
-    },
-    hostOverride
-  )
-  if (!res.ok || !res.data?.newPath) {
-    return { ok: false, error: res.error || res.data?.error || '修正文件后缀失败' }
+): Promise<FileOperationResult & { newPath?: string }> {
+  if (!/^[a-z0-9]{1,16}$/i.test(correctExt)) {
+    return { ok: false, error: '目标扩展名无效' }
   }
-  return { ok: true, newPath: res.data.newPath }
+  const split = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1
+  const name = filePath.slice(split)
+  if (!name || filePath.split(/[\\/]/).some(part => part === '..' || part === '.')) {
+    return { ok: false, error: '文件路径无效' }
+  }
+  const directory = filePath.slice(0, split) || '.'
+  // 打开文件仅授予读权限；改名需要用户明确选择其所在目录，不能扩大宿主授权。
+  const grant = await callHostTransport<{ canceled?: boolean; folderPath?: string }>(
+    'window_show_select_folder_dialog',
+    { title: '选择文件所在文件夹以允许修正后缀', defaultPath: directory }, hostOverride
+  )
+  if (!grant.ok) return { ok: false, error: grant.error || '无法选择文件夹' }
+  if (grant.data?.canceled) return { ok: false, canceled: true }
+  const normalize = (value: string) => {
+    const path = value.replace(/[\\/]+$/, '')
+    return /^[a-z]:/i.test(filePath) ? path.replace(/\\/g, '/').toLowerCase() : path
+  }
+  if (!grant.data?.folderPath || normalize(grant.data.folderPath) !== normalize(directory)) {
+    return { ok: false, error: '请选择当前文件所在的文件夹，文件尚未改名' }
+  }
+  const dot = name.lastIndexOf('.')
+  const newPath = filePath.slice(0, split) + (dot > 0 ? name.slice(0, dot) : name) + '.' + correctExt
+  const res = await callHostTransport<{ success?: boolean }>(
+    'filesystem_move_file_no_replace', { sourcePath: filePath, destPath: newPath }, hostOverride
+  )
+  return res.ok && res.data?.success === true
+    ? { ok: true, newPath }
+    : { ok: false, error: res.error || '修正文件后缀失败，未确认文件已移动' }
 }
 
 export async function saveConvertedTextFile(
   filePath: string,
   encodedBytes: Uint8Array,
   hostOverride?: unknown
-): Promise<{ ok: boolean; outputPath?: string; error?: string }> {
-  const base64Data =
-    typeof Buffer !== 'undefined'
-      ? Buffer.from(encodedBytes).toString('base64')
-      : btoa(String.fromCharCode(...encodedBytes))
-
-  const res = await callHostTransport<{ outputPath?: string; error?: string }>(
-    'dllplugin_call',
-    {
-      plugin: 'FileInspectorPlugin',
-      func: 'writeEncoded',
-      params: { filePath, base64Data }
-    },
+): Promise<FileOperationResult & { outputPath?: string }> {
+  if (encodedBytes.byteLength > 16 * 1024 * 1024) {
+    return { ok: false, error: '转码结果超过 16 MiB，请拆分文件后再保存' }
+  }
+  const name = filePath.split(/[\\/]/).pop() || 'text.txt'
+  const dot = name.lastIndexOf('.')
+  const defaultName = dot > 0 ? `${name.slice(0, dot)}_utf8bom${name.slice(dot)}` : `${name}_utf8bom.txt`
+  const picked = await callHostTransport<{ canceled?: boolean; filePath?: string }>(
+    'window_show_save_dialog', { title: '另存为 UTF-8-BOM 文件', defaultName }, hostOverride
+  )
+  if (!picked.ok) return { ok: false, error: picked.error || '打开保存窗口失败' }
+  if (picked.data?.canceled) return { ok: false, canceled: true }
+  if (!picked.data?.filePath) return { ok: false, error: '保存窗口未返回文件路径' }
+  // 分块处理，避免较大文件触发函数参数数量上限；浏览器插件无需 Buffer。
+  const chunks: string[] = []
+  for (let i = 0; i < encodedBytes.length; i += 8192) {
+    chunks.push(String.fromCharCode(...encodedBytes.subarray(i, i + 8192)))
+  }
+  const res = await callHostTransport<{ success?: boolean; size?: number }>(
+    'filesystem_write_file',
+    { path: picked.data.filePath, content: btoa(chunks.join('')), encoding: 'base64' },
     hostOverride
   )
-  if (!res.ok || !res.data?.outputPath) {
-    return {
-      ok: false,
-      error: res.error || res.data?.error || '文件正被其他应用打开，请关闭后重试'
-    }
-  }
-  return { ok: true, outputPath: res.data.outputPath }
+  return res.ok && res.data?.success === true && res.data.size === encodedBytes.byteLength
+    ? { ok: true, outputPath: picked.data.filePath }
+    : { ok: false, error: res.error || '未确认完整写入文件，请检查保存结果' }
 }
 
 export async function pickAndReadLocalFile(
   hostOverride?: unknown
-): Promise<{ ok: boolean; filePath?: string; bytes?: Uint8Array; error?: string }> {
-  const dialogRes = await callHostTransport<{ canceled?: boolean; filePaths?: string[] }>(
-    'window_show_open_dialog',
-    { properties: ['openFile'] },
-    hostOverride
+): Promise<FileOperationResult & { filePath?: string; bytes?: Uint8Array }> {
+  const picked = await callHostTransport<{ canceled?: boolean; filePath?: string }>(
+    'window_show_open_dialog', { title: '选择需要透视或转码的文件', properties: ['openFile'] }, hostOverride
   )
-  const chosenPath = dialogRes.data?.filePaths?.[0]
-  if (!dialogRes.ok || dialogRes.data?.canceled || !chosenPath) {
-    return { ok: false, error: '未选择文件' }
-  }
-  const readRes = await callHostTransport<{ base64Data?: string; filePath?: string; error?: string }>(
-    'dllplugin_call',
-    {
-      plugin: 'FileInspectorPlugin',
-      func: 'readFile',
-      params: { filePath: chosenPath }
-    },
-    hostOverride
+  if (!picked.ok) return { ok: false, error: picked.error || '打开选择文件窗口失败' }
+  if (picked.data?.canceled) return { ok: false, canceled: true }
+  const filePath = picked.data?.filePath
+  if (!filePath) return { ok: false, error: '选择窗口未返回文件路径' }
+  const read = await callHostTransport<{ content?: string; size?: number }>(
+    'filesystem_read_file', { path: filePath, encoding: 'base64' }, hostOverride
   )
-  if (!readRes.ok || !readRes.data?.base64Data) {
-    return { ok: false, error: readRes.error || readRes.data?.error || '读取文件字节失败' }
+  if (!read.ok || typeof read.data?.content !== 'string') {
+    return { ok: false, error: read.error || '读取文件字节失败' }
   }
-  const b64 = readRes.data.base64Data
-  const bytes =
-    typeof Buffer !== 'undefined'
-      ? new Uint8Array(Buffer.from(b64, 'base64'))
-      : Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))
-  return { ok: true, filePath: readRes.data.filePath || chosenPath, bytes }
+  try {
+    const bytes = Uint8Array.from(atob(read.data.content), c => c.charCodeAt(0))
+    if (read.data.size !== bytes.byteLength) return { ok: false, error: '文件数据不完整，请重新选择文件' }
+    return { ok: true, filePath, bytes }
+  } catch (error) {
+    return { ok: false, error: `读取文件字节失败：${error instanceof Error ? error.message : String(error)}` }
+  }
 }

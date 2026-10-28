@@ -3,7 +3,8 @@ import type {
   PresetTemplate,
   WatermarkOptions,
   WatermarkRenderResult
-} from './types'
+} from './types.js'
+import { decodeImage, MAX_IMAGE_BYTES } from './image-codec.js'
 
 export function formatWatermarkDate(now = new Date()): string {
   const y = now.getFullYear()
@@ -19,10 +20,7 @@ export function resolveTemplate(
 ): string {
   const dateStr = fixedDate || formatWatermarkDate()
   return String(rawText ?? '')
-    .replace(/\{业务名\}|\{business\}/g, businessName)
-    .replace(/\{房屋地址\}/g, businessName)
-    .replace(/\{项目\/招投标名称\}/g, businessName)
-    .replace(/\{date\}/g, dateStr)
+    .replace(/\{(?:业务名|business|房屋地址|项目\/招投标名称|date)\}/g, token => token === '{date}' ? dateStr : businessName)
     .trim()
 }
 
@@ -152,136 +150,36 @@ export function computeAdaptiveWatermarkLayout(
   }
 }
 
-function escapeXml(str: string): string {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
-
-/**
- * 纯本地离线合成斜向平铺防盗水印，保持原始图像精确宽高不变
- */
-export async function renderWatermarkOnImage(
-  imageInput:
-    | ImageMetadata
-    | { width: number; height: number; fileName?: string; rawBytes?: Uint8Array },
-  options: WatermarkOptions
-): Promise<WatermarkRenderResult> {
-  if ('rawBytes' in imageInput && imageInput.rawBytes) {
-    const check = validateImageBufferHeader(imageInput.rawBytes)
-    if (!check.valid) {
-      throw new Error(check.error)
-    }
-  }
-
-  const width = Number(imageInput.width)
-  const height = Number(imageInput.height)
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    throw new Error('INVALID_IMAGE_DIMENSIONS: 图片分辨率无效')
-  }
-
-  const layout = computeAdaptiveWatermarkLayout(width, height, options)
-  const opacity = Math.max(0.08, Math.min(0.65, (options.opacityPercent || 25) / 100))
-  const fillRgb =
-    options.colorMode === 'light' ? 'rgb(229,231,235)' : 'rgb(75,85,99)'
-
-  const tspans = layout.wrappedLines
-    .map(
-      (line, idx) =>
-        `<tspan x="0" dy="${idx === 0 ? 0 : layout.effectiveFontSizePx * 1.35}">${escapeXml(line)}</tspan>`
-    )
-    .join('')
-
-  const svgOverlay =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    `<defs>` +
-    `<pattern id="wm-tile" width="${layout.effectiveGapPx}" height="${layout.effectiveGapPx}" patternUnits="userSpaceOnUse" patternTransform="rotate(${options.rotateDegree || -30})">` +
-    `<text x="0" y="${layout.effectiveFontSizePx}" fill="${fillRgb}" fill-opacity="${opacity.toFixed(2)}" font-size="${layout.effectiveFontSizePx}px" font-family="sans-serif">${tspans}</text>` +
-    `</pattern>` +
-    `</defs>` +
-    `<rect width="100%" height="100%" fill="url(#wm-tile)"/>` +
-    `</svg>`
-
-  // In browser / Electron renderer, use OffscreenCanvas to composite tiled watermark pixels without direct DOM manipulation
-  let blob: Blob | null = null
-  if (typeof OffscreenCanvas !== 'undefined') {
-    try {
-      const canvas = new OffscreenCanvas(width, height)
-      const ctx = canvas.getContext('2d')
-      if (ctx) {
-        const rawBytes = 'rawBytes' in imageInput ? imageInput.rawBytes : undefined
-        if (typeof createImageBitmap === 'function' && rawBytes && rawBytes.byteLength > 0) {
-          try {
-            const bitmap = await createImageBitmap(new Blob([rawBytes as BlobPart]))
-            ctx.drawImage(bitmap, 0, 0, width, height)
-            bitmap.close()
-          } catch {
-            ctx.fillStyle = options.colorMode === 'light' ? 'rgb(31,41,55)' : 'rgb(249,250,251)'
-            ctx.fillRect(0, 0, width, height)
-          }
-        } else {
-          ctx.fillStyle = options.colorMode === 'light' ? 'rgb(31,41,55)' : 'rgb(249,250,251)'
-          ctx.fillRect(0, 0, width, height)
-        }
-        ctx.save()
-        ctx.globalAlpha = opacity
-        ctx.fillStyle = fillRgb
-        ctx.font = `${layout.effectiveFontSizePx}px sans-serif`
-        const rad = ((options.rotateDegree || -30) * Math.PI) / 180
-        const step = Math.max(80, layout.effectiveGapPx)
-        for (let y = -height * 0.5; y < height * 1.5; y += step) {
-          for (let x = -width * 0.5; x < width * 1.5; x += step) {
-            ctx.save()
-            ctx.translate(x, y)
-            ctx.rotate(rad)
-            layout.wrappedLines.forEach((line, idx) => {
-              ctx.fillText(line, 0, idx * layout.effectiveFontSizePx * 1.35)
-            })
-            ctx.restore()
-          }
-        }
-        ctx.restore()
-        if (typeof canvas.convertToBlob === 'function') {
-          blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.92 })
-        }
+/** 必须以真实原图像素合成；失败不生成替代图片。 */
+export async function renderWatermarkOnImage(image: ImageMetadata, options: WatermarkOptions): Promise<WatermarkRenderResult> {
+  if (!options.text.trim() || Array.from(options.text).length > 160 || !Number.isFinite(options.opacityPercent) || options.opacityPercent < 10 || options.opacityPercent > 65)
+    throw new Error('水印文字需为 1～160 字，不透明度需为 10～65%')
+  const bitmap = await decodeImage(image.rawBytes)
+  let canvas: OffscreenCanvas | undefined
+  try {
+    canvas = new OffscreenCanvas(bitmap.width, bitmap.height)
+    const { width, height } = bitmap
+    const layout = computeAdaptiveWatermarkLayout(width, height, options)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('无法创建图像处理画布')
+    ctx.drawImage(bitmap, 0, 0)
+    ctx.font = `${layout.effectiveFontSizePx}px sans-serif`
+    ctx.fillStyle = options.colorMode === 'light' ? 'rgb(240, 240, 240)' : 'rgb(48, 48, 48)'
+    ctx.globalAlpha = options.opacityPercent / 100
+    const lineHeight = layout.effectiveFontSizePx * 1.35
+    const horizontalStep = Math.max(...layout.wrappedLines.map(line => ctx.measureText(line).width)) + layout.effectiveFontSizePx * 3
+    const verticalStep = Math.max(layout.effectiveGapPx, lineHeight * (layout.wrappedLines.length + 2))
+    const diagonal = Math.hypot(width, height)
+    ctx.translate(width / 2, height / 2); ctx.rotate(-Math.PI / 6)
+    let tileCount = 0
+    for (let y = -diagonal; y < diagonal; y += verticalStep)
+      for (let x = -diagonal; x < diagonal; x += horizontalStep) {
+        layout.wrappedLines.forEach((line, i) => ctx.fillText(line, x, y + i * lineHeight)); tileCount++
       }
-    } catch {
-      blob = null
-    }
-  }
-
-  if (!blob) {
-    const payloadBytes = new TextEncoder().encode(
-      JSON.stringify({
-        width,
-        height,
-        tileCount: layout.tileCount,
-        effectiveFontSizePx: layout.effectiveFontSizePx,
-        svgOverlay
-      })
-    )
-    const jpegBytes = new Uint8Array(4 + payloadBytes.byteLength + 2)
-    jpegBytes[0] = 0xff
-    jpegBytes[1] = 0xd8
-    jpegBytes[2] = 0xff
-    jpegBytes[3] = 0xe0
-    jpegBytes.set(payloadBytes, 4)
-    jpegBytes[jpegBytes.byteLength - 2] = 0xff
-    jpegBytes[jpegBytes.byteLength - 1] = 0xd9
-    blob = new Blob([jpegBytes], { type: 'image/jpeg' })
-  }
-
-  return {
-    width,
-    height,
-    mimeType: 'image/jpeg',
-    tileCount: layout.tileCount,
-    effectiveFontSizePx: layout.effectiveFontSizePx,
-    effectiveGapPx: layout.effectiveGapPx,
-    wrappedLines: layout.wrappedLines,
-    svgOverlay,
-    blob
-  }
+    const blob = await canvas.convertToBlob({ type: 'image/png' })
+    if (blob.type !== 'image/png' || !blob.size || blob.size > MAX_IMAGE_BYTES) throw new Error('生成图片超过 16 MiB 或格式无效，请缩小原图后重试')
+    const verified = await decodeImage(new Uint8Array(await blob.arrayBuffer()))
+    try { if (verified.width !== width || verified.height !== height) throw new Error('合成图片尺寸校验失败') } finally { verified.close() }
+    return { ...layout, tileCount, width, height, mimeType: 'image/png', blob }
+  } finally { bitmap.close(); if (canvas) { canvas.width = 1; canvas.height = 1 } }
 }

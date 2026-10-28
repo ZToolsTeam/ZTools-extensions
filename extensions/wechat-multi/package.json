@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-wechat-multi",
+  "version": "1.0.0",
+  "description": "列出正在运行的微信进程，并可再运行一次微信程序（不能解除微信的单实例限制）",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

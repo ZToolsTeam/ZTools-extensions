@@ -1,258 +1,100 @@
-import React, {
-  List,
-  ActionPanel,
-  Action,
-  Icon,
-  Color,
-  Clipboard,
-  showToast,
-  ToastStyle,
-  useState,
-  useMemo,
-} from '@ztools/declarative-ui'
-import type { SvgExportFormat } from './types'
-import { isRealElectronHost } from './native-ipc'
-import { optimizeSvgSource } from './svg-service'
+import React, { List, Form, ActionPanel, Action, Icon, Clipboard, showToast, ToastStyle, useState, useMemo, useNavigation, useRef, useEffect } from '@ztools/declarative-ui'
+import { optimizeSvgSource } from './svg-service.js'
 
-export * from './types'
-export * from './svg-service'
+export * from './types.js'
+export * from './svg-service.js'
 
-const DEFAULT_SVG_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
-<!-- Generator: Sketch 64.1 - https://sketch.com -->
-<svg xmlns="http://www.w3.org/2000/svg" xmlns:sketch="http://www.bohemiancoding.com/sketch/ns" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.754321" stroke-linecap="round" stroke-linejoin="round">
-  <metadata>Created with Sketch</metadata>
-  <polygon points="12.00001 2.00004 2.00002 7.00009 12.00001 12.00005 22.00008 7.00009 12.00001 2.00004" />
-  <polyline points="2.00002 17.00001 12.00001 22.00006 22.00008 17.00001" />
-  <polyline points="2.00002 12.00005 12.00001 17.00001 22.00008 12.00005" />
-</svg>`
+export function SvgSourceForm({ initial, save }: { initial: string; save: (source: string) => void }) {
+  const [source, setSource] = useState(initial), { pop } = useNavigation()
+  const submit = async () => {
+    try { optimizeSvgSource(source); save(source); pop() }
+    catch (error) { await showToast({ style: ToastStyle.Failure, title: 'SVG 校验未通过', message: error instanceof Error ? error.message : String(error) }) }
+  }
+  return <Form navigationTitle="编辑 SVG 源码" actions={<ActionPanel><Action.SubmitForm title="校验并生成" onSubmit={submit} /></ActionPanel>}>
+    <Form.TextArea id="source" title="SVG 源码" value={source} onChange={setSource} />
+    <Form.Description text="保留多行文字和空白；最多 256 KiB。⌘/Ctrl+Enter 校验并生成，Esc 取消修改。" />
+  </Form>
+}
+
+function codeBlock(source: string, language: string): string {
+  let length = 3
+  for (const match of source.matchAll(/`+/g)) length = Math.max(length, match[0].length + 1)
+  const fence = '`'.repeat(length)
+  return `${fence}${language}\n${source}\n${fence}`
+}
 
 export function SvgIconStudioCommand() {
-  const [rawSvg, setRawSvg] = useState<string>(isRealElectronHost() ? '' : DEFAULT_SVG_SAMPLE)
-  const [exportFormat, setExportFormat] = useState<SvgExportFormat>('minified')
-
+  const [rawSvg, setRawSvg] = useState('')
+  const [query, setQuery] = useState(''), { push } = useNavigation()
+  const revision = useRef(0), mounted = useRef(true)
+  useEffect(() => () => { mounted.current = false; revision.current++ }, [])
+  const updateSource = (source: string) => { setRawSvg(source); setQuery('') }
+  const saveSource = (source: string) => { revision.current++; updateSource(source) }
+  const editSource = () => { revision.current++; push(<SvgSourceForm initial={rawSvg} save={saveSource} />) }
   const svgState = useMemo(() => {
-    try {
-      const result = optimizeSvgSource(rawSvg)
-      return { ok: true as const, result }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err),
-      }
-    }
+    if (!rawSvg.trim()) return { status: 'empty' as const }
+    try { return { status: 'ready' as const, result: optimizeSvgSource(rawSvg) } }
+    catch (error) { return { status: 'error' as const, error: error instanceof Error ? error.message : String(error) } }
   }, [rawSvg])
-
   const handleLoadClipboard = async (): Promise<void> => {
+    const request = ++revision.current
     try {
-      const clip = await Clipboard.readText()
-      if (!clip || !clip.trim()) {
-        await showToast({
-          style: ToastStyle.Failure,
-          title: '剪贴板为空',
-          message: '请先复制 <svg>...</svg> 源码到剪贴板',
-        })
-        return
-      }
-      setRawSvg(clip.trim())
-      await showToast({
-        style: ToastStyle.Success,
-        title: '已载入剪贴板 SVG 源码',
-      })
-    } catch (err) {
-      await showToast({
-        style: ToastStyle.Failure,
-        title: '读取剪贴板失败',
-        message: err instanceof Error ? err.message : String(err),
-      })
+      const text = await Clipboard.readText()
+      if (!mounted.current || request !== revision.current) return
+      updateSource(text || '')
+      optimizeSvgSource(text || '')
+      await showToast({ style: ToastStyle.Success, title: '已载入并校验 SVG' })
+    } catch (error) {
+      if (!mounted.current || request !== revision.current) return
+      await showToast({ style: ToastStyle.Failure, title: '未能载入有效 SVG', message: error instanceof Error ? error.message : String(error) })
     }
   }
-
+  const result = svgState.status === 'ready' ? svgState.result : null
+  const exports = result ? [
+    { id: 'svg', title: '清理后的 SVG', subtitle: '保留文字、空白和数值精度', language: 'xml', content: result.optimizedSvg },
+    { id: 'react', title: 'React TSX 组件', subtitle: '字符串文本与属性，支持 SVGProps', language: 'tsx', content: result.reactTsxCode },
+    { id: 'vue', title: 'Vue 3 SFC 组件', subtitle: 'script setup，文本按字面内容保留', language: 'vue', content: result.vueSfcCode },
+    { id: 'uri', title: 'Data URI', subtitle: 'UTF-8；次动作复制 Base64', language: 'text', content: result.dataUri },
+  ] : []
+  const summary = result ? `${result.metrics.originalBytes} B → ${result.metrics.optimizedBytes} B · ${result.metrics.savedBytes >= 0 ? '减少' : '增加'} ${Math.abs(result.metrics.savedBytes)} B${result.metrics.removedItems ? ` · 移除 ${result.metrics.removedItems} 项，请检查外观` : ''}` : ''
   return (
     <List
       isShowingDetail={true}
-      searchBarPlaceholder="粘贴 <svg>...</svg> 源码实时净化压缩..."
-      searchText={rawSvg}
-      onSearchTextChange={setRawSvg}
-      searchBarAccessory={
-        <List.Dropdown
-          tooltip="选择导出代码格式"
-          value={exportFormat}
-          onChange={(val: string) => setExportFormat(val as SvgExportFormat)}
-        >
-          <List.Dropdown.Item title="压缩后 SVG (Minified)" value="minified" />
-          <List.Dropdown.Item title="React TSX 无状态组件" value="react-tsx" />
-          <List.Dropdown.Item title="Vue 3 SFC 单文件组件" value="vue-sfc" />
-          <List.Dropdown.Item title="Data URI (UTF-8 / Base64)" value="data-uri" />
-        </List.Dropdown>
-      }
+      searchBarPlaceholder="筛选导出格式；SVG 请用编辑源码或载入剪贴板"
+      searchText={query}
+      onSearchTextChange={setQuery}
+      filterBar={result ? { summaryText: summary, actions: [
+        { id: 'load', title: '载入剪贴板', onAction: () => void handleLoadClipboard() },
+        { id: 'edit', title: '编辑源码', onAction: editSource },
+      ] } : undefined}
     >
-      {!svgState.ok && (
-        <List.Section title="SVG 解析异常">
-          <List.Item
-            id="svg-error"
-            title="SVG 源码不合法"
-            subtitle={svgState.error}
-            icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '解析失败', color: Color.Red } }]}
-            detail={
-              <List.Item.Detail
-                markdown={`### SVG 校验未通过\n\n\`\`\`text\n${svgState.error}\n\`\`\`\n\n请粘贴包含完整 \`<svg ...>...</svg>\` 标签的矢量图代码。`}
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action
-                  title="从剪贴板载入 SVG"
-                  icon={Icon.Clipboard}
-                  onAction={() => void handleLoadClipboard()}
-                />
-              </ActionPanel>
-            }
-          />
-        </List.Section>
+      {!result && (
+        <List.Item
+          id="svg-input"
+          title={svgState.status === 'error' ? 'SVG 无法处理' : '载入 SVG 源码开始'}
+          subtitle={svgState.status === 'error' ? svgState.error : '仅在本地处理静态 SVG，支持最多 256 KiB'}
+          icon={svgState.status === 'error' ? Icon.ExclamationMark : Icon.Code}
+          detail={<List.Item.Detail markdown={svgState.status === 'error' ? codeBlock(svgState.error, 'text') : '按 Enter 从剪贴板载入完整 SVG；按 ⌘/Ctrl+Enter 打开多行源码编辑器。\n\n保留文字、空白与坐标精度；移除的内容会列出提示。复杂样式或无效 XML 会停止处理。'} />}
+          actions={<ActionPanel>
+            <Action title="从剪贴板载入 SVG" icon={Icon.Clipboard} onAction={() => void handleLoadClipboard()} />
+            <Action title="编辑源码" icon={Icon.Code} onAction={editSource} shortcut={{ modifiers: ['cmd'], key: 'enter' }} />
+          </ActionPanel>}
+        />
       )}
-
-      {svgState.ok && (
-        <List.Section title="SVG 压缩优化与多框架代码导出">
-          <List.Item
-            id="svg-minified"
-            title="无损压缩 SVG (Minified)"
-            subtitle={`${svgState.result.metrics.originalBytes} B -> ${svgState.result.metrics.optimizedBytes} B (节省 ${svgState.result.metrics.savedPercentage}%)`}
-            icon={Icon.Code}
-            accessories={[
-              svgState.result.metrics.removedDangerousNodes > 0
-                ? {
-                    tag: {
-                      value: `已拦截 ${svgState.result.metrics.removedDangerousNodes} 处 XSS 节点`,
-                      color: Color.Red,
-                    },
-                  }
-                : { tag: `-${svgState.result.metrics.savedPercentage}%` },
-            ]}
-            detail={
-              <List.Item.Detail
-                markdown={`### 压缩后 SVG 源码\n\`\`\`xml\n${svgState.result.optimizedSvg}\n\`\`\`\n\n### React TSX 组件预览\n\`\`\`tsx\n${svgState.result.reactTsxCode}\n\`\`\``}
-                metadata={
-                  <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label
-                      title="原始体积"
-                      text={`${svgState.result.metrics.originalBytes} Bytes`}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="压缩后体积"
-                      text={`${svgState.result.metrics.optimizedBytes} Bytes`}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="压缩率"
-                      text={`节省 ${svgState.result.metrics.savedBytes} Bytes (${svgState.result.metrics.savedPercentage}%)`}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="画布视口 (viewBox)"
-                      text={svgState.result.metrics.viewBox}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="图形节点数"
-                      text={`${svgState.result.metrics.pathCount} 个矢量图元`}
-                    />
-                  </List.Item.Detail.Metadata>
-                }
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action.CopyToClipboard
-                  title="复制压缩后 SVG"
-                  content={svgState.result.optimizedSvg}
-                />
-                <Action.CopyToClipboard
-                  title="复制 React TSX 组件"
-                  content={svgState.result.reactTsxCode}
-                />
-                <Action.CopyToClipboard
-                  title="复制 Vue 3 SFC 组件"
-                  content={svgState.result.vueSfcCode}
-                />
-                <Action.CopyToClipboard
-                  title="复制 Base64 Data URI"
-                  content={svgState.result.base64DataUri}
-                />
-                <Action
-                  title="从剪贴板载入新 SVG"
-                  icon={Icon.Clipboard}
-                  onAction={() => void handleLoadClipboard()}
-                />
-              </ActionPanel>
-            }
-          />
-
-          <List.Item
-            id="svg-react-tsx"
-            title="React TSX 无状态图标组件"
-            subtitle="自动转换 strokeWidth / fillRule / clipRule 驼峰属性并透传 SVGProps"
-            icon={Icon.Document}
-            accessories={[{ tag: 'React TSX' }]}
-            detail={
-              <List.Item.Detail
-                markdown={`### React TSX 组件代码\n\`\`\`tsx\n${svgState.result.reactTsxCode}\n\`\`\``}
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action.CopyToClipboard
-                  title="复制 React TSX 组件"
-                  content={svgState.result.reactTsxCode}
-                />
-              </ActionPanel>
-            }
-          />
-
-          <List.Item
-            id="svg-vue-sfc"
-            title="Vue 3 SFC 单文件图标组件"
-            subtitle="标准 <template> + <script setup lang='ts'> 结构"
-            icon={Icon.Document}
-            accessories={[{ tag: 'Vue 3 SFC' }]}
-            detail={
-              <List.Item.Detail
-                markdown={`### Vue 3 SFC 组件代码\n\`\`\`vue\n${svgState.result.vueSfcCode}\n\`\`\``}
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action.CopyToClipboard
-                  title="复制 Vue 3 SFC 组件"
-                  content={svgState.result.vueSfcCode}
-                />
-              </ActionPanel>
-            }
-          />
-
-          <List.Item
-            id="svg-data-uri"
-            title="CSS / Image 内联 Data URI"
-            subtitle={svgState.result.base64DataUri.slice(0, 72)}
-            icon={Icon.Eye}
-            accessories={[{ tag: 'Data URI' }]}
-            detail={
-              <List.Item.Detail
-                markdown={`### UTF-8 Data URI\n\`\`\`text\n${svgState.result.dataUri}\n\`\`\`\n\n### Base64 Data URI\n\`\`\`text\n${svgState.result.base64DataUri}\n\`\`\``}
-              />
-            }
-            actions={
-              <ActionPanel>
-                <Action.CopyToClipboard
-                  title="复制 UTF-8 Data URI"
-                  content={svgState.result.dataUri}
-                />
-                <Action.CopyToClipboard
-                  title="复制 Base64 Data URI"
-                  content={svgState.result.base64DataUri}
-                />
-              </ActionPanel>
-            }
-          />
-        </List.Section>
-      )}
+      {exports.filter(item => item.title.toLowerCase().includes(query.trim().toLowerCase())).map(item => (
+        <List.Item
+          key={item.id}
+          id={item.id}
+          title={item.title}
+          subtitle={item.subtitle}
+          icon={Icon.Code}
+          detail={<List.Item.Detail markdown={`${result!.warnings.length ? `清理提示（可能改变外观）：\n\n${codeBlock(result!.warnings.join('\n'), 'text')}\n\n` : ''}${codeBlock(item.content, item.language)}`} />}
+          actions={<ActionPanel>
+            <Action.CopyToClipboard title={`复制${item.title}`} content={item.content} />
+            {item.id === 'uri' && <Action.CopyToClipboard title="复制 Base64 Data URI" content={result!.base64DataUri} shortcut={{ modifiers: ['cmd'], key: 'enter' }} />}
+          </ActionPanel>}
+        />
+      ))}
     </List>
   )
 }

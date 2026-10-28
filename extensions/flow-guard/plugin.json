@@ -1,0 +1,29 @@
+{
+  "id": "flow-guard",
+  "name": "流量监控",
+  "description": "查看本机各进程的 TCP / UDP 连接和监听端口，按公网、局域网、本机回环分类，可强制结束正在联网的进程",
+  "version": "2.0.7",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具",
+    "网络工具"
+  ],
+  "permissions": [
+    "system",
+    "process",
+    "shell",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

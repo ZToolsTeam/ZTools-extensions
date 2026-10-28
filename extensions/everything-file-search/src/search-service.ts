@@ -28,7 +28,7 @@ export function truncatePath(fullPath: string, maxLength = 46): string {
 }
 
 /**
- * 根据文件名与目录属性进行精细化 8 大类归类 (对齐 Raycast NTFS MFT 标准)
+ * 根据文件名与目录属性进行精细化 8 大类归类
  */
 export function getFileCategory(fileName: string, isDir: boolean, detailed = false): TypeFilter {
   if (isDir) return "folder";
@@ -70,131 +70,18 @@ export function getFileCategory(fileName: string, isDir: boolean, detailed = fal
   return "document";
 }
 
+/** 不在 ZTools 客户端里运行（拿不到宿主通道）时的提示；此时不显示任何示例数据 */
+export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+
 /**
- * 标杆文件样本库 (涵盖 8 大类真实文件、长路径与多语言)
+ * 系统快速预览只在 macOS 上可用（宿主调用 qlmanage）；Windows 上宿主会改为在资源管理器中定位，
+ * 所以只在 macOS 上提供这个动作，避免提示「已调起系统快速预览」却实际打开了资源管理器。
  */
-export const SAMPLE_FILES: FileRecord[] = [
-  {
-    name: "ZTools-Architecture-Design.docx",
-    path: "C:\\Users\\User\\Documents\\ZTools\\ZTools-Architecture-Design.docx",
-    isDir: false,
-    size: 4520192,
-    mtime: Date.now() - 3600000 * 2,
-    category: "document",
-    extension: "docx",
-    acronym: "zad",
-    pinyin: "ztools architecture"
-  },
-  {
-    name: "launcher-design-notes.md",
-    path: "D:\\Workspace\\Projects\\ZTools\\docs\\launcher-design-notes.md",
-    isDir: false,
-    size: 25451,
-    mtime: Date.now() - 3600000 * 5,
-    category: "document",
-    extension: "md",
-    acronym: "ldn",
-    pinyin: "launcher design notes"
-  },
-  {
-    name: "Development-Plan-2026.pdf",
-    path: "C:\\Users\\User\\Downloads\\Development-Plan-2026.pdf",
-    isDir: false,
-    size: 1845120,
-    mtime: Date.now() - 3600000 * 12,
-    category: "document",
-    extension: "pdf",
-    acronym: "dp2",
-    pinyin: "development plan"
-  },
-  {
-    name: "architecture-diagram.png",
-    path: "D:\\Workspace\\Projects\\ZTools\\docs\\images\\architecture-diagram.png",
-    isDir: false,
-    size: 382910,
-    mtime: Date.now() - 3600000 * 8,
-    category: "image",
-    extension: "png",
-    acronym: "adp",
-    pinyin: "architecture diagram"
-  },
-  {
-    name: "product-demo-walkthrough.mp4",
-    path: "D:\\Videos\\ScreenRecordings\\product-demo-walkthrough.mp4",
-    isDir: false,
-    size: 88473600,
-    mtime: Date.now() - 3600000 * 24,
-    category: "video",
-    extension: "mp4",
-    acronym: "pdw",
-    pinyin: "product demo"
-  },
-  {
-    name: "keynote-speech-recording.mp3",
-    path: "D:\\Music\\Conferences\\keynote-speech-recording.mp3",
-    isDir: false,
-    size: 12582912,
-    mtime: Date.now() - 86400000 * 2,
-    category: "audio",
-    extension: "mp3",
-    acronym: "ksr",
-    pinyin: "keynote speech"
-  },
-  {
-    name: "wechat-backup-2026.zip",
-    path: "D:\\Backup\\wechat-backup-2026.zip",
-    isDir: false,
-    size: 852910240,
-    mtime: Date.now() - 86400000 * 6,
-    category: "archive",
-    extension: "zip",
-    acronym: "wb",
-    pinyin: "wechat backup"
-  },
-  {
-    name: "indexer.rs",
-    path: "D:\\Workspace\\Projects\\ZTools\\electron-client\\native\\indexer\\src\\main.rs",
-    isDir: false,
-    size: 14208,
-    mtime: Date.now() - 3600000 * 3,
-    category: "code",
-    extension: "rs",
-    acronym: "ir",
-    pinyin: "indexer rs"
-  },
-  {
-    name: "ztools-indexer.exe",
-    path: "D:\\Workspace\\Projects\\ZTools\\electron-client\\out\\native\\win32-x64\\bin\\ztools-indexer.exe",
-    isDir: false,
-    size: 891240,
-    mtime: Date.now() - 3600000 * 18,
-    category: "app",
-    extension: "exe",
-    acronym: "zi",
-    pinyin: "ztools indexer"
-  },
-  {
-    name: "Projects",
-    path: "D:\\Workspace\\Projects",
-    isDir: true,
-    size: 0,
-    mtime: Date.now() - 86400000 * 3,
-    category: "folder",
-    acronym: "p",
-    pinyin: "projects"
-  },
-  {
-    name: "中文测试-超长路径-深度测试文档-2026-年度战略方案-核心资产清单-密级公开.docx",
-    path: "C:\\Company\\Confidential\\Archive\\VeryLongDirectoryNameThatExceedsNormalLengthLimitsToVerifyPathHandlingWithoutCrashing\\2026\\Q4\\中文测试-超长路径-深度测试文档-2026-年度战略方案-核心资产清单-密级公开.docx",
-    isDir: false,
-    size: 145200,
-    mtime: Date.now() - 3600000 * 1,
-    category: "document",
-    extension: "docx",
-    acronym: "zwcs",
-    pinyin: "zhongwen ceshi"
-  }
-];
+export function supportsSystemQuickLook(platform?: string): boolean {
+  const nav = (globalThis as { navigator?: { platform?: string } }).navigator;
+  const value = platform ?? String(nav?.platform || "");
+  return /^mac/i.test(value) || value === "darwin";
+}
 
 export function sortAndFilterFiles(
   files: FileRecord[],
@@ -245,7 +132,8 @@ function mapRawFileToRecord(f: any): FileRecord {
   const category = getFileCategory(name, isDir);
   const ext = (name.split(".").pop() || "").toLowerCase();
   const rawMtime = Number(f?.mtime ?? f?.mtimeMs ?? 0);
-  const mtime = rawMtime > 0 && rawMtime < 1e11 ? rawMtime * 1000 : rawMtime > 0 ? rawMtime : Date.now();
+  // 宿主没给修改时间时记为 0（界面显示「未知」），不能用当前时间冒充
+  const mtime = rawMtime > 0 && rawMtime < 1e11 ? rawMtime * 1000 : rawMtime > 0 ? rawMtime : 0;
   return {
     name,
     path: fullPath,
@@ -260,7 +148,8 @@ function mapRawFileToRecord(f: any): FileRecord {
 }
 
 /**
- * 检索文件 (深度联动 Rust 预编译侧车 ztools-indexer.exe 或系统 IPC)
+ * 检索文件：交给客户端的文件搜索接口（Windows 上由原生索引组件 ztools-indexer 提供，macOS 上用 Spotlight）。
+ * 拿不到任何宿主通道时抛出 NOT_IN_CLIENT_MESSAGE，不返回示例数据。
  */
 export async function searchLocalFiles(
   query: string,
@@ -270,64 +159,41 @@ export async function searchLocalFiles(
   const trimmed = (query || "").trim();
   const realHost = isRealElectronHost(hostOverride);
 
-  // 1. 若在真实宿主环境或注入了 hostOverride，优先调度底层 Rust 侧车 ztools-indexer / filesearch_query。
+  // 1. 在真实宿主环境或注入了 hostOverride 时，调用客户端的 filesearch_query（Windows 上由 C++ 原生索引组件 ztools-indexer 提供结果）。
   //    必须走插件自己的通道（callHostTransport，带本插件会话）：宿主只把这样拿到的普通文件结果授权给本插件移入回收站；
   //    __ztoolsLauncher.searchFiles 不带插件身份，结果只能打开 / 定位 / 预览，所以只在没有宿主通道时才用。
-  try {
-    let rawFiles: any[] = [];
-    if (hostOverride || realHost) {
-      const errors: string[] = [];
-      for (const method of ["filesearch_query", "system_search_files"]) {
-        // 空关键词原样发送：宿主把空查询当作「最近文件」（Spotlight 最近修改 / 用户目录最近文件）；
-        // 改成 "." 会被当成普通关键词去匹配文件名里的点号，首屏就成了无关文件
-        const result = await callHostTransport<unknown>(method, { query: trimmed, limit }, hostOverride);
-        const data = result.data;
-        const record = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
-        const files = Array.isArray(data) ? data : Array.isArray(record?.files) ? record.files : Array.isArray(record?.items) ? record.items : null;
-        if (result.ok && files) return files.map(mapRawFileToRecord);
-        errors.push(result.error || `${method} 返回无效结果`);
-      }
-      throw new Error(`文件搜索不可用：${errors.join("；")}`);
+  if (hostOverride || realHost) {
+    const errors: string[] = [];
+    for (const method of ["filesearch_query", "system_search_files"]) {
+      // 空关键词原样发送：宿主把空查询当作「最近文件」（Spotlight 最近修改 / 用户目录最近文件）；
+      // 改成 "." 会被当成普通关键词去匹配文件名里的点号，首屏就成了无关文件
+      const result = await callHostTransport<unknown>(method, { query: trimmed, limit }, hostOverride);
+      const data = result.data;
+      const record = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
+      const files = Array.isArray(data) ? data : Array.isArray(record?.files) ? record.files : Array.isArray(record?.items) ? record.items : null;
+      if (result.ok && files) return files.map(mapRawFileToRecord);
+      errors.push(result.error || `${method} 返回无效结果`);
+    }
+    throw new Error(`文件搜索不可用：${errors.join("；")}`);
+  } else {
+    const launcher = (globalThis as any).__ztoolsLauncher;
+    const system = (globalThis as any).ztools?.system;
+    let res: unknown;
+    if (launcher?.searchFiles) {
+      res = await launcher.searchFiles(trimmed, limit);
+      const wrapped = res && typeof res === "object" ? (res as { data?: unknown }).data : undefined;
+      if (wrapped) res = wrapped;
+    } else if (system?.searchFiles) {
+      res = await system.searchFiles(trimmed, limit);
     } else {
-      const launcher = (globalThis as any).__ztoolsLauncher;
-      const system = (globalThis as any).ztools?.system;
-      if (launcher?.searchFiles) {
-        const res = await launcher.searchFiles(trimmed, limit);
-        const unwrapped = res && typeof res === "object" && "data" in res && res.data ? res.data : res;
-        if (Array.isArray(unwrapped)) rawFiles = unwrapped;
-        else if (Array.isArray(unwrapped?.files)) rawFiles = unwrapped.files;
-      } else if (system?.searchFiles) {
-        const res = await system.searchFiles(trimmed, limit);
-        if (Array.isArray(res)) rawFiles = res;
-        else if (Array.isArray(res?.files)) rawFiles = res.files;
-      }
+      throw new Error(NOT_IN_CLIENT_MESSAGE);
     }
-
-    if (rawFiles.length > 0) {
-      return rawFiles.map(mapRawFileToRecord);
-    }
-
-
-  } catch (err) {
-    console.warn("[EverythingFileSearch] 调用宿主 Rust 索引引擎异常，转入回退引擎:", err);
-    if (hostOverride || realHost) throw err;
+    const listed = res && typeof res === "object" ? (res as { files?: unknown }).files : undefined;
+    const rawFiles = Array.isArray(res) ? res : Array.isArray(listed) ? listed : null;
+    // 返回结构不对时如实报错，不能当成「没有匹配的文件」
+    if (!rawFiles) throw new Error("文件搜索返回了无效结果");
+    return rawFiles.map(mapRawFileToRecord);
   }
-
-  // 2. 离线/测试/降级兜底引擎 (仅在非真实宿主环境下启用)
-  if (realHost) {
-    return [];
-  }
-  if (!trimmed) {
-    return SAMPLE_FILES;
-  }
-  return SAMPLE_FILES.filter(
-    (f) =>
-      f.name.toLowerCase().includes(trimmed) ||
-      f.path.toLowerCase().includes(trimmed) ||
-      (f.extension && f.extension.toLowerCase().includes(trimmed)) ||
-      (f.acronym && f.acronym.includes(trimmed)) ||
-      (f.pinyin && f.pinyin.includes(trimmed))
-  );
 }
 
 // 常见文本/代码后缀集合
@@ -372,6 +238,12 @@ const EXT_TO_LANG: Record<string, string> = {
 };
 
 const MAX_TEXT_PREVIEW_BYTES = 64 * 1024;
+
+/** 应用内不能预览时提示用户改用什么方式查看（系统快速预览只在 macOS 上有） */
+function openElsewhereHint(): string {
+  return supportsSystemQuickLook() ? "可用「Quick Look 快速预览」或直接打开查看。" : "可按 Enter 直接打开查看。";
+}
+
 /** 宿主单次分块读取上限是 2 MiB，应用内图片预览只读一块 */
 const MAX_IMAGE_PREVIEW_BYTES = 2 * 1024 * 1024;
 
@@ -516,7 +388,7 @@ export async function getFileQuickLook(
       return {
         ...base,
         previewType: "binary",
-        content: `图片较大 (${formatBytes(file.size)})，不在应用内预览。可用「系统快速预览」或直接打开查看。`
+        content: `图片较大 (${formatBytes(file.size)})，不在应用内预览。${openElsewhereHint()}`
       };
     }
     const read = await readHostFileHead(file.path, MAX_IMAGE_PREVIEW_BYTES, hostOverride);
@@ -527,7 +399,7 @@ export async function getFileQuickLook(
       return {
         ...base,
         previewType: "binary",
-        content: `图片较大 (${formatBytes(read.totalSize)})，不在应用内预览。可用「系统快速预览」或直接打开查看。`
+        content: `图片较大 (${formatBytes(read.totalSize)})，不在应用内预览。${openElsewhereHint()}`
       };
     }
     return { ...base, previewType: "image", content: `data:${imageMime};base64,${read.base64}` };
@@ -708,11 +580,15 @@ export async function copyFileToClipboard(filePath: string): Promise<FileActionR
 }
 
 /**
- * 调用系统原生 Quick Look 快速预览 (macOS qlmanage -p / Windows 预览桥接)
+ * 调用系统快速预览（仅 macOS：宿主执行 qlmanage -p）。Windows 上宿主没有快速预览，这里直接报不支持，
+ * 不调用宿主（宿主在 Windows 上会改为在资源管理器中定位，不能当作预览成功）。
  */
 export async function quickLookFile(filePath: string, hostOverride?: any): Promise<FileActionResult> {
   if (!filePath || !filePath.trim()) {
     return { success: false, message: "文件路径无效或为空", path: filePath || "", error: "INVALID_PATH" };
+  }
+  if (!supportsSystemQuickLook()) {
+    return { success: false, message: "系统快速预览只在 macOS 上可用，可改用「即时预览」或在资源管理器中定位", path: filePath, error: "QUICK_LOOK_UNSUPPORTED" };
   }
   const res = await callHostTransport("filesearch_quick_look", { path: filePath }, hostOverride);
   if (res.ok) {

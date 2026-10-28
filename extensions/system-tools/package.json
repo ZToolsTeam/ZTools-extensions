@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-system-tools",
+  "version": "1.0.0",
+  "description": "锁屏、睡眠、休眠、重启、关机、注销、系统音量、显示隐藏文件、清空回收站等 Windows 系统操作",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

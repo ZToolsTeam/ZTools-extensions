@@ -2,21 +2,21 @@ import type {
   ChmodCalculationResult,
   ChmodRoleBreakdown,
   CidrCalculationResult,
-} from './types'
+} from './types.js'
 
 function ipToUint32(ip: string): number {
   const parts = ip.trim().split('.')
   if (parts.length !== 4) {
-    throw new Error(`INVALID_IPV4_FORMAT: IPv4 地址必须包含 4 个八位组 (${ip})`)
+    throw new Error('IPv4 地址必须包含四段十进制数字。')
   }
   let val = 0
   for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) {
-      throw new Error(`INVALID_IPV4_OCTET: 非法八位组 "${part}"`)
+    if (!/^(?:0|[1-9]\d{0,2})$/.test(part)) {
+      throw new Error('IPv4 每段必须是无前导零的十进制数字。')
     }
     const num = Number(part)
     if (num < 0 || num > 255) {
-      throw new Error(`IPV4_OCTET_OUT_OF_RANGE: 八位组超出 0~255 范围 (${part})`)
+      throw new Error('IPv4 每段必须在 0～255 之间。')
     }
     val = ((val << 8) | num) >>> 0
   }
@@ -43,24 +43,42 @@ function uint32ToBinaryDotted(num: number): string {
   ].join('.')
 }
 
+// 地址用途依据 IANA IPv4 特殊用途登记；分类不代表实际网络可达性。
+const SPECIAL_SCOPES: ReadonlyArray<readonly [string, number, string]> = [
+  ['0.0.0.0', 32, '本网络上的本机（未指定地址）'],
+  ['255.255.255.255', 32, '有限广播地址'],
+  ['192.0.0.8', 32, 'IPv4 占位地址'],
+  ['192.0.0.9', 32, 'PCP 任播地址'],
+  ['192.0.0.10', 32, 'TURN 任播地址'],
+  ['192.0.0.170', 31, 'NAT64 / DNS64 发现地址'],
+  ['192.88.99.2', 32, '6a44 中继任播地址'],
+  ['192.0.0.0', 29, 'IPv4 服务连续性前缀'],
+  ['192.0.0.0', 24, 'IETF 协议专用地址'],
+  ['192.0.2.0', 24, '文档示例地址 TEST-NET-1'],
+  ['198.51.100.0', 24, '文档示例地址 TEST-NET-2'],
+  ['203.0.113.0', 24, '文档示例地址 TEST-NET-3'],
+  ['192.31.196.0', 24, 'AS112-v4 服务地址'],
+  ['192.52.193.0', 24, 'AMT 自动组播隧道地址'],
+  ['192.88.99.0', 24, '已弃用的 6to4 中继任播地址段'],
+  ['192.175.48.0', 24, 'AS112 直接委派服务地址'],
+  ['169.254.0.0', 16, '链路本地地址'],
+  ['192.168.0.0', 16, 'RFC 1918 私有地址'],
+  ['198.18.0.0', 15, '网络设备基准测试地址'],
+  ['172.16.0.0', 12, 'RFC 1918 私有地址'],
+  ['100.64.0.0', 10, '运营商共享地址 CGNAT'],
+  ['0.0.0.0', 8, '本网络地址段'],
+  ['10.0.0.0', 8, 'RFC 1918 私有地址'],
+  ['127.0.0.0', 8, '本地回环地址'],
+  ['224.0.0.0', 4, 'IPv4 组播地址'],
+  ['240.0.0.0', 4, '协议保留地址']
+]
+
 function classifyIpScope(ipUint: number): string {
-  const first = (ipUint >>> 24) & 255
-  const second = (ipUint >>> 16) & 255
-  if (first === 10) return 'RFC 1918 A类私有内网 (10.0.0.0/8)'
-  if (first === 172 && second >= 16 && second <= 31) {
-    return 'RFC 1918 B类私有内网 (172.16.0.0/12)'
+  for (const [network, prefix, label] of SPECIAL_SCOPES) {
+    const mask = (0xffffffff << (32 - prefix)) >>> 0
+    if (((ipUint & mask) >>> 0) === ipToUint32(network)) return `${label} (${network}/${prefix})`
   }
-  if (first === 192 && second === 168) {
-    return 'RFC 1918 C类私有内网 (192.168.0.0/16)'
-  }
-  if (first === 127) return 'Loopback 本地回环地址 (127.0.0.0/8)'
-  if (first === 100 && second >= 64 && second <= 127) {
-    return 'RFC 6598 运营商级 CGNAT 地址段 (100.64.0.0/10)'
-  }
-  if (first === 169 && second === 254) {
-    return 'APIPA 链路本地地址 (169.254.0.0/16)'
-  }
-  return '公网可路由单播地址 (Public Unicast)'
+  return '普通单播地址（未命中特殊用途；公网可达性未验证）'
 }
 
 export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
@@ -70,11 +88,12 @@ export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
   }
 
   const parts = trimmed.split('/')
+  if (parts.length > 2) throw new Error('CIDR 只能包含一个斜线和一个前缀长度。')
   const ipStr = parts[0].trim()
   const prefixStr = parts.length > 1 ? parts[1].trim() : '24'
 
   if (!/^\d{1,2}$/.test(prefixStr)) {
-    throw new Error(`INVALID_CIDR_PREFIX: 掩码前缀长度必须是 0~32 的整数 (/${prefixStr})`)
+    throw new Error('CIDR 前缀必须是 0～32 的整数。')
   }
   const prefixLength = Number(prefixStr)
   if (prefixLength < 0 || prefixLength > 32) {
@@ -114,20 +133,21 @@ export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
   }
 
   return {
-    input: `${ipStr}/${prefixLength}`,
+    input: `${uint32ToIp(ipUint)}/${prefixLength}`,
     ipAddress: uint32ToIp(ipUint),
     prefixLength,
     netmask: uint32ToIp(maskUint),
     wildcardMask: uint32ToIp(wildcardUint),
     networkAddress: uint32ToIp(networkUint),
     broadcastAddress: uint32ToIp(broadcastUint),
+    hasBroadcast: prefixLength < 31,
     firstUsableIp: uint32ToIp(firstUsableUint),
     lastUsableIp: uint32ToIp(lastUsableUint),
     totalHosts,
     usableHosts,
     netmaskBinary: uint32ToBinaryDotted(maskUint),
     addressScope: classifyIpScope(ipUint),
-    usageHint,
+    usageHint: `${usageHint}。主机容量仅为数学计算，未排除特殊用途地址，也不代表公网可达。`,
   }
 }
 
@@ -135,44 +155,24 @@ function digitToSymbolic(d: number): string {
   return `${(d & 4) !== 0 ? 'r' : '-'}${(d & 2) !== 0 ? 'w' : '-'}${(d & 1) !== 0 ? 'x' : '-'}`
 }
 
-function symbolicTriadToDigit(triad: string): number {
-  if (triad.length !== 3 || !/^[r-][w-][x-]$/.test(triad)) {
-    throw new Error(`INVALID_CHMOD_TRIAD: 权限符号组不合法 (${triad})`)
-  }
-  return (
-    (triad[0] === 'r' ? 4 : 0) +
-    (triad[1] === 'w' ? 2 : 0) +
-    (triad[2] === 'x' ? 1 : 0)
-  )
-}
-
 export function convertChmod(rawInput: string): ChmodCalculationResult {
-  const cleaned = String(rawInput || '')
-    .trim()
-    .replace(/^chmod\s+(-R\s+)?/i, '')
-    .trim()
-
-  if (!cleaned) {
-    throw new Error('EMPTY_CHMOD_INPUT: 请输入八进制权限（如 755）或符号权限（如 rwxr-xr-x）')
-  }
-
+  const cleaned = String(rawInput || '').trim().replace(/^chmod[ \t]+(?:-R[ \t]+)?/, '').trim()
+  if (!cleaned) throw new Error('请输入三至四位八进制权限，或九位符号权限。')
   let digits: [number, number, number]
-
-  if (/^0?[0-7]{3}$/.test(cleaned)) {
-    const three = cleaned.slice(-3)
-    digits = [Number(three[0]), Number(three[1]), Number(three[2])]
+  let special = 0, fileType = '-'
+  if (/^[0-7]{3,4}$/.test(cleaned)) {
+    const ordinary = cleaned.slice(-3)
+    digits = [Number(ordinary[0]), Number(ordinary[1]), Number(ordinary[2])]
+    special = cleaned.length === 4 ? Number(cleaned[0]) : 0
   } else {
-    const sym = cleaned.length === 10 && /^[dlcbps-]/.test(cleaned) ? cleaned.slice(1) : cleaned
-    if (sym.length !== 9) {
-      throw new Error(
-        `INVALID_CHMOD_INPUT: 无法识别权限表达式 "${cleaned}"，支持 3 位八进制 (000~777) 或 9 位符号 (rwxr-xr-x)`,
-      )
-    }
-    digits = [
-      symbolicTriadToDigit(sym.slice(0, 3)),
-      symbolicTriadToDigit(sym.slice(3, 6)),
-      symbolicTriadToDigit(sym.slice(6, 9)),
-    ]
+    const symbolic = cleaned.length === 10 && /^[dlcbps-]/.test(cleaned) ? cleaned.slice(1) : cleaned
+    if (!/^[r-][w-][xsS-][r-][w-][xsS-][r-][w-][xtT-]$/.test(symbolic)) throw new Error('权限格式不正确：支持 000～7777 或 rwxr-xr-x；s/S 仅位于属主或组执行位，t/T 仅位于其他用户执行位。')
+    if (cleaned.length === 10) fileType = cleaned[0]!
+    digits = [0, 1, 2].map(index => {
+      const triad = symbolic.slice(index * 3, index * 3 + 3)
+      if (/[sStT]/.test(triad[2]!)) special |= [4, 2, 1][index]!
+      return (triad[0] === 'r' ? 4 : 0) + (triad[1] === 'w' ? 2 : 0) + (/[xst]/.test(triad[2]!) ? 1 : 0)
+    }) as [number, number, number]
   }
 
   const roleNames: Array<'Owner (u)' | 'Group (g)' | 'Others (o)'> = [
@@ -190,19 +190,24 @@ export function convertChmod(rawInput: string): ChmodCalculationResult {
     execute: (digit & 1) !== 0,
   }))
 
-  const octal = digits.join('')
-  const symbolic = roles.map((r) => r.symbolic).join('')
+  const octal = (special ? String(special) : '') + digits.join('')
+  const symbolic = roles.map((role, index) => {
+    if (!(special & [4, 2, 1][index]!)) return role.symbolic
+    const letter = index === 2 ? 't' : 's'
+    return role.symbolic.slice(0, 2) + (role.execute ? letter : letter.toUpperCase())
+  }).join('')
   const isWorldWritable = (digits[2] & 2) !== 0
 
   return {
     octal,
     symbolic,
-    lsSymbolic: `-${symbolic}`,
+    lsSymbolic: `${fileType}${symbolic}`,
+    specialBits: [special & 4 ? 'setuid' : '', special & 2 ? 'setgid' : '', special & 1 ? 'sticky' : ''].filter(Boolean),
     chmodCommand: `chmod ${octal} <file>`,
     chmodRecursiveCommand: `chmod -R ${octal} <directory>`,
     isWorldWritable,
     securityWarning: isWorldWritable
-      ? `高危权限告警 (${octal}): Others 组拥有写入权限 (w)，任何系统用户均可篡改或替换目标文件，生产环境推荐使用 755 或 644`
+      ? `其他用户具有写入权限 (${octal})。实际访问还受目录执行位、sticky 位和 ACL 等规则约束，请按目标用途设置。`
       : undefined,
     roles,
   }

@@ -1,6 +1,13 @@
-import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types'
+import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types.js'
 
-const PBKDF2_ITERATIONS = 100000
+/** 新密文使用的 PBKDF2-SHA256 迭代次数（OWASP 现行建议值），写入信封以便以后调整 */
+export const PBKDF2_ITERATIONS = 600000
+/** 第 1 版信封未记录迭代次数，固定为 10 万次 */
+const LEGACY_PBKDF2_ITERATIONS = 100000
+const MAX_PBKDF2_ITERATIONS = 5000000
+/** 新建保险箱的主密码最短长度；已有保险箱沿用原规则（6 位），避免老用户无法解锁或保存 */
+export const NEW_VAULT_MIN_PASSWORD_LENGTH = 8
+const EXISTING_VAULT_MIN_PASSWORD_LENGTH = 6
 const SALT_BYTES = 16
 const IV_BYTES = 12
 
@@ -46,6 +53,7 @@ function base64ToBytes(base64: string): Uint8Array {
 async function deriveAesGcmKey(
   masterPassword: string,
   salt: Uint8Array,
+  iterations: number,
   usages: KeyUsage[]
 ): Promise<CryptoKey> {
   const cryptoObj = getWebCrypto()
@@ -62,7 +70,7 @@ async function deriveAesGcmKey(
     {
       name: 'PBKDF2',
       salt: salt as BufferSource,
-      iterations: PBKDF2_ITERATIONS,
+      iterations,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -72,12 +80,26 @@ async function deriveAesGcmKey(
   )
 }
 
-export function validateMasterPassword(password: string): { valid: boolean; error?: string } {
-  const trimmed = String(password || '')
-  if (trimmed.length < 6) {
-    return { valid: false, error: 'VAULT_WEAK_MASTER_PASSWORD: 主密码长度至少需要 6 位字符' }
+export function validateMasterPassword(
+  password: string,
+  options: { isNewVault?: boolean } = {}
+): { valid: boolean; error?: string } {
+  const value = String(password || '')
+  const minLength = options.isNewVault ? NEW_VAULT_MIN_PASSWORD_LENGTH : EXISTING_VAULT_MIN_PASSWORD_LENGTH
+  if (value.length < minLength) {
+    return { valid: false, error: `VAULT_WEAK_MASTER_PASSWORD: 主密码长度至少需要 ${minLength} 位字符` }
   }
   return { valid: true }
+}
+
+/** 按信封版本取 PBKDF2 迭代次数；第 2 版的次数必须是合理范围内的整数，否则视为损坏 */
+function envelopeIterations(envelope: EncryptedVaultEnvelope): number {
+  if (envelope.version === 1) return LEGACY_PBKDF2_ITERATIONS
+  const iterations = envelope.kdfIterations
+  if (!Number.isSafeInteger(iterations) || iterations! < LEGACY_PBKDF2_ITERATIONS || iterations! > MAX_PBKDF2_ITERATIONS) {
+    throw new Error('VAULT_DATA_CORRUPTED: 加密信封的密钥派生参数非法')
+  }
+  return iterations!
 }
 
 export function validateNewEntryInput(input: VaultNewEntryInput): { valid: boolean; error?: string } {
@@ -149,7 +171,7 @@ export async function encryptVaultEntries(
   cryptoObj.getRandomValues(salt)
   cryptoObj.getRandomValues(iv)
 
-  const key = await deriveAesGcmKey(masterPassword, salt, ['encrypt'])
+  const key = await deriveAesGcmKey(masterPassword, salt, PBKDF2_ITERATIONS, ['encrypt'])
   const payloadJson = JSON.stringify({
     magic: 'ZTOOLS_VAULT_V1',
     entries: Array.isArray(entries) ? entries : []
@@ -162,7 +184,8 @@ export async function encryptVaultEntries(
   )
 
   return {
-    version: 1,
+    version: 2,
+    kdfIterations: PBKDF2_ITERATIONS,
     saltBase64: bytesToBase64(salt),
     ivBase64: bytesToBase64(iv),
     cipherTextBase64: bytesToBase64(new Uint8Array(cipherBuffer))
@@ -179,7 +202,7 @@ export async function decryptVaultEntries(
   }
   if (
     !envelope ||
-    envelope.version !== 1 ||
+    (envelope.version !== 1 && envelope.version !== 2) ||
     !envelope.saltBase64 ||
     !envelope.ivBase64 ||
     !envelope.cipherTextBase64
@@ -202,8 +225,9 @@ export async function decryptVaultEntries(
     throw new Error('VAULT_DATA_CORRUPTED: 加密参数长度非法或密文已损坏')
   }
 
+  const iterations = envelopeIterations(envelope)
   const cryptoObj = getWebCrypto()
-  const key = await deriveAesGcmKey(masterPassword, salt, ['decrypt'])
+  const key = await deriveAesGcmKey(masterPassword, salt, iterations, ['decrypt'])
 
   let plainBuffer: ArrayBuffer
   try {
@@ -267,35 +291,15 @@ export function generateSecurePassword(length = 20, includeSymbols = true): stri
   return chars.join('')
 }
 
-export interface ClipboardAdapter {
-  copy: (text: string) => Promise<void>
-  readText: () => Promise<string | undefined>
-  clear: () => Promise<void>
-}
-
-export async function copySecretWithAutoClear(
-  secret: string,
-  clipboard: ClipboardAdapter,
-  options?: {
-    ttlMs?: number
-    scheduleTimer?: (fn: () => void, ms: number) => unknown
+/** 敏感复制由宿主计时，离开插件后仍清除，且不进入宿主剪贴板历史。 */
+export async function copySecretWithAutoClear(secret: string): Promise<void> {
+  const bridge = (globalThis as unknown as { __ztoolsElectron?: { transport?: { methods?: {
+    clipboard_copy_text?: (request: unknown) => Promise<{ success?: boolean; data?: { success?: boolean; clearAfterMs?: number }; error?: { message?: string } }>
+  } } } }).__ztoolsElectron
+  const method = bridge?.transport?.methods?.clipboard_copy_text
+  if (!method) throw new Error('当前客户端不支持安全复制，请升级客户端')
+  const response = await method({ messageId: `vault_copy_${crypto.randomUUID()}`, params: { text: secret, sensitive: true }, timeoutMs: 5000 })
+  if (!response?.success || response.data?.success !== true || response.data.clearAfterMs !== 30000) {
+    throw new Error(response?.error?.message || '客户端未确认自动清除，不能保证本次安全复制')
   }
-): Promise<{ clearNow: () => Promise<boolean> }> {
-  await clipboard.copy(secret)
-  const ttlMs = options?.ttlMs ?? 30000
-  const clearNow = async (): Promise<boolean> => {
-    const current = await clipboard.readText()
-    if (current === secret) {
-      await clipboard.clear()
-      return true
-    }
-    return false
-  }
-
-  const scheduler = options?.scheduleTimer || ((fn: () => void, ms: number) => setTimeout(fn, ms))
-  scheduler(() => {
-    void clearNow()
-  }, ttlMs)
-
-  return { clearNow }
 }

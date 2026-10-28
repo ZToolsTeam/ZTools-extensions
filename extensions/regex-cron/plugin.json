@@ -1,9 +1,9 @@
 {
   "id": "regex-cron",
   "name": "正则与Cron",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "中国本土常用正则速查与实时测试高亮，支持Cron表达式中文语义解析与未来5次执行时间推算",
-  "author": "ZTools Official",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

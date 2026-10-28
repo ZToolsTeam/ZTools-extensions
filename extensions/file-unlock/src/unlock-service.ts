@@ -187,16 +187,26 @@ export async function detectClipboardCandidatePath(hostOverride?: unknown): Prom
 }
 
 export async function listRemovableDrives(hostOverride?: unknown): Promise<RemovableDriveItem[]> {
-  const res = await invokePluginService<{ drives?: Array<Record<string, unknown>> }>(
+  return (await loadRemovableDrives(hostOverride)).drives
+}
+
+/** 读取外接磁盘：失败或列表不完整时带上原因，由界面提示，不能静默显示为“没有外接磁盘” */
+export async function loadRemovableDrives(hostOverride?: unknown): Promise<{ drives: RemovableDriveItem[]; error?: string; warning?: string }> {
+  const res = await invokePluginService<{ ok?: boolean; drives?: Array<Record<string, unknown>>; error?: string; warning?: string }>(
     FILE_UNLOCK_PLUGIN_NAME,
     'listRemovableDrives',
     {},
     hostOverride
   )
-  if (!res.ok || !res.data || !Array.isArray(res.data.drives)) {
-    return []
+  if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.drives)) {
+    return { drives: [], error: String(res.data?.error ?? res.error ?? res.message ?? '读取外接磁盘失败') }
   }
-  return res.data.drives
+  const warning = typeof res.data.warning === 'string' && res.data.warning ? res.data.warning : undefined
+  return { drives: normalizeDrives(res.data.drives), ...(warning ? { warning } : {}) }
+}
+
+function normalizeDrives(list: Array<Record<string, unknown>>): RemovableDriveItem[] {
+  return list
     .map((d) => ({
       mount: String(d.mount ?? ''),
       label: String(d.label ?? '可移动磁盘'),
@@ -270,12 +280,14 @@ export async function inspectTargetLocks(
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
     .map((item) => normalizeLockingProcess(item, resolvedTarget))
 
+  const partial = res.data.partial === true
   return {
     ok: true,
     targetPath: resolvedTarget,
     isDirectory: Boolean(res.data.isDirectory),
-    isUnlocked: processes.length === 0,
-    processes
+    isUnlocked: processes.length === 0 && !partial,
+    processes,
+    ...(partial ? { partial } : {})
   }
 }
 

@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-screenshot",
+  "version": "1.0.0",
+  "description": "浏览本机截图目录，一键回贴、复制、定位与清理截图；可立即截取全部屏幕并复制到剪贴板",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/screenshot.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

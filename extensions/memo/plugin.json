@@ -1,0 +1,38 @@
+{
+  "id": "memo",
+  "name": "便签",
+  "description": "轻量随手记便签，正文支持 Markdown，可加标签，按标题、正文或标签搜索",
+  "version": "1.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "效率工具"
+  ],
+  "permissions": [
+    "clipboard"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "keywords": [
+    "memo",
+    "note",
+    "便签",
+    "笔记",
+    "备忘"
+  ],
+  "minAppVersion": "1.1.8.3"
+}

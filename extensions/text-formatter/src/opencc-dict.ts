@@ -1,8 +1,26 @@
 /**
  * 简繁转换字典（自动生成，请勿手改）
  *
- * 数据来源：OpenCC 字典（经 opencc-data 发布，随 opencc-js 1.4.2 分发），Apache License 2.0。
- * https://github.com/BYVoid/OpenCC  https://github.com/nk2028/opencc-data
+ * 本文件的字典数据来自 Open Chinese Convert (OpenCC)：
+ *   Copyright 2010-2026 Carbo Kuo and contributors
+ *   https://github.com/BYVoid/OpenCC
+ *
+ *   Licensed under the Apache License, Version 2.0 (the "License");
+ *   you may not use this file except in compliance with the License.
+ *   You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
+ *
+ * 取自 opencc-data 1.4.2（https://github.com/nk2028/opencc-data ，随 opencc-js 1.4.2 分发）中的
+ * STCharacters.txt、STPhrases.txt、TSCharacters.txt、TSPhrases.txt、TWVariants.txt。
+ * 修改说明：本文件不是原始数据文件，已按下述规则筛选条目并改写为单行字符串格式。
+ * 许可证全文与第三方声明见插件目录下的 THIRD_PARTY_NOTICES.md。
  *
  * - 简转繁对应 OpenCC s2tw（台湾正体）：STCharacters / STPhrases 的结果再按 TWVariants 替换异体（為、裡、麵、吃）
  * - ST_CHARACTERS / TS_CHARACTERS：字表全表，每个字只取首选字形，去掉与原字相同的条目

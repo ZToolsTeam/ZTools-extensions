@@ -1,7 +1,7 @@
 /**
  * Calendar (极客日程表、视频会议直达与 ICS 日历中枢)
  *
- * 深度对齐 Raycast 官方 `calendar` (`My Schedule` & `Create Event`)：
+ * 包含「我的日程」与「新建日程」两部分：
  * - 按日期分组展示今天与近期日程，会议链接 (Zoom / Feishu / Teams / Google Meet) 一键直达
  * - 支持通过 <Form> 快速新建日程（日期 + 时间，提交前校验）、删除日程（需确认）与导出标准 RFC 5545 `.ics` 日历文件
  * - 对接主进程 `calendar_upcoming_events`, `calendar_list_events`, `calendar_create_event`, `calendar_delete_event`, `calendar_export_ics` IPC
@@ -60,53 +60,10 @@ export interface CalendarEventItem {
   readonly isAllDay?: boolean;
 }
 
-export const DEFAULT_CALENDAR_EVENTS: readonly CalendarEventItem[] = Object.freeze([
-  {
-    id: "evt-arch-sync",
-    title: "ZTools 2.0 macOS 双端架构对齐评审会",
-    startTime: "10:00",
-    endTime: "11:00",
-    location: "飞书视频会议 (Feishu Meet)",
-    conferenceUrl: "https://vc.feishu.cn/j/882910421",
-    calendarName: "Work",
-    notes: "评审 32+ 款第一方内置声明式套件与 macOS 原生侧车/TCC 权限降级体验",
-    attendees: ["arch@ztools.dev", "macos@ztools.dev", "qa@ztools.dev"]
-  },
-  {
-    id: "evt-code-freeze",
-    title: "Declarative UI 2.0 Release Candidate 发版冻结",
-    startTime: "14:30",
-    endTime: "15:30",
-    location: "Zoom Conference Room",
-    conferenceUrl: "https://zoom.us/j/918273645",
-    calendarName: "Engineering",
-    notes: "完成全量 E2E 集成与混沌破坏性测试门禁验收",
-    attendees: ["release@ztools.dev"]
-  },
-  {
-    id: "evt-1on1",
-    title: "1:1 Developer Experience & Plugin Store Review",
-    startTime: "16:30",
-    endTime: "17:00",
-    location: "Google Meet",
-    conferenceUrl: "https://meet.google.com/ztools-dx-sync",
-    calendarName: "Work",
-    notes: "讨论 ZTools-extensions 社区 PR 自动 AST 扫描与 CDN 分发",
-    attendees: ["dx@ztools.dev"]
-  },
-  {
-    id: "evt-gym",
-    title: "晚间有氧训练与拉伸恢复",
-    startTime: "19:30",
-    endTime: "20:30",
-    location: "Fitness Center",
-    calendarName: "Personal",
-    notes: "保持充沛体能与极客状态",
-    attendees: []
-  }
-]);
+export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
 
-let memoryCalendarEvents: CalendarEventItem[] = [...DEFAULT_CALENDAR_EVENTS];
+// 本次会话里经宿主新建 / 删除后的日程缓存（不含任何示例数据）
+let memoryCalendarEvents: CalendarEventItem[] = [];
 
 // ---------------------------------------------------------------------------
 // 日期与时间
@@ -479,8 +436,8 @@ export async function fetchCalendarPage(
     }
     return { events, total, searchedOnHost: !useUpcoming && Boolean(search.trim()) };
   }
-  const events = [...memoryCalendarEvents];
-  return { events, total: events.length, searchedOnHost: false };
+  // 日程保存在客户端的本机数据库里，没有客户端时不能显示示例日程冒充
+  throw new Error(`NOT_IN_CLIENT: ${NOT_IN_CLIENT_MESSAGE}`);
 }
 
 export async function fetchCalendarEvents(
@@ -565,8 +522,8 @@ export async function createCalendarEvent(
     throw new Error(`CREATE_EVENT_FAILED: ${res.error || "宿主没有返回日程 ID"}`);
   }
 
-  memoryCalendarEvents = [newEvent, ...memoryCalendarEvents];
-  return newEvent;
+  // 没有客户端时无处保存，不能只存在内存里提示「已创建」
+  throw new Error(`NOT_IN_CLIENT: ${NOT_IN_CLIENT_MESSAGE}`);
 }
 
 export async function deleteCalendarEvent(id: string, hostOverride?: any): Promise<boolean> {
@@ -578,9 +535,7 @@ export async function deleteCalendarEvent(id: string, hostOverride?: any): Promi
     memoryCalendarEvents = memoryCalendarEvents.filter((e) => e.id !== cleanId);
     return true;
   }
-  const before = memoryCalendarEvents.length;
-  memoryCalendarEvents = memoryCalendarEvents.filter((e) => e.id !== cleanId);
-  return memoryCalendarEvents.length < before;
+  return false;
 }
 
 /**
@@ -809,8 +764,8 @@ function belongsToScope(evt: CalendarEventItem, scope: CalendarFilterScope): boo
 
 export function CalendarCommand() {
   const realHost = isRealElectronHost();
-  const [events, setEvents] = useState<CalendarEventItem[]>(realHost ? [] : [...DEFAULT_CALENDAR_EVENTS]);
-  const [total, setTotal] = useState<number>(realHost ? 0 : DEFAULT_CALENDAR_EVENTS.length);
+  const [events, setEvents] = useState<CalendarEventItem[]>([]);
+  const [total, setTotal] = useState<number>(0);
   const [searchedOnHost, setSearchedOnHost] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [scope, setScope] = useState<CalendarFilterScope>("all");
@@ -824,6 +779,7 @@ export function CalendarCommand() {
   const hostSearch = scope === "upcoming" ? "" : searchText.trim();
 
   useEffect(() => {
+    if (!realHost) return;
     let active = true;
     setIsLoading(true);
     // 输入搜索词时稍等再请求，避免每个字符都查询一次；旧请求的结果被丢弃
@@ -954,6 +910,21 @@ export function CalendarCommand() {
     () => events.find((e) => Boolean(e.conferenceUrl)) || events[0] || null,
     [events]
   );
+
+  if (!realHost) {
+    return (
+      <List searchBarPlaceholder="搜索日程">
+        <List.Section title="日程">
+          <List.Item
+            id="calendar-client-required"
+            title={NOT_IN_CLIENT_MESSAGE}
+            subtitle="日程保存在 ZTools 客户端的本机数据库里"
+            icon={Icon.Info}
+          />
+        </List.Section>
+      </List>
+    );
+  }
 
   const summaryText = loadError
     ? events.length > 0
@@ -1144,11 +1115,11 @@ export function CalendarCommand() {
             <List.Item
               id="calendar-empty-create"
               title="新建日程事件 (Create Calendar Event)..."
-              subtitle="当前暂无日程安排，按 Enter 立即创建新日程或在线会议"
+              subtitle="当前没有日程，按 Enter 新建日程"
               icon={Icon.Plus}
               detail={
                 <List.Item.Detail
-                  markdown={`# 暂无日程事件\n\n按 \`Enter\` 即可新建工作日程、会议室预约或视频会议直达链接。`}
+                  markdown={`# 暂无日程事件\n\n按 \`Enter\` 新建日程，可附上视频会议链接。`}
                 />
               }
               actions={

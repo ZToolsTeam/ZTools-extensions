@@ -8,7 +8,7 @@
  *
  * 用法见各插件 tests/*.test.mjs。
  */
-import { renderDeclarativeRoot, setDeclarativeBridge } from '@ztools/declarative-ui'
+import { Clipboard, getComponentFactory, renderDeclarativeRoot, setDeclarativeBridge } from '@ztools/declarative-ui'
 
 let lastHost = null
 
@@ -41,6 +41,7 @@ export function createHost() {
       return clipboard.text
     },
     async pasteToActive(text) {
+      await this.copyToClipboard(text)
       clipboard.pasted.push(String(text))
     },
     async storageGetItem(key) {
@@ -197,14 +198,17 @@ export async function mount(Command, host = lastHost) {
     async run(node, title) {
       const action = api.actions(node).find((a) => a.props.title === title)
       if (!action) throw new Error(`找不到动作「${title}」；现有：${api.actions(node).map((a) => a.props.title).join(', ')}`)
-      // 复制、粘贴类动作由宿主渲染器执行，这里按宿主行为模拟
+      // 使用 SDK 调用隔离宿主，失败时不记录成功或触发成功回调。
       if (action.type === 'Action.CopyToClipboard') {
-        host.clipboard.text = String(action.props.content ?? '')
+        await Clipboard.copy(action.props.content ?? '')
         await action.props.onCopy?.(action.props.content)
+      } else if (action.type === 'Action.Paste') {
+        await Clipboard.paste(action.props.content ?? '')
+        await action.props.onPaste?.(action.props.content)
+      } else {
+        await action.props.onAction?.()
+        await action.props.onSubmit?.({})
       }
-      if (action.type === 'Action.Paste') host.clipboard.pasted.push(String(action.props.content ?? ''))
-      await action.props.onAction?.()
-      await action.props.onSubmit?.({})
       await tick()
       return action
     },
@@ -221,7 +225,9 @@ export async function mount(Command, host = lastHost) {
 export async function mountPushed(host) {
   const target = host.pushed[host.pushed.length - 1]
   if (!target) throw new Error('没有被 push 的视图')
-  const view = await mount(typeof target === 'function' ? target : () => target, host)
+  // 与真实宿主一致，重新执行 JSX 组件工厂，让表单字段拥有自己的响应式状态。
+  const component = typeof target === 'function' ? target : getComponentFactory(target) || (() => target)
+  const view = await mount(component, host)
   view.field = (id) => {
     let found
     walk(view.tree(), (n) => {

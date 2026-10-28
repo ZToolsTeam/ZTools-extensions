@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-hardware-info",
+  "version": "2.0.8",
+  "description": "查看本机 CPU 型号与负载、物理内存、系统版本、磁盘容量、显示器与电源状态，给出 4 个常见场景的估算评分，并可导出 Markdown / JSON / TXT 配置报告",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/hardware-info.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

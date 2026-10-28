@@ -1,0 +1,22 @@
+{
+  "id": "browser-history",
+  "name": "浏览器历史记录",
+  "description": "Chrome / Edge 浏览器历史记录搜索",
+  "version": "1.0.0",
+  "revoked": true,
+  "revokedReason": "功能未完成（只有示例数据）",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "browser",
+  "permissions": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

@@ -15,17 +15,16 @@ import React, {
   useCallback,
   useRef
 } from '@ztools/declarative-ui'
-import type { SnippetCategory, SnippetFormInput, SnippetItem } from './types'
+import type { SnippetCategory, SnippetFormInput, SnippetItem } from './types.js'
 import {
-  getSnippetCategoryLabel,
+  SnippetStoreRepository,
   resolveMacroTemplate,
   validateSnippetInput
-} from './macro-engine'
+} from './macro-engine.js'
+import { SNIPPETS_STORAGE_KEY, assertSnippetUnchanged, parseStoredSnippets, updateSnippets } from './snippets-storage.js'
 
-export * from './types'
-export * from './macro-engine'
-
-const SNIPPETS_STORAGE_KEY = 'ztools.snippets.items.v1'
+export * from './types.js'
+export * from './macro-engine.js'
 
 function getCategoryIcon(category: SnippetCategory): Icon {
   switch (category) {
@@ -44,7 +43,7 @@ function getCategoryIcon(category: SnippetCategory): Icon {
 
 export interface SnippetEditFormProps {
   initialData?: SnippetItem
-  onSave: (input: SnippetFormInput) => Promise<void>
+  onSave: (input: SnippetFormInput, expected?: SnippetItem) => Promise<void>
 }
 
 export function SnippetEditForm({ initialData, onSave }: SnippetEditFormProps) {
@@ -71,7 +70,7 @@ export function SnippetEditForm({ initialData, onSave }: SnippetEditFormProps) {
       })
       return
     }
-    await onSave(payload)
+    await onSave(payload, initialData)
     pop()
   }, [initialData, title, category, keyword, content, onSave, pop])
 
@@ -120,7 +119,7 @@ export function SnippetEditForm({ initialData, onSave }: SnippetEditFormProps) {
       />
       <Form.Description
         title="宏变量提示"
-        text="{date}=年月日  {time}=时分秒  {clipboard}=当前剪贴板  {cursor}=上屏后光标停留位置"
+        text="{date}=年月日  {time}=时分秒  {clipboard}=当前剪贴板  {cursor}=移除占位标记（暂不移动光标）"
       />
     </Form>
   )
@@ -142,6 +141,10 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
     return 'all'
   })
 
+  const readyRef = useRef(Boolean(initialSnippets))
+  const savingRef = useRef(false)
+  const openedNewRef = useRef(false)
+  const [loadError, setLoadError] = useState('')
   const mountedRef = useRef<boolean>(true)
   useEffect(() => {
     mountedRef.current = true
@@ -157,16 +160,12 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
     let active = true
     ;(async () => {
       try {
-        const raw = await LocalStorage.getItem<string>(SNIPPETS_STORAGE_KEY)
+        const raw = await LocalStorage.getItem(SNIPPETS_STORAGE_KEY)
         if (!active || !mountedRef.current) return
-        if (raw) {
-          const parsed = JSON.parse(raw) as SnippetItem[]
-          if (Array.isArray(parsed)) {
-            setSnippets(parsed)
-          }
-        }
-      } catch {
-        // Ignore storage read error
+        setSnippets(parseStoredSnippets(raw))
+        readyRef.current = true
+      } catch (error) {
+        if (active && mountedRef.current) setLoadError(error instanceof Error ? error.message : String(error))
       } finally {
         if (active && mountedRef.current) {
           setIsLoading(false)
@@ -178,105 +177,63 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
     }
   }, [initialSnippets])
 
-  const persistSnippets = useCallback(async (nextList: SnippetItem[]) => {
-    await LocalStorage.setItem(SNIPPETS_STORAGE_KEY, JSON.stringify(nextList))
-    if (mountedRef.current) {
-      setSnippets(nextList)
+  const persistSnippets = useCallback(async (update: (items: SnippetItem[]) => SnippetItem[]) => {
+    if (!readyRef.current) throw new Error('短语尚未读取成功，请重新打开插件')
+    if (savingRef.current) throw new Error('正在保存短语，请稍后再试')
+    savingRef.current = true
+    try {
+      const nextList = await updateSnippets(update)
+      if (mountedRef.current) setSnippets(nextList)
+    } finally {
+      savingRef.current = false
     }
   }, [])
 
-  const handleSaveSnippet = useCallback(
-    async (input: SnippetFormInput) => {
-      const check = validateSnippetInput(input)
-      if (!check.valid) {
-        throw new Error(check.error)
-      }
-      const now = Date.now()
-      const content = input.content.trim()
-      const previewText = content.replace(/\s+/g, ' ').slice(0, 72)
-      let next: SnippetItem[]
+  const handleSaveSnippet = useCallback(async (input: SnippetFormInput, expected?: SnippetItem) => {
+    await persistSnippets((items) => {
       if (input.id) {
-        next = snippets.map((s: SnippetItem) =>
-          s.id === input.id
-            ? {
-                ...s,
-                title: input.title.trim(),
-                category: input.category,
-                categoryLabel: getSnippetCategoryLabel(input.category),
-                keyword: input.keyword?.trim() || undefined,
-                content,
-                previewText,
-                updatedAt: now
-              }
-            : s
-        )
-      } else {
-        const created: SnippetItem = {
-          id: `snip-${now}`,
-          title: input.title.trim(),
-          category: input.category,
-          categoryLabel: getSnippetCategoryLabel(input.category),
-          keyword: input.keyword?.trim() || undefined,
-          content,
-          previewText,
-          useCount: 0,
-          updatedAt: now
-        }
-        next = [created, ...snippets]
+        if (!expected || input.id !== expected.id) throw new Error('短语编辑状态已变化，请重新打开后再操作')
+        assertSnippetUnchanged(items, expected)
       }
-      await persistSnippets(next)
-      await showToast({
-        style: Toast.Style.Success,
-        title: '短语已保存',
-        message: input.title.trim()
-      })
-    },
-    [snippets, persistSnippets]
-  )
+      const repository = new SnippetStoreRepository(items)
+      repository.save(input)
+      return repository.list()
+    })
+    await showToast({ style: Toast.Style.Success, title: '短语已保存', message: input.title.trim() })
+  }, [persistSnippets])
 
-  const handleDeleteSnippet = useCallback(
-    async (id: string) => {
-      const next = snippets.filter((s: SnippetItem) => s.id !== id)
-      await persistSnippets(next)
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已删除该快捷短语'
-      })
-    },
-    [snippets, persistSnippets]
-  )
+  const handleDeleteSnippet = useCallback(async (expected: SnippetItem) => {
+    await persistSnippets((items) => {
+      assertSnippetUnchanged(items, expected)
+      return items.filter(item => item.id !== expected.id)
+    })
+    await showToast({ style: Toast.Style.Success, title: '已删除该快捷短语' })
+  }, [persistSnippets])
 
-  const handleInsertSnippet = useCallback(
-    async (item: SnippetItem) => {
-      const clipText = (await Clipboard.readText()) || ''
-      const resolved = resolveMacroTemplate(item.content, clipText)
-      await Clipboard.copy(resolved.text)
-      try {
-        const g = globalThis as Record<string, unknown>
-        const win = (typeof window !== 'undefined' ? window : g) as Record<string, unknown>
-        const electron = win.__ztoolsElectron as
-          | { transport?: { invoke?: (m: string, p?: Record<string, unknown>) => Promise<unknown> } }
-          | undefined
-        if (typeof electron?.transport?.invoke === 'function') {
-          await electron.transport.invoke('clipboard_hide_and_paste_text', {
-            text: resolved.text
-          })
-        }
-      } catch {
-        // Fallback to clipboard copy already completed
-      }
-      const next = snippets.map((s: SnippetItem) =>
-        s.id === item.id ? { ...s, useCount: (s.useCount || 0) + 1 } : s
-      )
-      await persistSnippets(next)
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已解析动态宏并上屏/写入剪贴板',
-        message: resolved.text.slice(0, 48)
-      })
-    },
-    [snippets, persistSnippets]
-  )
+  const handleUseSnippet = useCallback(async (item: SnippetItem, paste: boolean) => {
+    try {
+      const clipboardText = item.content.includes('{clipboard}') ? await Clipboard.readText() : ''
+      const resolved = resolveMacroTemplate(item.content, clipboardText)
+      if (paste) await Clipboard.paste(resolved.text)
+      else await Clipboard.copy(resolved.text)
+    } catch (error) {
+      await showToast({ style: Toast.Style.Failure, title: paste ? '粘贴失败' : '复制失败', message: error instanceof Error ? error.message : String(error) })
+      return
+    }
+    try {
+      await persistSnippets((items) => items.map((current) => current.id === item.id ? { ...current, useCount: (current.useCount || 0) + 1 } : current))
+    } catch (error) {
+      await showToast({ style: Toast.Style.Failure, title: paste ? '已发送请求，但使用次数保存失败' : '已复制，但使用次数保存失败', message: error instanceof Error ? error.message : String(error) })
+      return
+    }
+    await showToast({ style: Toast.Style.Success, title: paste ? '已发送粘贴请求' : '已复制解析后的文本' })
+  }, [persistSnippets])
+
+  useEffect(() => {
+    if (featureCode !== 'snippets-new' || isLoading || loadError || openedNewRef.current) return
+    openedNewRef.current = true
+    push(<SnippetEditForm onSave={handleSaveSnippet} />)
+  }, [featureCode, isLoading, loadError, handleSaveSnippet, push])
 
   const filteredSnippets = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -293,8 +250,8 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
     })
   }, [snippets, searchText, categoryFilter])
 
-  if (featureCode === 'snippets-new') {
-    return <SnippetEditForm onSave={handleSaveSnippet} />
+  if (isLoading || loadError) {
+    return <List isLoading={isLoading}><List.Item id="load-state" title={loadError ? '无法读取短语' : '正在读取短语'} subtitle={loadError || undefined} /></List>
   }
 
   return (
@@ -306,7 +263,7 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
       searchBarAccessory={
         <List.Dropdown
           value={categoryFilter}
-          onChange={setCategoryFilter}
+          onChange={(value) => { setCategoryFilter(value); setSearchText('') }}
           tooltip="按短语分类筛选"
         >
           <List.Dropdown.Item title="全部短语" value="all" icon={Icon.List} />
@@ -347,11 +304,11 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
               <Action
                 title="直接上屏粘贴"
                 icon={Icon.ArrowUp}
-                onAction={() => handleInsertSnippet(item)}
+                onAction={() => handleUseSnippet(item, true)}
               />
-              <Action.CopyToClipboard
+              <Action
                 title="复制解析后的文本"
-                content={resolveMacroTemplate(item.content, '').text}
+                onAction={() => handleUseSnippet(item, false)}
                 shortcut={{ modifiers: ['cmd'], key: 'enter' }}
               />
               <Action
@@ -363,17 +320,11 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
                 }
               />
               <Action
-                title="新建短语"
-                icon={Icon.Plus}
-                shortcut={{ modifiers: ['cmd'], key: 'n' }}
-                onAction={() => push(<SnippetEditForm onSave={handleSaveSnippet} />)}
-              />
-              <Action
                 title="删除短语"
                 icon={Icon.Trash}
                 style={Action.Style.Destructive}
                 shortcut={{ modifiers: ['ctrl'], key: 'backspace' }}
-                onAction={() => handleDeleteSnippet(item.id)}
+                onAction={() => handleDeleteSnippet(item)}
               />
             </ActionPanel>
           }
@@ -385,3 +336,10 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
 
 export const SnippetsCommand = Snippets
 export default Snippets
+
+export const commands = {
+  'snippets-all': Snippets,
+  'snippets-invoice': () => <Snippets featureCode="snippets-invoice" />,
+  'snippets-address': () => <Snippets featureCode="snippets-address" />,
+  'snippets-new': () => <Snippets featureCode="snippets-new" />
+}

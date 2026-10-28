@@ -1,12 +1,12 @@
-import { callHostTransport } from './native-ipc'
-import { CHEATSHEET_SHORTCUTS, HIGH_CONFLICT_HOTKEY_PRESETS } from './cheatsheet-data'
+import { callHostTransport } from './native-ipc.js'
+import { CHEATSHEET_SHORTCUTS, HIGH_CONFLICT_HOTKEY_PRESETS } from './cheatsheet-data.js'
 import type {
   CheatsheetShortcutItem,
   HotkeyModeFilter,
   HotkeyProbePreset,
   HotkeyProbeResultItem,
   ParsedHotkeyCombo
-} from './types'
+} from './types.js'
 
 const MODIFIER_ORDER = ['Ctrl', 'Alt', 'Shift', 'Win'] as const
 const MODIFIER_MAP: Record<string, (typeof MODIFIER_ORDER)[number]> = {
@@ -163,12 +163,14 @@ export async function probeGlobalHotkeys(
     hostOverride
   )
 
+  // 探测失败不能把所有组合显示成“空闲”
+  if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.results)) {
+    throw new Error(String(res.data?.error ?? res.error ?? '热键探测未完成，不能判断是否空闲'))
+  }
   const hostMap = new Map<string, Record<string, unknown>>()
-  if (res.ok && res.data && Array.isArray(res.data.results)) {
-    for (const r of res.data.results as Array<Record<string, unknown>>) {
-      const key = String(r.keyCombo ?? '').toUpperCase().replace(/\s+/g, '')
-      if (key) hostMap.set(key, r)
-    }
+  for (const r of res.data.results as Array<Record<string, unknown>>) {
+    const key = String(r.keyCombo ?? '').toUpperCase().replace(/\s+/g, '')
+    if (key) hostMap.set(key, r)
   }
 
   const items: HotkeyProbeResultItem[] = effectivePresets.map((preset) => {
@@ -177,7 +179,10 @@ export async function probeGlobalHotkeys(
     const isSystemReserved = Boolean(
       hostEntry?.isSystemReserved ?? (upper === 'WIN+L' || upper === 'CTRL+ALT+DEL')
     )
-    const isOccupied = Boolean(hostEntry?.isOccupied ?? isSystemReserved)
+    const rawStatus = String(hostEntry?.probeStatus ?? '')
+    const probeStatus: 'reserved' | 'occupied' | 'free' | 'unsupported' =
+      isSystemReserved ? 'reserved' : rawStatus === 'occupied' || rawStatus === 'free' ? rawStatus : 'unsupported'
+    const isOccupied = probeStatus === 'reserved' || probeStatus === 'occupied'
     const suspectApp = isOccupied
       ? String(hostEntry?.suspectApp || preset.typicalCulprit || '后台进程')
       : null
@@ -196,10 +201,13 @@ export async function probeGlobalHotkeys(
       keyCombo: preset.keyCombo,
       title: preset.commonVictim,
       subtitle: isOccupied
-        ? `疑似占用源: ${suspectApp}${suspectPid ? ` (PID: ${suspectPid})` : ''} · 解决建议: ${modifyGuide}`
-        : `当前空闲可用 · 常被「${preset.typicalCulprit}」抢占`,
-      categoryLabel: isSystemReserved ? '系统内核保留' : '全局热键空闲',
-      statusText: isOccupied ? '冲突占用' : '空闲可用',
+        ? `占用来源: ${suspectApp} · 解决建议: ${modifyGuide}`
+        : probeStatus === 'unsupported'
+          ? '此组合包含暂不支持检测的按键，无法判断是否被占用'
+          : `本次检测可注册（其他软件的应用内快捷键无法完整检测） · 常被「${preset.typicalCulprit}」抢占`,
+      categoryLabel: isSystemReserved ? '系统内核保留' : probeStatus === 'unsupported' ? '无法检测' : isOccupied ? '已被占用' : '本次可注册',
+      statusText: isOccupied ? '冲突占用' : probeStatus === 'unsupported' ? '无法检测' : '可注册',
+      probeStatus,
       isOccupied,
       isSystemReserved,
       suspectApp,
@@ -235,51 +243,4 @@ export function filterCheatsheetItems(
     const haystack = `${item.keyCombo} ${item.macKeyCombo ?? ''} ${item.title} ${item.subtitle} ${item.categoryLabel} ${item.keywords.join(' ')}`.toLowerCase()
     return haystack.includes(q)
   })
-}
-
-export async function killHotkeySuspectProcess(
-  item: Pick<HotkeyProbeResultItem, 'isSystemReserved' | 'suspectPid' | 'suspectProcess' | 'suspectApp'>,
-  hostOverride?: unknown
-): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
-  const procLower = (item.suspectProcess || '').toLowerCase()
-  if (
-    item.isSystemReserved ||
-    !item.suspectPid ||
-    item.suspectPid <= 4 ||
-    procLower === 'explorer.exe' ||
-    procLower === 'csrss.exe' ||
-    procLower === 'winlogon.exe' ||
-    procLower === 'svchost.exe'
-  ) {
-    return {
-      ok: false,
-      errorCode: 'PROTECTED_SYSTEM_PROCESS',
-      error: `PROTECTED_SYSTEM_PROCESS: 禁止结束系统保留或核心外壳进程 (${item.suspectApp || procLower || 'System'})`
-    }
-  }
-
-  const res = await callHostTransport<Record<string, unknown>>(
-    'dllplugin_call',
-    {
-      plugin: 'HotkeyRadarPlugin',
-      func: 'killSuspectProcess',
-      params: {
-        pid: item.suspectPid,
-        processName: item.suspectProcess ?? ''
-      }
-    },
-    hostOverride
-  )
-
-  if (!res.ok || (res.data && res.data.ok === false)) {
-    const errText = String(res.data?.error ?? res.error ?? '结束嫌疑进程失败')
-    const codeMatch = errText.match(/^([A-Z0-9_]+):/)
-    return {
-      ok: false,
-      errorCode: String(res.data?.errorCode ?? codeMatch?.[1] ?? 'KILL_PROCESS_FAILED'),
-      error: errText
-    }
-  }
-
-  return { ok: true }
 }

@@ -1,9 +1,9 @@
 {
   "id": "text-formatter",
   "name": "文本排版",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "中英文混排自动加空格、中英标点互转、全半角转换、大小写转换与清除多余空行空白",
-  "author": "ZTools Team",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

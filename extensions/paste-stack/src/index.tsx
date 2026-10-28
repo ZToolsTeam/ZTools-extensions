@@ -1,319 +1,167 @@
-import React, {
-  List,
-  ActionPanel,
-  Action,
-  Icon,
-  Clipboard,
-  showToast,
-  Toast,
-  useState,
-  useEffect,
-  useMemo,
-  useCallback,
-  useRef
-} from '@ztools/declarative-ui'
-import type { StackItem, StackPopMode } from './types'
-import {
-  cleanRichTextToPlain,
-  fetchHostPasteStackState,
-  readClipboardWithRetry
-} from './stack-manager'
+import React, { List, ActionPanel, Action, Icon, Clipboard, LocalStorage, showToast, Toast, useState, useEffect, useMemo, useCallback, useRef } from '@ztools/declarative-ui'
+import type { StackItem, StackPopMode } from './types.js'
+import { STACK_STORAGE_KEY, cleanRichTextToPlain, parseStackState, stackItem, subscribeStackClipboard } from './stack-manager.js'
+import type { StackState } from './stack-manager.js'
+export * from './types.js'
+export * from './stack-manager.js'
 
-export * from './types'
-export * from './stack-manager'
-
-export interface PasteStackProps {
-  featureCode?: string
-  initialItems?: StackItem[]
-  initialListening?: boolean
-  hostOverride?: unknown
+export async function CleanClipboardCommand() {
+  const text = cleanRichTextToPlain(await Clipboard.readText() || '')
+  if (!text.length) throw new Error('剪贴板无可用文本')
+  await Clipboard.copy(text)
+  return '已移除富文本格式，文本内容保持不变'
 }
 
-export function PasteStack({
-  featureCode = 'paste-stack-queue',
-  initialItems,
-  initialListening = true,
-  hostOverride
-}: PasteStackProps = {}) {
-  const [isLoading, setIsLoading] = useState<boolean>(!initialItems)
-  const [isListening, setIsListening] = useState<boolean>(initialListening)
-  const [stackMode, setStackMode] = useState<StackPopMode>(
-    featureCode === 'paste-stack-lifo' ? 'lifo' : 'fifo'
-  )
-  const [stackItems, setStackItems] = useState<StackItem[]>(initialItems || [])
-  const [searchText, setSearchText] = useState<string>('')
-
-  const mountedRef = useRef<boolean>(true)
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
+export function PasteStack({ featureCode = 'paste-stack-queue' }: { featureCode?: string } = {}) {
+  const [state, setState] = useState<StackState>({ version: 1, items: [], isListening: true })
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
+  const [listenError, setListenError] = useState('')
+  const [listening, setListening] = useState(false)
+  const [reload, setReload] = useState(0)
+  const [search, setSearch] = useState('')
+  const [mode, setMode] = useState<StackPopMode | 'sent'>(featureCode === 'paste-stack-lifo' ? 'lifo' : 'fifo')
+  const current = useRef(state), expected = useRef<unknown>(undefined), ready = useRef(false), alive = useRef(true)
+  const jobs = useRef<Promise<unknown>>(Promise.resolve()), pasting = useRef(false)
+  // 宿主粘贴会把内容写入剪贴板，开启剪贴板历史时这次写入同样会广播；忽略一次自己刚发送的内容，避免出栈后又被加回
+  const pastedEcho = useRef<{ text: string; until: number } | null>(null)
+  useEffect(() => { alive.current = true; return () => { alive.current = false; ready.current = false } }, [])
+  const fail = useCallback(async (title: string, error: unknown) => {
+    if (alive.current) await showToast({ style: Toast.Style.Failure, title, message: error instanceof Error ? error.message : String(error) })
   }, [])
-
-  const handleCleanCurrentClipboard = useCallback(async () => {
-    try {
-      const raw = await readClipboardWithRetry(async () => (await Clipboard.readText()) || '')
-      const cleaned = cleanRichTextToPlain(raw)
-      if (!cleaned) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: '剪贴板无可用文本'
-        })
-        return
-      }
-      await Clipboard.copy(cleaned)
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已洗净为纯文本',
-        message: `剥离富文本样式，保留 ${cleaned.length} 字符`
-      })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '清洗剪贴板失败',
-        message: err instanceof Error ? err.message : String(err)
-      })
-    }
+  const enqueue = useCallback((operation: () => Promise<void>) => {
+    const task = jobs.current.then(operation)
+    jobs.current = task.catch(() => undefined)
+    return task
   }, [])
-
   useEffect(() => {
-    if (featureCode === 'paste-clean-text') {
-      void handleCleanCurrentClipboard()
-    }
-  }, [featureCode, handleCleanCurrentClipboard])
-
-  useEffect(() => {
-    if (initialItems) {
-      return
-    }
     let active = true
-    ;(async () => {
+    ready.current = false; setLoading(true); setLoadError('')
+    void jobs.current.then(async () => {
       try {
-        const state = await fetchHostPasteStackState(hostOverride)
-        if (!active || !mountedRef.current) return
-        setIsListening(state.isListening)
-        setStackItems(state.items)
-      } catch {
-        // Keep empty initial state if host not connected
-      } finally {
-        if (active && mountedRef.current) {
-          setIsLoading(false)
-        }
-      }
-    })()
+        const raw = await LocalStorage.getItem(STACK_STORAGE_KEY), value = parseStackState(raw)
+        if (!active || !alive.current) return
+        current.current = value; expected.current = raw; ready.current = true; setState(value)
+      } catch (error) { if (active && alive.current) setLoadError(error instanceof Error ? error.message : String(error)) }
+      finally { if (active && alive.current) setLoading(false) }
+    })
+    return () => { active = false }
+  }, [reload])
+
+  const save = useCallback(async (next: StackState) => {
+    if (!ready.current || !alive.current) throw new Error('请先重新读取粘贴栈')
+    const raw = JSON.stringify(next)
+    if (next.items.length + (next.sent?.length || 0) > 500 || new TextEncoder().encode(raw).length > 8 * 1024 * 1024) throw new Error('待发送与已发送记录已达到 500 项或 8 MiB 上限，请先处理已有条目')
+    const saved = await LocalStorage.compareAndSet(STACK_STORAGE_KEY, expected.current, raw)
+    if (!saved) {
+      ready.current = false
+      if (alive.current) setLoadError('粘贴栈已在另一窗口变化，请重新读取；原数据未覆盖')
+      throw new Error('粘贴栈已变化，原数据未覆盖')
+    }
+    expected.current = raw; current.current = next
+    if (alive.current) setState(next)
+  }, [])
+
+  useEffect(() => {
+    if (loading || loadError || !state.isListening) { setListening(false); return }
+    let active = true, dispose: (() => Promise<void>) | undefined
+    setListenError(''); setListening(false)
+    void subscribeStackClipboard(text => {
+      if (!active || !alive.current) return
+      const echo = pastedEcho.current
+      if (echo && echo.text === text && Date.now() <= echo.until) { pastedEcho.current = null; return }
+      void enqueue(async () => {
+        if (!active || !alive.current || !current.current.isListening) return
+        const items = current.current.items
+        if (items.at(-1)?.text === text) return
+        await save({ ...current.current, items: [...items, stackItem(text)] })
+      }).catch(error => {
+        active = false; setListening(false); setListenError(error instanceof Error ? error.message : String(error))
+        if (dispose) void dispose().catch(error => { void fail('监听停止失败', error) })
+      })
+    }).then(release => {
+      dispose = release
+      if (!active || !alive.current) return release()
+      setListening(true)
+    }).catch(error => { if (active && alive.current) setListenError(error instanceof Error ? error.message : String(error)) })
     return () => {
       active = false
+      if (dispose) void dispose().catch(error => { void fail('监听停止失败', error) })
     }
-  }, [initialItems, hostOverride])
+  }, [loading, loadError, state.isListening, reload, enqueue, save, fail])
 
-  useEffect(() => {
-    if (!isListening || initialItems) return
-    let lastSeen = ''
-    let pollSeq = 0
-    const timer = setInterval(async () => {
-      if (!mountedRef.current) return
-      try {
-        const text = (await Clipboard.readText())?.trim() || ''
-        if (!text || text === lastSeen) return
-        lastSeen = text
-        setStackItems((prev: StackItem[]) => {
-          if (prev.length > 0 && prev[prev.length - 1]?.text === text) {
-            return prev
-          }
-          const newItem: StackItem = {
-            id: `stk-${Date.now()}-${++pollSeq}`,
-            text,
-            textPreview: text.replace(/\s+/g, ' ').slice(0, 60),
-            charCount: text.length,
-            timestamp: Date.now(),
-            timeAgo: '刚刚',
-            sourceApp: '系统剪贴板'
-          }
-          return [...prev, newItem]
-        })
-      } catch {
-        // ignore clipboard polling error
-      }
-    }, 900)
-    return () => {
-      clearInterval(timer)
-    }
-  }, [isListening, initialItems])
+  const mutate = useCallback((update: (value: StackState) => StackState) => enqueue(async () => {
+    await save(update(current.current))
+  }).catch(error => fail('未保存，原数据保留', error)), [enqueue, save, fail])
 
-  const handleToggleListening = useCallback(async () => {
-    const next = !isListening
-    setIsListening(next)
-    await showToast({
-      style: Toast.Style.Success,
-      title: next ? '已开启连续复制入栈监听' : '已暂停连续复制入栈监听'
-    })
-  }, [isListening])
-
-  const handleClearStack = useCallback(async () => {
-    setStackItems([])
-    await showToast({
-      style: Toast.Style.Success,
-      title: '粘贴栈已清空'
-    })
-  }, [])
-
-  const popAndPasteItem = useCallback(
-    async (itemId?: string) => {
-      if (stackItems.length === 0) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: '粘贴栈为空',
-          message: '请先复制文本入栈后再执行出栈粘贴'
-        })
-        return
-      }
-      let target: StackItem | undefined
-      let nextList: StackItem[] = []
-      if (itemId) {
-        target = stackItems.find((i: StackItem) => i.id === itemId)
-        nextList = stackItems.filter((i: StackItem) => i.id !== itemId)
-      } else if (stackMode === 'lifo') {
-        target = stackItems[stackItems.length - 1]
-        nextList = stackItems.slice(0, -1)
-      } else {
-        target = stackItems[0]
-        nextList = stackItems.slice(1)
-      }
-
-      if (!target) return
-      await Clipboard.copy(target.text)
-      setStackItems(nextList)
-      await showToast({
-        style: Toast.Style.Success,
-        title: `已出栈并写入剪贴板: ${target.textPreview}`,
-        message: nextList.length > 0 ? `栈内剩余 ${nextList.length} 项` : '粘贴栈已全部出栈完毕'
+  const pasteItem = useCallback(async (id: string) => {
+    if (pasting.current) return
+    pasting.current = true
+    let dispatched = false
+    try {
+      await enqueue(async () => {
+        if (!ready.current || !alive.current) throw new Error('请先重新读取粘贴栈')
+        const item = current.current.items.find(value => value.id === id)
+        if (!item) throw new Error('此条目已不在粘贴栈中')
+        pastedEcho.current = { text: item.text, until: Date.now() + 5000 }
+        try { await Clipboard.paste(item.text) } catch (error) { pastedEcho.current = null; throw error }
+        dispatched = true
+        await save({ ...current.current, items: current.current.items.filter(value => value.id !== id),
+          sent: [...(current.current.sent || []), { item, index: current.current.items.findIndex(value => value.id === id) }] })
       })
-    },
-    [stackItems, stackMode]
-  )
+      if (alive.current) await showToast({ style: Toast.Style.Success, title: '已发送粘贴请求，可在已发送记录中恢复' })
+    } catch (error) { await fail(dispatched ? '已发送请求，但队列未保存；请检查目标后再操作' : '粘贴失败，条目保留', error) }
+    finally { pasting.current = false }
+  }, [enqueue, save, fail])
 
-  const moveItem = useCallback(
-    (fromIdx: number, toIdx: number) => {
-      if (fromIdx < 0 || fromIdx >= stackItems.length || toIdx < 0 || toIdx >= stackItems.length) {
-        return
-      }
-      const copy = [...stackItems]
-      const [moved] = copy.splice(fromIdx, 1)
-      if (moved) {
-        copy.splice(toIdx, 0, moved)
-        setStackItems(copy)
-      }
-    },
-    [stackItems]
-  )
-
-  const removeItem = useCallback((id: string) => {
-    setStackItems((prev: StackItem[]) => prev.filter((i: StackItem) => i.id !== id))
-  }, [])
-
-  const filteredItems = useMemo(() => {
-    const q = searchText.trim().toLowerCase()
-    if (!q) return stackItems
-    return stackItems.filter((i: StackItem) => i.text.toLowerCase().includes(q))
-  }, [stackItems, searchText])
-
-  return (
-    <List
-      isLoading={isLoading}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索当前粘贴栈中的文本内容..."
-      searchBarAccessory={
-        <List.Dropdown
-          value={stackMode}
-          onChange={(v: string) => setStackMode(v as StackPopMode)}
-          tooltip="切换出栈顺序"
-        >
-          <List.Dropdown.Item
-            title="先进先出（FIFO 顺序填表）"
-            value="fifo"
-            icon={Icon.ArrowRight}
-          />
-          <List.Dropdown.Item
-            title="后进先出（LIFO 倒序填表）"
-            value="lifo"
-            icon={Icon.ArrowLeft}
-          />
-        </List.Dropdown>
-      }
-      filterBar={{
-        summaryText: isListening
-          ? `监听中 (${stackMode.toUpperCase()}) · 栈内共 ${stackItems.length} 项 · 按出栈键依次填入目标窗口`
-          : `已暂停监听 · 栈内共 ${stackItems.length} 项`,
-        actions: [
-          {
-            id: 'toggle-listen',
-            title: isListening ? '暂停入栈监听' : '开启入栈监听',
-            onAction: handleToggleListening
-          },
-          {
-            id: 'clean-clipboard',
-            title: '洗净剪贴板为纯文本',
-            onAction: handleCleanCurrentClipboard
-          }
-        ]
-      }}
-    >
-      {filteredItems.map((item: StackItem, index: number) => (
-        <List.Item
-          key={item.id}
-          id={item.id}
-          title={item.textPreview}
-          subtitle={`字符数: ${item.charCount} · 复制时间: ${item.timeAgo}`}
-          icon={Icon.Text}
-          accessories={[
-            {
-              tag:
-                stackMode === 'fifo'
-                  ? `#${index + 1} 出栈`
-                  : `#${stackItems.length - index} 出栈`
-            },
-            { text: item.sourceApp ? `来自: ${item.sourceApp}` : '' }
-          ]}
-          actions={
-            <ActionPanel>
-              <Action
-                title="立即出栈并粘贴到上个窗口"
-                icon={Icon.ArrowUp}
-                onAction={() => popAndPasteItem(item.id)}
-              />
-              <Action.CopyToClipboard title="复制该项到剪贴板" content={item.text} />
-              <Action
-                title="上移一位"
-                icon={Icon.ArrowUp}
-                onAction={() => moveItem(index, index - 1)}
-              />
-              <Action
-                title="下移一位"
-                icon={Icon.ArrowDown}
-                onAction={() => moveItem(index, index + 1)}
-              />
-              <Action
-                title="从栈中移除"
-                icon={Icon.Trash}
-                style={Action.Style.Destructive}
-                shortcut={{ modifiers: ['ctrl'], key: 'backspace' }}
-                onAction={() => removeItem(item.id)}
-              />
-              <Action
-                title="清空整个栈"
-                icon={Icon.XMarkCircle}
-                style={Action.Style.Destructive}
-                onAction={handleClearStack}
-              />
-            </ActionPanel>
-          }
-        />
-      ))}
-    </List>
-  )
+  const showingSent = mode === 'sent'
+  const restore = (id: string) => mutate(value => {
+    const entry = value.sent?.find(entry => entry.item.id === id)
+    if (!entry) throw new Error('已发送记录已变化，请重新读取')
+    const items = [...value.items]
+    items.splice(Math.min(entry.index, items.length), 0, entry.item)
+    return { ...value, items, sent: value.sent?.filter(entry => entry.item.id !== id) }
+  })
+  const items = useMemo(() => {
+    const ordered = mode === 'sent' ? (state.sent || []).map(entry => entry.item).reverse() : mode === 'lifo' ? [...state.items].reverse() : state.items
+    const query = search.trim().toLowerCase()
+    return ordered.filter(item => !query || item.text.toLowerCase().includes(query))
+  }, [state.items, state.sent, mode, search])
+  const move = (id: string, otherId?: string) => {
+    if (!otherId) return
+    return mutate(value => {
+      const next = [...value.items], from = next.findIndex(item => item.id === id), to = next.findIndex(item => item.id === otherId)
+      if (from >= 0 && to >= 0) [next[from], next[to]] = [next[to], next[from]]
+      return { ...value, items: next }
+    })
+  }
+  const retry = () => { setReload(value => value + 1) }
+  const clean = async () => { try { await showToast({ style: Toast.Style.Success, title: await CleanClipboardCommand() }) } catch (error) { await fail('清除格式失败', error) } }
+  return <List isLoading={loading} searchText={search} onSearchTextChange={setSearch} searchBarPlaceholder="搜索粘贴栈文本..." isShowingDetail={false}
+    searchBarAccessory={<List.Dropdown value={mode} onChange={(value: string) => setMode(value as StackPopMode | 'sent')} tooltip="队列与发送记录">
+      <List.Dropdown.Item title="先进先出" value="fifo" /><List.Dropdown.Item title="后进先出" value="lifo" /><List.Dropdown.Item title="已发送（可恢复）" value="sent" />
+    </List.Dropdown>}
+    filterBar={{ summaryText: loadError || listenError || `${listening ? '当前页面监听中' : state.isListening ? '正在连接监听' : '监听已暂停'} · 待发送 ${state.items.length} 项 · 已发送 ${state.sent?.length || 0} 项`,
+      actions: loadError || listenError ? [{ id: 'retry', title: '重新读取', onAction: retry }] : [
+        { id: 'listen', title: state.isListening ? '暂停监听' : '开启监听', onAction: () => mutate(value => ({ ...value, isListening: !value.isListening })) },
+        { id: 'clear', title: showingSent ? '清空发送记录' : '清空队列', onAction: () => mutate(value => showingSent ? { ...value, sent: [] } : { ...value, items: [] }) }
+      ] }}
+    actions={<ActionPanel><Action title="清除剪贴板格式" icon={Icon.Text} onAction={clean} /></ActionPanel>}>
+    {items.map((item: StackItem, index: number) => <List.Item key={item.id} id={item.id} title={item.textPreview} subtitle={`${item.charCount} 字符`} icon={Icon.Text} accessories={[{ tag: showingSent ? '已发送，可恢复' : `#${index + 1} 待发送` }]}
+      actions={<ActionPanel>
+        <Action title={showingSent ? "恢复到待发送队列" : "发送到原输入位置"} icon={Icon.ArrowUp} onAction={() => showingSent ? restore(item.id) : pasteItem(item.id)} />
+        <Action.CopyToClipboard title="复制该项到剪贴板" content={item.text} />
+        {!showingSent && <Action title="上移一位" icon={Icon.ArrowUp} onAction={() => move(item.id, items[index - 1]?.id)} />}
+        {!showingSent && <Action title="下移一位" icon={Icon.ArrowDown} onAction={() => move(item.id, items[index + 1]?.id)} />}
+        <Action title={showingSent ? "移除发送记录" : "从栈中移除"} icon={Icon.Trash} style={Action.Style.Destructive} onAction={() => mutate(value => showingSent ? { ...value, sent: value.sent?.filter(entry => entry.item.id !== item.id) } : { ...value, items: value.items.filter(current => current.id !== item.id) })} />
+      </ActionPanel>} />)}
+  </List>
 }
-
 export const PasteStackCommand = PasteStack
+export const commands = {
+  'paste-stack-queue': PasteStack,
+  'paste-stack-fifo': () => PasteStack({ featureCode: 'paste-stack-fifo' }),
+  'paste-stack-lifo': () => PasteStack({ featureCode: 'paste-stack-lifo' }),
+  'paste-clean-text': CleanClipboardCommand
+}
 export default PasteStack

@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-process-monitor",
+  "version": "1.0.0",
+  "description": "实时枚举系统进程树、CPU/内存占用、签名状态与关联 Windows 服务，支持定位文件与强制结束异常进程",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/process-monitor.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

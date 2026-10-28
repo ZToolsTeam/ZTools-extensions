@@ -1,0 +1,30 @@
+{
+  "id": "clipboard-manager",
+  "name": "剪贴板历史",
+  "description": "查看客户端记录的剪贴板历史（文本、图片、文件），支持搜索、置顶、编辑，并粘贴回前台应用",
+  "version": "2.0.8",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [
+    "clipboard",
+    "database",
+    "shell"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

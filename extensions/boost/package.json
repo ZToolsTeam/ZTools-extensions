@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-boost",
+  "version": "1.0.0",
+  "description": "列出高内存进程、“启动”文件夹里的项目和临时文件，确认后结束进程或移入回收站",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/boost.host.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

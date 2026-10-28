@@ -1,0 +1,27 @@
+{
+  "id": "pdf",
+  "name": "PDF 工具箱",
+  "description": "提取 PDF 中未压缩的文字，导出为 TXT 或 HTML 文件，输出不覆盖已有文件（扫描件和多数压缩的 PDF 无法提取）",
+  "version": "2.0.7",
+  "draft": true,
+  "draftReason": "客户端缺少可靠的 PDF 解析、渲染与生成组件：现有的 PDF 重建方式会把字体、图片等数据当成页面内容写入，合并、拆分、压缩输出的文件内容错乱，已停用；PDF 与 Word/Excel/PPT/图片互转、加密解密没有对应组件。目前只能导出未压缩 PDF 中的简单文字。待客户端提供可靠的 PDF 解析、渲染与生成能力后，恢复对应工具并去掉草稿。",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公效率"
+  ],
+  "permissions": [
+    "fs"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

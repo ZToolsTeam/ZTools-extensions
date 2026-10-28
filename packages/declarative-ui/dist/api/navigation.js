@@ -1,32 +1,27 @@
 import { getDeclarativeBridge } from "./bridge.js";
 let activeNavigation = null;
 export function setActiveNavigation(nav) {
+    const previous = activeNavigation;
     activeNavigation = nav;
+    return previous;
 }
 /**
  * useNavigation Hook
  */
 export function useNavigation() {
-    const bridge = getDeclarativeBridge();
+    // 导航属于创建 Hook 的页面；异步恢复或嵌套渲染不能借用另一页面的导航。
+    const navigation = activeNavigation ?? getDeclarativeBridge()?.navigation;
     return {
         push(target) {
-            if (activeNavigation?.push) {
-                activeNavigation.push(target);
-                return;
-            }
-            if (bridge?.navigation?.push) {
-                bridge.navigation.push(target);
+            if (navigation?.push) {
+                navigation.push(target);
                 return;
             }
             console.warn("[RaycastCompat] No active navigation stack found for push");
         },
         pop() {
-            if (activeNavigation?.pop) {
-                activeNavigation.pop();
-                return;
-            }
-            if (bridge?.navigation?.pop) {
-                bridge.navigation.pop();
+            if (navigation?.pop) {
+                navigation.pop();
                 return;
             }
             console.warn("[RaycastCompat] No active navigation stack found for pop");

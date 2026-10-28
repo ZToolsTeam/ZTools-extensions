@@ -1,178 +1,25 @@
-import React, {
-  Action,
-  ActionPanel,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useEffect,
-  useMemo,
-  useState
-} from '@ztools/declarative-ui'
-import {
-  filterProjectEntries,
-  launchProjectInEditor,
-  scanAllRecentProjects
-} from './project-service'
-import type { EditorFilterGroup, ProjectEntry, SupportedEditor } from './types'
-
-export * from './types'
-export * from './project-service'
-
-export interface VscodeProjectsCommandProps {
-  featureCode?: string
-  initialProjects?: ProjectEntry[]
-  hostOverride?: unknown
-}
-
-function getEditorIcon(editorType: SupportedEditor): Icon {
-  switch (editorType) {
-    case 'vscode':
-    case 'cursor':
-    case 'trae':
-    case 'windsurf':
-      return Icon.Code
-    default:
-      return Icon.Terminal
-  }
-}
-
+import React, { Action, ActionPanel, List, useEffect, useState } from '@ztools/declarative-ui'
+import MacCommand from './mac-command.js'
+import { projectsInvoke } from './mac-service.js'
+export * from './types.js'
+export interface VscodeProjectsCommandProps { featureCode?: string }
 export function VscodeProjectsCommand(props: VscodeProjectsCommandProps = {}) {
-  const defaultEditorFilter: EditorFilterGroup =
-    props.featureCode === 'projects-vscode-cursor'
-      ? 'vsc-family'
-      : props.featureCode === 'projects-jetbrains'
-        ? 'jetbrains'
-        : 'all'
-
-  const [projects, setProjects] = useState<ProjectEntry[]>(props.initialProjects ?? [])
-  const [selectedEditor, setSelectedEditor] = useState<EditorFilterGroup>(defaultEditorFilter)
-  const [searchText, setSearchText] = useState<string>('')
-  const [isLoading, setIsLoading] = useState<boolean>(!props.initialProjects)
-
-  const handleRescan = async () => {
-    setIsLoading(true)
-    try {
-      const scanned = await scanAllRecentProjects(undefined, props.hostOverride)
-      if (scanned.length > 0 || !props.initialProjects) {
-        setProjects(scanned)
-      }
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
+  const [platform, setPlatform] = useState(''), [error, setError] = useState(''), [attempt, setAttempt] = useState(0)
   useEffect(() => {
-    if (!props.initialProjects) {
-      void handleRescan()
-    }
-  }, [])
-
-  const filteredProjects = useMemo(
-    () => filterProjectEntries(projects, searchText, selectedEditor),
-    [projects, searchText, selectedEditor]
-  )
-
-  const handleOpenInEditor = async (item: ProjectEntry) => {
-    const res = await launchProjectInEditor(item, props.hostOverride)
-    if (!res.ok) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '无法打开该项目',
-        message: res.error
-      })
-      return
-    }
-    await showToast({
-      style: Toast.Style.Success,
-      title: `正在使用 ${item.editorName} 打开 ${item.name}`
-    })
-  }
-
-  const handleCleanGhostProjects = async () => {
-    const missingCount = projects.filter((p) => p.isMissing).length
-    setProjects((prev) => prev.filter((p) => !p.isMissing))
-    await showToast({
-      style: Toast.Style.Success,
-      title: `已清理 ${missingCount} 条失效项目记录`
-    })
-  }
-
-  return (
-    <List
-      isLoading={isLoading}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索项目名、路径、Git 分支或编辑器 (如: ztools、main、cursor) ..."
-      searchBarAccessory={
-        <List.Dropdown
-          value={selectedEditor}
-          onChange={(v: string) => setSelectedEditor(v as EditorFilterGroup)}
-          tooltip="按编辑器筛选"
-        >
-          <List.Dropdown.Item title="全部编辑器项目" value="all" icon={Icon.Folder} />
-          <List.Dropdown.Item
-            title="VS Code 家族 (Code / Cursor / Trae)"
-            value="vsc-family"
-            icon={Icon.Code}
-          />
-          <List.Dropdown.Item
-            title="JetBrains 家族 (IDEA / WebStorm 等)"
-            value="jetbrains"
-            icon={Icon.Terminal}
-          />
-        </List.Dropdown>
-      }
-      filterBar={{
-        summaryText: `共发现 ${filteredProjects.length} 个本地项目 · 支持回车秒开 IDE、Ctrl+Enter 唤起终端`,
-        actions: [
-          { id: 'refresh', title: '重新扫描', onAction: handleRescan },
-          { id: 'clean-ghost', title: '清理失效记录', onAction: handleCleanGhostProjects }
-        ]
-      }}
-    >
-      {filteredProjects.map((item) => (
-        <List.Item
-          key={`${item.editorType}:${item.path}`}
-          id={`${item.editorType}:${item.path}`}
-          title={item.name}
-          subtitle={item.displayPath}
-          icon={getEditorIcon(item.editorType)}
-          accessories={[
-            ...(item.gitBranch ? [{ tag: `git:${item.gitBranch}` }] : []),
-            item.isMissing ? { tag: '路径已失效' } : { tag: item.editorName },
-            { text: item.lastOpenedRelative }
-          ]}
-          actions={
-            <ActionPanel>
-              <Action
-                title={`用 ${item.editorName} 打开项目`}
-                icon={Icon.Desktop}
-                onAction={() => handleOpenInEditor(item)}
-              />
-              <Action.CopyToClipboard
-                title="复制项目绝对路径"
-                content={item.path}
-                shortcut={{ modifiers: ['cmd'], key: 'c' }}
-              />
-              {item.gitBranch ? (
-                <Action.CopyToClipboard
-                  title="复制 Git 分支名"
-                  content={item.gitBranch}
-                  shortcut={{ modifiers: ['cmd', 'shift'], key: 'c' }}
-                />
-              ) : null}
-              <Action
-                title="清理失效项目记录"
-                icon={Icon.Trash}
-                onAction={handleCleanGhostProjects}
-              />
-            </ActionPanel>
-          }
-        />
-      ))}
-    </List>
-  )
+    let alive = true; setError('')
+    void projectsInvoke('system_get_platform', {}).then(data => {
+      if (typeof data.platform !== 'string' || !['macos', 'windows'].includes(data.platform)) throw new Error('当前平台不支持最近项目')
+      if (alive) setPlatform(String(data.platform))
+    }).catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
+    return () => { alive = false }
+  }, [attempt])
+  // macOS 与 Windows 共用主进程的最近项目服务（读取编辑器历史、直接启动编辑器，不经过命令行解释器）
+  if (platform === 'macos' || platform === 'windows') return MacCommand({ featureCode: props.featureCode })
+  return <List isShowingDetail={false} isLoading={!error}><List.Item id="platform" title={error || '正在确认系统平台'} actions={<ActionPanel><Action title="重试" onAction={() => setAttempt(attempt + 1)} /></ActionPanel>} /></List>
 }
-
 export default VscodeProjectsCommand
+export const commands = {
+  'projects-all': () => VscodeProjectsCommand(),
+  'projects-vscode-cursor': () => VscodeProjectsCommand({ featureCode: 'projects-vscode-cursor' }),
+  'projects-jetbrains': () => VscodeProjectsCommand({ featureCode: 'projects-jetbrains' })
+}

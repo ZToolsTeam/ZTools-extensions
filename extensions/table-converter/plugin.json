@@ -1,12 +1,14 @@
 {
   "id": "table-converter",
   "name": "表格互转",
-  "version": "1.0.0",
-  "description": "本地离线将 Excel/TSV/CSV、JSON 数组、Markdown 表格与 SQL INSERT 互相转换，智能推断类型与列对齐，回车秒复制",
+  "version": "1.0.1",
+  "description": "离线转换 Excel 复制文本/TSV/CSV、JSON 数组、Markdown、HTML 文字表格与 SQLite INSERT，保留长数字和 JSON 类型，回车复制",
   "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "permissions": ["clipboard"],
+  "permissions": [
+    "clipboard"
+  ],
   "nativeComponents": [],
   "targets": [
     {
@@ -26,22 +28,40 @@
     {
       "code": "table-auto",
       "explain": "自动识别剪贴板数据并转为 Markdown 表格、JSON、SQL 或 HTML",
-      "cmds": ["表格转换", "excel转markdown", "csv转json", "table", "表格互转"]
+      "cmds": [
+        "表格转换",
+        "excel转markdown",
+        "csv转json",
+        "table",
+        "表格互转"
+      ]
     },
     {
       "code": "table-to-markdown",
       "explain": "将剪贴板的 Excel/TSV/CSV 快速转为对齐美化的 Markdown 表格",
-      "cmds": ["转markdown表格", "excel转md", "csv2md"]
+      "cmds": [
+        "转markdown表格",
+        "excel转md",
+        "csv2md"
+      ]
     },
     {
       "code": "table-to-json",
       "explain": "将剪贴板表格数据转为结构化 JSON 对象数组",
-      "cmds": ["表格转json", "csv转json数组", "csv2json"]
+      "cmds": [
+        "表格转json",
+        "csv转json数组",
+        "csv2json"
+      ]
     },
     {
       "code": "table-to-sql",
       "explain": "将表格数据生成批量 SQL INSERT INTO 语句",
-      "cmds": ["表格转sql", "csv转insert", "生成sql"]
+      "cmds": [
+        "表格转sql",
+        "csv转insert",
+        "生成sql"
+      ]
     }
   ]
 }

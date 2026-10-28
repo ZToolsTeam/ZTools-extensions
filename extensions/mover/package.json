@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-mover",
+  "version": "1.0.0",
+  "description": "把 C 盘用户目录下的大文件夹复制到其他分区，并在原位置建立目录联接 (Junction)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

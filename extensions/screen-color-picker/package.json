@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-screen-color-picker",
+  "version": "1.0.0",
+  "description": "提供跟随鼠标的像素网格放大镜，一键拾取屏幕任意位置色彩并实时转换 HEX / RGB / HSL / CMYK 与 Tailwind 色值",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/screen-color-picker.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

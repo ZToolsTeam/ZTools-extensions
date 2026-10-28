@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-flow-guard",
+  "version": "1.0.0",
+  "description": "查看各进程的 TCP / UDP 连接和监听端口，可强制结束正在联网的进程",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/flow-guard.host.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

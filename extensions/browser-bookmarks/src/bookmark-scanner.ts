@@ -1,358 +1,48 @@
-import { callHostTransport } from './native-ipc'
-import type {
-  BookmarkItem,
-  BookmarkScannerOptions,
-  BookmarkSourceInput,
-  BrowserFilterValue,
-  BrowserType,
-  ScanBookmarksResponse
-} from './types'
-
-const PINYIN_DICT: Readonly<Record<string, string>> = Object.freeze({
-  哔: 'bi',
-  哩: 'li',
-  百: 'bai',
-  度: 'du',
-  一: 'yi',
-  下: 'xia',
-  你: 'ni',
-  就: 'jiu',
-  知: 'zhi',
-  道: 'dao',
-  淘: 'tao',
-  宝: 'bao',
-  网: 'wang',
-  天: 'tian',
-  猫: 'mao',
-  京: 'jing',
-  东: 'dong',
-  乎: 'hu',
-  微: 'wei',
-  信: 'xin',
-  博: 'bo',
-  飞: 'fei',
-  书: 'shu',
-  钉: 'ding',
-  阿: 'a',
-  里: 'li',
-  云: 'yun',
-  腾: 'teng',
-  讯: 'xun',
-  华: 'hua',
-  为: 'wei',
-  码: 'ma',
-  企: 'qi',
-  业: 'ye',
-  研: 'yan',
-  发: 'fa',
-  效: 'xiao',
-  能: 'neng',
-  平: 'ping',
-  台: 'tai',
-  工: 'gong',
-  作: 'zuo',
-  生: 'sheng',
-  产: 'chan',
-  监: 'jian',
-  控: 'kong',
-  掘: 'jue',
-  金: 'jin',
-  开: 'kai',
-  源: 'yuan',
-  中: 'zhong',
-  国: 'guo'
-})
-
-export function computePinyinIndex(text: string): { full: string; initials: string } {
-  const clean = String(text || '').trim()
-  let full = ''
-  let initials = ''
-  for (const ch of clean) {
-    const py = PINYIN_DICT[ch]
-    if (py) {
-      full += py
-      initials += py[0]
-    } else if (/[a-zA-Z0-9]/.test(ch)) {
-      const lower = ch.toLowerCase()
-      full += lower
-      initials += lower
-    }
+import { BROWSERS, type BookmarkItem, type BrowserFilterValue, type ScanBookmarksResponse } from './types.js'
+interface BridgeReply { success?: boolean; data?: unknown; error?: { message?: string } }
+interface Bridge { transport?: { methods?: Record<string, (request: unknown) => Promise<BridgeReply>> } }
+let sequence = 0
+export function validateScan(value: unknown): ScanBookmarksResponse {
+  const data = value as ScanBookmarksResponse | null
+  if (!data || data.success !== true || !Array.isArray(data.bookmarks) || data.bookmarks.length > 20000 ||
+    !Array.isArray(data.warnings) || data.warnings.some(w => typeof w !== 'string') || !Number.isSafeInteger(data.sourcesRead) || data.sourcesRead < 0) throw new Error('客户端返回的书签结果无效')
+  if (data.sourcesRead === 0 && data.warnings.length) throw new Error(`未能读取任何浏览器书签：${data.warnings.slice(0, 5).join('；')}`)
+  if (data.sourcesRead === 0 && data.bookmarks.length) throw new Error('书签来源缺失')
+  const ids = new Set<string>()
+  for (const item of data.bookmarks) {
+    if (!item || !Object.hasOwn(BROWSERS, item.browser) || !['id', 'title', 'url', 'hostname', 'folderBreadcrumb', 'browserLabel', 'profile', 'pinyinFull', 'pinyinInitials'].every(key => typeof item[key as keyof BookmarkItem] === 'string') || !item.id || ids.has(item.id) ||
+      (item.dateAdded !== null && (!Number.isFinite(item.dateAdded) || item.dateAdded <= 0 || item.dateAdded > 8640000000000000))) throw new Error('客户端返回的书签条目无效')
+    const url = new URL(item.url)
+    if (!['http:', 'https:'].includes(url.protocol) || url.hostname !== item.hostname) throw new Error('书签网址不安全')
+    ids.add(item.id)
   }
-  return { full, initials }
+  return data
 }
-
-export function isSafeHttpBookmarkUrl(rawUrl: string): boolean {
-  const trimmed = String(rawUrl || '').trim()
-  if (!trimmed) return false
-  if (/^(javascript|vbscript|data|file|place|about|chrome|edge):/i.test(trimmed)) {
-    return false
-  }
+export async function scanAllBrowserBookmarksWithMeta(signal: AbortSignal): Promise<ScanBookmarksResponse> {
+  const methods = (globalThis as unknown as { __ztoolsElectron?: Bridge }).__ztoolsElectron?.transport?.methods
+  if (!methods?.browser_bookmarks_scan || !methods.browser_bookmarks_cancel) throw new Error('请升级客户端后使用网页书签')
+  signal.throwIfAborted()
+  const id = `bookmarks_${Date.now()}_${++sequence}`
+  const cancel = () => { void methods.browser_bookmarks_cancel!({ messageId: `cancel_${id}`, params: { operationId: id }, timeoutMs: 5000 }).catch(error => console.warn('取消书签读取失败', error)) }
+  signal.addEventListener('abort', cancel, { once: true })
   try {
-    const parsed = new URL(trimmed)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
+    const response = await methods.browser_bookmarks_scan({ messageId: id, params: { operationId: id }, timeoutMs: 20000 })
+    signal.throwIfAborted()
+    if (response?.success !== true) throw new Error(response?.error?.message || '读取浏览器书签失败')
+    return validateScan(response.data)
+  } finally { signal.removeEventListener('abort', cancel) }
 }
-
-export function formatBookmarkDate(tsMs: number): string {
-  const safe = Number.isFinite(tsMs) && tsMs > 0 ? tsMs : Date.now()
-  const d = new Date(safe)
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
+export function formatBookmarkDate(date: number | null) { return date === null ? '日期未知' : new Date(date).toLocaleDateString('zh-CN') }
+export function bookmarkMarkdown(item: BookmarkItem) {
+  const title = item.title.replace(/[\\\[\]`*_<>]/g, value => `\\${value}`).replace(/[\r\n]+/g, ' ')
+  const url = item.url.replace(/[<>\s\\]/g, value => encodeURIComponent(value))
+  return `[${title}](<${url}>)`
 }
-
-export function normalizeBookmarkEntry(raw: {
-  id: string
-  title: string
-  url: string
-  folderBreadcrumb?: string
-  browser: BrowserType
-  browserLabel: string
-  dateAdded?: number
-}): BookmarkItem | null {
-  if (!isSafeHttpBookmarkUrl(raw.url)) {
-    return null
-  }
-  const parsedUrl = new URL(raw.url.trim())
-  const title = String(raw.title || parsedUrl.hostname).trim()
-  const folderBreadcrumb = String(raw.folderBreadcrumb || '').trim()
-  const py = computePinyinIndex(`${title} ${folderBreadcrumb}`)
-  const dateAdded =
-    typeof raw.dateAdded === 'number' && Number.isFinite(raw.dateAdded) && raw.dateAdded > 0
-      ? raw.dateAdded
-      : Date.now()
-
-  return {
-    id: String(raw.id),
-    title,
-    url: parsedUrl.toString(),
-    hostname: parsedUrl.hostname,
-    folderBreadcrumb,
-    browser: raw.browser,
-    browserLabel: raw.browserLabel,
-    dateAdded,
-    dateAddedFormatted: formatBookmarkDate(dateAdded),
-    pinyinFull: py.full,
-    pinyinInitials: py.initials
-  }
-}
-
-export function parseChromiumBookmarksJson(
-  jsonText: string,
-  browser: BrowserType,
-  browserLabel: string
-): BookmarkItem[] {
-  const parsed = JSON.parse(jsonText) as { roots?: Record<string, Record<string, unknown>> }
-  const roots = parsed?.roots || {}
-  const items: BookmarkItem[] = []
-
-  const walk = (node: Record<string, unknown>, trail: string[]) => {
-    if (!node || typeof node !== 'object') return
-    const type = String(node.type || '')
-    const name = String(node.name || '').trim()
-
-    if (type === 'url') {
-      const rawUrl = String(node.url || '').trim()
-      const rawDate = Number(node.date_added || 0)
-      const dateAdded =
-        rawDate > 11644473600000000
-          ? Math.floor(rawDate / 1000 - 11644473600000)
-          : rawDate > 0
-            ? rawDate
-            : Date.now()
-      const entry = normalizeBookmarkEntry({
-        id: String(node.id || `${browser}-${items.length + 1}`),
-        title: name || rawUrl,
-        url: rawUrl,
-        folderBreadcrumb: trail.join(' / '),
-        browser,
-        browserLabel,
-        dateAdded
-      })
-      if (entry) {
-        items.push(entry)
-      }
-      return
-    }
-
-    const children = Array.isArray(node.children)
-      ? (node.children as Array<Record<string, unknown>>)
-      : []
-    const nextTrail =
-      name && !['书签栏', 'Bookmarks bar', '其他书签', 'Other bookmarks'].includes(name)
-        ? [...trail, name]
-        : trail
-    for (const child of children) {
-      walk(child, nextTrail)
-    }
-  }
-
-  for (const key of Object.keys(roots)) {
-    const rootNode = roots[key]
-    if (rootNode) {
-      walk(rootNode, [])
-    }
-  }
-  return items
-}
-
-export async function scanAllBrowserBookmarksWithMeta(
-  options: BookmarkScannerOptions = {}
-): Promise<ScanBookmarksResponse> {
-  const warnings: string[] = []
-  const allItems: BookmarkItem[] = []
-
-  if (Array.isArray(options.customSources) && options.customSources.length > 0) {
-    for (const src of options.customSources) {
-      try {
-        if (typeof src.jsonText === 'string') {
-          const parsedItems = parseChromiumBookmarksJson(
-            src.jsonText,
-            src.browser,
-            src.browserLabel
-          )
-          allItems.push(...parsedItems)
-        } else if (Array.isArray(src.sqliteRows)) {
-          // Copy-on-read snapshot simulation for locked Firefox places.sqlite
-          const snapshotRows = [...src.sqliteRows]
-          for (let i = 0; i < snapshotRows.length; i++) {
-            const row = snapshotRows[i]!
-            const entry = normalizeBookmarkEntry({
-              id: String(row.id ?? `ff-${i + 1}`),
-              title: String(row.title || ''),
-              url: String(row.url || ''),
-              folderBreadcrumb: String(row.folderBreadcrumb || 'Firefox 书签'),
-              browser: src.browser,
-              browserLabel: src.browserLabel,
-              dateAdded: row.dateAdded
-            })
-            if (entry) {
-              allItems.push(entry)
-            }
-          }
-        }
-      } catch (err) {
-        warnings.push(
-          `${src.browserLabel} 解析失败已隔离: ${err instanceof Error ? err.message : String(err)}`
-        )
-      }
-    }
-  } else {
-    const res = await callHostTransport<{
-      bookmarks?: Array<{
-        id: string
-        title: string
-        url: string
-        hostname: string
-        folderBreadcrumb: string
-        browser: BrowserType
-        browserLabel: string
-        dateAdded: number
-      }>
-      warnings?: string[]
-    }>(
-      'dllplugin_call',
-      {
-        plugin: 'BrowserBookmarksPlugin',
-        func: 'scanBookmarks',
-        params: {}
-      },
-      options.hostOverride
-    )
-
-    if (!res.ok) {
-      throw new Error(res.error || 'BOOKMARKS_SCAN_FAILED: 无法读取本地浏览器书签库')
-    }
-
-    if (Array.isArray(res.data?.warnings)) {
-      warnings.push(...res.data.warnings)
-    }
-
-    for (const b of res.data?.bookmarks || []) {
-      const normalized = normalizeBookmarkEntry(b)
-      if (normalized) {
-        allItems.push(normalized)
-      }
-    }
-  }
-
-  const allowedBrowsers = Array.isArray(options.browsers) ? new Set(options.browsers) : null
-  const filteredByBrowsers = allowedBrowsers
-    ? allItems.filter((item) => allowedBrowsers.has(item.browser))
-    : allItems
-
-  const browserSet = new Set(filteredByBrowsers.map((i) => i.browser))
-  return {
-    bookmarks: filteredByBrowsers,
-    warnings,
-    activeBrowserCount: browserSet.size
-  }
-}
-
-export async function scanAllBrowserBookmarks(
-  options: BookmarkScannerOptions = {}
-): Promise<BookmarkItem[]> {
-  const res = await scanAllBrowserBookmarksWithMeta(options)
-  return res.bookmarks
-}
-
-export function searchAndFilterBookmarks(
-  bookmarks: readonly BookmarkItem[],
-  query = '',
-  browserFilter: BrowserFilterValue = 'all'
-): BookmarkItem[] {
-  const byBrowser = bookmarks.filter((item) => {
-    if (browserFilter === 'all') return true
-    if (browserFilter === 'domestic') {
-      return (
-        item.browser === '360se' ||
-        item.browser === '360chrome' ||
-        item.browser === 'qqbrowser'
-      )
-    }
-    return item.browser === browserFilter
+export function searchAndFilterBookmarks(items: readonly BookmarkItem[], query = '', browser: BrowserFilterValue = 'all'): BookmarkItem[] {
+  const target = query.trim().toLowerCase(), domain = target.startsWith('domain:') ? target.slice(7).trim() : null
+  return items.filter(item => {
+    if (browser !== 'all' && (browser === 'domestic' ? !['360se', '360chrome', 'qqbrowser'].includes(item.browser) : item.browser !== browser)) return false
+    if (domain !== null) return item.hostname.toLowerCase().includes(domain)
+    return !target || [item.title, item.url, item.folderBreadcrumb, item.profile, item.pinyinFull, item.pinyinInitials].some(value => value.toLowerCase().includes(target))
   })
-
-  const rawQuery = query.trim().toLowerCase()
-  if (!rawQuery) {
-    return byBrowser
-  }
-
-  if (rawQuery.startsWith('domain:')) {
-    const domainTarget = rawQuery.slice('domain:'.length).trim()
-    return byBrowser.filter((item) => item.hostname.toLowerCase().includes(domainTarget))
-  }
-
-  const scored: Array<{ item: BookmarkItem; score: number }> = []
-  for (const item of byBrowser) {
-    const titleLower = item.title.toLowerCase()
-    const urlLower = item.url.toLowerCase()
-    const hostLower = item.hostname.toLowerCase()
-    const folderLower = item.folderBreadcrumb.toLowerCase()
-
-    let score = 0
-    if (titleLower === rawQuery || hostLower === rawQuery) {
-      score = 100
-    } else if (titleLower.includes(rawQuery)) {
-      score = 90
-    } else if (item.pinyinInitials.includes(rawQuery)) {
-      score = 85
-    } else if (item.pinyinFull.includes(rawQuery)) {
-      score = 80
-    } else if (hostLower.includes(rawQuery)) {
-      score = 75
-    } else if (folderLower.includes(rawQuery) || urlLower.includes(rawQuery)) {
-      score = 60
-    }
-
-    if (score > 0) {
-      scored.push({ item, score })
-    }
-  }
-
-  scored.sort((a, b) => b.score - a.score)
-  return scored.map((s) => s.item)
 }

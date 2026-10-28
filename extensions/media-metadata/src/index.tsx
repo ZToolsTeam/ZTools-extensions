@@ -1,288 +1,62 @@
-import React, {
-  Action,
-  ActionPanel,
-  Color,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useMemo,
-  useState
-} from '@ztools/declarative-ui'
-import {
-  inspectMediaBuffer,
-  pickAndReadMediaFile,
-  saveCleanedMediaToDisk,
-  stripAllMetadataFromBuffer,
-  stripGpsOnlyFromBuffer
-} from './media-service'
-import type { MediaMetadataSummary, MediaParamItem } from './types'
+import React, { Action, ActionPanel, Detail, Icon, List, Toast, showToast, useEffect, useMemo, useRef, useState } from '@ztools/declarative-ui'
+import { MediaClient, mediaSize } from './media-service.js'
+import type { CleaningMode, MediaMetadataSummary, SavedMedia } from './types.js'
+export * from './types.js'
+export * from './media-service.js'
 
-export * from './types'
-export * from './media-service'
-
-export interface MediaMetadataCommandProps {
-  featureCode?: string
-  initialSummary?: MediaMetadataSummary | null
-  initialParams?: MediaParamItem[]
-  initialRawBytes?: Uint8Array
-  hostOverride?: unknown
+export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' }: { featureCode?: string } = {}) {
+  const client = useMemo(() => new MediaClient(), [])
+  const active = useRef<AbortController | null>(null), alive = useRef(true), source = useRef('')
+  const [summary, setSummary] = useState<MediaMetadataSummary | null>(null), [saved, setSaved] = useState<SavedMedia | null>(null)
+  const [mode, setMode] = useState<CleaningMode>('location'), [query, setQuery] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  useEffect(() => () => { alive.current = false; active.current?.abort(); source.current = '' }, [])
+  async function operate(task: (signal: AbortSignal) => Promise<void>) {
+    if (active.current) return
+    const job = new AbortController(); active.current = job; setBusy(true); setError('')
+    try { await task(job.signal) } catch (reason) {
+      if (alive.current && !job.signal.aborted) {
+        const message = reason instanceof Error ? reason.message : String(reason)
+        setError(message); await showToast({ style: Toast.Style.Failure, title: message })
+      }
+    } finally { active.current = null; if (alive.current) setBusy(false) }
+  }
+  const pick = () => operate(async signal => {
+    const selected = await client.choose(signal)
+    if (!selected) return
+    signal.throwIfAborted()
+    const info = await client.inspect(selected, signal)
+    if (alive.current && !signal.aborted) { source.current = selected; setSummary(info); setSaved(null) }
+  })
+  const clean = () => operate(async signal => {
+    if (!summary?.canClean || !source.current) throw new Error('请选择支持清理的照片')
+    const extension = summary.type === 'JPEG' ? 'jpg' : summary.type === 'PNG' ? 'png' : 'heic'
+    const output = await client.choose(signal, summary.name.replace(/\.[^.]+$/, '') + `_clean.${extension}`)
+    if (!output) return
+    signal.throwIfAborted()
+    const result = await client.clean(source.current, summary, output, mode, signal)
+    if (alive.current && !signal.aborted) {
+      setSaved(result)
+      await showToast({ style: Toast.Style.Success, title: '副本已保存，定位标签检查通过', message: `${result.name} · ${mediaSize(result.size)}` })
+    }
+  })
+  const readonly = featureCode === 'media-stream-info'
+  const visible = summary && summary.name.toLowerCase().includes(query.trim().toLowerCase())
+  const details = <Detail markdown="读取自文件的元数据；未识别到的字段不代表不存在。" metadata={<Detail.Metadata>{summary?.fields.map(field => <Detail.Metadata.Label key={field.key} title={field.key} text={field.value} />)}</Detail.Metadata>} />
+  return <List navigationTitle={readonly ? '媒体参数' : '照片隐私清理'} isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索已选文件…"
+    filterBar={{ summaryText: error || (saved ? `已另存 ${saved.name} · ${mediaSize(saved.size)}` : '仅在本机处理，原文件保留 · 单文件最大 16 MiB'), actions: [{ id: 'pick', title: '选择文件', onAction: pick }] }}
+    workbenchPanel={{ title: readonly ? '参数查看' : '副本处理', fields: [
+      ...(readonly ? [] : [{ id: 'mode', label: '清理内容', type: 'select' as const, value: mode, options: [{ label: '定位及相关附属元数据', value: 'location' }, { label: 'EXIF / XMP / IPTC（保留显示参数）', value: 'metadata' }], onChange: (v: unknown) => { if (!active.current && (v === 'location' || v === 'metadata')) setMode(v) } }]),
+      { id: 'formats', label: '支持范围', type: 'info', value: 'JPEG / PNG / HEIC 可清理，音视频只查看真实参数' },
+      { id: 'scope', label: '清理说明', type: 'info', value: '定位模式也移除 XMP、IPTC 和厂商注记；不处理画面、文件名或文字里的个人信息' }
+    ] }}
+    subList={{ title: '已选文件', emptyText: summary ? '没有匹配的文件' : '选择文件后读取元数据', items: visible ? [
+      <List.Item id="media" key="media" title={summary.name} subtitle={`${summary.type} · ${mediaSize(summary.size)} · ${summary.hasLocation ? '检测到定位标签' : '未检测到已识别的定位标签'}`} icon={Icon.Document}
+        actions={<ActionPanel>{summary.canClean && !readonly ? <Action title="清理并另存副本…" icon={Icon.Download} onAction={clean} /> : null}<Action.Push title="查看原始参数" target={details} /></ActionPanel>} />
+    ] : [] }} />
 }
-
-function getGroupIcon(group: MediaParamItem['group']): Icon {
-  switch (group) {
-    case '位置隐私':
-      return Icon.Pin
-    case '拍摄设备':
-      return Icon.Desktop
-    case '曝光参数':
-      return Icon.Eye
-    case '视频流':
-      return Icon.Play
-    default:
-      return Icon.Document
-  }
+export const commands = {
+  'media-metadata-workbench': () => <MediaMetadataCommand />,
+  'media-clean-gps-fast': () => <MediaMetadataCommand featureCode="media-clean-gps-fast" />,
+  'media-stream-info': () => <MediaMetadataCommand featureCode="media-stream-info" />
 }
-
-export function MediaMetadataCommand(props: MediaMetadataCommandProps = {}) {
-  const [rawBytes, setRawBytes] = useState<Uint8Array | null>(props.initialRawBytes ?? null)
-  const [selectedFilePath, setSelectedFilePath] = useState<string>(
-    props.initialSummary?.filePath || ''
-  )
-  const [stripMode, setStripMode] = useState<'gps-only' | 'all-exif'>('gps-only')
-  const [keepBackup, setKeepBackup] = useState<boolean>(true)
-  const [searchText, setSearchText] = useState<string>('')
-  const [isLoading, setIsLoading] = useState<boolean>(false)
-
-  const inspected = useMemo(() => {
-    if (rawBytes) {
-      try {
-        return inspectMediaBuffer(rawBytes, selectedFilePath)
-      } catch {
-        return null
-      }
-    }
-    if (props.initialSummary) {
-      return {
-        summary: props.initialSummary,
-        params: props.initialParams ?? []
-      }
-    }
-    return null
-  }, [rawBytes, selectedFilePath, props.initialSummary, props.initialParams])
-
-  const handlePickMediaFile = async () => {
-    setIsLoading(true)
-    try {
-      const res = await pickAndReadMediaFile(props.hostOverride)
-      if (!res.ok || !res.bytes) {
-        if (res.error && res.error !== '未选择媒体文件') {
-          await showToast({ style: Toast.Style.Failure, title: res.error })
-        }
-        return
-      }
-      setSelectedFilePath(res.filePath || 'IMG_20261025.JPG')
-      setRawBytes(res.bytes)
-      await showToast({
-        style: Toast.Style.Success,
-        title: `已载入媒体文件 (${res.bytes.byteLength} 字节)`
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const mediaInfo = inspected?.summary ?? null
-  const paramList = useMemo(() => {
-    const all = inspected?.params ?? []
-    const q = searchText.trim().toLowerCase()
-    if (!q) return all
-    return all.filter(
-      (p) =>
-        p.label.toLowerCase().includes(q) ||
-        p.value.toLowerCase().includes(q) ||
-        p.group.toLowerCase().includes(q)
-    )
-  }, [inspected, searchText])
-
-  const handleStripGpsOnly = async () => {
-    if (!mediaInfo || !mediaInfo.hasGps) {
-      await showToast({
-        style: Toast.Style.Success,
-        title: '该照片未包含任何 GPS 定位隐私，非常安全'
-      })
-      return
-    }
-    setIsLoading(true)
-    try {
-      if (rawBytes) {
-        const cleaned = stripGpsOnlyFromBuffer(rawBytes)
-        setRawBytes(cleaned)
-        const outPath = mediaInfo.filePath.replace(/(\.[a-z0-9]+)$/i, '_clean$1')
-        await saveCleanedMediaToDisk(outPath, cleaned, props.hostOverride)
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已无损抹除 GPS 经纬度坐标（100% 保留原图画质与相机曝光参数）'
-      })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: err instanceof Error ? err.message : String(err)
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleStripAllExif = async () => {
-    if (!mediaInfo || !mediaInfo.hasExif) {
-      await showToast({
-        style: Toast.Style.Success,
-        title: '该文件不包含可擦除的 EXIF 元数据'
-      })
-      return
-    }
-    setIsLoading(true)
-    try {
-      if (rawBytes) {
-        const cleaned = stripAllMetadataFromBuffer(rawBytes)
-        setRawBytes(cleaned)
-        const outPath = mediaInfo.filePath.replace(/(\.[a-z0-9]+)$/i, '_clean$1')
-        await saveCleanedMediaToDisk(outPath, cleaned, props.hostOverride)
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已彻底抹除全部 EXIF 与设备序列号元数据（原图像素零损保真）'
-      })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: err instanceof Error ? err.message : String(err)
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  return (
-    <List
-      navigationTitle="EXIF隐私抹除"
-      isLoading={isLoading}
-      isShowingDetail={false}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索媒体参数名称、GPS 坐标、相机型号或视频流编码..."
-      filterBar={{
-        summaryText: mediaInfo
-          ? mediaInfo.hasGps
-            ? `发现高精度 GPS 定位: ${mediaInfo.gpsFormatted} · 设备: ${mediaInfo.deviceModel || '未知'}`
-            : `已检测: ${mediaInfo.fileType.toUpperCase()} · 无 GPS 隐私定位 · 设备: ${mediaInfo.deviceModel || '未知'}`
-          : '无损解析 EXIF、查看音视频流编码参数、一键擦除照片拍摄定位',
-        actions: [
-          {
-            id: 'pick-media',
-            title: '选择照片/视频',
-            onAction: () => {
-              void handlePickMediaFile()
-            }
-          },
-          {
-            id: 'strip-gps-only',
-            title: '仅擦除 GPS 定位',
-            onAction: () => {
-              void handleStripGpsOnly()
-            }
-          },
-          {
-            id: 'strip-all-exif',
-            title: '彻底抹除全部 EXIF',
-            onAction: () => {
-              void handleStripAllExif()
-            }
-          }
-        ]
-      }}
-      workbenchPanel={{
-        title: mediaInfo ? mediaInfo.fileName : '请拖入照片 (JPG/PNG/HEIC) 或音视频文件',
-        subtitle: mediaInfo ? mediaInfo.filePath : '纯二进制 APP1/EXIF 无损段剥离引擎（零重编码画质损耗）',
-        fields: [
-          {
-            id: 'stripMode',
-            label: '隐私抹除策略',
-            type: 'select',
-            value: stripMode,
-            options: [
-              { label: '仅擦除 GPS 经纬度 (保留光圈/快门/相机型号)', value: 'gps-only' },
-              { label: '彻底抹除所有 EXIF / 设备序列号 / 拍摄时间', value: 'all-exif' }
-            ],
-            onChange: (val: unknown) => setStripMode(val as 'gps-only' | 'all-exif')
-          },
-          {
-            id: 'keepBackup',
-            label: '另存为 _clean 副本 (保护原图)',
-            type: 'toggle',
-            value: keepBackup,
-            onChange: (val: unknown) => setKeepBackup(Boolean(val))
-          },
-          {
-            id: 'gpsStatus',
-            label: 'GPS 定位隐私状态',
-            type: 'info',
-            value: mediaInfo?.hasGps ? mediaInfo.gpsFormatted || '包含定位' : '安全 (无定位)'
-          },
-          {
-            id: 'deviceInfo',
-            label: '拍摄设备 / 编码器',
-            type: 'info',
-            value: mediaInfo?.deviceModel || '未检测'
-          }
-        ],
-        previewCard: {
-          title: mediaInfo?.hasGps
-            ? `高危隐私预警：包含精确到米的拍摄地经纬度 (${mediaInfo.gpsFormatted})`
-            : '隐私安全：当前文件未检出 GPS 经纬度坐标',
-          subtitle: '采用二进制段直接裁剪，不经过 Canvas 重压缩，像素均方误差 MSE = 0'
-        }
-      }}
-      subList={{
-        title: `媒体元数据与流参数明细 (${paramList.length} 项)`,
-        subtitle: '按 Enter 立即无损抹除 GPS 定位，或复制任意媒体参数值',
-        emptyText: '该文件未包含可解析的 EXIF 或媒体流参数',
-        items: paramList.map((param) => (
-          <List.Item
-            key={param.key}
-            id={param.key}
-            title={param.label}
-            subtitle={param.value}
-            icon={getGroupIcon(param.group)}
-            accessories={[
-              param.group === '位置隐私'
-                ? { tag: { value: param.group, color: Color.Red } }
-                : { tag: param.group },
-              param.extraHint ? { text: param.extraHint } : {}
-            ]}
-            actions={
-              <ActionPanel>
-                <Action
-                  title="仅擦除 GPS 定位 (保留拍摄参数)"
-                  icon={Icon.Shield}
-                  onAction={handleStripGpsOnly}
-                />
-                <Action
-                  title="彻底抹除所有 EXIF 与元数据"
-                  icon={Icon.Trash}
-                  style={Action.Style.Destructive}
-                  onAction={handleStripAllExif}
-                />
-                <Action.CopyToClipboard title="复制该项参数值" content={param.value} />
-              </ActionPanel>
-            }
-          />
-        ))
-      }}
-    />
-  )
-}
-
 export default MediaMetadataCommand

@@ -1,9 +1,9 @@
 {
   "id": "office-slim",
   "name": "办公文档瘦身",
-  "version": "1.0.1",
-  "description": "本地离线对 Word、PPT、Excel 文档深度瘦身，内嵌图片无损重压缩，一键擦除作者与修订批注隐私，提取全部原图",
-  "author": "ZTools Team",
+  "version": "1.0.3",
+  "description": "本地重新压缩 Word、PPT、Excel 文档，保留图片原字节，可移除作者属性与批注、导出原图 ZIP；只另存新副本",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -20,7 +20,7 @@
   "features": [
     {
       "code": "office-slim-workbench",
-      "explain": "打开办公文档瘦身工作台，拖入或选择 Office 文档进行深度压缩与隐私清理",
+      "explain": "重新压缩 Office 文档结构，图片保持原字节，另存新副本",
       "cmds": [
         "文档瘦身",
         "ppt压缩",
@@ -32,7 +32,7 @@
     },
     {
       "code": "office-extract-images",
-      "explain": "直接提取 Word / PPT / Excel 内嵌的全部原始图片并另存到文件夹",
+      "explain": "把文档内嵌原图导出为 ZIP 压缩包",
       "cmds": [
         "提取ppt图片",
         "导出word图片",
@@ -42,7 +42,7 @@
     },
     {
       "code": "office-clean-metadata",
-      "explain": "一键擦除 Office 文档中的作者信息、修改批注与历史编辑痕迹",
+      "explain": "移除作者属性与批注，保留正文及修订内容，另存新副本",
       "cmds": [
         "清除文档隐私",
         "擦除作者信息",
@@ -64,5 +64,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

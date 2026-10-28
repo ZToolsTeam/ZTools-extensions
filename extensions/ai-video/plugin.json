@@ -1,0 +1,28 @@
+{
+  "id": "ai-video",
+  "name": "AI 视频增强",
+  "description": "本地 AI 视频画质超清放大、60/120 帧流畅补帧与低清视频画质修复",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "图像媒体",
+    "AI工具"
+  ],
+  "permissions": [
+    "fs",
+    "video",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

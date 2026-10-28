@@ -211,32 +211,23 @@ export async function launchQuicklink(
   return [target]
 }
 
+function getStorage(): Storage {
+  if (typeof localStorage === 'undefined') throw new Error('当前宿主没有快捷链接存储，无法保存')
+  return localStorage
+}
+
 export async function getQuicklinks(): Promise<Quicklink[]> {
-  if (typeof localStorage !== 'undefined') {
-    try {
-      const data = localStorage.getItem(STORAGE_KEY)
-      if (data) {
-        const parsed = JSON.parse(data)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed
-        }
-      }
-    } catch {
-      // Fallback to defaults
-    }
+  const data = getStorage().getItem(STORAGE_KEY)
+  if (data === null) return [...DEFAULT_QUICKLINKS]
+  const parsed = JSON.parse(data) as Quicklink[]
+  if (!Array.isArray(parsed) || parsed.some((item) => !item || typeof item.id !== 'string' || typeof item.title !== 'string' || typeof item.link !== 'string')) {
+    throw new Error('快捷链接存储格式无效，未覆盖原数据')
   }
-  return [...DEFAULT_QUICKLINKS]
+  return parsed
 }
 
 export async function saveQuicklinks(quicklinks: Quicklink[]): Promise<void> {
-  if (typeof localStorage !== 'undefined') {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(quicklinks))
-      localStorage.setItem(`${STORAGE_KEY}:backup`, JSON.stringify(quicklinks))
-    } catch {
-      // Ignore storage quota error
-    }
-  }
+  getStorage().setItem(STORAGE_KEY, JSON.stringify(quicklinks))
 }
 
 export function resolveQuicklinkUrl(

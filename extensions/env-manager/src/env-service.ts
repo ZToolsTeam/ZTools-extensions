@@ -1,117 +1,38 @@
-import { callHostTransport } from './native-ipc'
-import type { EnvFilterCategory, EnvItem, EnvScope } from './types'
-
-export function expandEnvVariablesInString(
-  rawValue: string,
-  envMap: Record<string, string>
-): string {
-  return String(rawValue ?? '').replace(/%([^%]+)%/g, (full, varName: string) => {
-    const found = envMap[varName] ?? envMap[varName.toUpperCase()] ?? envMap[varName.toLowerCase()]
-    return typeof found === 'string' && found ? found : full
-  })
+import type { EnvChange, EnvPlan, EnvSnapshot } from './types.js'
+interface Reply { success?: boolean; data?: unknown; error?: { message?: string } }
+interface Bridge { transport?: { methods?: Record<string, (request: unknown) => Promise<Reply>> } }
+let sequence = 0
+const record = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
+const id = (v: unknown): v is string => typeof v === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v)
+const scope = (v: unknown) => v === 'user' || v === 'system'
+const text = (v: unknown): v is string => typeof v === 'string'
+async function invoke(params: Record<string, unknown>) {
+  const call = (globalThis as unknown as { __ztoolsElectron?: Bridge }).__ztoolsElectron?.transport?.methods?.environment_manager
+  if (!call) throw new Error('请升级客户端后使用环境变量管理')
+  const result = await call({ messageId: `environment_${Date.now()}_${++sequence}`, params, timeoutMs: 90000 })
+  if (result?.success !== true) throw new Error(result?.error?.message || '环境变量请求失败')
+  if (!record(result.data) || result.data.success !== true) throw new Error('客户端未确认环境变量操作结果')
+  return result.data
 }
-
-export async function loadAllEnvVariables(
-  customEnv?: Record<string, string>,
-  hostOverride?: unknown
-): Promise<EnvItem[]> {
-  const res = await callHostTransport<{ items?: EnvItem[] }>(
-    'dllplugin_call',
-    {
-      plugin: 'EnvManagerPlugin',
-      func: 'loadAllEnvVariables',
-      params: customEnv ? { customEnv } : {}
-    },
-    hostOverride
-  )
-  return res.data?.items ?? []
+export async function loadEnvironment(): Promise<EnvSnapshot> {
+  const d = await invoke({ action: 'list' })
+  if (!id(d.sessionId) || !text(d.platform) || !text(d.notice) || !Array.isArray(d.sources) || !d.sources.every(v => record(v) && scope(v.id) && text(v.label)) ||
+      !Array.isArray(d.variables) || !d.variables.every(v => record(v) && text(v.key) && text(v.value) && (scope(v.scope) || v.scope === 'process')) ||
+      !Array.isArray(d.paths) || !d.paths.every(v => record(v) && (scope(v.scope) || v.scope === 'process') && Number.isSafeInteger(v.index) && Number(v.index) >= 0 && text(v.value) && text(v.reason) && typeof v.status === 'string' && ['directory', 'missing', 'unknown'].includes(v.status)) ||
+      !Array.isArray(d.backups) || !d.backups.every(v => record(v) && id(v.id) && scope(v.source) && text(v.createdAt) && text(v.summary))) throw new Error('环境变量读取结果不完整，请刷新')
+  return d as unknown as EnvSnapshot
 }
-
-export async function cleanInvalidPathEntries(
-  options?: { rawPath?: string; customEnv?: Record<string, string>; scope?: EnvScope },
-  hostOverride?: unknown
-): Promise<{
-  removedCount: number
-  cleanedPath: string
-  remainingEntries: string[]
-}> {
-  const res = await callHostTransport<{
-    removedCount?: number
-    cleanedPath?: string
-    remainingEntries?: string[]
-  }>(
-    'dllplugin_call',
-    {
-      plugin: 'EnvManagerPlugin',
-      func: 'cleanInvalidPathEntries',
-      params: options || {}
-    },
-    hostOverride
-  )
-  return {
-    removedCount: res.data?.removedCount ?? 0,
-    cleanedPath: res.data?.cleanedPath ?? '',
-    remainingEntries: res.data?.remainingEntries ?? []
-  }
+export async function prepareEnvironment(sessionId: string, change: EnvChange): Promise<EnvPlan> {
+  const d = await invoke({ action: 'prepare', sessionId, change })
+  if (!id(d.planId) || !text(d.summary) || !text(d.location) || !text(d.notice) || !Array.isArray(d.removed) || !d.removed.every(text)) throw new Error('修改预览不完整，未执行写入')
+  return d as unknown as EnvPlan
 }
-
-export async function writeEnvVariable(
-  key: string,
-  value: string,
-  scope: EnvScope = 'user',
-  options?: { simulateNoAdmin?: boolean },
-  hostOverride?: unknown
-): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
-  const res = await callHostTransport<{ errorCode?: string; error?: string }>(
-    'dllplugin_call',
-    {
-      plugin: 'EnvManagerPlugin',
-      func: 'writeEnvVariable',
-      params: { key, value, scope, ...options }
-    },
-    hostOverride
-  )
-  if (!res.ok) {
-    return {
-      ok: false,
-      errorCode: res.data?.errorCode || 'ADMIN_REQUIRED',
-      error: res.error || res.data?.error || '写入环境变量失败'
-    }
-  }
-  return { ok: true }
+export async function applyEnvironment(planId: string) {
+  const d = await invoke({ action: 'apply', planId })
+  if (d.verified !== true || !id(d.backupId) || !text(d.summary) || (d.recoveryPath !== undefined && !text(d.recoveryPath))) throw new Error('环境变量写入未得到完整确认，请刷新检查；不要重复提交')
+  return { backupId: d.backupId, summary: d.summary, recoveryPath: d.recoveryPath as string | undefined }
 }
-
-export function exportEnvSnapshot(items: EnvItem[]): string {
-  return JSON.stringify(
-    {
-      exportedAt: new Date().toISOString(),
-      count: items.length,
-      items
-    },
-    null,
-    2
-  )
-}
-
-export function filterEnvItems(
-  items: EnvItem[],
-  searchText: string,
-  category: EnvFilterCategory
-): EnvItem[] {
-  const byCat = items.filter((item) => {
-    if (category === 'path') return item.isPathItem
-    if (category === 'path-invalid') return item.isPathItem && item.isInvalid
-    if (category === 'user') return !item.isPathItem && item.scope === 'user'
-    if (category === 'system') return !item.isPathItem && item.scope === 'system'
-    return true
-  })
-
-  const q = String(searchText ?? '').trim().toLowerCase()
-  if (!q) return byCat
-  return byCat.filter(
-    (item) =>
-      item.key.toLowerCase().includes(q) ||
-      item.value.toLowerCase().includes(q) ||
-      (item.expandedValue && item.expandedValue.toLowerCase().includes(q))
-  )
+export async function cancelEnvironment() { await invoke({ action: 'cancel' }) }
+export function exportEnvSnapshot(snapshot: EnvSnapshot) {
+  return JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), platform: snapshot.platform, notice: snapshot.notice, sources: snapshot.sources, variables: snapshot.variables, paths: snapshot.paths }, null, 2)
 }

@@ -1,9 +1,9 @@
 {
   "id": "font-manager",
   "name": "字体管理",
-  "version": "1.0.1",
-  "description": "极速检索与实时预览本机安装字体，输入任意文案比对字形，内置免费可商用白名单识别库，远离字体侵权风险",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "检索本机已安装字体，输入文字查看真实字形，查看字体文件附带的许可与版权说明。",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -41,22 +41,20 @@
     },
     {
       "code": "font-manager-free-commercial",
-      "explain": "仅筛选查看经白名单认证的免费可商用中英文字体",
+      "explain": "查看字体文件附带的许可说明",
       "cmds": [
-        "免费商用字体",
-        "可商用字体",
-        "商用安全字体",
-        "免费字体"
+        "字体许可",
+        "字体授权说明"
       ]
     },
     {
       "code": "font-manager-commercial-risk",
-      "explain": "筛选查看具有商业版权限制、未经授权商用存在侵权风险的字体",
+      "explain": "查看没有附带许可说明的字体",
       "cmds": [
-        "侵权字体排查",
-        "版权字体",
-        "商业字体"
+        "未附许可字体",
+        "字体版权信息"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

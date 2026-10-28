@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-ocr",
+  "version": "1.0.0",
+  "description": "用 Windows 系统文字识别在本机识别图片和屏幕截图中的文字",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

@@ -1,9 +1,9 @@
 {
   "id": "paste-stack",
   "name": "纯文本与粘贴栈",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "description": "一键清除剪贴板富文本脏格式转为纯文本；支持多项连续复制入栈、跨窗口依次顺序或倒序自动上屏粘贴",
-  "author": "ZTools Team",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -11,8 +11,7 @@
     "办公工具"
   ],
   "permissions": [
-    "clipboard",
-    "system"
+    "clipboard"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
@@ -30,18 +29,19 @@
     },
     {
       "code": "paste-clean-text",
-      "explain": "一键洗净当前系统剪贴板中的富文本、HTML与换行样式，转为纯文本",
+      "explain": "清除当前剪贴板富文本格式，保留路径、代码、空格与换行原文",
       "cmds": [
         "清除格式",
         "纯文本粘贴",
         "洗纯文本",
         "剪贴板清洗",
         "clean clipboard text"
-      ]
+      ],
+      "mode": "no-view"
     },
     {
       "code": "paste-stack-fifo",
-      "explain": "立即开启先进先出（FIFO）连续复制入栈模式",
+      "explain": "按先进先出顺序查看与使用粘贴栈",
       "cmds": [
         "开启先进先出",
         "顺序粘贴模式",
@@ -50,7 +50,7 @@
     },
     {
       "code": "paste-stack-lifo",
-      "explain": "立即开启后进先出（LIFO）连续复制入栈模式",
+      "explain": "按后进先出顺序查看与使用粘贴栈",
       "cmds": [
         "开启后进先出",
         "倒序粘贴模式",
@@ -71,5 +71,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.3"
 }

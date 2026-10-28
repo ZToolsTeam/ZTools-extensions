@@ -7,6 +7,7 @@ export interface CidrCalculationResult {
   netmask: string
   wildcardMask: string
   networkAddress: string
+  hasBroadcast: boolean
   broadcastAddress: string
   firstUsableIp: string
   lastUsableIp: string
@@ -29,6 +30,7 @@ export interface ChmodRoleBreakdown {
 export interface ChmodCalculationResult {
   octal: string
   symbolic: string
+  specialBits: string[]
   lsSymbolic: string
   chmodCommand: string
   chmodRecursiveCommand: string

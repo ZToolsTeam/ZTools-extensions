@@ -1,5 +1,5 @@
-import { callHostTransport } from './native-ipc'
-import type { HostRule, HostsProfile } from './types'
+import { callHostTransport } from './native-ipc.js'
+import type { HostRule, HostsProfile } from './types.js'
 
 export function isValidIpAddress(ip: string): boolean {
   const trimmed = String(ip ?? '').trim()
@@ -147,14 +147,14 @@ export const DEFAULT_HOSTS_PROFILES: HostsProfile[] = [
   },
   {
     id: 'hosts-staging',
-    name: '内网测试与预发布集群 (Staging 01)',
+    name: '示例：测试环境 (Staging)',
     isEnabled: false,
     isSystem: false,
     rawContent: [
-      '# 内网 K8s Ingress 测试网关',
-      '192.168.10.50   staging.ztools.cn',
-      '192.168.10.51   mysql-staging.ztools.internal',
-      '192.168.10.52   redis-staging.ztools.internal'
+      '# 示例：把测试环境域名指向内网地址（请改成自己的域名与 IP）',
+      '192.168.10.50   staging.example.com',
+      '192.168.10.51   mysql.staging.example.com',
+      '192.168.10.52   redis.staging.example.com'
     ].join('\n'),
     rulesCount: 3,
     invalidCount: 0,
@@ -177,11 +177,12 @@ export const DEFAULT_HOSTS_PROFILES: HostsProfile[] = [
   }
 ]
 
+// 宿主只读写系统 hosts，调用方不能指定其他路径，所以这里不提供路径选项
 export async function readSystemHosts(
-  options?: { customHostsPath?: string },
+  options?: Record<string, never>,
   hostOverride?: unknown
 ): Promise<{ ok: boolean; content: string; path?: string }> {
-  const res = await callHostTransport<{ content?: string; path?: string }>(
+  const res = await callHostTransport<{ content?: string; hostsPath?: string; path?: string }>(
     'dllplugin_call',
     {
       plugin: 'HostsSwitcherPlugin',
@@ -191,17 +192,22 @@ export async function readSystemHosts(
     hostOverride
   )
   if (res.ok && typeof res.data?.content === 'string') {
-    return { ok: true, content: res.data.content, path: res.data.path }
+    return { ok: true, content: res.data.content, path: res.data.hostsPath ?? res.data.path }
   }
   return { ok: false, content: '' }
 }
 
+/** 从 "CODE: 说明" 形式的宿主错误里取错误码；宿主失败回执经传输层解包后只剩错误文本 */
+function errorCodeFromMessage(message: string | undefined): string | undefined {
+  return String(message ?? '').match(/^([A-Z][A-Z0-9_]+):/)?.[1]
+}
+
 export async function applyCombinedHosts(
   content: string,
-  options?: { customHostsPath?: string; simulateAccessDenied?: boolean; skipFlushDns?: boolean },
+  options?: { skipFlushDns?: boolean },
   hostOverride?: unknown
-): Promise<{ success: boolean; errorCode?: string; error?: string }> {
-  const res = await callHostTransport<{ errorCode?: string; error?: string }>(
+): Promise<{ success: boolean; errorCode?: string; error?: string; warnings?: string[] }> {
+  const res = await callHostTransport<{ errorCode?: string; error?: string; warnings?: unknown }>(
     'dllplugin_call',
     {
       plugin: 'HostsSwitcherPlugin',
@@ -214,17 +220,22 @@ export async function applyCombinedHosts(
     hostOverride
   )
   if (!res.ok) {
+    const error = res.error || res.data?.error || '写入系统 hosts 失败'
     return {
       success: false,
-      errorCode: res.data?.errorCode || 'EACCES',
-      error: res.error || res.data?.error || '写入系统 hosts 失败'
+      errorCode: res.data?.errorCode || errorCodeFromMessage(error) || 'WRITE_FAILED',
+      error
     }
   }
-  return { success: true }
+  // 宿主已写入但部分步骤失败（如刷新 DNS 缓存失败）时会带回警告，必须原样交给界面，不能只报成功
+  const warnings = Array.isArray(res.data?.warnings)
+    ? res.data.warnings.filter((w): w is string => typeof w === 'string' && w.trim().length > 0)
+    : []
+  return warnings.length ? { success: true, warnings } : { success: true }
 }
 
 export async function flushDnsCache(
-  options?: { dryRun?: boolean; simulateTimeout?: boolean },
+  options?: { dryRun?: boolean },
   hostOverride?: unknown
 ): Promise<{ success: boolean; output: string; error?: string }> {
   const res = await callHostTransport<{ output?: string; error?: string }>(

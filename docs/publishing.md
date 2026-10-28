@@ -31,7 +31,7 @@ extensions/<id>/
 | `name` | 显示名称，不超过 50 个字符 |
 | `version` | 版本号，`主.次.修订` 三段数字（如 `1.2.0`），可带 `-beta.1` 这类后缀。改动规则见 [版本号](#版本号) |
 | `description` | 一句话说明插件做什么，不超过 500 个字符 |
-| `author` | 作者，字符串，或 `{ "name": "…", "email": "…", "url": "…" }` |
+| `author` | 作者，字符串，或 `{ "name": "…", "email": "…", "url": "…" }`。不能写 `ZTools`、`ZTools Team`、`ZTools 官方`、`Official` 等官方名称（只有官方名单里的插件可以用），否则检查不通过 |
 | `entry` | 编译后的入口，通常是 `dist/index.js`。必须是插件目录内的相对路径 |
 | `icon` | 图标文件的相对路径，如 `icon.svg` |
 | `permissions` | 用到的权限，见 [API 参考 · 权限](api.md#权限)；不用任何权限写 `[]` |
@@ -125,7 +125,7 @@ Schema 里还有其他字段（如 `homepage`、`license`、`category`）。没�
 
 ## 共用源码
 
-`extensions/shared/` 里的 `hash.ts`、`native-ipc.ts`、`volume-ipc.ts`、`host-compat.ts` 以**复制**的方式进入各插件的 `src/`。插件里的副本必须与 `shared/` 里的原文件一字不差，否则编译直接失败。
+`extensions/shared/` 里的 `hash.ts`、`native-ipc.ts`、`volume-ipc.ts`、`host-compat.ts`、`qr-encoder.ts` 以**复制**的方式进入各插件的 `src/`。插件里的副本必须与 `shared/` 里的原文件一字不差，否则编译直接失败。
 
 修改公共源码时：先改 `extensions/shared/` 里的原文件，再复制到所有用到它的插件，并给这些插件升版本。`extensions/shared/test-harness.mjs` 是测试工具，测试里直接用相对路径引入，不需要复制。
 

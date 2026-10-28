@@ -3,21 +3,20 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   Clipboard,
   useState,
-  useEffect,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
 import {
+  CANCEL_COMMAND,
+  executePowerAction,
   getCommandForAction,
-  calculateTargetTime,
   getQuickScheduleOptions,
   type QuickScheduleItem
 } from './logic.js'
 
-declare const ztools: any
+export * from './logic.js'
 
 /**
  * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
@@ -36,120 +35,101 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   await showToast({ style: Toast.Style.Success, title: successTitle, message: successMessage })
 }
 
+async function runPowerAction(item: QuickScheduleItem): Promise<void> {
+  const res = await executePowerAction(item)
+  if (res.canceled) {
+    await showToast({ style: Toast.Style.Animated, title: '已取消', message: res.message })
+    return
+  }
+  await showToast(
+    res.ok
+      ? { style: Toast.Style.Success, title: res.message, message: res.detail }
+      : {
+          style: Toast.Style.Failure,
+          title: `${item.title}失败`,
+          message: res.detail ? `${res.message}；${res.detail}` : res.message
+        }
+  )
+}
+
+function iconFor(action: QuickScheduleItem['action']): Icon {
+  switch (action) {
+    case 'shutdown':
+      return Icon.Power
+    case 'lock':
+      return Icon.Lock
+    case 'sleep':
+      return Icon.Moon
+    default:
+      return Icon.XMarkCircle
+  }
+}
+
+function actionsFor(item: QuickScheduleItem) {
+  if (item.action === 'cancel') {
+    return [
+      Action({
+        title: '复制取消命令',
+        icon: Icon.Clipboard,
+        onAction: () => copyWithToast(CANCEL_COMMAND, '已复制取消命令', '在命令提示符中运行即可取消已设定的关机')
+      })
+    ]
+  }
+  if (item.action === 'shutdown') {
+    const cmd = getCommandForAction(item.action, item.seconds)
+    return [
+      Action({ title: '设定定时关机（需确认）', icon: Icon.Power, onAction: () => runPowerAction(item) }),
+      Action({
+        title: '复制等价命令',
+        icon: Icon.Clipboard,
+        shortcut: { modifiers: ['ctrl'], key: 'return' },
+        onAction: () => copyWithToast(cmd, '已复制命令', cmd)
+      })
+    ]
+  }
+  return [Action({ title: item.title, icon: iconFor(item.action), onAction: () => runPowerAction(item) })]
+}
+
+const SECTIONS: Array<{ title: string; actions: QuickScheduleItem['action'][] }> = [
+  { title: '定时关机', actions: ['shutdown'] },
+  { title: '立即执行', actions: ['lock', 'sleep'] },
+  { title: '取消关机计划', actions: ['cancel'] }
+]
+
 export default function ShutdownTimerCommand() {
   const [searchText, setSearchText] = useState('')
   const [options] = useState<QuickScheduleItem[]>(getQuickScheduleOptions())
 
-  async function executeSchedule(item: QuickScheduleItem) {
-    const cmd = getCommandForAction(item.action, item.seconds)
-    try {
-      if (typeof ztools !== 'undefined' && ztools.shell && ztools.shell.exec) {
-        await ztools.shell.exec(cmd)
-      }
-      
-      if (item.action === 'cancel') {
-        showToast({
-          style: Toast.Style.Success,
-          title: '已取消关机任务',
-          message: '系统当前排队的关机/重启计划已清除'
-        })
-      } else if (item.action === 'shutdown' || item.action === 'reboot') {
-        const target = calculateTargetTime(item.seconds)
-        showToast({
-          style: Toast.Style.Success,
-          title: `已设定${item.action === 'shutdown' ? '关机' : '重启'}任务`,
-          message: `预计将在 ${target} 执行 (命令行: ${cmd})`
-        })
-      } else {
-        showToast({
-          style: Toast.Style.Success,
-          title: `已触发 ${item.title}`
-        })
-      }
-    } catch (err) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '执行失败',
-        message: String(err)
-      })
-    }
-  }
-
   const query = searchText.trim().toLowerCase()
-  const filtered = options.filter(item => {
-    if (!query) return true
-    return (
-      item.title.toLowerCase().includes(query) ||
-      item.subtitle.toLowerCase().includes(query) ||
-      item.description.toLowerCase().includes(query)
-    )
-  })
-
-  function getIconForAction(action: QuickScheduleItem['action']) {
-    switch (action) {
-      case 'shutdown':
-        return { source: Icon.Power, tintColor: Color.Red }
-      case 'reboot':
-        return { source: Icon.ArrowClockwise, tintColor: Color.Orange }
-      case 'lock':
-        return { source: Icon.Lock, tintColor: Color.Blue }
-      case 'sleep':
-        return { source: Icon.Moon, tintColor: Color.Purple }
-      case 'cancel':
-        return { source: Icon.XMarkCircle, tintColor: Color.Green }
-      default:
-        return { source: Icon.Circle, tintColor: Color.SecondaryText }
-    }
-  }
+  const filtered = options.filter(
+    (item) => !query || item.title.toLowerCase().includes(query) || item.subtitle.toLowerCase().includes(query)
+  )
 
   return List({
-    searchBarPlaceholder: '搜索电源动作 (如 关机, 30, 重启, 锁屏, 取消)...',
+    searchBarPlaceholder: '搜索电源动作，如 关机、30、锁屏、取消',
     onSearchTextChange: setSearchText,
-    children: [
-      List.Section({
-        title: `快捷电源任务 (${filtered.length})`,
-        children: filtered.map(item =>
-          List.Item({
-            id: item.id,
-            title: item.title,
-            subtitle: item.subtitle,
-            icon: getIconForAction(item.action),
-            accessories: [
-              {
-                text: item.description
-              }
-            ],
-            actions: ActionPanel({
-              title: item.title,
-              children: [
-                Action({
-                  title: '立即设定/执行',
-                  icon: Icon.CheckCircle,
-                  onAction: () => executeSchedule(item)
-                }),
-                Action({
-                  title: '复制系统命令',
-                  icon: Icon.Clipboard,
-                  shortcut: { modifiers: ['ctrl'], key: 'c' },
-                  onAction: () => {
-                    const cmd = getCommandForAction(item.action, item.seconds)
-                    return copyWithToast(cmd, '已复制命令', cmd)
-                  }
-                }),
-                Action({
-                  title: '取消当前关机计划',
-                  icon: Icon.XMarkCircle,
-                  shortcut: { modifiers: ['ctrl'], key: 'a' },
-                  onAction: () => {
-                    const cancelItem = options.find(o => o.action === 'cancel')
-                    if (cancelItem) executeSchedule(cancelItem)
-                  }
-                })
-              ]
-            })
+    children: SECTIONS.map((section) => {
+      const items = filtered.filter((item) => section.actions.includes(item.action))
+      return items.length === 0
+        ? null
+        : List.Section({
+            title: section.title,
+            children: items.map((item) =>
+              List.Item({
+                id: item.id,
+                title: item.title,
+                subtitle: item.subtitle,
+                icon: iconFor(item.action),
+                accessories:
+                  item.action === 'shutdown'
+                    ? [{ tag: { value: '执行前确认' } }]
+                    : item.action === 'cancel'
+                    ? [{ tag: { value: '复制命令' } }]
+                    : [],
+                actions: ActionPanel({ title: item.title, children: actionsFor(item) })
+              })
+            )
           })
-        )
-      })
-    ]
+    }).filter((section) => section !== null)
   })
 }

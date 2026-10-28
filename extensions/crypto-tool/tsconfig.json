@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "typeRoots": [
+      "../../frontend/node_modules/@types",
+      "../../electron-client/node_modules/@types"
+    ],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "paths": {
+      "@ztools/declarative-ui": ["../../packages/declarative-ui/dist/index.d.ts"]
+    }
+  },
+  "include": ["src/**/*"]
+}

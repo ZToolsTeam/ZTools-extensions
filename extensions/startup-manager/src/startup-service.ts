@@ -256,7 +256,8 @@ export async function scanStartupItems(
     }
   }
 
-  return computeStartupScanSummary(items)
+  const warnings = Array.isArray(res.data.warnings) ? res.data.warnings.map(String).filter(Boolean) : []
+  return { ...computeStartupScanSummary(items), ...(warnings.length ? { warnings } : {}) }
 }
 
 export async function setStartupItemEnabled(
@@ -401,24 +402,44 @@ export async function removeBrokenStartupItems(
     hostOverride
   )
 
+  // 只按宿主确认删掉的条目更新列表；没有 removedIds 时视为没有删掉任何条目。
+  // 只认本次提交清理的条目 id，宿主返回其它 id 也不会把无关条目从列表移除
+  const targetIds = new Set(targetBrokenItems.map((entry) => entry.id))
+  const removedIds = Array.isArray(res.data?.removedIds)
+    ? [...new Set((res.data.removedIds as unknown[]).map(String))].filter((id) => targetIds.has(id))
+    : []
+  const failed = normalizeCleanFailures(res.data?.failed)
+  const removedSet = new Set(removedIds)
+  const remainingItems = currentItems.filter((entry) => !removedSet.has(entry.id))
+
   if (!res.ok || !res.data || res.data.ok === false) {
     const errText = String(res.data?.error ?? res.error ?? res.message ?? '清理残留启动项失败')
     const errCode = extractStartupErrorCode(errText, res.data?.errorCode)
     return {
       ok: false,
-      removedCount: 0,
-      removedIds: [],
-      remainingItems: currentItems,
+      removedCount: removedIds.length,
+      removedIds,
+      remainingItems,
+      failed,
       errorCode: errCode,
       error: errText
     }
   }
 
-  const removedIds = Array.isArray(res.data.removedIds)
-    ? res.data.removedIds.map(String)
-    : targetBrokenItems.map((i) => i.id)
-  const removedSet = new Set(removedIds)
-  const remainingItems = currentItems.filter((entry) => !removedSet.has(entry.id))
+  // 部分成功：宿主以 success:true 返回（传输层在 success:false 时会丢弃数据），并带 partial / failed 说明未清理的条目
+  if (res.data.partial === true || failed.length > 0) {
+    const errText = String(res.data.error ?? '') || `PARTIAL_FAILED: ${failed.map((entry) => `${entry.id}：${entry.error}`).join('；')}`
+    return {
+      ok: true,
+      partial: true,
+      removedCount: removedIds.length,
+      removedIds,
+      remainingItems,
+      failed,
+      errorCode: extractStartupErrorCode(errText, res.data.errorCode ?? 'PARTIAL_FAILED'),
+      error: errText
+    }
+  }
 
   return {
     ok: true,
@@ -426,6 +447,30 @@ export async function removeBrokenStartupItems(
     removedIds,
     remainingItems
   }
+}
+
+/** 宿主返回的未清理条目：原因字段兼容 error / reason / message，错误码兼容 errorCode / code */
+function normalizeCleanFailures(raw: unknown): Array<{ id: string; errorCode: string; error: string }> {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+    .map((entry) => {
+      const errorCode = String(entry.errorCode ?? entry.code ?? '').trim()
+      const error = String(entry.error ?? entry.reason ?? entry.message ?? '').trim()
+      return { id: String(entry.id ?? ''), errorCode, error: error || errorCode || '未说明原因' }
+    })
+}
+
+/** 清理结果的提示文案：部分成功时标题写明清理与未清理数量，正文逐条列出未清理原因 */
+export function describeCleanBrokenResult(res: StartupCleanBrokenResult, items: StartupEntryItem[] = []): { title: string; message?: string } {
+  const failed = res.failed ?? []
+  const nameOf = (id: string) => items.find((entry) => entry.id === id)?.name || id
+  const reasons = failed.map((entry) => `${nameOf(entry.id)}：${entry.error}`).join('；')
+  if (res.ok && !res.partial) return { title: `已清理 ${res.removedCount} 个无效残留启动项` }
+  if (res.removedCount > 0 || res.partial) {
+    return { title: `已清理 ${res.removedCount} 个，${failed.length} 个未清理`, message: reasons || res.error }
+  }
+  return { title: '批量清理残留启动项失败', message: reasons || res.error || '部分系统级条目需要管理员权限' }
 }
 
 export function filterStartupItems(

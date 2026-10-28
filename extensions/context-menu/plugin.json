@@ -1,0 +1,26 @@
+{
+  "id": "context-menu",
+  "name": "右键菜单管理",
+  "description": "列出文件、文件夹和文件夹空白处右键菜单里的命令项（注册表 shell 子键），可逐项启用或禁用，并可切换 Windows 11 经典右键菜单；暂不包含外壳扩展（shellex）",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

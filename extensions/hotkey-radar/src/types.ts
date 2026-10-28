@@ -36,6 +36,8 @@ export interface HotkeyProbeResultItem {
   subtitle: string
   categoryLabel: string
   statusText: string
+  /** reserved 系统保留；occupied 系统拒绝注册；free 本次可注册；unsupported 该按键无法检测 */
+  probeStatus?: 'reserved' | 'occupied' | 'free' | 'unsupported'
   isOccupied: boolean
   isSystemReserved: boolean
   suspectApp: string | null

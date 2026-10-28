@@ -1,320 +1,70 @@
-import React, {
-  Action,
-  ActionPanel,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useEffect,
-  useMemo,
-  useState
-} from '@ztools/declarative-ui'
-import { callHostTransport } from './native-ipc'
-import {
-  buildWordClipboardHtml,
-  exportMarkdownToDocxFile,
-  parseMarkdownAST
-} from './md-to-office-service'
-import type { DocElement, DocFontSize, StylePreset } from './types'
-
-export * from './types'
-export * from './md-to-office-service'
-
-export interface MdToOfficeCommandProps {
-  featureCode?: string
-  initialMarkdown?: string
-  initialPreset?: StylePreset
-  initialFontSize?: DocFontSize
-  hostOverride?: unknown
+import React, { Action, ActionPanel, Form, Icon, List, Toast, showToast, useEffect, useMemo, useNavigation, useRef, useState } from '@ztools/declarative-ui'
+import { MarkdownClient, validMarkdown } from './md-to-office-service.js'
+import { DEFAULT_OPTIONS, type ConvertOptions, type DocSummary } from './types.js'
+const message = (e: unknown) => e instanceof Error ? e.message : String(e)
+function MarkdownForm({ initial, onApply }: { initial: string; onApply: (text: string, active: () => boolean) => Promise<boolean> }) {
+  const [text, setText] = useState(initial), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const alive = useRef(true), guard = useRef(false), { pop } = useNavigation()
+  useEffect(() => () => { alive.current = false }, [])
+  const submit = async () => {
+    if (guard.current) return
+    guard.current = true; setBusy(true)
+    try { validMarkdown(text); if (await onApply(text, () => alive.current) && alive.current) pop() }
+    catch (e) { if (alive.current) setError(message(e)) }
+    finally { guard.current = false; if (alive.current) setBusy(false) }
+  }
+  return <Form navigationTitle="编辑 Markdown" isLoading={busy} actions={<ActionPanel><Action.SubmitForm title="载入文档" onSubmit={submit} /></ActionPanel>}>
+    <Form.TextArea id="markdown" title="Markdown 文本" value={text} onChange={setText} placeholder="输入或粘贴 Markdown，最多 256 KiB" />
+    <Form.Description title="说明" text={error || '支持标题、加粗、列表、表格、链接和代码块；原始 HTML 按文字保留。'} />
+  </Form>
 }
-
-function getElementIcon(type: DocElement['type']): Icon {
-  switch (type) {
-    case 'heading':
-      return Icon.Pin
-    case 'table':
-      return Icon.List
-    case 'code':
-      return Icon.Code
-    default:
-      return Icon.Document
+export function MdToOfficeCommand({ copyImmediately = false }: { copyImmediately?: boolean } = {}) {
+  const client = useMemo(() => new MarkdownClient(), []), { push } = useNavigation()
+  const [text, setText] = useState(''), [summary, setSummary] = useState<DocSummary | null>(null)
+  const [options, setOptions] = useState<ConvertOptions>({ ...DEFAULT_OPTIONS }), [busy, setBusy] = useState(false), [status, setStatus] = useState('读取剪贴板…')
+  const alive = useRef(true), guard = useRef(false)
+  const perform = async (work: () => Promise<void>) => {
+    if (guard.current || !alive.current) return
+    guard.current = true; setBusy(true)
+    try { await work() }
+    catch (e) { if (alive.current) { setStatus(message(e)); await showToast({ style: Toast.Style.Failure, title: '操作未完成', message: message(e) }) } }
+    finally { guard.current = false; if (alive.current) setBusy(false) }
   }
+  const accept = async (next: string, active = () => true) => {
+    const parsed = await client.inspect(next, options)
+    if (!alive.current || !active()) return false
+    setText(next); setSummary(parsed); setStatus(parsed.warnings.join('；') || `已载入 ${parsed.characters} 字 · ${parsed.blocks} 个结构块`); return true
+  }
+  const clipboard = (copy = false) => perform(async () => {
+    const next = await client.clipboard()
+    if (!alive.current || !await accept(next)) return
+    if (copy) { const result = await client.copy(next, options); if (alive.current) { setStatus(result.warnings.join('；') || '已复制富文本，可粘贴到 Word、WPS 或文本编辑'); await showToast({ style: Toast.Style.Success, title: '已复制为 Word 富文本' }) } }
+  })
+  useEffect(() => { void clipboard(copyImmediately); return () => { alive.current = false; void client.cancel().catch(e => console.warn('文档取消请求失败', e)) } }, [])
+  const edit = () => { if (!guard.current) push(<MarkdownForm initial={text} onApply={async (next, active) => { let applied = false; await perform(async () => { applied = await accept(next, active) }); return applied }} />) }
+  const openFile = () => perform(async () => { const path = await client.choose('open'); if (!path || !alive.current) return; const next = await client.read(path); if (alive.current) await accept(next) })
+  const exportFile = () => perform(async () => {
+    if (!summary) return
+    const output = await client.choose('save', summary.title)
+    if (!output || !alive.current) return
+    const result = await client.export(text, options, output)
+    if (alive.current) { setStatus(`已另存 ${result.name} · ${(result.size / 1024).toFixed(1)} KB`); await showToast({ style: Toast.Style.Success, title: 'Word 新副本已保存', message: result.name }) }
+  })
+  const copyRich = () => perform(async () => { const result = await client.copy(text, options); if (alive.current) { setStatus(result.warnings.join('；') || '已复制富文本，可粘贴到 Word、WPS 或文本编辑'); await showToast({ style: Toast.Style.Success, title: '已复制富文本' }) } })
+  const change = (patch: Partial<ConvertOptions>) => { if (!guard.current) setOptions(current => ({ ...current, ...patch })) }
+  return <List navigationTitle="AI 文档转 Word" isShowingDetail={false} isLoading={busy} searchBarPlaceholder="当前文档"
+    filterBar={{ summaryText: status, actions: [{ id: 'clipboard', title: '读取剪贴板', onAction: () => clipboard() }, { id: 'open', title: '打开文件', onAction: openFile }] }}
+    workbenchPanel={{ title: '排版选项', fields: [
+      { id: 'preset', label: '排版风格', type: 'select', value: options.preset, options: [{ label: '公文风格', value: 'official' }, { label: '商务报告', value: 'business' }, { label: '学术三线表', value: 'academic' }], onChange: (value: unknown) => { if (typeof value === 'string' && ['official','business','academic'].includes(value)) change({ preset: value as ConvertOptions['preset'] }) } },
+      { id: 'fontSize', label: '正文字号', type: 'select', value: options.fontSize, options: [{ label: '三号 16pt', value: 'size-3' }, { label: '小四 12pt', value: 'size-s4' }, { label: '五号 10.5pt', value: 'size-5' }], onChange: (value: unknown) => { if (typeof value === 'string' && ['size-3','size-s4','size-5'].includes(value)) change({ fontSize: value as ConvertOptions['fontSize'] }) } },
+      { id: 'indent', label: '正文首行缩进', type: 'toggle', value: options.firstLineIndent, onChange: (value: unknown) => { if (typeof value === 'boolean') change({ firstLineIndent: value }) } }
+    ], previewCard: { title: '另存为 DOCX 新副本', subtitle: '原文件保留；实际字体由打开文档的设备决定' } }}
+    subList={{ title: '待转换文档', items: [summary ? <List.Item key="document" id="document" title={summary.title} subtitle={`${summary.characters} 字 · ${summary.blocks} 个结构块`} icon={Icon.Document} actions={<ActionPanel>
+      <Action title="另存 Word 新副本" icon={Icon.Download} onAction={exportFile} />
+      <Action title="复制为富文本" icon={Icon.Clipboard} onAction={copyRich} />
+      <Action title="编辑 Markdown" onAction={edit} />
+      <Action.CopyToClipboard title="复制 Markdown 原文" content={text} />
+    </ActionPanel>} /> : <List.Item key="empty" id="empty" title="输入 Markdown 文本" subtitle="也可以读取剪贴板或打开 Markdown 文件" icon={Icon.Document} actions={<ActionPanel><Action title="输入 Markdown" onAction={edit} /></ActionPanel>} />] }} />
 }
-
-export function MdToOfficeCommand(props: MdToOfficeCommandProps = {}) {
-  const [markdownText, setMarkdownText] = useState<string>(props.initialMarkdown ?? '')
-  const [preset, setPreset] = useState<StylePreset>(props.initialPreset ?? 'official')
-  const [fontSize, setFontSize] = useState<DocFontSize>(props.initialFontSize ?? 'size-3')
-  const [firstLineIndent, setFirstLineIndent] = useState<boolean>(true)
-  const [searchText, setSearchText] = useState<string>('')
-  const [isLoading, setIsLoading] = useState<boolean>(false)
-
-  const handleReadClipboard = async () => {
-    setIsLoading(true)
-    try {
-      let res = await callHostTransport<{ text?: string; markdown?: string }>(
-        'dllplugin_call',
-        {
-          plugin: 'MdToOfficePlugin',
-          func: 'read_clipboard_md',
-          params: { action: 'read_clipboard_md' }
-        },
-        props.hostOverride
-      )
-      if (!res.ok || !(res.data?.text || res.data?.markdown)) {
-        res = await callHostTransport<{ text?: string; markdown?: string }>(
-          'md_to_office',
-          { action: 'read_clipboard_md' },
-          props.hostOverride
-        )
-      }
-      const text = String(res.data?.text ?? res.data?.markdown ?? '').trim()
-      if (!text) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: '剪贴板中暂无可解析的 Markdown 文本'
-        })
-        return
-      }
-      setMarkdownText(text)
-      await showToast({
-        style: Toast.Style.Success,
-        title: `已载入剪贴板文本`
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!props.initialMarkdown) {
-      void handleReadClipboard()
-    }
-  }, [props.featureCode])
-
-  const parsed = useMemo(() => parseMarkdownAST(markdownText), [markdownText])
-  const docMeta = parsed.elements.length > 0 ? parsed.metadata : null
-
-  const filteredElements = useMemo(() => {
-    const q = searchText.trim().toLowerCase()
-    if (!q) return parsed.elements
-    return parsed.elements.filter(
-      (el) =>
-        el.title.toLowerCase().includes(q) ||
-        el.typeLabel.toLowerCase().includes(q) ||
-        el.rawContent.toLowerCase().includes(q)
-    )
-  }, [parsed.elements, searchText])
-
-  const handleExportDocx = async () => {
-    if (!markdownText.trim()) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '请先粘贴或载入有效的 Markdown 文本'
-      })
-      return
-    }
-    setIsLoading(true)
-    try {
-      let dialogRes = await callHostTransport<{ filePath?: string; canceled?: boolean }>(
-        'window_show_save_dialog',
-        {
-          title: '导出为标准 Word 文档 (.docx)',
-          defaultPath: `${parsed.metadata.title || 'AI研报文档'}.docx`
-        },
-        props.hostOverride
-      )
-      if (!dialogRes.ok || !dialogRes.data?.filePath) {
-        dialogRes = await callHostTransport<{ filePath?: string; canceled?: boolean }>(
-          'dialog_show_save',
-          {
-            title: '导出为标准 Word 文档 (.docx)',
-            defaultPath: `${parsed.metadata.title || 'AI研报文档'}.docx`
-          },
-          props.hostOverride
-        )
-      }
-      const savePath = dialogRes.data?.filePath
-      const res = await exportMarkdownToDocxFile(
-        markdownText,
-        { preset, fontSize, firstLineIndent },
-        savePath,
-        props.hostOverride
-      )
-      if (!res.ok) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: res.error || '导出 Word 文档失败'
-        })
-        return
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: `已生成原生 Word 文档 (${Math.max(1, Math.round((res.byteLength ?? 0) / 1024))} KB)`
-      })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: err instanceof Error ? err.message : String(err)
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleCopyRichText = async () => {
-    if (!markdownText.trim()) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '请先粘贴或载入有效的 Markdown 文本'
-      })
-      return
-    }
-    try {
-      const html = buildWordClipboardHtml(markdownText, {
-        preset,
-        fontSize,
-        firstLineIndent
-      })
-      const dllRes = await callHostTransport(
-        'dllplugin_call',
-        {
-          plugin: 'MdToOfficePlugin',
-          func: 'copy_rich_html',
-          params: { action: 'copy_rich_html', html, plainText: markdownText }
-        },
-        props.hostOverride
-      )
-      if (!dllRes.ok) {
-        await callHostTransport(
-          'md_to_office',
-          { action: 'copy_rich_html', html, plainText: markdownText },
-          props.hostOverride
-        )
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已复制为 Word 排版格式，切回 Word/WPS 按 Ctrl+V 即可粘贴'
-      })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: err instanceof Error ? err.message : String(err)
-      })
-    }
-  }
-
-  return (
-    <List
-      navigationTitle="AI文档转Word"
-      isLoading={isLoading}
-      isShowingDetail={false}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索文档提取的标题大纲、表格或代码块..."
-      filterBar={{
-        summaryText: docMeta
-          ? `共 ${docMeta.wordCount} 字 · 识别 ${docMeta.headingsCount} 个标题、${docMeta.tablesCount} 个表格、${docMeta.codeBlocksCount} 处代码块`
-          : '支持 DeepSeek / ChatGPT 研报、党政公文、学术三线表一键转 Word (.docx)',
-        actions: [
-          {
-            id: 'paste-clipboard',
-            title: '读取剪贴板',
-            onAction: () => {
-              void handleReadClipboard()
-            }
-          },
-          {
-            id: 'export-docx',
-            title: '导出为 Word (.docx)',
-            onAction: () => {
-              void handleExportDocx()
-            }
-          }
-        ]
-      }}
-      workbenchPanel={{
-        title: docMeta ? docMeta.title : '请粘贴或载入 Markdown 文本',
-        subtitle: docMeta
-          ? `共 ${docMeta.wordCount} 字 · ${docMeta.headingsCount} 个标题 · ${docMeta.tablesCount} 个表格`
-          : '纯本地 OpenXML 排版转换引擎',
-        fields: [
-          {
-            id: 'stylePreset',
-            label: '排版规范风格',
-            type: 'select',
-            value: preset,
-            options: [
-              { label: '中国党政公文规范 (仿宋 / 黑体 / 28磅行距)', value: 'official' },
-              { label: '现代商务研报规范 (微软雅黑 / 雅致表头)', value: 'business' },
-              { label: '学术论文规范 (宋体 / TNR / 学术三线表)', value: 'academic' }
-            ],
-            onChange: (val: unknown) => setPreset(val as StylePreset)
-          },
-          {
-            id: 'fontSize',
-            label: '正文字号',
-            type: 'select',
-            value: fontSize,
-            options: [
-              { label: '三号字 (公文标准 16pt)', value: 'size-3' },
-              { label: '小四号字 (报告通用 12pt)', value: 'size-s4' },
-              { label: '五号字 (紧凑排版 10.5pt)', value: 'size-5' }
-            ],
-            onChange: (val: unknown) => setFontSize(val as DocFontSize)
-          },
-          {
-            id: 'firstLineIndent',
-            label: '首行缩进 2 字符 (200 字符单位)',
-            type: 'toggle',
-            value: firstLineIndent,
-            onChange: (val: unknown) => setFirstLineIndent(Boolean(val))
-          }
-        ],
-        previewCard: {
-          title:
-            preset === 'official'
-              ? '二号方正小标宋标题 · 三号仿宋正文 · 28磅固定行距'
-              : preset === 'academic'
-                ? '黑体章节标题 · 宋体+Times New Roman · 国家标准学术三线表'
-                : '微软雅黑现代商务层级 · 自适应网格数据表',
-          subtitle: docMeta
-            ? `已解析 ${parsed.elements.length} 个结构块，按 Enter 一键导出 .docx`
-            : '等待剪贴板或文件载入 Markdown 内容'
-        }
-      }}
-      subList={{
-        title: `文档结构大纲与核心要素 (${filteredElements.length} 项)`,
-        subtitle: '按 Enter 导出为 Word (.docx)，或复制为富文本直接粘贴至 Word',
-        emptyText: '请在剪贴板复制 Markdown 文本后点击「读取剪贴板」',
-        items: filteredElements.map((el) => (
-          <List.Item
-            key={el.id}
-            id={el.id}
-            title={el.title}
-            subtitle={el.preview}
-            icon={getElementIcon(el.type)}
-            accessories={[{ tag: el.typeLabel }, { text: el.extraInfo }]}
-            actions={
-              <ActionPanel>
-                <Action
-                  title="导出为 Word (.docx)"
-                  icon={Icon.Download}
-                  onAction={handleExportDocx}
-                />
-                <Action
-                  title="复制富文本 (直接去 Word 粘贴)"
-                  icon={Icon.Clipboard}
-                  onAction={handleCopyRichText}
-                />
-                <Action.CopyToClipboard title="复制该段原始文本" content={el.rawContent} />
-              </ActionPanel>
-            }
-          />
-        ))
-      }}
-    />
-  )
-}
-
+export const commands = { 'md-to-office-workbench': MdToOfficeCommand, 'md-to-office-clipboard-fast': () => MdToOfficeCommand({ copyImmediately: true }) }
 export default MdToOfficeCommand

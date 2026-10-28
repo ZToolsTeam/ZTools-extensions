@@ -316,8 +316,8 @@ test('-10 不占用 ⌘⌫ / ⌘C 等输入框编辑键（列表与即时预览�
   assert.equal(acts.some((a) => isPlain(a.props.shortcut, 'c')), false)
   const nameAct = acts.find((a) => a.props.title === '复制文件名')
   assert.deepEqual(nameAct.props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'n' })
-  // 同一组合键不能绑定到两个动作
-  const combos = acts.filter((a) => a.props.shortcut && a.props.shortcut.key !== 'y').map((a) => JSON.stringify(a.props.shortcut))
+  // 同一组合键不能绑定到两个动作（以前「Quick Look 快速预览」和「即时预览」都绑了 ⌘Y）
+  const combos = acts.filter((a) => a.props.shortcut).map((a) => JSON.stringify(a.props.shortcut))
   assert.equal(new Set(combos).size, combos.length)
   view.unmount()
 
@@ -429,4 +429,86 @@ test('-13 检索进行中卸载视图不抛错，结果被丢弃', async () => {
   await new Promise((r) => setTimeout(r, 260))
   // 卸载后定时器与在途请求都已作废，不应再发起新的检索
   assert.equal(queriesSent(host).filter((q) => q === 'slow').length, 1)
+})
+
+// ---------------- 平台差异、示例数据与未知时间 ----------------
+
+function withPlatform(platform, fn) {
+  const saved = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { platform }, configurable: true, writable: true })
+  return Promise.resolve()
+    .then(fn)
+    .finally(() => Object.defineProperty(globalThis, 'navigator', saved))
+}
+
+test('即时预览与系统快速预览各用各的快捷键（⌘⇧P / ⌘Y）', async () => {
+  const host = setupHost()
+  const view = await mountList(host)
+  await withPlatform('MacIntel', () => {
+    const acts = view.actions(view.item(notesTxt))
+    assert.deepEqual(acts.find((a) => a.props.title === 'Quick Look 快速预览').props.shortcut, { modifiers: ['ctrl'], key: 'y' })
+    assert.deepEqual(acts.find((a) => a.props.title === '即时预览').props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'p' })
+  })
+  view.unmount()
+})
+
+test('Windows 上不提供系统快速预览（宿主只会改为定位），直接调用也报不支持且不调宿主', async () => {
+  const host = setupHost()
+  installChunkReader(host)
+  let called = 0
+  host.ipc.filesearch_quick_look = async ({ path: p }) => {
+    called++
+    return { success: true, path: p }
+  }
+  await withPlatform('Win32', async () => {
+    const view = await mountList(host)
+    const titles = view.actions(view.item(notesTxt)).map((a) => a.props.title)
+    assert.equal(titles.includes('Quick Look 快速预览'), false)
+    assert.ok(titles.includes('即时预览'))
+    view.unmount()
+
+    const detail = await mount(() => mod.FileQuickLookDetailView({ file: rec(notesTxt) }), host)
+    await tick(10)
+    assert.equal(detail.actions().some((a) => a.props.title === 'Quick Look 快速预览'), false)
+    detail.unmount()
+
+    const res = await quickLookFile(notesTxt)
+    assert.equal(res.success, false)
+    assert.equal(res.error, 'QUICK_LOOK_UNSUPPORTED')
+  })
+  assert.equal(called, 0)
+})
+
+test('不在客户端里运行：列表为空并提示「需要在 ZTools 客户端中使用」，不显示示例文件', async () => {
+  const host = setupHost()
+  const saved = globalThis.__ztoolsElectron
+  delete globalThis.__ztoolsElectron
+  try {
+    const view = await mount(Command, host)
+    await waitSearch(20)
+    const items = view.items()
+    assert.deepEqual(items.map((i) => i.props.id), ['search-error'])
+    assert.equal(items[0].props.title, '需要在 ZTools 客户端中使用')
+    assert.match(view.tree().props.filterBar.summaryText, /需要在 ZTools 客户端中使用/)
+    await view.search('md')
+    await waitSearch()
+    assert.deepEqual(view.items().map((i) => i.props.id), ['search-error'])
+    view.unmount()
+  } finally {
+    globalThis.__ztoolsElectron = saved
+  }
+  assert.equal(host.ipcCalls.length, 0)
+})
+
+test('宿主没有返回修改时间时显示「未知」，不用当前时间冒充', async () => {
+  const host = setupHost()
+  host.ipc.filesearch_query = async () => ({ files: [{ name: 'no-time.txt', path: notesTxt, size: 3 }] })
+  const files = await mod.searchLocalFiles('no-time')
+  assert.equal(files[0].mtime, 0)
+  installChunkReader(host)
+  host.ipc.filesearch_sha256 = async () => ({ success: false, error: '文件不存在' })
+  const detail = await mount(() => mod.FileQuickLookDetailView({ file: files[0] }), host)
+  await tick(10)
+  assert.match(detail.text(), /"title":"修改时间","text":"未知"/)
+  detail.unmount()
 })

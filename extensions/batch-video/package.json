@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-batch-video",
+  "version": "1.0.0",
+  "description": "批量视频格式转换、转 GIF 与提取音频（调用本机 ffmpeg，按默认参数处理）",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

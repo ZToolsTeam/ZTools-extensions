@@ -1,9 +1,9 @@
 {
   "id": "ssl-domain-check",
   "name": "域名与SSL诊断",
-  "version": "1.0.1",
-  "description": "实时检测域名 HTTPS/TLS 证书有效期倒计时、颁发机构链与 DNS-over-HTTPS (A/AAAA/CNAME/MX/TXT) 解析记录",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "查询域名真实 TLS 证书、信任与名称匹配状态、有效期和证书链，并查看 DNS 解析记录",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -41,5 +41,6 @@
         "域名诊断"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

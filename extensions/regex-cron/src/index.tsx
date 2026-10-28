@@ -4,18 +4,22 @@ import React, {
   Color,
   Icon,
   List,
+  Form,
+  useNavigation,
+  useEffect,
   useMemo,
   useState
 } from '@ztools/declarative-ui'
 import {
   REGEX_PRESETS,
-  parseAndExplainCron,
-  runSafeRegexMatch
-} from './regex-cron-service'
-import type { RegexCronMode, RegexPresetItem } from './types'
+  parseAndExplainCron
+} from './regex-cron-service.js'
+import type { RegexCronMode, RegexPresetItem, RegexMatchResult } from './types.js'
 
-export * from './types'
-export * from './regex-cron-service'
+import { runRegexInWorker } from './regex-worker.js'
+
+export * from './types.js'
+export * from './regex-cron-service.js'
 
 export interface RegexCronCommandProps {
   featureCode?: string
@@ -31,6 +35,16 @@ const CRON_TEMPLATES = [
   { id: 'cron-month-1st', expr: '0 0 0 1 * ?', title: '每月 1 号零点生成月度账单' }
 ]
 
+export function EditRegexText({ sample, onSave }: { sample: string; onSave: (value: string) => void }) {
+  const [value, setValue] = useState(sample)
+  const { pop } = useNavigation()
+  return <Form navigationTitle="编辑待测文本" actions={<ActionPanel>
+    <Action.SubmitForm title="开始匹配" onSubmit={() => { onSave(value); pop() }} />
+  </ActionPanel>}>
+    <Form.TextArea id="sample" title="待测文本" placeholder="粘贴需要匹配的文本，支持多行" value={value} onChange={setValue} />
+  </Form>
+}
+
 export function RegexCronCommand(props: RegexCronCommandProps = {}) {
   const defaultMode: RegexCronMode =
     props.initialMode ??
@@ -41,11 +55,29 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
         : 'dict')
 
   const [currentMode, setCurrentMode] = useState<RegexCronMode>(defaultMode)
-  const [searchText, setSearchText] = useState<string>(props.initialSearchText ?? '')
-  const [testSample, setTestSample] = useState<string>(
-    props.initialTestSample ??
-      '联系人手机：13800138000，备用号：18612345678，身份证：11010519900307281X，车牌：京AD12345'
-  )
+  const [queries, setQueries] = useState<Record<RegexCronMode, string>>({
+    dict: '', tester: '', cron: '*/15 * * * *',
+    [defaultMode]: props.initialSearchText ?? (defaultMode === 'cron' ? '*/15 * * * *' : '')
+  })
+  const searchText = queries[currentMode]
+  const setSearchText = (value: string) => setQueries(prev => ({ ...prev, [currentMode]: value }))
+  const [testSample, setTestSample] = useState(props.initialTestSample ?? '')
+  const { push } = useNavigation()
+  const [completed, setCompleted] = useState<{ pattern: string; text: string; result: RegexMatchResult } | null>(null)
+  const activeTesterPattern = queries.tester
+  const regexMatchResult = completed?.pattern === activeTesterPattern && completed?.text === testSample ? completed.result : null
+  useEffect(() => {
+    if (currentMode !== 'tester') return
+    const controller = new AbortController()
+    setCompleted(null)
+    const timer = setTimeout(() => {
+      void runRegexInWorker(activeTesterPattern, testSample, { signal: controller.signal }).then(result => {
+        if (!controller.signal.aborted) setCompleted({ pattern: activeTesterPattern, text: testSample, result })
+      })
+    }, 150)
+    return () => { clearTimeout(timer); controller.abort() }
+  }, [currentMode, activeTesterPattern, testSample])
+  const editSample = () => push(() => <EditRegexText sample={testSample} onSave={setTestSample} />)
 
   const filteredRegexList = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -59,31 +91,17 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
     )
   }, [searchText])
 
-  const activeTesterPattern =
-    currentMode === 'tester' && searchText.trim()
-      ? searchText.trim()
-      : '1(?:3\\d|4[5-9]|5[0-35-9]|6[2567]|7[0-8]|8\\d|9[0-35-9])\\d{8}'
-
-  const regexMatchResult = useMemo(
-    () => runSafeRegexMatch(activeTesterPattern, testSample, 'g'),
-    [activeTesterPattern, testSample]
-  )
-
-  const activeCronExpr =
-    currentMode === 'cron' && searchText.trim() ? searchText.trim() : '0 0 2 * * ?'
-
-  const cronResult = useMemo(() => parseAndExplainCron(activeCronExpr), [activeCronExpr])
-
+  const [cronRefresh, setCronRefresh] = useState(0)
+  const cronResult = useMemo(() => parseAndExplainCron(queries.cron), [queries.cron, currentMode, cronRefresh])
   const handleLoadIntoTester = (item: RegexPresetItem) => {
+    setQueries(prev => ({ ...prev, tester: `/${item.pattern}/${item.recommendedFlags || ''}` }))
+    setTestSample(item.validExamples[0] ?? '')
     setCurrentMode('tester')
-    setSearchText(item.pattern)
-    if (item.validExamples.length > 0) {
-      setTestSample(item.validExamples.join('  |  '))
-    }
   }
 
   return (
     <List
+      isLoading={currentMode === 'tester' && !regexMatchResult}
       searchText={searchText}
       onSearchTextChange={setSearchText}
       searchBarPlaceholder={
@@ -105,6 +123,10 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
         </List.Dropdown>
       }
       isShowingDetail={true}
+      filterBar={currentMode === 'cron' ? {
+        summaryText: cronResult.calculatedAt ? `计算起点 ${cronResult.calculatedAt}` : '支持五位 Linux 与六位 Spring 基础语法',
+        actions: [{ id: 'refresh-cron', title: '重新推算', onAction: () => setCronRefresh(value => value + 1) }]
+      } : undefined}
     >
       {currentMode === 'dict' && (
         <List.Section title={`常用本土业务正则库（共 ${filteredRegexList.length} 项）`}>
@@ -170,25 +192,25 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
         <List.Section title="实时正则匹配与捕获组透视">
           <List.Item
             id="tester-summary"
-            icon={regexMatchResult.isValidRegex ? Icon.CheckCircle : Icon.XMarkCircle}
+            icon={regexMatchResult?.isValidRegex ? Icon.CheckCircle : Icon.XMarkCircle}
             title={
-              regexMatchResult.isValidRegex
-                ? `共命中 ${regexMatchResult.totalMatches} 处匹配（耗时 ${regexMatchResult.elapsedMs}ms）`
-                : '正则表达式语法错误或已触发安全熔断'
+              regexMatchResult?.isValidRegex
+                ? `${regexMatchResult.truncated ? '仅显示前' : '共命中'} ${regexMatchResult.totalMatches} 处匹配（耗时 ${regexMatchResult.elapsedMs}ms）`
+                : regexMatchResult ? '正则匹配未完成' : '正在匹配…'
             }
             subtitle={activeTesterPattern}
             accessories={[
-              regexMatchResult.isValidRegex
+              regexMatchResult?.isValidRegex
                 ? { tag: '语法有效' }
-                : { tag: { value: '异常拦截', color: Color.Red } }
+                : regexMatchResult ? { tag: { value: '异常拦截', color: Color.Red } } : { tag: '计算中' }
             ]}
             detail={
               <List.Item.Detail
                 markdown={
-                  regexMatchResult.isValidRegex
+                  regexMatchResult?.isValidRegex
                     ? `### 实时测试结果
 \`\`\`regexp
-/${activeTesterPattern}/g
+/${regexMatchResult.pattern}/${regexMatchResult.flags}
 \`\`\`
 
 #### 待测样本原文
@@ -205,26 +227,27 @@ ${
           (m) =>
             `- **Match #${m.index + 1}**: \`${m.text}\` *(位置 [${m.start}, ${m.end}])*\n${
               m.groups.length > 0
-                ? m.groups.map((g) => `  - Group ${g.groupIndex}: \`${g.value}\``).join('\n')
+                ? m.groups.map((g) => `  - Group ${g.groupIndex}: ${g.start < 0 ? '未匹配' : `\`${g.value}\` (位置 [${g.start}, ${g.end}])`}`).join('\n')
                 : ''
             }`
         )
         .join('\n')
 }
 `
-                    : `### 正则异常诊断
-> **错误详情**：${regexMatchResult.errorMessage}
+                    : `### 正则匹配
+${regexMatchResult?.errorMessage || '正在处理…'}
 `
                 }
               />
             }
             actions={
               <ActionPanel>
-                <Action.CopyToClipboard title="复制当前正则表达式" content={activeTesterPattern} />
-                <Action.CopyToClipboard
+                <Action title="编辑待测文本…" icon={Icon.Pencil} onAction={editSample} />
+                {activeTesterPattern && <Action.CopyToClipboard title="复制当前正则表达式" content={activeTesterPattern} />}
+                {regexMatchResult?.matches.some(m => m.text.length > 0) && <Action.CopyToClipboard
                   title="复制全部命中结果"
                   content={regexMatchResult.matches.map((m) => m.text).join('\n')}
-                />
+                />}
               </ActionPanel>
             }
           />
@@ -250,11 +273,13 @@ ${
                     ? `### Cron 自然语言直译
 > **${cronResult.chineseSummary}**
 
-#### 未来 5 次执行时间推算 (Asia/Shanghai)
-| 批次 | 触发绝对时间 | 相对倒计时 |
+${cronResult.dialect}；使用本机时区，不支持 Quartz 编号及 L/W/# 扩展。
+
+#### 未来 5 次执行时间推算 (${cronResult.timeZone})
+| 批次 | 触发时间及偏移 | 距起算时刻 |
 | :--- | :--- | :--- |
 ${cronResult.nextRuns
-  .map((r, i) => `| 第 ${i + 1} 次 | \`${r.formattedTime}\` | ${r.relativeTime} |`)
+  .map((r, i) => `| 第 ${i + 1} 次 | \`${r.formattedTime} ${r.utcOffset}\` | ${r.relativeTime} |`)
   .join('\n')}
 
 #### 槽位字段拆解
@@ -271,10 +296,10 @@ ${cronResult.slots.map((s) => `| ${s.name} | \`${s.value}\` | ${s.meaning} |`).j
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard title="复制 Cron 表达式" content={cronResult.expression} />
-                <Action.CopyToClipboard
+                {cronResult.isValid && <Action.CopyToClipboard
                   title="复制未来 5 次执行时间"
-                  content={cronResult.nextRuns.map((r) => r.formattedTime).join('\n')}
-                />
+                  content={cronResult.nextRuns.map((r) => `${r.formattedTime} ${r.utcOffset}`).join('\n')}
+                />}
               </ActionPanel>
             }
           />
@@ -302,6 +327,13 @@ ${cronResult.slots.map((s) => `| ${s.name} | \`${s.value}\` | ${s.meaning} |`).j
       )}
     </List>
   )
+}
+
+// 宿主按 manifest 中的功能码选择导出命令，默认组件不会自动收到 featureCode 属性。
+export const commands = {
+  'regex-dict': () => <RegexCronCommand initialMode="dict" />,
+  'regex-tester': () => <RegexCronCommand initialMode="tester" />,
+  'cron-explainer': () => <RegexCronCommand initialMode="cron" />
 }
 
 export default RegexCronCommand

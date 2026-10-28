@@ -1,0 +1,27 @@
+{
+  "id": "super-markdown",
+  "name": "Markdown 即时阅读与大纲笔记",
+  "description": "Markdown 预览、大纲提取与字数统计",
+  "version": "1.0.0",
+  "revoked": true,
+  "revokedReason": "功能未完成（只有示例数据）",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

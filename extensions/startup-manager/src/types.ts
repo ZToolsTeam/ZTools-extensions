@@ -28,6 +28,8 @@ export interface StartupScanSummary {
   serviceCount: number
   taskCount: number
   brokenCount: number
+  /** 部分来源（注册表、启动目录、服务、计划任务）读取失败，列表不完整 */
+  warnings?: string[]
   errorCode?: string
   error?: string
 }
@@ -43,9 +45,13 @@ export interface StartupToggleResult {
 
 export interface StartupCleanBrokenResult {
   ok: boolean
+  /** 部分成功：已清理 removedIds，其余见 failed */
+  partial?: boolean
   removedCount: number
   removedIds: string[]
   remainingItems?: StartupEntryItem[]
+  /** 未能清理的条目与原因 */
+  failed?: Array<{ id: string; errorCode: string; error: string }>
   errorCode?: string
   error?: string
 }

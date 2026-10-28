@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-wechat-cleaner",
+  "version": "1.0.0",
+  "description": "深度扫描微信 PC 版 FileStorage 目录下的群聊缓存、朋友圈图片视频、自动下载重复文件与旧版本残留，保护核心聊天记录",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/wechat-cleaner.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

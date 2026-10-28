@@ -1,0 +1,27 @@
+{
+  "id": "image-editor",
+  "name": "图片轻量编辑与批注",
+  "description": "图片缩放、旋转翻转与文字水印",
+  "version": "1.0.0",
+  "revoked": true,
+  "revokedReason": "功能未完成（只有示例数据）",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

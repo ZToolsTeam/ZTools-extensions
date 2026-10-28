@@ -1,9 +1,9 @@
 {
   "id": "pomodoro-focus",
   "name": "番茄倒数",
-  "version": "1.0.1",
-  "description": "25分钟极简番茄专注工作钟，结合重要日程、发薪日、版本上线倒数日管理，原生系统通知提醒",
-  "author": "ZTools Team",
+  "version": "1.0.3",
+  "description": "25 分钟番茄专注与短长休息，离页继续计时、重启恢复状态；本地保存重要日程倒数日并发送系统通知",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -55,5 +55,6 @@
         "添加纪念日"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

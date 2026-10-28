@@ -1,9 +1,10 @@
 {
   "id": "snippets",
   "name": "快捷短语",
-  "version": "1.2.1",
+  "version": "1.2.5",
+  "minAppVersion": "1.1.8.3",
   "description": "管理常用开票税号、收件地址、客服话术与常用模板，支持动态日期/时间/剪贴板宏变量，一键穿透上屏或复制",
-  "author": "ZTools Team",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

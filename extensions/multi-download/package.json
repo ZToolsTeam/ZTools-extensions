@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-multi-download",
+  "version": "1.0.0",
+  "description": "把下载链接交给本机 aria2 多线程下载，没有 aria2 时由客户端单连接下载 HTTP 链接，并管理「下载」文件夹里的文件",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

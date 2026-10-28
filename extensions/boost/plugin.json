@@ -1,0 +1,28 @@
+{
+  "id": "boost",
+  "name": "开机启动项",
+  "description": "列出内存占用最高的进程、“启动”文件夹里的开机启动项和临时文件，勾选并确认后结束进程，或把启动项和临时文件移入回收站",
+  "version": "2.0.7",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "shell",
+    "fs",
+    "process"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

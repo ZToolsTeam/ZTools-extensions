@@ -1,9 +1,9 @@
 {
   "id": "docker-manager",
   "name": "容器管控",
-  "version": "1.0.1",
-  "description": "免开 Docker Desktop 秒查本地容器状态、CPU/内存占用与端口映射，回车直接访问服务网页，支持启停与查看日志",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "查看本机 Docker 容器、端口和资源采样，支持启停、日志与确认后清理停止容器；需已安装并启动 Docker 环境",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -40,7 +40,7 @@
     },
     {
       "code": "docker-running",
-      "explain": "仅筛选查看当前处于运行中的活跃容器及资源占用",
+      "explain": "筛选运行中的容器并读取 CPU、内存采样",
       "cmds": [
         "运行中容器",
         "docker运行中",
@@ -49,7 +49,7 @@
     },
     {
       "code": "docker-clean-stopped",
-      "explain": "快速筛选并批量清理所有已退出的停止容器 (docker container prune)",
+      "explain": "列出已停止容器，确认清单后清理，保留挂载的数据卷",
       "cmds": [
         "清理容器",
         "删除停止容器",

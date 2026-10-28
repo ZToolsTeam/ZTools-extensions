@@ -17,6 +17,9 @@ export interface RegexPresetItem {
 }
 
 export interface CronParseResult {
+  timeZone?: string
+  dialect?: string
+  calculatedAt?: string
   isValid: boolean
   expression: string
   chineseSummary: string
@@ -28,12 +31,16 @@ export interface CronParseResult {
   }>
   nextRuns: Array<{
     formattedTime: string
+    utcOffset: string
     relativeTime: string
     timestamp: number
   }>
 }
 
 export interface RegexMatchResult {
+  pattern?: string
+  flags?: string
+  truncated?: boolean
   isValidRegex: boolean
   errorMessage?: string
   totalMatches: number

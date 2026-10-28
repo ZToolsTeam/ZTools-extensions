@@ -1,9 +1,9 @@
 {
   "id": "quicklinks",
   "name": "网页快开",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "聚合多平台快捷搜索与工作流网址组批量打开，支持自定义 {query} 变量与热键直达",
-  "author": "ZTools Team",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

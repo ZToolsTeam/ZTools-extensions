@@ -1,3 +1,5 @@
+export type SqlDialect = 'mysql' | 'postgresql' | 'sqlite'
+
 export type SqlHelperTab = 'formatter' | 'mybatis' | 'ddl'
 
 export interface FormattedSqlOutput {
@@ -28,6 +30,7 @@ export interface DdlParsedColumn {
   dbType: string
   nullable: boolean
   comment?: string
+  unsigned?: boolean
 }
 
 export interface DdlParsedResult {
@@ -35,6 +38,7 @@ export interface DdlParsedResult {
   warningMessage?: string
   tableName: string
   columns: DdlParsedColumn[]
+  warnings: string[]
   generatedCode: {
     typescript: string
     golang: string

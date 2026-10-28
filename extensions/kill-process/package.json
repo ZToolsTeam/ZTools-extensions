@@ -1,0 +1,10 @@
+{
+  "name": "kill-process",
+  "version": "1.0.0",
+  "description": "按内存或 CPU 占用列出进程，确认后结束进程或进程树",
+  "type": "module",
+  "main": "dist/index.js",
+  "dependencies": {
+    "@ztools/declarative-ui": "^1.0.0"
+  }
+}

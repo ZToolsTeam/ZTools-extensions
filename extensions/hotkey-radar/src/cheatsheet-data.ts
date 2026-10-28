@@ -1,4 +1,4 @@
-import type { CheatsheetShortcutItem, HotkeyProbePreset } from './types'
+import type { CheatsheetShortcutItem, HotkeyProbePreset } from './types.js'
 
 export const HIGH_CONFLICT_HOTKEY_PRESETS: readonly HotkeyProbePreset[] = Object.freeze([
   {

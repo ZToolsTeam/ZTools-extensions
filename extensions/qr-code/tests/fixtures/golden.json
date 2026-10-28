@@ -1,0 +1,37 @@
+[
+ {
+  "text": "https://ztools.cn",
+  "ecc": "M",
+  "version": 2,
+  "mask": 2,
+  "sha256": "3de4b57b6b6a676235b31966e15f4aa7b3c0d8004f98b16d73a318480cdf2253"
+ },
+ {
+  "text": "中文二维码测试 😀",
+  "ecc": "Q",
+  "version": 3,
+  "mask": 0,
+  "sha256": "c374679f0ca683902054ac4a68f18ce4540f130e6ac6d81fdc3054699f4b31b6"
+ },
+ {
+  "text": "WIFI:T:WPA;S:My\\;Net;P:pass;;",
+  "ecc": "H",
+  "version": 4,
+  "mask": 7,
+  "sha256": "7fd45dc4221cc33ab6a87de6bb0f1ec9f40dfd88665b88d17ed414b3761ae8f3"
+ },
+ {
+  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "ecc": "L",
+  "version": 7,
+  "mask": 0,
+  "sha256": "1b893491bd8934e7e281a7818cb4450f2b9821d9db8aeb32d1d4442b21d32f12"
+ },
+ {
+  "text": "长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本长文本",
+  "ecc": "M",
+  "version": 18,
+  "mask": 2,
+  "sha256": "0b08135decc86370a419fbbaa4fdbae6b8cd3ca6afb52173e26f64130d10a832"
+ }
+]

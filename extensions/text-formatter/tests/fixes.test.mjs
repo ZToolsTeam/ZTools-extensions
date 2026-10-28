@@ -41,7 +41,7 @@ async function applyViaEditor(view, text) {
 }
 
 // ---------------------------------------------------------------- text-formatter-1
-test('[text-formatter-1] 多行正文走 TextArea 编辑页，换行完整保留，行操作按行处理', async () => {
+test('多行正文走 TextArea 编辑页，换行完整保留，行操作按行处理', async () => {
   const view = await mount(TextFormatterCommand)
   assert.equal(view.tree().props.searchText, '', '搜索框不再承载正文')
   await applyViaEditor(view, MULTI)
@@ -52,7 +52,7 @@ test('[text-formatter-1] 多行正文走 TextArea 编辑页，换行完整保留
   assert.equal(previewBody(detailOf(view, 'dedupe-lines')).split('\n').filter((l) => l === 'banana').length, 1)
 })
 
-test('[text-formatter-1] 编辑页预填当前文本；清空后应用回到示例文本', async () => {
+test('编辑页预填当前文本；清空后应用回到示例文本', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, 'a\nb')
   await view.run(view.item('source-text'), '编辑待排版文本')
@@ -65,7 +65,7 @@ test('[text-formatter-1] 编辑页预填当前文本；清空后应用回到示�
   assert.equal(host.lastToast().title, '已清空，使用示例文本')
 })
 
-test('[text-formatter-1] 从剪贴板读取多行文本后，在搜索框输入只筛选转换项，不会覆盖或拍平正文', async () => {
+test('从剪贴板读取多行文本后，在搜索框输入只筛选转换项，不会覆盖或拍平正文', async () => {
   host.clipboard.text = MULTI
   const view = await mount(TextFormatterCommand)
   await view.run(view.item('source-text'), '从剪贴板粘贴文本')
@@ -87,7 +87,7 @@ test('[text-formatter-1] 从剪贴板读取多行文本后，在搜索框输入�
   assert.match(sourceSubtitle(view), /7 行/)
 })
 
-test('[text-formatter-1] 「将此结果设为当前输入」保留多行；空结果不替换当前文本', async () => {
+test('「将此结果设为当前输入」保留多行；空结果不替换当前文本', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, 'b\na')
   await view.run(view.item('sort-lines-asc'), '将此结果设为当前输入文本')
@@ -99,7 +99,7 @@ test('[text-formatter-1] 「将此结果设为当前输入」保留多行；空�
   assert.equal(previewBody(detailOf(view, 'source-text')), '你好世界', '空结果不会把正文清掉')
 })
 
-test('[text-formatter-1] 剪贴板为空或读取失败时提示失败，正文不变', async () => {
+test('剪贴板为空或读取失败时提示失败，正文不变', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, 'keep\nme')
   host.clipboard.text = ''
@@ -121,7 +121,7 @@ test('[text-formatter-1] 剪贴板为空或读取失败时提示失败，正文�
   assert.equal(previewBody(detailOf(view, 'source-text')), 'keep\nme')
 })
 
-test('[text-formatter-1] 复制：空结果提示无内容、宿主拒绝写入时提示失败，均不显示「已复制」', async () => {
+test('复制：空结果提示无内容、宿主拒绝写入时提示失败，均不显示「已复制」', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, '你好世界')
   host.clipboard.text = 'SENTINEL'
@@ -150,7 +150,7 @@ test('[text-formatter-1] 复制：空结果提示无内容、宿主拒绝写入�
 })
 
 // ---------------------------------------------------------------- text-formatter-3
-test('[text-formatter-3] 简转繁：错误映射已清除，一简对多繁按词组转换', () => {
+test('简转繁：错误映射已清除，一简对多繁按词组转换', () => {
   assert.equal(
     convertToTraditional('初次出发判断利用冰刺刻，这个问题后来说过'),
     '初次出發判斷利用冰刺刻，這個問題後來說過'
@@ -160,12 +160,12 @@ test('[text-formatter-3] 简转繁：错误映射已清除，一简对多繁按�
   assert.equal(convertToTraditional('为什么在这里'), '為什麼在這裡')
 })
 
-test('[text-formatter-3] 繁转简：反向表单独维护，不被一对多覆盖', () => {
+test('繁转简：反向表单独维护，不被一对多覆盖', () => {
   assert.equal(convertToSimplified('這齣戲很好看，儂好，後來發現問題'), '这出戏很好看，侬好，后来发现问题')
   assert.equal(convertToSimplified('頭髮很乾，幹部，為什麼在這裡'), '头发很干，干部，为什么在这里')
 })
 
-test('[text-formatter-3] 边界：空串、纯英文、Emoji 与扩展区汉字原样保留，往返不丢字', () => {
+test('边界：空串、纯英文、Emoji 与扩展区汉字原样保留，往返不丢字', () => {
   assert.equal(convertToTraditional(''), '')
   assert.equal(convertToSimplified(''), '')
   assert.equal(convertToTraditional(undefined), '')
@@ -174,7 +174,7 @@ test('[text-formatter-3] 边界：空串、纯英文、Emoji 与扩展区汉字�
   assert.equal(convertToSimplified(convertToTraditional(text)), text)
 })
 
-test('[text-formatter-3] 80 万字长文本转换在 2 秒内完成', () => {
+test('80 万字长文本转换在 2 秒内完成', () => {
   const big = '头发很干，后来发现问题。'.repeat(70000)
   const start = Date.now()
   const out = convertToTraditional(big)
@@ -184,7 +184,7 @@ test('[text-formatter-3] 80 万字长文本转换在 2 秒内完成', () => {
 })
 
 // ---------------------------------------------------------------- text-formatter-4
-test('[text-formatter-4] 中文标点转英文：不改坏小数、域名、网址，行尾不留空格', () => {
+test('中文标点转英文：不改坏小数、域名、网址，行尾不留空格', () => {
   assert.equal(toEnglishPunctuation('版本号是3.14，官网：example.com。'), '版本号是3.14, 官网: example.com.')
   assert.equal(toEnglishPunctuation('see https://example.com/a?b=1,c ok'), 'see https://example.com/a?b=1,c ok')
   assert.equal(toEnglishPunctuation('第一行。\n第二行，\n  缩进行'), '第一行.\n第二行,\n  缩进行')
@@ -192,7 +192,7 @@ test('[text-formatter-4] 中文标点转英文：不改坏小数、域名、网�
   assert.equal(toEnglishPunctuation('pi=3.14,e=2.71'), 'pi=3.14,e=2.71', '纯 ASCII 原样保留')
 })
 
-test('[text-formatter-4] 英文标点转中文：只转换紧挨中文的标点，网址、邮箱、小数、行内代码不动', () => {
+test('英文标点转中文：只转换紧挨中文的标点，网址、邮箱、小数、行内代码不动', () => {
   assert.equal(toChinesePunctuation('see https://example.com/a?b=1,c ok'), 'see https://example.com/a?b=1,c ok')
   assert.equal(toChinesePunctuation('版本号是3.14,官网:example.com.'), '版本号是3.14，官网：example.com.', '句点两侧都不是中文时不转换')
   assert.equal(
@@ -206,7 +206,7 @@ test('[text-formatter-4] 英文标点转中文：只转换紧挨中文的标点�
   assert.equal(toChinesePunctuation(''), '')
 })
 
-test('[text-formatter-4] 中文智能排版不再破坏网址与小数', () => {
+test('中文智能排版不再破坏网址与小数', () => {
   assert.equal(
     formatChineseSmart('请访问https://example.com/a?b=1,c查看文档.版本3.14发布'),
     '　　请访问 https://example.com/a?b=1,c 查看文档。版本 3.14 发布'
@@ -214,7 +214,7 @@ test('[text-formatter-4] 中文智能排版不再破坏网址与小数', () => {
 })
 
 // ---------------------------------------------------------------- text-formatter-5
-test('[text-formatter-5] 去除行号只去掉 01. / 1) / 1、 前缀，正文开头的数字保留', () => {
+test('去除行号只去掉 01. / 1) / 1、 前缀，正文开头的数字保留', () => {
   assert.equal(
     removeLineNumbers('3 apples\n2024 年会议纪要\n1. first item\n01. x\n2) b\n3、c\n3.14 是圆周率\n  4. 缩进'),
     '3 apples\n2024 年会议纪要\nfirst item\nx\nb\nc\n3.14 是圆周率\n缩进'
@@ -225,7 +225,7 @@ test('[text-formatter-5] 去除行号只去掉 01. / 1) / 1、 前缀，正文�
 })
 
 // ---------------------------------------------------------------- text-formatter-6
-test('[text-formatter-6] 中文智能排版合并多行时英文与数字之间补空格，空行作为段落边界', () => {
+test('中文智能排版合并多行时英文与数字之间补空格，空行作为段落边界', () => {
   assert.equal(
     splitChineseParagraphs('banana\napple\nbanana\n3 apples\n2024 年会议纪要'),
     'banana apple banana 3 apples 2024 年会议纪要'
@@ -243,14 +243,14 @@ test('[text-formatter-6] 中文智能排版合并多行时英文与数字之间�
   )
 })
 
-test('[text-formatter-6] Markdown 结构行独立成行、不缩进、不并入正文', () => {
+test('Markdown 结构行独立成行、不缩进、不并入正文', () => {
   assert.equal(
     formatChineseSmart('说明文字\n- 第一项\n- 第二项\n---\n结尾'),
     '　　说明文字\n\n- 第一项\n- 第二项\n---\n\n　　结尾'
   )
 })
 
-test('[text-formatter-6] 边界：空串、只有空白行、80 万字长文本', () => {
+test('边界：空串、只有空白行、80 万字长文本', () => {
   assert.equal(formatChineseSmart(''), '')
   assert.equal(formatChineseSmart('\n\n   \n'), '')
   const big = 'line, ok.\nhello world\n'.repeat(40000)
@@ -261,12 +261,12 @@ test('[text-formatter-6] 边界：空串、只有空白行、80 万字长文本'
   assert.ok(!out.includes('okhello'))
 })
 
-test('[text-formatter-6] 中英文混排加空格不再删除中文行之间的换行', () => {
+test('中英文混排加空格不再删除中文行之间的换行', () => {
   assert.equal(normalizeCjkSpacing('标题\n\n正文  内容'), '标题\n\n正文内容')
 })
 
 // ---------------------------------------------------------------- text-formatter-7
-test('[text-formatter-7] 开启右侧详情，完整展示结果的换行、缩进与空白', async () => {
+test('开启右侧详情，完整展示结果的换行、缩进与空白', async () => {
   const view = await mount(TextFormatterCommand)
   assert.equal(view.tree().props.isShowingDetail, true)
   await applyViaEditor(view, '  a   b  \n\n\tc')
@@ -282,7 +282,7 @@ test('[text-formatter-7] 开启右侧详情，完整展示结果的换行、缩�
   assert.deepEqual(row.props.accessories, [{ text: '8 字符' }])
 })
 
-test('[text-formatter-7] 预览边界：空结果给出说明、内容含 ``` 不会提前结束代码块、超长结果截断并注明', async () => {
+test('预览边界：空结果给出说明、内容含 ``` 不会提前结束代码块、超长结果截断并注明', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, '你好世界')
   assert.equal(detailOf(view, 'camel-case'), '该转换对当前文本没有输出内容')
@@ -304,7 +304,7 @@ test('[text-formatter-7] 预览边界：空结果给出说明、内容含 ``` �
 })
 
 // ---------------------------------------------------------------- text-formatter-v1
-test('[text-formatter-v1] Markdown 自动排版不改坏粗体、分隔线、负数，代码块内容原样保留', () => {
+test('Markdown 自动排版不改坏粗体、分隔线、负数，代码块内容原样保留', () => {
   const input = '**bold** text\n---\n***\n-1 degree\n+86 电话\n--flag\n*斜体* 文字\n#Heading\n-Item\n*Item 2\n```c\n#include <x>\n*ptr\n\n\n\n-x\n```\n\n\n\nend  '
   assert.equal(
     formatMarkdown(input),
@@ -312,7 +312,7 @@ test('[text-formatter-v1] Markdown 自动排版不改坏粗体、分隔线、负
   )
 })
 
-test('[text-formatter-v1] Markdown 代码块：~~~ 围栏、未闭合的代码块到文末都不处理', () => {
+test('Markdown 代码块：~~~ 围栏、未闭合的代码块到文末都不处理', () => {
   assert.equal(formatMarkdown('~~~\n#a\n~~~\n#b'), '~~~\n#a\n~~~\n# b')
   assert.equal(formatMarkdown('````\n```\n#a\n````\n#b'), '````\n```\n#a\n````\n# b', '短围栏不能关闭长围栏')
   assert.equal(formatMarkdown('```\n#a\n-b'), '```\n#a\n-b')

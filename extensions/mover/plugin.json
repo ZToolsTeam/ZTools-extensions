@@ -1,0 +1,28 @@
+{
+  "id": "mover",
+  "name": "C盘搬家",
+  "description": "把 C 盘用户目录下的微信与 QQ 文件、下载、文档、视频和 npm / pip / NuGet 缓存复制到其他分区，并在原位置建立目录联接，软件仍按原路径访问",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "system",
+    "dialog",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

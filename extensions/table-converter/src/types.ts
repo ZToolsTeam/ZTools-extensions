@@ -1,10 +1,15 @@
-export type InferredColumnType = 'number' | 'boolean' | 'string' | 'null'
-export type DetectedSourceFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'html' | 'empty'
+export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+export type InferredColumnType = 'number' | 'boolean' | 'string' | 'null' | 'json' | 'mixed'
+export type DetectedSourceFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'html' | 'sql' | 'empty'
+export type SourceFormat = Exclude<DetectedSourceFormat, 'empty'> | 'auto'
 
 export interface TableGrid {
   headers: string[]
   rows: string[][]
   inferredTypes: InferredColumnType[]
+  /** JSON / SQL 的原始类型；undefined 表示原对象缺少此键。 */
+  values?: (JsonValue | undefined)[][]
+  warnings?: string[]
 }
 
 export interface TableConversionTarget {
@@ -16,4 +21,5 @@ export interface TableConversionTarget {
   fullText: string
   previewText: string
   typeSummary: string
+  error?: string
 }

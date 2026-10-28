@@ -1,9 +1,9 @@
 {
   "id": "mock-data",
   "name": "测试数据生成",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "一键生成符合国家校验位算法的虚拟测试用18位身份证号、手机号、统一社会信用代码、银行卡号及批量JSON测试数据",
-  "author": "ZTools Official",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

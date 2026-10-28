@@ -1,47 +1,24 @@
 export type SyncMode = 'incremental' | 'two-way' | 'mirror'
-export type DiffFilterType = 'all' | 'added' | 'modified' | 'orphan'
-export type DiffCategory = 'added' | 'modified' | 'reverse-add' | 'orphan'
-export type SyncDirection = 'src-to-dst' | 'dst-to-src' | 'delete-dst'
-
+export type DiffFilterType = 'all' | 'added' | 'modified' | 'orphan' | 'conflict'
 export interface FolderSyncDiffItem {
   relPath: string
-  diffType: DiffCategory
-  direction: SyncDirection
+  diffType: 'added' | 'modified' | 'reverse-add' | 'orphan' | 'conflict'
+  direction: 'src-to-dst' | 'dst-to-src' | 'delete-dst' | 'conflict'
   actionBadge: string
   reasonText: string
   sizeBytes: number
-  sourceMtimeMs: number | null
-  targetMtimeMs: number | null
   sourceFullPath: string
   targetFullPath: string
 }
-
-export interface CompareFoldersResponse {
-  ok: boolean
-  sourceDir: string
-  targetDir: string
-  syncMode: SyncMode
-  ignoreDevJunk: boolean
-  diffs: FolderSyncDiffItem[]
-  totalDiffs: number
-  transferBytes: number
-  targetFreeBytes: number
-  errorCode?: string
-  error?: string
-}
-
-export interface ExecuteSyncFailure {
-  relPath: string
-  errorCode: string
-  error: string
-}
-
+export interface CompareFoldersResponse { success: true; ok: true; planId: string; diffs: FolderSyncDiffItem[] }
 export interface ExecuteSyncResponse {
+  success: true
   ok: boolean
   syncedCount: number
   deletedCount: number
   transferredBytes: number
-  failures: ExecuteSyncFailure[]
-  errorCode?: string
+  remainingCount: number
+  failures: { relPath: string; error: string }[]
+  recoveryPaths: string[]
   error?: string
 }

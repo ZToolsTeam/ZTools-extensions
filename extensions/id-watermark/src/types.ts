@@ -12,6 +12,8 @@ export interface ImageMetadata {
   width: number
   height: number
   mimeType?: string
+  rawBytes: Uint8Array
+  path?: string
 }
 
 export interface PresetTemplate {
@@ -30,6 +32,5 @@ export interface WatermarkRenderResult {
   effectiveFontSizePx: number
   effectiveGapPx: number
   wrappedLines: string[]
-  svgOverlay: string
   blob: Blob
 }

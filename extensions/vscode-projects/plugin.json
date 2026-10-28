@@ -1,9 +1,9 @@
 {
   "id": "vscode-projects",
   "name": "最近项目",
-  "version": "1.0.1",
-  "description": "聚合检索 VS Code、Cursor、Trae、Windsurf 与 JetBrains 历史项目，实时透视 Git 分支，回车秒开对应 IDE 或终端",
-  "author": "ZTools Official",
+  "version": "1.0.4",
+  "description": "聚合检索 VS Code、Cursor、Trae、Windsurf 与 JetBrains 的本地最近项目，查看 Git 分支并打开编辑器或终端",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -57,5 +57,6 @@
         "jetbrains项目"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

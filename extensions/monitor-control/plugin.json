@@ -1,9 +1,9 @@
 {
   "id": "monitor-control",
   "name": "屏幕亮度与控制",
-  "version": "1.0.1",
-  "description": "免按显示器物理按键，通过 DDC/CI 与 WMI 调节外接与内置显示器硬件亮度、对比度，支持多屏同步与一键熄屏",
-  "author": "ZTools Team",
+  "version": "1.0.4",
+  "description": "读取显示器真实硬件状态，调节受支持的亮度与对比度；支持多屏统一亮度与系统熄屏命令",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -32,14 +32,15 @@
     },
     {
       "code": "monitor-sleep",
-      "explain": "立即关闭所有显示器背光进入省电状态（不锁机、不断后台任务）",
+      "explain": "请求系统关闭显示器；是否锁屏取决系统设置",
       "cmds": [
         "熄屏",
         "关闭屏幕",
         "关屏",
         "sleep monitor",
         "turn off screen"
-      ]
+      ],
+      "mode": "no-view"
     }
   ],
   "targets": [
@@ -55,5 +56,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

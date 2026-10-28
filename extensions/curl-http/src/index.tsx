@@ -5,30 +5,39 @@ import React, {
   Icon,
   Color,
   Clipboard,
+  confirmAlert,
   showToast,
   ToastStyle,
   useState,
   useMemo,
+  useRef,
+  useEffect,
 } from '@ztools/declarative-ui'
-import type { CodeTargetLang, HttpResponseSnapshot } from './types'
-import { isRealElectronHost } from './native-ipc'
+import type { CodeTargetLang, HttpResponseSnapshot } from './types.js'
 import {
   parseCurlCommand,
   generateCodeFromCurl,
   executeCurlRequest,
-} from './curl-service'
+} from './curl-service.js'
 
-export * from './types'
-export * from './curl-service'
-
-const DEFAULT_CURL_SAMPLE =
-  'curl -X POST "https://httpbin.org/post" -H "Content-Type: application/json" -H "X-Client: ZTools" -d \'{"query":"declarative-ui","limit":10}\''
+export * from './types.js'
+export * from './curl-service.js'
 
 export function CurlHttpCommand() {
-  const [rawCurl, setRawCurl] = useState<string>(isRealElectronHost() ? '' : DEFAULT_CURL_SAMPLE)
+  // 初始为空，不预填示例请求
+  const [rawCurl, setRawCurl] = useState<string>('')
   const [targetLang, setTargetLang] = useState<CodeTargetLang>('fetch')
   const [responseSnap, setResponseSnap] = useState<HttpResponseSnapshot | null>(null)
   const [isSending, setIsSending] = useState<boolean>(false)
+  const requestRevision = useRef(0)
+
+  useEffect(() => () => { requestRevision.current += 1 }, [])
+
+  const replaceRequest = (value: string): void => {
+    requestRevision.current += 1
+    setRawCurl(value)
+    setResponseSnap(null)
+  }
 
   const parsedState = useMemo(() => {
     try {
@@ -54,8 +63,7 @@ export function CurlHttpCommand() {
         })
         return
       }
-      setRawCurl(clip.trim())
-      setResponseSnap(null)
+      replaceRequest(clip.trim())
       await showToast({
         style: ToastStyle.Success,
         title: '已载入剪贴板 cURL 命令',
@@ -71,9 +79,23 @@ export function CurlHttpCommand() {
 
   const handleSendRequest = async (): Promise<void> => {
     if (!parsedState.ok || isSending) return
+    const { method, url } = parsedState.parsed
+    // DELETE / PUT 会删除或覆盖服务器上的数据，发送前请用户确认；取消或无法确认时不发送
+    if (method === 'DELETE' || method === 'PUT') {
+      const confirmed = await confirmAlert({
+        title: `确认发送 ${method} 请求？`,
+        message: `${url}\n${method === 'DELETE' ? '可能删除服务器上的数据' : '可能覆盖服务器上的数据'}，发送后无法撤回。`,
+        primaryAction: { title: `发送 ${method}`, style: 'destructive' },
+        dismissAction: { title: '取消' }
+      })
+      if (!confirmed) return
+    }
+    const revision = requestRevision.current
     setIsSending(true)
+    setResponseSnap(null)
     try {
       const snap = await executeCurlRequest(parsedState.parsed)
+      if (revision !== requestRevision.current) return
       setResponseSnap(snap)
       await showToast({
         style: snap.ok ? ToastStyle.Success : ToastStyle.Failure,
@@ -81,6 +103,7 @@ export function CurlHttpCommand() {
         message: `${snap.sizeBytes} bytes`,
       })
     } catch (err) {
+      if (revision !== requestRevision.current) return
       await showToast({
         style: ToastStyle.Failure,
         title: '请求执行失败',
@@ -97,7 +120,7 @@ export function CurlHttpCommand() {
       isLoading={isSending}
       searchBarPlaceholder="粘贴 cURL 命令或 HTTP URL..."
       searchText={rawCurl}
-      onSearchTextChange={setRawCurl}
+      onSearchTextChange={replaceRequest}
       searchBarAccessory={
         <List.Dropdown
           tooltip="选择目标代码语言"
@@ -121,7 +144,7 @@ export function CurlHttpCommand() {
             accessories={[{ tag: { value: '语法错误', color: Color.Red } }]}
             detail={
               <List.Item.Detail
-                markdown={`### cURL 解析异常\n\n\`\`\`text\n${parsedState.error}\n\`\`\`\n\n支持从 Chrome / Edge DevTools 直接复制 \`Copy as cURL (bash / cmd / PowerShell)\`。`}
+                markdown={`### cURL 解析异常\n\n\`\`\`text\n${parsedState.error}\n\`\`\`\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
               />
             }
             actions={

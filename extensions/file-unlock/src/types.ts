@@ -31,6 +31,8 @@ export interface FileUnlockInspectionResult {
   isDirectory: boolean
   isUnlocked: boolean
   processes: LockingProcessItem[]
+  /** 目录只抽查了部分文件（或有子目录读取失败），不能据此判断未被占用 */
+  partial?: boolean
   errorCode?: string
   error?: string
 }

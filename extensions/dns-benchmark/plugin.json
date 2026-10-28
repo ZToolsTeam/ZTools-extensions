@@ -1,9 +1,9 @@
 {
   "id": "dns-benchmark",
   "name": "DNS测速",
-  "version": "1.0.1",
-  "description": "一键并发实测阿里、腾讯、114、百度、Cloudflare、Google 等 15 组公共 DNS 对本机的真实解析延迟，按速度排序并一键切换当前网卡 DNS",
-  "author": "ZTools Team",
+  "version": "1.0.4",
+  "description": "测试公共 DNS 地址的响应情况，切换当前网络 DNS；Mac 支持真实域名解析、配置备份与恢复",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -20,7 +20,7 @@
   "features": [
     {
       "code": "dns-benchmark-run",
-      "explain": "并发实测 15 组公共 DNS 响应延迟并一键切换为最快 DNS",
+      "explain": "测量公共 DNS 地址并选择应用",
       "cmds": [
         "DNS测速",
         "切换DNS",
@@ -32,7 +32,7 @@
     },
     {
       "code": "dns-flush-cache",
-      "explain": "立即清空并刷新本机系统 DNS 解析缓存 (ipconfig /flushdns)",
+      "explain": "刷新系统 DNS 解析缓存，需要系统授权",
       "cmds": [
         "刷新DNS",
         "清空DNS缓存",
@@ -41,7 +41,7 @@
     },
     {
       "code": "dns-reset-dhcp",
-      "explain": "将当前网卡 DNS 恢复为路由器 DHCP 自动获取模式",
+      "explain": "将当前网络恢复为自动获取 DNS",
       "cmds": [
         "恢复默认DNS",
         "自动获取DNS",

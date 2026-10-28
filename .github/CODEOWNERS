@@ -1,0 +1,6 @@
+# 下面这些文件的改动会自动请维护者审核。
+# 官方名单（official-ids.json）决定哪些插件显示"官方"标记，只能由维护者修改。
+/packages/ztools-plugins-spec/official-ids.json @Sh1-5 @codingmuse
+/packages/ztools-plugins-spec/reserved-ids.json @Sh1-5 @codingmuse
+/.github/ @Sh1-5 @codingmuse
+/scripts/ @Sh1-5 @codingmuse

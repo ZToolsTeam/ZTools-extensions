@@ -1,0 +1,30 @@
+{
+  "id": "wechat-multi",
+  "name": "微信多开",
+  "description": "列出正在运行的 WeChat / Weixin 进程（PID、内存占用、启动时间），并可让客户端再运行一次微信程序；不修改、不注入微信，也不能解除微信的单实例限制，微信已在运行时通常只会切换到已有窗口",
+  "version": "2.0.6",
+  "draft": true,
+  "draftReason": "客户端只会再运行一次微信程序，不能解除微信的单实例限制；微信已在运行时再启动通常只会切换到已有窗口，多开功能不成立",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公效率",
+    "系统工具"
+  ],
+  "permissions": [
+    "system",
+    "child_process",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

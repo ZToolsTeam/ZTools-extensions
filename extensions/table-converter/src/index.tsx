@@ -1,182 +1,105 @@
-import React, {
-  Action,
-  ActionPanel,
-  Clipboard,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useEffect,
-  useMemo,
-  useState
-} from '@ztools/declarative-ui'
-import { buildAllConversionTargets, detectAndParse } from './table-service'
-
-export * from './types'
-export * from './table-service'
+import React, { Action, ActionPanel, Clipboard, Icon, List, Toast, showToast, useEffect, useMemo, useState, useRef, useNavigation } from '@ztools/declarative-ui'
+import { buildAllConversionTargets, detectAndParse, fencedPreview } from './table-service.js'
+import { TableInputForm } from './input-form.js'
+import type { SourceFormat } from './types.js'
+export * from './types.js'
+export * from './table-service.js'
 
 export interface TableConverterCommandProps {
   featureCode?: string
   initialRawText?: string
   initialHeaderMode?: 'first-row-header' | 'no-header'
   initialSqlTableName?: string
+  initialSourceFormat?: SourceFormat
 }
 
-const DEFAULT_SAMPLE_TSV = [
-  '服务模块\tQPS峰值\tP99延迟(ms)\t核心状态',
-  'ztools-indexer\t48500\t1.8\ttrue',
-  'declarative-reconciler\t19200\t3.2\ttrue',
-  'host-ipc-bridge\t12800\t2.4\ttrue'
-].join('\n')
-
 export function TableConverterCommand(props: TableConverterCommandProps = {}) {
-  const [rawText, setRawText] = useState<string>(props.initialRawText ?? DEFAULT_SAMPLE_TSV)
-  const [headerMode, setHeaderMode] = useState<'first-row-header' | 'no-header'>(
-    props.initialHeaderMode ?? 'first-row-header'
-  )
-  const [sqlTableName] = useState<string>(props.initialSqlTableName ?? 'my_table')
-  const [searchText, setSearchText] = useState<string>('')
-  const [isConverting, setIsConverting] = useState<boolean>(false)
+  const [rawText, setRawText] = useState(props.initialRawText ?? '')
+  const [headerMode, setHeaderMode] = useState(props.initialHeaderMode ?? 'first-row-header')
+  const [sqlTableName, setSqlTableName] = useState(props.initialSqlTableName ?? 'my_table')
+  const [source, setSource] = useState<SourceFormat>(props.initialSourceFormat ?? 'auto')
+  const [searchText, setSearchText] = useState('')
+  const [isReading, setIsReading] = useState(false)
+  const [readError, setReadError] = useState('')
+  const generation = useRef(0), alive = useRef(true)
+  const { push } = useNavigation()
+  useEffect(() => () => { alive.current = false; generation.current++ }, [])
 
   const handleReadClipboard = async () => {
-    setIsConverting(true)
+    const request = ++generation.current
+    setIsReading(true); setReadError('')
     try {
-      const clipText = await Clipboard.readText()
-      if (clipText && clipText.trim()) {
-        setRawText(clipText)
-        await showToast({
-          style: Toast.Style.Success,
-          title: '已从剪贴板读取表格数据'
-        })
-      }
-    } catch {
-      // Keep current text if clipboard is empty or unavailable
+      const text = await Clipboard.readText()
+      if (!alive.current || request !== generation.current) return
+      setRawText(text ?? '')
+      // 读取成功不等于转换成功；无效输入仍保存，供编辑修正。
+    } catch (error) {
+      if (!alive.current || request !== generation.current) return
+      const message = error instanceof Error ? error.message : String(error)
+      setReadError('剪贴板读取失败，保留上一次输入。')
+      await showToast({ style: Toast.Style.Failure, title: '未能读取剪贴板', message })
     } finally {
-      setIsConverting(false)
+      if (alive.current && request === generation.current) setIsReading(false)
     }
   }
 
   useEffect(() => {
-    if (props.initialRawText === undefined) {
-      void handleReadClipboard()
-    }
+    if (props.initialRawText === undefined) void handleReadClipboard()
   }, [props.featureCode])
 
-  const parsed = useMemo(
-    () => detectAndParse(rawText, headerMode === 'first-row-header'),
-    [rawText, headerMode]
-  )
+  const result = useMemo(() => {
+    try {
+      const parsed = detectAndParse(rawText, headerMode === 'first-row-header', source)
+      const targets = parsed.format === 'empty' ? [] : buildAllConversionTargets(parsed.grid, sqlTableName)
+      return { parsed, targets, error: '' }
+    } catch (error) {
+      return { parsed: null, targets: [], error: error instanceof Error ? error.message : String(error) }
+    }
+  }, [rawText, headerMode, source, sqlTableName])
+  const preferred = props.featureCode?.replace('table-to-', '')
+  const targets = [...result.targets].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
+    .filter(target => [target.id, target.title, target.subtitle].some(text => text.toLowerCase().includes(searchText.trim().toLowerCase())))
+  const grid = result.parsed?.grid
+  const summary = result.error ? '解析失败，原文保留，可编辑后重试。' : result.parsed?.format === 'empty' ? '请读取剪贴板或编辑输入' : `${result.parsed?.format.toUpperCase()} · ${grid?.rows.length ?? 0} 行 × ${grid?.headers.length ?? 0} 列`
+  const editInput = () => {
+    generation.current++; setIsReading(false)
+    push(<TableInputForm initial={{ text: rawText, source, sqlTableName }} hasHeader={headerMode === 'first-row-header'} onApply={value => {
+      if (!alive.current) return
+      generation.current++; setRawText(value.text); setSource(value.source); setSqlTableName(value.sqlTableName); setReadError('')
+    }} />)
+  }
 
-  const conversionTargets = useMemo(() => {
-    const targets = buildAllConversionTargets(parsed.grid, sqlTableName)
-    const q = searchText.trim().toLowerCase()
-    if (!q) return targets
-    return targets.filter(
-      (t) =>
-        t.title.toLowerCase().includes(q) ||
-        t.subtitle.toLowerCase().includes(q) ||
-        t.id.toLowerCase().includes(q)
-    )
-  }, [parsed.grid, sqlTableName, searchText])
-
-  const rowCount = parsed.grid.rows.length
-  const colCount = parsed.grid.headers.length
-
-  return (
-    <List
-      navigationTitle="表格互转"
-      isLoading={isConverting}
-      isShowingDetail={true}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="切换目标转换格式（Markdown / JSON / SQL / HTML / CSV）..."
-      searchBarAccessory={
-        <List.Dropdown
-          value={headerMode}
-          onChange={(val) => setHeaderMode(val as 'first-row-header' | 'no-header')}
-          tooltip="表头识别模式"
-        >
-          <List.Dropdown.Item
-            title="第一行为列标题（首行表头）"
-            value="first-row-header"
-            icon={Icon.List}
-          />
-          <List.Dropdown.Item
-            title="纯数据无表头（自动分配 col_1, col_2...）"
-            value="no-header"
-            icon={Icon.Code}
-          />
-        </List.Dropdown>
-      }
-      filterBar={{
-        summaryText:
-          parsed.format === 'empty'
-            ? '等待输入或从剪贴板粘贴表格数据'
-            : `识别源格式: ${parsed.format.toUpperCase()} · 共 ${rowCount} 行 × ${colCount} 列`,
-        actions: [
-          {
-            id: 'read-clipboard',
-            title: '读取剪贴板',
-            onAction: () => {
-              void handleReadClipboard()
-            }
-          }
-        ]
-      }}
-    >
-      {conversionTargets.map((target) => (
-        <List.Item
-          key={target.id}
-          id={target.id}
-          title={target.title}
-          subtitle={target.subtitle}
-          icon={target.id === 'markdown' ? Icon.Document : Icon.Code}
-          accessories={[{ tag: target.badge }]}
-          detail={
-            <List.Item.Detail
-              markdown={`\`\`\`${target.language}\n${target.previewText}\n\`\`\``}
-              metadata={
-                <List.Item.Detail.Metadata>
-                  <List.Item.Detail.Metadata.Label title="输出格式" text={target.title} />
-                  <List.Item.Detail.Metadata.Label
-                    title="行数 / 列数"
-                    text={`${rowCount} 行 × ${colCount} 列`}
-                  />
-                  <List.Item.Detail.Metadata.Label
-                    title="输出字符数"
-                    text={`${target.fullText.length} 字符`}
-                  />
-                  <List.Item.Detail.Metadata.Separator />
-                  <List.Item.Detail.Metadata.Label title="推断列类型" text={target.typeSummary} />
-                </List.Item.Detail.Metadata>
-              }
-            />
-          }
-          actions={
-            <ActionPanel>
-              <Action.CopyToClipboard
-                title="复制转换结果"
-                content={target.fullText}
-                icon={Icon.Clipboard}
-              />
-              <Action.Paste
-                title="直接上屏粘贴"
-                content={target.fullText}
-                icon={Icon.Text}
-                shortcut={{ modifiers: ['cmd'], key: 'enter' }}
-              />
-              <Action
-                title="重新读取剪贴板"
-                icon={Icon.ArrowClockwise}
-                shortcut={{ modifiers: ['cmd'], key: 'r' }}
-                onAction={handleReadClipboard}
-              />
-            </ActionPanel>
-          }
-        />
-      ))}
-    </List>
-  )
+  return <List navigationTitle="表格互转" isLoading={isReading} isShowingDetail={true}
+    searchText={searchText} onSearchTextChange={setSearchText} searchBarPlaceholder="筛选输出格式（Markdown / JSON / SQL / HTML / CSV）"
+    searchBarAccessory={<List.Dropdown value={headerMode} onChange={value => setHeaderMode(value as typeof headerMode)} tooltip="表头识别模式">
+      <List.Dropdown.Item title="首行为表头" value="first-row-header" />
+      <List.Dropdown.Item title="无表头，自动命名列" value="no-header" />
+    </List.Dropdown>}
+    filterBar={{ summaryText: readError || summary, actions: [
+      { id: 'read-clipboard', title: '读取剪贴板', onAction: handleReadClipboard },
+      { id: 'edit-input', title: '编辑输入', onAction: editInput }
+    ] }}>
+    {!isReading && result.error ? <List.Item id="parse-error" title="无法转换当前输入" subtitle="原文已保留，可编辑后重试" detail={<List.Item.Detail markdown={fencedPreview(result.error, 'text')} />} /> : null}
+    {!isReading && !result.error && !targets.length ? <List.Item id="empty-input" title={rawText ? '没有匹配的输出格式' : '等待表格数据'} subtitle="使用顶部的读取剪贴板或编辑输入" /> : null}
+    {!isReading && targets.map(target => <List.Item key={target.id} id={target.id} title={target.title} subtitle={target.subtitle}
+      icon={Icon.Document} accessories={[{ tag: target.badge }]}
+      detail={<List.Item.Detail markdown={target.error ? fencedPreview(target.error, 'text') : fencedPreview(target.previewText, target.language)}
+        metadata={<List.Item.Detail.Metadata>
+          <List.Item.Detail.Metadata.Label title="数据规模" text={`${grid?.rows.length ?? 0} 行 × ${grid?.headers.length ?? 0} 列`} />
+          <List.Item.Detail.Metadata.Label title="输出字符数" text={String(target.fullText.length)} />
+          <List.Item.Detail.Metadata.Label title="列类型" text={target.typeSummary} />
+          {grid?.warnings?.map((warning, i) => <List.Item.Detail.Metadata.Label key={i} title="表头处理" text={warning} />)}
+        </List.Item.Detail.Metadata>} />}
+      actions={target.error ? undefined : <ActionPanel>
+        <Action.CopyToClipboard title="复制转换结果" content={target.fullText} icon={Icon.Clipboard} />
+        <Action.Paste title="直接上屏粘贴" content={target.fullText} icon={Icon.Text} shortcut={{ modifiers: ['cmd'], key: 'enter' }} />
+      </ActionPanel>} />)}
+  </List>
 }
-
+export const commands = {
+  'table-auto': TableConverterCommand,
+  'table-to-markdown': () => TableConverterCommand({ featureCode: 'table-to-markdown' }),
+  'table-to-json': () => TableConverterCommand({ featureCode: 'table-to-json' }),
+  'table-to-sql': () => TableConverterCommand({ featureCode: 'table-to-sql' })
+}
 export default TableConverterCommand

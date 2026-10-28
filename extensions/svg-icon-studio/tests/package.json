@@ -1,0 +1,14 @@
+{
+  "name": "svg-icon-studio-browser-tests",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@vue/compiler-sfc": "3.5.23",
+    "jsdom": "27.4.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "typescript": "7.0.2",
+    "vue": "3.5.23"
+  }
+}
