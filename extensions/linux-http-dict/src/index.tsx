@@ -11,11 +11,11 @@ import {
   searchCommonPorts,
   searchHttpStatus,
   searchLinuxCommands
-} from './dict-service'
+} from './dict-service.js'
 import type { DictCategory } from './types'
 
-export * from './types'
-export * from './dict-service'
+export * from './types.js'
+export * from './dict-service.js'
 
 export interface LinuxHttpDictCommandProps {
   featureCode?: string
@@ -53,7 +53,10 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
       searchBarAccessory={
         <List.Dropdown
           value={category}
-          onChange={(v) => setCategory(v as DictCategory)}
+          onChange={(v) => {
+            setCategory(v as DictCategory)
+            setSearchText('')
+          }}
           tooltip="切换速查字典类别"
         >
           <List.Dropdown.Item title="Linux 高频命令实例" value="linux" icon={Icon.Terminal} />
@@ -243,3 +246,9 @@ ss -tulpn | grep :${item.port}
 }
 
 export default LinuxHttpDictCommand
+
+export const commands = {
+  'linux-commands': () => React.createElement(LinuxHttpDictCommand, { initialCategory: 'linux' }),
+  'http-status': () => React.createElement(LinuxHttpDictCommand, { initialCategory: 'http' }),
+  'port-dict': () => React.createElement(LinuxHttpDictCommand, { initialCategory: 'port' })
+}

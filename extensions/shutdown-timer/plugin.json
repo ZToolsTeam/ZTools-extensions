@@ -1,17 +1,16 @@
 {
   "id": "shutdown-timer",
   "name": "定时关机",
-  "description": "支持按倒计时或指定时间自动关机、重启、睡眠、休眠与锁屏，可随时一键取消计划任务",
-  "version": "1.0.4",
-  "author": "ZTools Team",
+  "description": "按预设倒计时（10、30、60、120 分钟）自动关机，或立即锁屏、睡眠，设定关机前会先确认；插件不能取消已设定的关机，可复制取消命令自行运行",
+  "version": "1.0.6",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
   "permissions": [
-    "shell",
-    "child_process"
+    "system"
   ],
   "targets": [
     {
@@ -27,16 +26,14 @@
     "倒计时关机",
     "自动关机",
     "取消关机",
-    "定时重启",
     "睡眠",
-    "休眠",
     "锁屏",
     "shutdown"
   ],
   "features": [
     {
       "code": "timer-shutdown",
-      "explain": "设置倒计时或指定时间自动关机",
+      "explain": "按倒计时自动关机",
       "cmds": [
         "定时关机",
         "倒计时关机",
@@ -46,18 +43,16 @@
       ]
     },
     {
-      "code": "timer-reboot",
-      "explain": "定时重启、睡眠与立即锁屏",
+      "code": "power-now",
+      "explain": "立即锁屏或睡眠",
       "cmds": [
-        "定时重启",
-        "定时睡眠",
-        "休眠",
-        "锁屏"
+        "锁屏",
+        "睡眠"
       ]
     },
     {
       "code": "timer-cancel",
-      "explain": "一键取消当前定时关机计划任务",
+      "explain": "复制取消关机计划的命令",
       "cmds": [
         "取消关机",
         "取消定时关机",

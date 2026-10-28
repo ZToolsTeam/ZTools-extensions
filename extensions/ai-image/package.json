@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-ai-image",
+  "version": "1.0.0",
+  "description": "AI 图片修复插件：目前只提供 PNG、JPG、BMP 图片的普通插值放大，AI 超分辨率、去背景、人像修复暂不可用",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

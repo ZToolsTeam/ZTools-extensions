@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-lan-share",
+  "version": "1.0.0",
+  "description": "选择电脑上的文件开启局域网共享，同一网络的设备用浏览器打开本机地址或扫码下载",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

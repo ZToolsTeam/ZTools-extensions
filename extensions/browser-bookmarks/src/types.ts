@@ -1,53 +1,9 @@
-export type BrowserType =
-  | 'edge'
-  | 'chrome'
-  | '360se'
-  | '360chrome'
-  | 'qqbrowser'
-  | 'brave'
-  | 'firefox'
-  | 'safari'
-
-export type BrowserFilterValue = 'all' | 'edge' | 'chrome' | 'domestic' | 'firefox'
-
+export const BROWSERS = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', '360se': '360安全', '360chrome': '360极速', qqbrowser: 'QQ浏览器', firefox: 'Firefox', safari: 'Safari' } as const
+export type BrowserType = keyof typeof BROWSERS
+export type BrowserFilterValue = 'all' | 'domestic' | BrowserType
 export interface BookmarkItem {
-  id: string
-  title: string
-  url: string
-  hostname: string
-  folderBreadcrumb: string
-  browser: BrowserType
-  browserLabel: string
-  dateAdded: number
-  dateAddedFormatted: string
-  pinyinFull: string
-  pinyinInitials: string
+  id: string; title: string; url: string; hostname: string; folderBreadcrumb: string
+  browser: BrowserType; browserLabel: string; profile: string; dateAdded: number | null
+  pinyinFull: string; pinyinInitials: string
 }
-
-export interface BookmarkSourceInput {
-  browser: BrowserType
-  browserLabel: string
-  jsonText?: string
-  filePath?: string
-  isLocked?: boolean
-  sqliteRows?: Array<{
-    id?: string | number
-    title?: string
-    url?: string
-    dateAdded?: number
-    folderBreadcrumb?: string
-  }>
-}
-
-export interface BookmarkScannerOptions {
-  browsers?: BrowserType[]
-  includeProfiles?: boolean
-  customSources?: BookmarkSourceInput[]
-  hostOverride?: unknown
-}
-
-export interface ScanBookmarksResponse {
-  bookmarks: BookmarkItem[]
-  warnings: string[]
-  activeBrowserCount: number
-}
+export interface ScanBookmarksResponse { success: true; bookmarks: BookmarkItem[]; warnings: string[]; sourcesRead: number }

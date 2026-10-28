@@ -1,857 +1,108 @@
-import {
-  AudioActionResult,
-  AudioComboPreset,
-  AudioDevice,
-  AudioFilterOptions,
-  AudioPlatform,
-  AudioPlatformCommand,
-  IOType,
-  TransportType
-} from './types'
-import { callHostTransport, isRealElectronHost } from './native-ipc'
+import { LocalStorage } from '@ztools/declarative-ui'
+import { callHostTransport } from './native-ipc.js'
+import type { AudioDevice, AudioFilterOptions } from './types.js'
 
-export const INITIAL_AUDIO_DEVICES: readonly AudioDevice[] = Object.freeze([
-  {
-    id: 'out-bluetooth-airpods',
-    uid: '{0.0.0.00000000}.{airpods-pro-out}',
-    name: 'AirPods Pro (蓝牙降噪耳机)',
-    type: 'output',
-    isInput: false,
-    isOutput: true,
-    isDefault: true,
-    isCommunicationDefault: true,
-    volume: 65,
-    isMuted: false,
-    transportType: TransportType.Bluetooth,
-    sampleRate: 48000,
-    channels: 2,
-    isFavourite: true,
-    isHidden: false
-  },
-  {
-    id: 'out-display-dell-4k',
-    uid: '{0.0.0.00000000}.{dell-u2723qe-dp}',
-    name: 'Dell U2723QE (外接显示器音响)',
-    type: 'output',
-    isInput: false,
-    isOutput: true,
-    isDefault: false,
-    isCommunicationDefault: false,
-    volume: 50,
-    isMuted: false,
-    transportType: TransportType.DisplayPort,
-    sampleRate: 48000,
-    channels: 2,
-    isFavourite: true,
-    isHidden: false
-  },
-  {
-    id: 'out-builtin-realtek',
-    uid: '{0.0.0.00000000}.{realtek-hd-speakers}',
-    name: 'Realtek High Definition Audio (本机扬声器)',
-    type: 'output',
-    isInput: false,
-    isOutput: true,
-    isDefault: false,
-    isCommunicationDefault: false,
-    volume: 80,
-    isMuted: false,
-    transportType: TransportType.BuiltIn,
-    sampleRate: 48000,
-    channels: 2,
-    isFavourite: false,
-    isHidden: false
-  },
-  {
-    id: 'out-usb-dac',
-    uid: '{0.0.0.00000000}.{fiio-ka13-usb-dac}',
-    name: 'FiiO USB DAC-E10 (桌面解码耳放)',
-    type: 'output',
-    isInput: false,
-    isOutput: true,
-    isDefault: false,
-    isCommunicationDefault: false,
-    volume: 45,
-    isMuted: false,
-    transportType: TransportType.Usb,
-    sampleRate: 96000,
-    channels: 2,
-    isFavourite: true,
-    isHidden: false
-  },
-  {
-    id: 'in-usb-shure-mv7',
-    uid: '{0.0.1.00000000}.{shure-mv7-usb-mic}',
-    name: 'Shure MV7 Podcast Microphone (桌面电容麦)',
-    type: 'input',
-    isInput: true,
-    isOutput: false,
-    isDefault: true,
-    isCommunicationDefault: true,
-    volume: 85,
-    isMuted: false,
-    transportType: TransportType.Usb,
-    sampleRate: 48000,
-    channels: 1,
-    isFavourite: true,
-    isHidden: false
-  },
-  {
-    id: 'in-bluetooth-airpods-mic',
-    uid: '{0.0.1.00000000}.{airpods-pro-in}',
-    name: 'AirPods Pro Hands-Free (蓝牙耳机麦克风)',
-    type: 'input',
-    isInput: true,
-    isOutput: false,
-    isDefault: false,
-    isCommunicationDefault: false,
-    volume: 75,
-    isMuted: false,
-    transportType: TransportType.Bluetooth,
-    sampleRate: 24000,
-    channels: 1,
-    isFavourite: true,
-    isHidden: false
-  },
-  {
-    id: 'in-builtin-array',
-    uid: '{0.0.1.00000000}.{realtek-mic-array}',
-    name: '英特尔智音技术麦克风阵列 (内置麦克风)',
-    type: 'input',
-    isInput: true,
-    isOutput: false,
-    isDefault: false,
-    isCommunicationDefault: false,
-    volume: 70,
-    isMuted: true,
-    transportType: TransportType.BuiltIn,
-    sampleRate: 48000,
-    channels: 2,
-    isFavourite: false,
-    isHidden: false
-  }
-])
-
-export const DEFAULT_AUDIO_COMBOS: readonly AudioComboPreset[] = Object.freeze([
-  {
-    id: 'combo-meeting',
-    name: '线上会议模式 (腾讯会议/飞书)',
-    description: '输出切至蓝牙/会议耳机，输入切至桌面麦克风并解除静音',
-    outputDeviceId: 'out-bluetooth-airpods',
-    inputDeviceId: 'in-usb-shure-mv7',
-    outputVolume: 65,
-    inputVolume: 90,
-    muteInput: false,
-    shortcut: 'Alt+1'
-  },
-  {
-    id: 'combo-speaker-chill',
-    name: '桌面外放影音模式 (防窃听静音麦)',
-    description: '输出切至外接显示器音响，自动将输入麦克风静音保护隐私',
-    outputDeviceId: 'out-display-dell-4k',
-    inputDeviceId: 'in-builtin-array',
-    outputVolume: 55,
-    inputVolume: 0,
-    muteInput: true,
-    shortcut: 'Alt+2'
-  },
-  {
-    id: 'combo-hifi-music',
-    name: 'Hi-Fi 沉浸听歌模式',
-    description: '输出切至 USB DAC 解码耳放，音量调至 45% 黄金听感区间',
-    outputDeviceId: 'out-usb-dac',
-    inputDeviceId: 'in-usb-shure-mv7',
-    outputVolume: 45,
-    inputVolume: 80,
-    muteInput: true,
-    shortcut: 'Alt+3'
-  }
-])
-
-export function clampVolume(volume: number): number {
-  if (typeof volume !== 'number' || !Number.isFinite(volume)) {
-    throw new Error('音量值必须为有效数字')
-  }
-  return Math.max(0, Math.min(100, Math.round(volume)))
-}
-
-export function buildAudioPlatformCommand(
-  action: 'switch' | 'volume' | 'mute',
-  device: AudioDevice,
-  platform: AudioPlatform = 'Windows',
-  value?: number | boolean
-): AudioPlatformCommand {
-  const safeName = device.name.replace(/"/g, '\\"')
-  if (platform === 'Windows') {
-    if (action === 'switch') {
-      const cmd = `Set-AudioDevice -ID "${device.uid}"`
-      return {
-        platform: 'Windows',
-        executable: 'powershell.exe',
-        args: ['-NoProfile', '-Command', cmd],
-        commandLine: `powershell.exe -NoProfile -Command "${cmd}"`,
-        description: `Windows CoreAudio 切换默认${device.type === 'output' ? '输出' : '输入'}设备为 ${device.name}`
-      }
-    }
-    if (action === 'volume') {
-      const vol = clampVolume(typeof value === 'number' ? value : device.volume)
-      const prop = device.type === 'output' ? '-PlaybackVolume' : '-RecordingVolume'
-      const cmd = `Set-AudioDevice ${prop} ${vol}`
-      return {
-        platform: 'Windows',
-        executable: 'powershell.exe',
-        args: ['-NoProfile', '-Command', cmd],
-        commandLine: `powershell.exe -NoProfile -Command "${cmd}"`,
-        description: `设置 ${device.name} 音量为 ${vol}%`
-      }
-    }
-    const muteFlag = value ? '1' : '0'
-    const prop = device.type === 'output' ? '-PlaybackMute' : '-RecordingMute'
-    const cmd = `Set-AudioDevice ${prop} ${muteFlag}`
-    return {
-      platform: 'Windows',
-      executable: 'powershell.exe',
-      args: ['-NoProfile', '-Command', cmd],
-      commandLine: `powershell.exe -NoProfile -Command "${cmd}"`,
-      description: `${value ? '静音' : '取消静音'} ${device.name}`
-    }
-  }
-
-  if (action === 'switch') {
-    return {
-      platform: 'macOS',
-      executable: 'SwitchAudioSource',
-      args: ['-t', device.type, '-s', device.name],
-      commandLine: `SwitchAudioSource -t ${device.type} -s "${safeName}"`,
-      description: `macOS CoreAudio 切换默认${device.type === 'output' ? '输出' : '输入'}设备为 ${device.name}`
-    }
-  }
-  if (action === 'volume') {
-    const vol = clampVolume(typeof value === 'number' ? value : device.volume)
-    const osa =
-      device.type === 'output'
-        ? `set volume output volume ${vol}`
-        : `set volume input volume ${vol}`
-    return {
-      platform: 'macOS',
-      executable: 'osascript',
-      args: ['-e', osa],
-      commandLine: `osascript -e '${osa}'`,
-      description: `设置 ${device.name} 音量为 ${vol}%`
-    }
-  }
-  const osa = `set volume ${value ? 'with' : 'without'} output muted`
+const FAVOURITES_KEY = 'audio-device-favourites-v1'
+export function parseAudioDevice(value: unknown): AudioDevice {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('音频设备数据无效')
+  const item = value as Record<string, unknown>
+  if (typeof item.id !== 'string' || !item.id || typeof item.uid !== 'string' || !item.uid || typeof item.name !== 'string' || !item.name || (item.type !== 'input' && item.type !== 'output') || typeof item.isDefault !== 'boolean') throw new Error('音频设备信息不完整')
+  if (item.volume !== undefined && (typeof item.volume !== 'number' || !Number.isFinite(item.volume) || item.volume < 0 || item.volume > 100)) throw new Error('音频设备返回了无效音量')
+  if (item.muted !== undefined && typeof item.muted !== 'boolean') throw new Error('音频设备返回了无效静音状态')
   return {
-    platform: 'macOS',
-    executable: 'osascript',
-    args: ['-e', osa],
-    commandLine: `osascript -e '${osa}'`,
-    description: `${value ? '静音' : '取消静音'} ${device.name}`
+    id: item.id, uid: item.uid, name: item.name, type: item.type, isDefault: item.isDefault,
+    canSetDefault: item.canSetDefault === true,
+    canSetVolume: item.canSetVolume === true && item.volume !== undefined,
+    canMute: item.canMute === true && item.muted !== undefined,
+    volume: item.volume as number | undefined, isMuted: item.muted as boolean | undefined,
+    transportType: typeof item.transport === 'string' ? item.transport : undefined,
+    sampleRate: typeof item.sampleRate === 'number' && item.sampleRate > 0 ? item.sampleRate : undefined,
+    channels: typeof item.channels === 'number' && item.channels > 0 ? item.channels : undefined
   }
 }
 
 export class AudioDeviceManager {
-  private devices: AudioDevice[]
-  private combos: AudioComboPreset[]
-  private platform: AudioPlatform
+  private devices: AudioDevice[] = []
+  private favourites = new Set<string>()
+  private reading = 0
+  private changing = false
+  public preferenceWarning = ''
+  constructor(private readonly hostOverride?: unknown) {}
 
-  constructor(
-    initialDevices?: readonly AudioDevice[],
-    initialCombos: readonly AudioComboPreset[] = DEFAULT_AUDIO_COMBOS,
-    platform: AudioPlatform = typeof process !== 'undefined' && process.platform === 'darwin'
-      ? 'macOS'
-      : 'Windows'
-  ) {
-    const sourceDevices = initialDevices ?? (isRealElectronHost() ? [] : INITIAL_AUDIO_DEVICES)
-    this.devices = sourceDevices.map((d) => ({ ...d }))
-    this.combos = initialCombos.map((c) => ({ ...c }))
-    this.platform = platform
-  }
-
-  private mapRawHostDevice(raw: Record<string, unknown>, idx: number): AudioDevice {
-    const type: IOType =
-      raw?.type === 'input' || raw?.isInput === true || raw?.dataFlow === 'capture'
-        ? 'input'
-        : 'output'
-    const id = String(raw?.id || raw?.uid || `${type}-dev-${idx}`)
-    const uid = String(raw?.uid || raw?.id || id)
-    const name = String(raw?.name || raw?.deviceName || `Audio Device ${idx + 1}`)
-    const volRaw = Number(raw?.volume ?? 70)
-    const volume = Number.isFinite(volRaw) ? Math.max(0, Math.min(100, Math.round(volRaw))) : 70
-
-    return {
-      id,
-      uid,
-      name,
-      type,
-      isInput: type === 'input',
-      isOutput: type === 'output',
-      isDefault: Boolean(raw?.isDefault ?? raw?.default),
-      isCommunicationDefault: Boolean(raw?.isCommunicationDefault ?? raw?.isDefault),
-      volume,
-      isMuted: Boolean(raw?.isMuted ?? raw?.muted),
-      transportType: String(raw?.transportType || TransportType.BuiltIn),
-      sampleRate: Number(raw?.sampleRate) > 0 ? Number(raw.sampleRate) : 48000,
-      channels: Number(raw?.channels) > 0 ? Number(raw.channels) : type === 'output' ? 2 : 1,
-      isFavourite: Boolean(raw?.isFavourite),
-      isHidden: Boolean(raw?.isHidden)
-    }
-  }
-
-  public async syncDevicesFromHost(hostOverride?: unknown): Promise<AudioDevice[]> {
-    if (!hostOverride && !isRealElectronHost()) {
-      return this.getAllDevices()
-    }
-
+  async syncDevicesFromHost(): Promise<AudioDevice[]> {
+    const generation = ++this.reading
+    const response = await callHostTransport<unknown>('audio_get_devices', {}, this.hostOverride)
+    if (!response.ok) throw new Error(response.error || '读取音频设备失败')
+    const list = Array.isArray(response.data) ? response.data : response.data && typeof response.data === 'object' ? (response.data as Record<string, unknown>).devices : undefined
+    if (!Array.isArray(list)) throw new Error('宿主没有返回有效的音频设备列表')
+    const devices = list.map(parseAudioDevice)
+    if (new Set(devices.map(device => device.id)).size !== devices.length) throw new Error('音频设备标识重复')
+    if (generation !== this.reading) return this.getAllDevices()
+    this.devices = devices
     try {
-      const ipcRes = await callHostTransport<Record<string, unknown> | unknown[]>(
-        'audio_get_devices',
-        {},
-        hostOverride
-      )
-      if (ipcRes.ok && ipcRes.data !== undefined && ipcRes.data !== null) {
-        const list = Array.isArray(ipcRes.data)
-          ? ipcRes.data
-          : Array.isArray((ipcRes.data as Record<string, unknown>)?.devices)
-            ? ((ipcRes.data as Record<string, unknown>).devices as unknown[])
-            : null
-        if (list !== null) {
-          this.devices = list
-            .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-            .map((raw, idx) => this.mapRawHostDevice(raw, idx))
-          return this.getAllDevices()
-        }
-      }
-    } catch {
-      // 继续尝试 dllplugin_call
+      const value = await LocalStorage.getItem(FAVOURITES_KEY)
+      const parsed: unknown = typeof value === 'string' ? JSON.parse(value) : value
+      if (parsed !== undefined && (!Array.isArray(parsed) || parsed.some(id => typeof id !== 'string'))) throw new Error('收藏数据格式无效')
+      if (generation === this.reading) { this.favourites = new Set((parsed || []) as string[]); this.preferenceWarning = '' }
+    } catch (error) {
+      if (generation === this.reading) this.preferenceWarning = `收藏读取失败：${error instanceof Error ? error.message : String(error)}`
     }
-
-    try {
-      const dllRes = await callHostTransport<Record<string, unknown>>(
-        'dllplugin_call',
-        {
-          plugin: 'AudioDevicePlugin',
-          func: 'listDevices',
-          params: {}
-        },
-        hostOverride
-      )
-      if (dllRes.ok && dllRes.data) {
-        const payload = dllRes.data?.result !== undefined ? dllRes.data.result : dllRes.data
-        const parsed = typeof payload === 'string' ? JSON.parse(payload) : payload
-        const list = Array.isArray(parsed)
-          ? parsed
-          : Array.isArray((parsed as Record<string, unknown>)?.devices)
-            ? ((parsed as Record<string, unknown>).devices as unknown[])
-            : null
-        if (list !== null) {
-          this.devices = list
-            .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'))
-            .map((raw, idx) => this.mapRawHostDevice(raw, idx))
-          return this.getAllDevices()
-        }
-      }
-    } catch {
-      // ignore
-    }
-
     return this.getAllDevices()
   }
-
-  public getAllDevices(): AudioDevice[] {
-    return this.devices.map((d) => ({ ...d }))
+  getAllDevices(): AudioDevice[] { return this.devices.map(device => ({ ...device, isFavourite: this.favourites.has(device.id) })) }
+  getDefaultOutputDevice(): AudioDevice | undefined { return this.getAllDevices().find(device => device.type === 'output' && device.isDefault) }
+  getDefaultInputDevice(): AudioDevice | undefined { return this.getAllDevices().find(device => device.type === 'input' && device.isDefault) }
+  filterDevices(options: AudioFilterOptions = {}): AudioDevice[] {
+    const query = (options.query || '').trim().toLowerCase()
+    return this.getAllDevices().filter(device => (!options.ioType || options.ioType === 'all' || (options.ioType === 'favourites' ? device.isFavourite : device.type === options.ioType)) && `${device.name} ${device.transportType || ''}`.toLowerCase().includes(query))
   }
-
-  public getOutputDevices(): AudioDevice[] {
-    return this.devices.filter((d) => d.type === 'output').map((d) => ({ ...d }))
+  private find(id: string): AudioDevice {
+    const device = this.devices.find(item => item.id === id)
+    if (!device) throw new Error('设备已不在列表中，请重新扫描')
+    return device
   }
-
-  public getInputDevices(): AudioDevice[] {
-    return this.devices.filter((d) => d.type === 'input').map((d) => ({ ...d }))
-  }
-
-  public getDefaultOutputDevice(): AudioDevice | undefined {
-    const found =
-      this.devices.find((d) => d.type === 'output' && d.isDefault) ||
-      this.devices.find((d) => d.type === 'output')
-    return found ? { ...found } : undefined
-  }
-
-  public getDefaultInputDevice(): AudioDevice | undefined {
-    const found =
-      this.devices.find((d) => d.type === 'input' && d.isDefault) ||
-      this.devices.find((d) => d.type === 'input')
-    return found ? { ...found } : undefined
-  }
-
-  public getCombos(): AudioComboPreset[] {
-    return this.combos.map((c) => ({ ...c }))
-  }
-
-  public filterDevices(options: AudioFilterOptions = {}): AudioDevice[] {
-    const ioType = options.ioType || 'all'
-    const transport = options.transportType || 'all'
-    const includeHidden = options.includeHidden ?? false
-    const q = (options.query || '').trim().toLowerCase()
-
-    return this.devices
-      .filter((d) => {
-        if (!includeHidden && d.isHidden) return false
-        if (ioType === 'output' && d.type !== 'output') return false
-        if (ioType === 'input' && d.type !== 'input') return false
-        if (ioType === 'favourites' && !d.isFavourite) return false
-        if (transport !== 'all' && d.transportType !== transport) return false
-        if (!q) return true
-        return `${d.name} ${d.transportType} ${d.type}`.toLowerCase().includes(q)
-      })
-      .map((d) => ({ ...d }))
-  }
-
-  public setDefaultDevice(
-    deviceId: string,
-    hostOverride?: unknown
-  ): AudioActionResult & Promise<AudioActionResult> {
-    const cleanId = (deviceId || '').trim()
-    const target = this.devices.find((d) => d.id === cleanId || d.uid === cleanId)
-    if (!target) {
-      const failRes: AudioActionResult = {
-        success: false,
-        action: 'switch-default',
-        errorCode: 'DEVICE_NOT_FOUND',
-        error: `未找到指定的音频设备: "${cleanId}"`
-      }
-      return Object.assign(Promise.resolve(failRes), failRes)
-    }
-
-    const command = buildAudioPlatformCommand('switch', target, this.platform)
-    const applySwitch = () => {
-      for (const dev of this.devices) {
-        if (dev.type === target.type) {
-          dev.isDefault = dev.id === target.id
-          dev.isCommunicationDefault = dev.id === target.id
-        }
-      }
-    }
-
-    if (hostOverride || isRealElectronHost()) {
-      const prevDefaults = this.devices.map((d) => ({
-        id: d.id,
-        isDefault: d.isDefault,
-        isCommunicationDefault: d.isCommunicationDefault
-      }))
-      applySwitch()
-      const optimistic: AudioActionResult = {
-        success: true,
-        action: 'switch-default',
-        device: { ...target },
-        command
-      }
-      const promise = (async (): Promise<AudioActionResult> => {
-        let res = await callHostTransport<Record<string, unknown>>(
-          'audio_set_default_device',
-          {
-            id: target.id,
-            uid: target.uid,
-            name: target.name,
-            type: target.type
-          },
-          hostOverride
-        )
-        if (!res.ok && (String(res.error || '').startsWith('METHOD_NOT_AVAILABLE:') || res.error === 'NO_WINDOW_ENV')) {
-          res = await callHostTransport<Record<string, unknown>>(
-            'dllplugin_call',
-            {
-              plugin: 'AudioDevicePlugin',
-              func: 'setDefault',
-              params: {
-                id: target.id,
-                uid: target.uid,
-                name: target.name,
-                type: target.type
-              }
-            },
-            hostOverride
-          )
-        }
-        const innerFailed = res.data && typeof res.data === 'object' && res.data.ok === false
-        if (!res.ok || innerFailed) {
-          for (const prev of prevDefaults) {
-            const dev = this.devices.find((d) => d.id === prev.id)
-            if (dev) {
-              dev.isDefault = prev.isDefault
-              dev.isCommunicationDefault = prev.isCommunicationDefault
-            }
-          }
-          const errMsg = String(
-            (res.data as Record<string, unknown>)?.error || res.error || '切换默认音频设备失败'
-          )
-          const extractedCode = errMsg.match(/^([A-Z0-9_]+):/)?.[1]
-          return {
-            success: false,
-            action: 'switch-default',
-            device: { ...target },
-            command,
-            errorCode: String((res.data as Record<string, unknown>)?.errorCode || extractedCode || 'SWITCH_DEFAULT_FAILED'),
-            error: errMsg
-          }
-        }
-        return optimistic
-      })()
-      return Object.assign(promise, optimistic)
-    }
-
-    applySwitch()
-    const okRes: AudioActionResult = {
-      success: true,
-      action: 'switch-default',
-      device: { ...target },
-      command
-    }
-    return Object.assign(Promise.resolve(okRes), okRes)
-  }
-
-  public setDeviceVolume(
-    deviceId: string,
-    volume: number,
-    hostOverride?: unknown
-  ): AudioActionResult & Promise<AudioActionResult> {
-    const cleanId = (deviceId || '').trim()
-    const target = this.devices.find((d) => d.id === cleanId || d.uid === cleanId)
-    if (!target) {
-      const failRes: AudioActionResult = {
-        success: false,
-        action: 'set-volume',
-        errorCode: 'DEVICE_NOT_FOUND',
-        error: `未找到指定的音频设备: "${cleanId}"`
-      }
-      return Object.assign(Promise.resolve(failRes), failRes)
-    }
-
-    let clamped: number
+  private async change(id: string, method: string, params: Record<string, unknown>): Promise<AudioDevice> {
+    if (this.changing) throw new Error('音频操作正在执行，请稍后重试')
+    const target = this.find(id)
+    this.changing = true
     try {
-      clamped = clampVolume(volume)
-    } catch (e: unknown) {
-      const failRes: AudioActionResult = {
-        success: false,
-        action: 'set-volume',
-        errorCode: 'INVALID_VOLUME',
-        error: e instanceof Error ? e.message : '无效的音量参数'
-      }
-      return Object.assign(Promise.resolve(failRes), failRes)
-    }
-
-    const prevVol = target.volume
-    const prevMuted = target.isMuted
-    target.volume = clamped
-    if (clamped > 0 && target.isMuted) {
-      target.isMuted = false
-    }
-
-    const command = buildAudioPlatformCommand('volume', target, this.platform, clamped)
-    if (hostOverride || isRealElectronHost()) {
-      const optimistic: AudioActionResult = {
-        success: true,
-        action: 'set-volume',
-        device: { ...target },
-        command
-      }
-      const promise = (async (): Promise<AudioActionResult> => {
-        let res = await callHostTransport<Record<string, unknown>>(
-          'audio_set_volume',
-          {
-            id: target.id,
-            uid: target.uid,
-            name: target.name,
-            type: target.type,
-            volume: clamped
-          },
-          hostOverride
-        )
-        if (!res.ok && (String(res.error || '').startsWith('METHOD_NOT_AVAILABLE:') || res.error === 'NO_WINDOW_ENV')) {
-          res = await callHostTransport<Record<string, unknown>>(
-            'dllplugin_call',
-            {
-              plugin: 'AudioDevicePlugin',
-              func: 'setVolume',
-              params: {
-                id: target.id,
-                type: target.type,
-                volume: clamped
-              }
-            },
-            hostOverride
-          )
-        }
-        const innerFailed = res.data && typeof res.data === 'object' && res.data.ok === false
-        if (!res.ok || innerFailed) {
-          target.volume = prevVol
-          target.isMuted = prevMuted
-          return {
-            success: false,
-            action: 'set-volume',
-            device: { ...target },
-            command,
-            error: String((res.data as Record<string, unknown>)?.error || res.error || '设置音频设备音量失败')
-          }
-        }
-        return optimistic
-      })()
-      return Object.assign(promise, optimistic)
-    }
-
-    const okRes: AudioActionResult = {
-      success: true,
-      action: 'set-volume',
-      device: { ...target },
-      command
-    }
-    return Object.assign(Promise.resolve(okRes), okRes)
+      const response = await callHostTransport<Record<string, unknown>>(method, { id: target.id, type: target.type, ...params }, this.hostOverride)
+      if (!response.ok || response.data?.success !== true) throw new Error(response.error || String(response.data?.error || response.data?.message || '音频操作未成功'))
+      const actual = parseAudioDevice(response.data.details)
+      if (actual.id !== target.id || actual.type !== target.type) throw new Error('返回的设备与选择不一致，请刷新确认')
+      if (method === 'audio_set_default_device' && !actual.isDefault) throw new Error('系统未切换到所选设备')
+      if (method === 'audio_set_volume' && (actual.volume === undefined || Math.abs(actual.volume - Number(params.volume)) > 1)) throw new Error('设备音量未达到请求值')
+      if (method === 'audio_toggle_mute' && actual.isMuted !== params.muted) throw new Error('设备静音状态没有改变')
+      this.reading++ // 已完成写入后，之前发出的列表请求不能覆盖确认过的状态。
+      this.devices = this.devices.map(device => device.id === actual.id ? actual : method === 'audio_set_default_device' && device.type === actual.type ? { ...device, isDefault: false } : device)
+      return { ...actual }
+    } finally { this.changing = false }
   }
-
-  public stepDeviceVolume(
-    deviceId: string,
-    delta: number,
-    hostOverride?: unknown
-  ): AudioActionResult {
-    const target = this.devices.find((d) => d.id === deviceId || d.uid === deviceId)
-    if (!target) {
-      return {
-        success: false,
-        action: 'step-volume',
-        error: `未找到音频设备: "${deviceId}"`
-      }
-    }
-    const nextVol = clampVolume(target.volume + (Number.isFinite(delta) ? delta : 0))
-    const res = this.setDeviceVolume(target.id, nextVol, hostOverride)
-    return {
-      ...res,
-      action: 'step-volume'
-    }
+  async setDefaultDevice(id: string): Promise<AudioDevice> {
+    if (!this.find(id).canSetDefault) throw new Error('此设备不能设为系统默认设备')
+    return this.change(id, 'audio_set_default_device', {})
   }
-
-  public toggleDeviceMute(
-    deviceId: string,
-    forceState?: boolean,
-    hostOverride?: unknown
-  ): AudioActionResult & Promise<AudioActionResult> {
-    const target = this.devices.find((d) => d.id === deviceId || d.uid === deviceId)
-    if (!target) {
-      const failRes: AudioActionResult = {
-        success: false,
-        action: 'toggle-mute',
-        error: `未找到音频设备: "${deviceId}"`
-      }
-      return Object.assign(Promise.resolve(failRes), failRes)
-    }
-
-    const prevMuted = target.isMuted
-    target.isMuted = forceState !== undefined ? Boolean(forceState) : !target.isMuted
-
-    const command = buildAudioPlatformCommand('mute', target, this.platform, target.isMuted)
-    if (hostOverride || isRealElectronHost()) {
-      const optimistic: AudioActionResult = {
-        success: true,
-        action: 'toggle-mute',
-        device: { ...target },
-        command
-      }
-      const promise = (async (): Promise<AudioActionResult> => {
-        let res = await callHostTransport<Record<string, unknown>>(
-          'audio_toggle_mute',
-          {
-            id: target.id,
-            uid: target.uid,
-            name: target.name,
-            type: target.type,
-            muted: target.isMuted
-          },
-          hostOverride
-        )
-        if (!res.ok && (String(res.error || '').startsWith('METHOD_NOT_AVAILABLE:') || res.error === 'NO_WINDOW_ENV')) {
-          res = await callHostTransport<Record<string, unknown>>(
-            'dllplugin_call',
-            {
-              plugin: 'AudioDevicePlugin',
-              func: 'setMute',
-              params: {
-                id: target.id,
-                type: target.type,
-                muted: target.isMuted
-              }
-            },
-            hostOverride
-          )
-        }
-        const innerFailed = res.data && typeof res.data === 'object' && res.data.ok === false
-        if (!res.ok || innerFailed) {
-          target.isMuted = prevMuted
-          return {
-            success: false,
-            action: 'toggle-mute',
-            device: { ...target },
-            command,
-            error: String((res.data as Record<string, unknown>)?.error || res.error || '切换静音状态失败')
-          }
-        }
-        return optimistic
-      })()
-      return Object.assign(promise, optimistic)
-    }
-
-    const okRes: AudioActionResult = {
-      success: true,
-      action: 'toggle-mute',
-      device: { ...target },
-      command
-    }
-    return Object.assign(Promise.resolve(okRes), okRes)
+  async setDeviceVolume(id: string, volume: number): Promise<AudioDevice> {
+    if (!Number.isFinite(volume) || volume < 0 || volume > 100) throw new Error('请输入 0 到 100 之间的音量')
+    if (!this.find(id).canSetVolume) throw new Error('此设备不支持软件调节音量')
+    return this.change(id, 'audio_set_volume', { volume: Math.round(volume) })
   }
-
-  public toggleFavourite(deviceId: string): AudioActionResult {
-    const target = this.devices.find((d) => d.id === deviceId || d.uid === deviceId)
-    if (!target) {
-      return {
-        success: false,
-        action: 'toggle-favourite',
-        error: `未找到音频设备: "${deviceId}"`
-      }
-    }
-    target.isFavourite = !target.isFavourite
-    return {
-      success: true,
-      action: 'toggle-favourite',
-      device: { ...target }
-    }
+  async stepDeviceVolume(id: string, delta: number): Promise<AudioDevice> {
+    const device = this.find(id)
+    if (device.volume === undefined || !Number.isFinite(delta)) throw new Error('无法读取设备当前音量')
+    return this.setDeviceVolume(id, Math.max(0, Math.min(100, device.volume + delta)))
   }
-
-  public applyComboPreset(comboId: string, hostOverride?: unknown): AudioActionResult {
-    const combo = this.combos.find((c) => c.id === comboId)
-    if (!combo) {
-      return {
-        success: false,
-        action: 'apply-combo',
-        error: `未找到音频场景预设: "${comboId}"`
-      }
-    }
-
-    const outRes = this.setDefaultDevice(combo.outputDeviceId, hostOverride)
-    if (!outRes.success) {
-      return {
-        success: false,
-        action: 'apply-combo',
-        error: outRes.error
-      }
-    }
-    if (combo.outputVolume !== undefined) {
-      this.setDeviceVolume(combo.outputDeviceId, combo.outputVolume, hostOverride)
-    }
-
-    const inRes = this.setDefaultDevice(combo.inputDeviceId, hostOverride)
-    if (!inRes.success) {
-      return {
-        success: false,
-        action: 'apply-combo',
-        error: inRes.error
-      }
-    }
-    if (combo.inputVolume !== undefined) {
-      this.setDeviceVolume(combo.inputDeviceId, combo.inputVolume, hostOverride)
-    }
-    if (combo.muteInput !== undefined) {
-      this.toggleDeviceMute(combo.inputDeviceId, combo.muteInput, hostOverride)
-    }
-
-    return {
-      success: true,
-      action: 'apply-combo',
-      combo: { ...combo },
-      device: this.getDefaultOutputDevice()
-    }
+  async toggleDeviceMute(id: string): Promise<AudioDevice> {
+    const device = this.find(id)
+    if (!device.canMute || device.isMuted === undefined) throw new Error('此设备不支持软件静音')
+    return this.change(id, 'audio_toggle_mute', { muted: !device.isMuted })
   }
-
-  public resetToDefaults(): void {
-    this.devices = INITIAL_AUDIO_DEVICES.map((d) => ({ ...d }))
-    this.combos = DEFAULT_AUDIO_COMBOS.map((c) => ({ ...c }))
+  async toggleFavourite(id: string): Promise<void> {
+    this.find(id)
+    if (this.preferenceWarning) throw new Error(this.preferenceWarning)
+    const next = new Set(this.favourites)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    await LocalStorage.setItem(FAVOURITES_KEY, JSON.stringify([...next]))
+    this.favourites = next
   }
-}
-
-export const defaultAudioDeviceManager = new AudioDeviceManager()
-
-export async function getAllDevices(hostOverride?: unknown): Promise<AudioDevice[]> {
-  if (hostOverride || isRealElectronHost()) {
-    return defaultAudioDeviceManager.syncDevicesFromHost(hostOverride)
-  }
-  return defaultAudioDeviceManager.getAllDevices()
-}
-
-export async function getInputDevices(hostOverride?: unknown): Promise<AudioDevice[]> {
-  if (hostOverride || isRealElectronHost()) {
-    await defaultAudioDeviceManager.syncDevicesFromHost(hostOverride)
-  }
-  return defaultAudioDeviceManager.getInputDevices()
-}
-
-export async function getOutputDevices(hostOverride?: unknown): Promise<AudioDevice[]> {
-  if (hostOverride || isRealElectronHost()) {
-    await defaultAudioDeviceManager.syncDevicesFromHost(hostOverride)
-  }
-  return defaultAudioDeviceManager.getOutputDevices()
-}
-
-export async function getDefaultOutputDevice(hostOverride?: unknown): Promise<AudioDevice | undefined> {
-  if (hostOverride || isRealElectronHost()) {
-    await defaultAudioDeviceManager.syncDevicesFromHost(hostOverride)
-  }
-  return defaultAudioDeviceManager.getDefaultOutputDevice()
-}
-
-export async function getDefaultInputDevice(hostOverride?: unknown): Promise<AudioDevice | undefined> {
-  if (hostOverride || isRealElectronHost()) {
-    await defaultAudioDeviceManager.syncDevicesFromHost(hostOverride)
-  }
-  return defaultAudioDeviceManager.getDefaultInputDevice()
-}
-
-export async function setDefaultOutputDevice(
-  deviceId: string,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.setDefaultDevice(deviceId, hostOverride)
-}
-
-export async function setDefaultInputDevice(
-  deviceId: string,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.setDefaultDevice(deviceId, hostOverride)
-}
-
-export async function setOutputDeviceVolume(
-  deviceId: string,
-  volume: number,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.setDeviceVolume(deviceId, volume, hostOverride)
-}
-
-export async function toggleOutputDeviceMute(
-  deviceId: string,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.toggleDeviceMute(deviceId, undefined, hostOverride)
-}
-
-export async function setInputDeviceVolume(
-  deviceId: string,
-  volume: number,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.setDeviceVolume(deviceId, volume, hostOverride)
-}
-
-export async function toggleInputDeviceMute(
-  deviceId: string,
-  hostOverride?: unknown
-): Promise<AudioActionResult> {
-  return defaultAudioDeviceManager.toggleDeviceMute(deviceId, undefined, hostOverride)
 }

@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-pdf",
+  "version": "1.0.0",
+  "description": "提取 PDF 中未压缩的文字并导出为 TXT 或 HTML",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

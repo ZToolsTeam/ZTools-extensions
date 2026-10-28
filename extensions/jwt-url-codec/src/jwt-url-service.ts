@@ -6,11 +6,11 @@ import type {
 } from './types'
 
 export function decodeBase64UrlToUtf8(segment: string): string {
-  const trimmed = String(segment || '').trim()
+  const trimmed = String(segment || '')
   if (!trimmed) {
     throw new Error('EMPTY_BASE64URL_SEGMENT: Base64URL 段不能为空')
   }
-  if (!/^[A-Za-z0-9\-_]+={0,2}$/.test(trimmed)) {
+  if (!/^[A-Za-z0-9\-_]+$/.test(trimmed) || trimmed.length % 4 === 1) {
     throw new Error('INVALID_BASE64URL_CHARS: 包含非法 Base64URL 字符')
   }
 
@@ -18,15 +18,11 @@ export function decodeBase64UrlToUtf8(segment: string): string {
   const padLen = (4 - (normalized.length % 4)) % 4
   const padded = normalized + '='.repeat(padLen)
 
-  if (typeof Buffer !== 'undefined') {
-    return Buffer.from(padded, 'base64').toString('utf8')
-  }
-  const binary = atob(padded)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+  const bytes = typeof Buffer !== 'undefined' ? new Uint8Array(Buffer.from(padded, 'base64'))
+    : Uint8Array.from(atob(padded), character => character.charCodeAt(0))
+  const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+  if (encodeUtf8ToBase64Url(decoded) !== trimmed) throw new Error('INVALID_BASE64URL_ENCODING: 非规范编码')
+  return decoded
 }
 
 export function encodeUtf8ToBase64Url(input: string): string {
@@ -46,7 +42,7 @@ export function encodeUtf8ToBase64Url(input: string): string {
 }
 
 function formatEpochSec(sec: unknown): string | undefined {
-  if (typeof sec !== 'number' || !Number.isFinite(sec) || sec <= 0) {
+  if (typeof sec !== 'number' || !Number.isFinite(sec)) {
     return undefined
   }
   const date = new Date(sec * 1000)
@@ -128,18 +124,21 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
   const notBeforeText = formatEpochSec(payloadObj.nbf)
   const expiresAtText = formatEpochSec(payloadObj.exp)
 
-  let isExpired = false
-  let expiryCountdownText = '未设置过期时间 (永不过期)'
-  if (typeof payloadObj.exp === 'number' && Number.isFinite(payloadObj.exp)) {
-    const nowSec = Math.floor(nowMs / 1000)
-    const diffSec = payloadObj.exp - nowSec
-    if (diffSec <= 0) {
-      isExpired = true
-      expiryCountdownText = `已过期 ${formatDurationSec(Math.abs(diffSec))}`
-    } else {
-      isExpired = false
-      expiryCountdownText = `剩余 ${formatDurationSec(diffSec)} 有效`
-    }
+  if (!Number.isFinite(nowMs)) throw new Error('INVALID_CURRENT_TIME: 当前时间无效')
+  const nowSec = nowMs / 1000
+  const invalidTime = ['exp', 'nbf', 'iat'].some(key => key in payloadObj && formatEpochSec(payloadObj[key]) === undefined)
+    || (typeof payloadObj.nbf === 'number' && typeof payloadObj.exp === 'number' && payloadObj.nbf >= payloadObj.exp)
+  const isExpired = typeof payloadObj.exp === 'number' && Number.isFinite(payloadObj.exp) && payloadObj.exp <= nowSec
+  let timeStatus: JwtDecodedResult['timeStatus'] = '未声明到期'
+  let expiryCountdownText = '未声明 exp，无法判断到期时间'
+  if (invalidTime) {
+    timeStatus = '时间声明异常'; expiryCountdownText = 'exp、nbf 或 iat 不是有效时间，或生效时间不早于到期时间'
+  } else if (isExpired) {
+    timeStatus = '已过期'; expiryCountdownText = `已过期 ${formatDurationSec(nowSec - Number(payloadObj.exp))}`
+  } else if (typeof payloadObj.nbf === 'number' && payloadObj.nbf > nowSec) {
+    timeStatus = '尚未生效'; expiryCountdownText = `距离 nbf 生效时间 ${formatDurationSec(payloadObj.nbf - nowSec)}`
+  } else if (typeof payloadObj.exp === 'number') {
+    timeStatus = '尚未过期'; expiryCountdownText = `距离 exp 到期时间 ${formatDurationSec(payloadObj.exp - nowSec)}`
   }
 
   return {
@@ -154,6 +153,7 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
     notBeforeText,
     expiresAtText,
     isExpired,
+    timeStatus,
     expiryCountdownText,
   }
 }
@@ -195,13 +195,13 @@ export async function verifyJwtHmacSha256(
   if (!secret) {
     throw new Error('EMPTY_JWT_SECRET: 验签密钥 Secret 不能为空')
   }
-  if (decoded.algorithm.toUpperCase() !== 'HS256') {
+  if (decoded.algorithm !== 'HS256' || 'crit' in decoded.header || 'b64' in decoded.header) {
     return {
       verified: false,
       algorithm: decoded.algorithm,
       expectedSignature: '',
       actualSignature: decoded.signatureRaw,
-      reason: `当前仅支持 HS256 对称密钥验签，Token 声明算法为 ${decoded.algorithm}`,
+      reason: '当前仅支持 alg 为 HS256 且不含 crit/b64 扩展的标准签名',
     }
   }
 
@@ -214,7 +214,7 @@ export async function verifyJwtHmacSha256(
     algorithm: decoded.algorithm,
     expectedSignature,
     actualSignature: decoded.signatureRaw,
-    reason: verified ? 'HMAC-SHA256 签名一致' : '签名不匹配，密钥错误或载荷已被篡改',
+    reason: verified ? 'HMAC-SHA256 签名一致；未校验签发方、接收方或授权范围' : '签名不匹配，密钥错误或载荷已被篡改',
   }
 }
 
@@ -228,6 +228,12 @@ export async function signJwtHmacSha256(
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     throw new Error('INVALID_JWT_PAYLOAD: Payload 必须是合法 JSON 对象')
+  }
+  if (headerOverrides !== undefined && (!headerOverrides || typeof headerOverrides !== 'object' || Array.isArray(headerOverrides))) {
+    throw new Error('INVALID_JWT_HEADER: Header 必须是 JSON 对象')
+  }
+  if (headerOverrides && (('alg' in headerOverrides && headerOverrides.alg !== 'HS256') || 'crit' in headerOverrides || 'b64' in headerOverrides)) {
+    throw new Error('UNSUPPORTED_JWT_HEADER: 仅支持 HS256，不能覆盖算法或使用 crit/b64 扩展')
   }
 
   const header = {
@@ -244,7 +250,7 @@ export async function signJwtHmacSha256(
 
 function safeDecodeURIComponent(val: string): string {
   try {
-    return decodeURIComponent(val.replace(/\+/g, ' '))
+    return decodeURIComponent(val)
   } catch {
     return val
   }
@@ -256,12 +262,14 @@ export function parseAndInspectUrl(rawInput: string): UrlInspectResult {
     throw new Error('EMPTY_URL_INPUT: URL 或 Query 字符串不能为空')
   }
 
-  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)
+  const authorityWithPort = /^[^/?#]+:\d+(?:[/?#]|$)/.test(trimmed)
+  const hasScheme = /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed) && !authorityWithPort
+  const queryOnly = !hasScheme && (trimmed.startsWith('?') || /^[^/?#]*[=&]/u.test(trimmed))
   const normalizedUrlStr = hasScheme
     ? trimmed
-    : trimmed.startsWith('?') || trimmed.includes('=')
+    : queryOnly
       ? `https://ztools.local/${trimmed.startsWith('?') ? trimmed : `?${trimmed}`}`
-      : `https://${trimmed}`
+      : trimmed.startsWith('//') ? `https:${trimmed}` : `https://${trimmed}`
 
   let parsed: URL
   try {
@@ -273,8 +281,12 @@ export function parseAndInspectUrl(rawInput: string): UrlInspectResult {
   }
 
   const queryParams: UrlQueryParamItem[] = []
-  parsed.searchParams.forEach((value, key) => {
-    const decodedValue = safeDecodeURIComponent(value)
+  const decodedEntries = parsed.searchParams.entries()
+  for (const pair of parsed.search.slice(1).split('&').filter(Boolean)) {
+    const entry = decodedEntries.next().value
+    if (!entry) continue
+    const [key, decodedValue] = entry
+    const equals = pair.indexOf('=')
     const isNestedUrl = /^https?:\/\//i.test(decodedValue)
     const isJsonLike =
       (decodedValue.startsWith('{') && decodedValue.endsWith('}')) ||
@@ -282,23 +294,45 @@ export function parseAndInspectUrl(rawInput: string): UrlInspectResult {
 
     queryParams.push({
       key,
-      rawValue: value,
+      rawKey: equals < 0 ? pair : pair.slice(0, equals),
+      rawValue: equals < 0 ? '' : pair.slice(equals + 1),
       decodedValue,
       isNestedUrl,
       isJsonLike,
     })
-  })
+  }
 
   return {
     rawInput: trimmed,
-    protocol: hasScheme ? parsed.protocol.replace(/:$/, '') : 'query-only',
-    host: hasScheme ? parsed.host : '-',
-    hostname: hasScheme ? parsed.hostname : '-',
-    port: hasScheme ? parsed.port || (parsed.protocol === 'https:' ? '443' : '80') : '-',
-    pathname: hasScheme ? parsed.pathname : '-',
+    protocol: queryOnly ? 'query-only' : parsed.protocol.replace(/:$/, ''),
+    host: queryOnly ? '-' : parsed.host || '-',
+    hostname: queryOnly ? '-' : parsed.hostname || '-',
+    port: queryOnly ? '-' : parsed.port || (parsed.protocol === 'https:' ? '443' : parsed.protocol === 'http:' ? '80' : '-'),
+    pathname: queryOnly ? '-' : parsed.pathname,
     hash: parsed.hash || '',
-    encodedFullUrl: encodeURI(trimmed),
+    encodedFullUrl: queryOnly ? parsed.search + parsed.hash : parsed.href,
     decodedFullUrl: safeDecodeURIComponent(trimmed),
     queryParams,
   }
+}
+
+/** 重复键保留全部值，特殊键名作为普通数据，不触发对象原型赋值。 */
+export function queryParamsToJson(params: UrlQueryParamItem[]): string {
+  const values: Record<string, string | string[]> = Object.create(null)
+  for (const item of params) {
+    const previous = values[item.key]
+    if (previous === undefined) values[item.key] = item.decodedValue
+    else if (Array.isArray(previous)) previous.push(item.decodedValue)
+    else values[item.key] = [previous, item.decodedValue]
+  }
+  return JSON.stringify(values, null, 2)
+}
+
+/** 用户输入只作为代码块原文展示，不能闭合围栏后生成联网图片或链接。 */
+export function fencedBlock(content: string, language = 'text'): string {
+  const normalized = content.replace(/\r\n?/g, '\n')
+  let length = 3
+  for (const run of normalized.matchAll(/`+/g)) length = Math.max(length, run[0].length + 1)
+  const fence = '`'.repeat(length)
+  return `${fence}${language}\n${normalized}\n${fence}`
 }

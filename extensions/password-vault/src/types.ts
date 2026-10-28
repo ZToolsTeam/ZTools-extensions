@@ -14,7 +14,9 @@ export interface VaultEntry {
 }
 
 export interface EncryptedVaultEnvelope {
-  version: 1
+  /** 1：PBKDF2 固定 10 万次；2：迭代次数记录在 kdfIterations */
+  version: 1 | 2
+  kdfIterations?: number
   saltBase64: string
   ivBase64: string
   cipherTextBase64: string

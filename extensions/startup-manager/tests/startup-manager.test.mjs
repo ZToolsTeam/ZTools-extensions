@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
 
 const require = createRequire(import.meta.url)
-const pluginModule = require('../dist/index.js')
+const pluginModule = require('../dist/windows-command.js')
 
 const { default: StartupManagerCommand } = pluginModule
 

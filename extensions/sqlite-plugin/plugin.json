@@ -1,0 +1,29 @@
+{
+  "id": "sqlite-plugin",
+  "name": "SQLite 查看器",
+  "description": "查找 AppData 下的 SQLite 数据库文件，只读查看表结构与每张表前 50 行记录，并把记录导出为 CSV / JSON / SQL INSERT 文本",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "开发工具"
+  ],
+  "permissions": [
+    "sqlite",
+    "fs",
+    "system",
+    "clipboard",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

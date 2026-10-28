@@ -1,24 +1,11 @@
-export type MediaParamGroup = '位置隐私' | '拍摄设备' | '曝光参数' | '视频流' | '音频流'
-
+export type CleaningMode = 'location' | 'metadata'
 export interface MediaMetadataSummary {
-  filePath: string
-  fileName: string
-  fileSize: number
-  fileType: 'image' | 'video' | 'audio'
-  hasExif: boolean
-  hasGps: boolean
-  gpsFormatted?: string
-  gpsLatitude?: number
-  gpsLongitude?: number
-  deviceModel?: string
-  dateTimeOriginal?: string
-  isMediaVideo: boolean
+  name: string
+  size: number
+  digest: string
+  type: string
+  canClean: boolean
+  hasLocation: boolean
+  fields: { key: string; value: string }[]
 }
-
-export interface MediaParamItem {
-  key: string
-  label: string
-  value: string
-  group: MediaParamGroup
-  extraHint?: string
-}
+export interface SavedMedia { success: true; status: 'committed'; name: string; size: number }

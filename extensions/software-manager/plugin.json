@@ -1,0 +1,58 @@
+{
+  "id": "software-manager",
+  "name": "软件卸载",
+  "description": "列出系统登记的已安装软件与占用体积，确认后启动软件自带的卸载程序，并只读列出 AppData 目录占用",
+  "version": "2.0.8",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "keywords": [
+    "软件卸载",
+    "应用卸载",
+    "卸载软件",
+    "应用管理",
+    "已安装软件",
+    "uninstall"
+  ],
+  "features": [
+    {
+      "code": "uninstall-all",
+      "explain": "列出已安装软件，确认后启动软件自带的卸载程序",
+      "cmds": [
+        "软件卸载",
+        "应用卸载",
+        "卸载软件",
+        "应用管理",
+        "uninstall"
+      ]
+    },
+    {
+      "code": "uninstall-large",
+      "explain": "按登记的占用体积从大到小查看已安装软件",
+      "cmds": [
+        "大体积软件",
+        "大软件清理",
+        "软件占用空间"
+      ]
+    }
+  ],
+  "permissions": [
+    "system",
+    "fs",
+    "shell",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

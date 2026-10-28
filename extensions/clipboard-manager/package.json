@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-clipboard-manager",
+  "version": "1.0.0",
+  "description": "剪贴板历史记录搜索、收藏与快速回填",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

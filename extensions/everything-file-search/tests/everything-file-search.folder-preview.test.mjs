@@ -37,7 +37,7 @@ for (let i = 0; i < 250; i++) writeFile(path.join(crowded, 'cache', `blob-${i}.b
 async function setup(opts = {}) {
   const host = createHost()
   host.reset()
-  await installDirectoryHost(host, { globalHits: ['/Applications/workspace/elsewhere/Electron Framework'], ...opts })
+  await installDirectoryHost(host, { globalHits: ['/Users/test/elsewhere/Electron Framework'], ...opts })
   return host
 }
 

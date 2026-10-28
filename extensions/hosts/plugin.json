@@ -1,0 +1,22 @@
+{
+  "id": "hosts",
+  "name": "Hosts 管理器",
+  "description": "系统 Hosts 规则查看与切换",
+  "version": "1.0.0",
+  "revoked": true,
+  "revokedReason": "功能未完成（只有示例数据）",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": "system",
+  "permissions": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

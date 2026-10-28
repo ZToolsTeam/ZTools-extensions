@@ -1,4 +1,4 @@
-import type { CommitTypeItem, GitEmergencyItem, GitignoreStackTemplate } from './types'
+import type { CommitTypeItem, GitEmergencyItem, GitignoreStackTemplate } from './types.js'
 
 export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
   {
@@ -8,23 +8,23 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
     categoryLabel: '提交后悔药',
     tags: ['撤销提交', '撤销commit', '保留代码', 'reset soft'],
     pinyinKeywords: ['chexiao', 'chexiaotijiao', 'huitui', 'huigun'],
-    safetyLevel: '安全无损',
+    safetyLevel: '注意检查',
     difficulty: '小白推荐',
-    primaryCommand: 'git reset --soft HEAD~1',
+    primaryCommand: 'git branch backup/before-undo && git reset --soft HEAD~1',
     steps: [
       {
-        title: '撤销最近一次 commit，所有改动退回暂存区（Staged）',
-        cmd: 'git reset --soft HEAD~1',
-        explain: '工作区与暂存区代码 100% 完好保留，仅回退分支 HEAD 指针到上一个版本'
+        title: '为当前提交建立恢复分支，再撤销最近一次尚未推送的提交',
+        cmd: 'git branch backup/before-undo && git reset --soft HEAD~1',
+        explain: '只适用于至少有两次提交的本地分支。恢复分支已存在时会停止，请另取新名字；不会覆盖旧恢复点。工作文件与暂存内容保持不变。'
       },
       {
         title: '若想同时取消 git add 退回未暂存状态（可选）',
-        cmd: 'git reset HEAD~1',
-        explain: '默认 --mixed 模式，代码依然保留在本地磁盘，绝不丢失'
+        cmd: 'git reset --mixed HEAD',
+        explain: '在上一步之后执行；只取消暂存，不再回退 HEAD。工作文件保留，原来的暂存划分会取消。'
       }
     ],
     principle:
-      '--soft 参数只移动 HEAD 引用指针，不触碰 Index 暂存区和 Working Tree 工作树，是最安全的后悔药。',
+      '先核对 git status 和 git log。只撤销一次未推送提交；已推送到共享分支的提交使用 revert。恢复分支保留原提交，不包含未提交文件的独立副本。',
     minGitVersion: 'Git 2.0+'
   },
   {
@@ -34,19 +34,19 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
     categoryLabel: '提交后悔药',
     tags: ['漏提文件', '修改提交备注', 'amend', '追加文件'],
     pinyinKeywords: ['loutiwangjian', 'xiugaibeizhu', 'amend', 'zhuijia'],
-    safetyLevel: '安全无损',
+    safetyLevel: '注意检查',
     difficulty: '小白推荐',
-    primaryCommand: 'git add <遗漏文件> && git commit --amend --no-edit',
+    primaryCommand: 'git status --short',
     steps: [
       {
         title: '把遗漏的文件加入暂存区并合并进上一次提交（不改备注）',
-        cmd: 'git add . && git commit --amend --no-edit',
-        explain: '不会产生多余的 "fix typo" 脏提交节点，保持 Git 历史干净'
+        cmd: 'git add -- "需要补交的文件路径"',
+        explain: '把引号内替换为明确要补交的文件；再用 git diff --cached 检查全部暂存内容，避免把其他工作一起提交。'
       },
       {
-        title: '如果只想重写上一次的中文提交备注',
-        cmd: 'git commit --amend -m "fix: 修正后的中文提交说明"',
-        explain: '直接替换最近一次 Commit 的 Message'
+        title: '确认暂存内容后，保存旧提交再补交（不改备注）',
+        cmd: 'git branch backup/before-amend && git commit --amend --no-edit',
+        explain: '只用于未推送提交。备份分支重名时停止，换新名字后重试；若只改备注，先核对暂存区，再单独使用 git commit --amend。'
       }
     ],
     principle: 'amend 会用一个新的 Commit 对象替换当前分支顶端的旧 Commit（仅限尚未 push 到公共分支时使用）。'
@@ -65,12 +65,12 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
       {
         title: '第一步：查看本地所有 HEAD 历史移动轨迹，找到翻车前的短哈希（如 a1b2c3d）',
         cmd: 'git reflog -n 20',
-        explain: '即便分支被删或 reset --hard，Git 本地仍会在 reflog 中保留对象至少 30~90 天'
+        explain: '从日志中确认要恢复的提交。记录可能已过期或被清理，未提交的文件修改通常不能依靠 reflog 找回。'
       },
       {
         title: '第二步：基于翻车前的 commit 哈希新建或恢复分支',
-        cmd: 'git checkout -b recovered-branch HEAD@{1}',
-        explain: '也可将 HEAD@{1} 替换为你在 reflog 里看到的具体哈希值'
+        cmd: 'git branch recovered-branch "确认后的提交哈希"',
+        explain: '将引号内替换为已核对的提交哈希，仅创建恢复分支，不切换或改写当前工作文件；不要假定 HEAD@{1} 就是正确版本。'
       }
     ],
     principle:
@@ -85,25 +85,20 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
     pinyinKeywords: ['tijiaocuofenzhi', 'fenzhicuowu', 'nuoyitijiao'],
     safetyLevel: '注意检查',
     difficulty: '中等',
-    primaryCommand: 'git branch feat/new-work && git reset --hard HEAD~1 && git checkout feat/new-work',
+    primaryCommand: 'git switch -c feat/new-work',
     steps: [
       {
-        title: '第一步：在当前位置原地创建一个新分支保留这笔提交',
-        cmd: 'git branch feat/new-work',
-        explain: '此时 feat/new-work 已经安全指向了包含新代码的提交'
+        title: '第一步：新建并切换到工作分支，保留提交和当前修改',
+        cmd: 'git switch -c feat/new-work',
+        explain: '新名字不能与已有分支重复。原分支暂时保留，不触碰工作区。'
       },
       {
-        title: '第二步：将当前 main 分支回退 1 个版本（务必确认工作区无未提交脏改动）',
-        cmd: 'git reset --hard HEAD~1',
-        explain: '让 main 分支恢复干净状态'
-      },
-      {
-        title: '第三步：切换到刚才创建的新特性分支继续工作',
-        cmd: 'git checkout feat/new-work',
-        explain: '代码已完好迁移至新分支'
+        title: '第二步：核对分支与提交关系，再决定如何处理原分支',
+        cmd: 'git log --oneline --decorate --all -n 10',
+        explain: '当前工作已转到新分支。原分支若已共享，使用 revert；若尚未推送，核对要保留的提交后再调整原分支，不直接运行硬重置。'
       }
     ],
-    principle: '因为分支本质上只是一个 41 字节的哈希指针文件，先建指针再退旧指针即可实现零成本移花接木。'
+    principle: '先建立新分支保护工作，再核对原分支是否已经共享。这里不会自动清理原分支的提交；git switch 需要 Git 2.23 或更新版本。'
   },
   {
     id: 'undo-messy-git-pull-merge',
@@ -112,22 +107,22 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
     categoryLabel: '冲突拆弹',
     tags: ['撤销pull', '放弃合并', 'merge abort', '冲突回退'],
     pinyinKeywords: ['chexiaopull', 'fangqihebing', 'chongtu'],
-    safetyLevel: '安全无损',
+    safetyLevel: '注意检查',
     difficulty: '小白推荐',
-    primaryCommand: 'git merge --abort',
+    primaryCommand: 'git status',
     steps: [
       {
         title: '若正处于合并冲突中断状态，一键中止合并',
         cmd: 'git merge --abort',
-        explain: '如果是 git rebase 冲突，则执行 git rebase --abort'
+        explain: '只适用于正在进行的 merge；rebase 冲突单独用 git rebase --abort。先另存未提交文件及手动解决冲突的内容，abort 不能保证还原合并前所有未提交改动。'
       },
       {
-        title: '若 pull 已经自动合并完成但想退回 pull 之前的版本',
-        cmd: 'git reset --hard ORIG_HEAD',
-        explain: 'Git 在执行危险合并前会自动把旧位置保存在 ORIG_HEAD 中'
+        title: '若合并已经完成，先核对合并前位置；不要接着执行上一步',
+        cmd: 'git show --stat ORIG_HEAD',
+        explain: '这是另一种情形，不是 abort 后的下一步。先保存文件副本并新建备份分支；确认该引用未被后续操作改写后，再决定 revert 或本地回退。'
       }
     ],
-    principle: 'ORIG_HEAD 是 Git 在执行 merge / pull / reset 等大跨度操作前自动留存的安全锚点。'
+    principle: '区分正在合并与已经完成，不能把两个方案连续运行。ORIG_HEAD 会被后续操作更新，使用前必须核对实际提交。'
   },
   {
     id: 'revert-pushed-public-commit',
@@ -136,24 +131,31 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
     categoryLabel: '线上回滚',
     tags: ['远程回滚', 'revert', '线上回退', '反向提交'],
     pinyinKeywords: ['yuanchenghuigun', 'xianshanghuigun', 'revert'],
-    safetyLevel: '安全无损',
+    safetyLevel: '注意检查',
     difficulty: '小白推荐',
-    primaryCommand: 'git revert HEAD --no-edit && git push',
+    primaryCommand: 'git show --stat HEAD',
     steps: [
       {
         title: '生成一笔反向抵消提交（不动历史时间线）',
         cmd: 'git revert HEAD --no-edit',
-        explain: '如果回滚的是一个 Merge Commit，需加 -m 1 指定主线父节点：git revert -m 1 <hash>'
+        explain: '确认 HEAD 是要撤销的普通提交，先保存当前修改。合并提交需要核对主线父节点，不能一律选择 -m 1；出现冲突后应处理或 git revert --abort。'
       },
       {
         title: '正常推送到远端仓库（无需危险的 --force）',
-        cmd: 'git push origin main',
-        explain: '团队其他成员只需正常 git pull，不会产生历史分叉冲突'
+        cmd: 'git status -sb',
+        explain: '测试反向提交并核对当前分支、远端和上游后再正常推送。不要把固定的 main 当成所有项目的目标分支。'
       }
     ],
     principle: '公共分支严禁 git reset --hard 后强推（force push），使用 git revert 新增反向补丁才是工程规范。'
   }
 ]
+
+/** 整份指南仅供阅读；每行都是 shell 注释，避免把可选方案串成连续命令。 */
+export function buildEmergencyGuide(item: GitEmergencyItem): string {
+  return [`场景：${item.title}`, '以下是说明，请逐项核对后单独执行命令；不需要把全部步骤连续运行。',
+    ...item.steps.flatMap((step, index) => [`${index + 1}. ${step.title}`, step.cmd, step.explain]), item.principle]
+    .flatMap(line => line.split(/\r?\n/)).map(line => `# ${line}`).join('\n')
+}
 
 export const COMMIT_TYPES: CommitTypeItem[] = [
   {
@@ -323,16 +325,10 @@ export function searchGitEmergencies(query: string): GitEmergencyItem[] {
 }
 
 /**
- * 安全转义 Shell 双引号参数中的特殊字符（`"`、`$`、`\n`、`` ` ``）
+ * 用 POSIX 单引号保留 Bash/zsh 参数的字面值，包括交互终端的感叹号。
  */
-export function escapeShellDoubleQuoted(raw: string): string {
-  return String(raw ?? '')
-    .replace(/\r?\n/g, ' ')
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\$/g, '\\$')
-    .replace(/`/g, '\\`')
-    .trim()
+export function quotePosixShellArg(raw: string): string {
+  return "'" + raw.replace(/'/g, "'\"'\"'") + "'"
 }
 
 /**
@@ -352,30 +348,30 @@ export function buildConventionalCommit(options: {
   const cleanType = String(options.type || 'feat').trim()
   const cleanScope = String(options.scope || '')
     .trim()
-    .replace(/[()]/g, '')
+    .replace(/[()\r\n]/g, '')
   const rawSubject = String(options.subject || '').trim()
   const bang = options.breaking ? '!' : ''
   const scopePart = cleanScope ? `(${cleanScope})` : ''
 
-  if (!rawSubject) {
+  if (!rawSubject || /[\u0000-\u001f\u007f]/.test(cleanType + cleanScope + rawSubject.replace(/\r?\n/g, ' '))) {
     const placeholder = '请填写清晰明确的中文改动摘要'
     const msg = `${cleanType}${scopePart}${bang}: ${placeholder}`
     return {
       isValid: false,
       message: msg,
-      gitCommand: `git commit -m "${msg}"`,
+      gitCommand: '',
       validationHint: '提交说明不能为空，建议使用中文简述本次修改的具体目的'
     }
   }
 
   const normalizedSubject = rawSubject.replace(/\r?\n/g, ' ').trim()
   const message = `${cleanType}${scopePart}${bang}: ${normalizedSubject}`
-  const escaped = escapeShellDoubleQuoted(message)
+  const escaped = quotePosixShellArg(message)
 
   return {
     isValid: true,
     message,
-    gitCommand: `git commit -m "${escaped}"`
+    gitCommand: `git commit -m ${escaped}`
   }
 }
 
@@ -387,10 +383,7 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
   totalUniqueRules: number
   selectedStacks: string[]
 } {
-  const effectiveIds =
-    Array.isArray(selectedStackIds) && selectedStackIds.length > 0
-      ? selectedStackIds
-      : ['macOS', 'Windows']
+  const effectiveIds = [...new Set(selectedStackIds)]
 
   const seenRules = new Set<string>()
   const sections: string[] = [
@@ -419,7 +412,7 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
     }
   }
 
-  const cleanCustom = customRules.map((r) => r.trim()).filter((r) => r && !seenRules.has(r))
+  const cleanCustom = [...new Set(customRules.map((r) => r.trim()))].filter((r) => r && !seenRules.has(r))
   if (cleanCustom.length > 0) {
     sections.push('\n### Custom Rules ###')
     for (const r of cleanCustom) {

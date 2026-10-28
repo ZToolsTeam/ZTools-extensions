@@ -16,7 +16,8 @@ export interface FileDiagnosticResult {
   extensionMismatch: boolean
   isText: boolean
   detectedEncoding: string
-  confidence: number
+  /** 编码判断的依据（BOM、合法 UTF-8 或按 GBK 推测），不是概率 */
+  detectionBasis: string
   hasBom: boolean
   lineEnding: LineEndingType
   hexHeaderPreview: string

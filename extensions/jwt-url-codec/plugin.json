@@ -1,9 +1,9 @@
 {
   "id": "jwt-url-codec",
   "name": "JWT与URL解析",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "离线解析 JWT Token（Header/Payload/生命周期倒计时/HMAC-SHA256 验签与签发）与深度 URL Query 参数拆解重组工具",
-  "author": "ZTools Official",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

@@ -2,6 +2,8 @@ export type WifiSecurityType =
   | 'WPA3-Personal'
   | 'WPA2-Personal'
   | 'WPA/WPA2-Personal'
+  | 'WPA-Personal'
+  | 'WPA-Enterprise'
   | 'WPA2-Enterprise'
   | 'WPA3-Enterprise'
   | 'WEP'
@@ -73,7 +75,6 @@ export type WifiCommandExecutor = (
 export interface FetchWifiProfilesOptions {
   platform?: 'win32' | 'darwin' | 'linux'
   executor?: WifiCommandExecutor
-  fallbackToSample?: boolean
   interfaceName?: string
   hostOverride?: unknown
 }

@@ -336,6 +336,7 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
   const safeCount = Math.min(Math.max(1, Math.floor(count || 10)), 500)
   const rand = createPrng(seed)
   const records: MockUserRecord[] = []
+  const now = new Date()
 
   for (let i = 0; i < safeCount; i++) {
     const itemSeed = Math.floor(rand() * 10_000_000) + i * 97
@@ -348,13 +349,15 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
       idInfo.gender === '男'
         ? GIVEN_NAMES_M[i % GIVEN_NAMES_M.length]!
         : GIVEN_NAMES_F[i % GIVEN_NAMES_F.length]!
-    const birthYear = Number(idInfo.birthDate.slice(0, 4))
+    const [birthYear, birthMonth, birthDay] = idInfo.birthDate.split('-').map(Number)
+    const birthdayPending = now.getMonth() + 1 < birthMonth! ||
+      (now.getMonth() + 1 === birthMonth && now.getDate() < birthDay!)
 
     records.push({
       id: `USR-${padNum(i + 1, 4)}`,
       name: `${surname}${given}`,
       gender: idInfo.gender,
-      age: 2026 - birthYear,
+      age: now.getFullYear() - birthYear! - Number(birthdayPending),
       idCard: idInfo.idCard,
       phone,
       email: `user_${i + 1}_${phone.slice(-4)}@example.ztools.cn`,
@@ -362,7 +365,7 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
       creditCode,
       bankCard: bankInfo.cardNo,
       address: `${idInfo.areaName}科技园创新大厦 ${i + 1} 层`,
-      createdAt: '2026-10-25T10:00:00+08:00'
+      createdAt: now.toISOString()
     })
   }
 

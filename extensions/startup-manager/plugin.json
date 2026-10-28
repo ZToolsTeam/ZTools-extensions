@@ -1,9 +1,9 @@
 {
   "id": "startup-manager",
   "name": "启动管理",
-  "description": "穿透扫描注册表开机自启、启动文件夹、第三方后台服务与计划任务，一键禁用流氓软件后台自启并加速开机",
-  "version": "1.0.1",
-  "author": "ZTools Team",
+  "description": "查看启动应用、后台服务与计划任务，管理自启状态；Mac 修改前保留可恢复的配置记录",
+  "version": "1.0.4",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -14,7 +14,8 @@
     "system",
     "shell",
     "process",
-    "clipboard"
+    "clipboard",
+    "fs"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
@@ -62,5 +63,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

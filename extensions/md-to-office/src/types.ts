@@ -1,30 +1,7 @@
-export type StylePreset = 'official' | 'business' | 'academic'
-export type DocFontSize = 'size-3' | 'size-s4' | 'size-5'
-
-export interface DocElement {
-  id: string
-  type: 'heading' | 'table' | 'code' | 'paragraph' | 'list'
-  typeLabel: string
-  title: string
-  preview: string
-  rawContent: string
-  extraInfo: string
-  headingLevel?: number
-  tableRows?: string[][]
-  codeLanguage?: string
-}
-
-export interface DocMetadata {
-  title: string
-  wordCount: number
-  headingsCount: number
-  tablesCount: number
-  codeBlocksCount: number
-  paragraphsCount: number
-}
-
 export interface ConvertOptions {
-  preset: StylePreset
-  fontSize: DocFontSize
+  preset: 'official' | 'business' | 'academic'
+  fontSize: 'size-3' | 'size-s4' | 'size-5'
   firstLineIndent: boolean
 }
+export interface DocSummary { title: string; characters: number; blocks: number; warnings: string[] }
+export const DEFAULT_OPTIONS: ConvertOptions = { preset: 'official', fontSize: 'size-3', firstLineIndent: true }

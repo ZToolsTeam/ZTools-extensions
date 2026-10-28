@@ -9,17 +9,23 @@ import React, {
   ToastStyle,
   useState,
   useMemo,
+  useRef,
+  useEffect,
+  useNavigation,
 } from '@ztools/declarative-ui'
-import type { CodecMode, UrlQueryParamItem } from './types'
-import { isRealElectronHost } from './native-ipc'
+import type { CodecMode, UrlQueryParamItem } from './types.js'
+import { isRealElectronHost } from './native-ipc.js'
+import { JwtSignForm } from './sign-form.js'
 import {
   decodeJwtToken,
   verifyJwtHmacSha256,
   parseAndInspectUrl,
-} from './jwt-url-service'
+  queryParamsToJson,
+  fencedBlock,
+} from './jwt-url-service.js'
 
-export * from './types'
-export * from './jwt-url-service'
+export * from './types.js'
+export * from './jwt-url-service.js'
 
 const DEFAULT_JWT_SAMPLE =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEwMjQiLCJuYW1lIjoiWlRvb2xzIERldmVsb3BlciIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTczNTY4OTYwMCwiZXhwIjoxOTg4MTUwNDAwfQ.4f-8h_l7mN3vR2kX9pQ1wZ5yB6cT0dG8jL4sA2eF6uI'
@@ -27,13 +33,27 @@ const DEFAULT_JWT_SAMPLE =
 export function JwtUrlCodecCommand() {
   const [mode, setMode] = useState<CodecMode>('jwt')
   const [rawInput, setRawInput] = useState<string>(isRealElectronHost() ? '' : DEFAULT_JWT_SAMPLE)
-  const [secretInput, setSecretInput] = useState<string>('')
   const [verifyMsg, setVerifyMsg] = useState<string>('未验签（可通过动作面板读取剪贴板密钥验签）')
+  const [nowMs, setNowMs] = useState(Date.now())
+  const requestVersion = useRef(0)
+  const { push } = useNavigation()
+
+  function updateInput(text: string) {
+    requestVersion.current++
+    setRawInput(text)
+    setVerifyMsg('未验签（可通过动作面板读取剪贴板密钥验签）')
+  }
+
+  useEffect(() => {
+    if (mode !== 'jwt') return () => { requestVersion.current++ }
+    const timer = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => { clearInterval(timer); requestVersion.current++ }
+  }, [mode])
 
   const jwtState = useMemo(() => {
     if (mode !== 'jwt') return null
     try {
-      const result = decodeJwtToken(rawInput)
+      const result = decodeJwtToken(rawInput, nowMs)
       return { ok: true as const, result }
     } catch (err) {
       return {
@@ -41,7 +61,7 @@ export function JwtUrlCodecCommand() {
         error: err instanceof Error ? err.message : String(err),
       }
     }
-  }, [mode, rawInput])
+  }, [mode, rawInput, nowMs])
 
   const urlState = useMemo(() => {
     if (mode !== 'url') return null
@@ -57,8 +77,10 @@ export function JwtUrlCodecCommand() {
   }, [mode, rawInput])
 
   const handleLoadFromClipboard = async (): Promise<void> => {
+    const request = ++requestVersion.current
     try {
       const text = await Clipboard.readText()
+      if (request !== requestVersion.current) return
       if (!text || !text.trim()) {
         await showToast({
           style: ToastStyle.Failure,
@@ -68,7 +90,7 @@ export function JwtUrlCodecCommand() {
         return
       }
       const trimmed = text.trim()
-      setRawInput(trimmed)
+      updateInput(trimmed)
       if (trimmed.split('.').length === 3 && /^eyJ/.test(trimmed.replace(/^Bearer\s+/i, ''))) {
         setMode('jwt')
       } else if (/^https?:\/\//i.test(trimmed) || trimmed.includes('?')) {
@@ -79,6 +101,7 @@ export function JwtUrlCodecCommand() {
         title: '已从剪贴板载入内容',
       })
     } catch (err) {
+      if (request !== requestVersion.current) return
       await showToast({
         style: ToastStyle.Failure,
         title: '读取剪贴板失败',
@@ -88,9 +111,13 @@ export function JwtUrlCodecCommand() {
   }
 
   const handleVerifyFromClipboardSecret = async (): Promise<void> => {
+    const request = ++requestVersion.current
+    setVerifyMsg('正在校验签名')
     try {
-      const clipSecret = (await Clipboard.readText())?.trim() || secretInput.trim()
+      const clipSecret = await Clipboard.readText()
+      if (request !== requestVersion.current) return
       if (!clipSecret) {
+        setVerifyMsg('未验签：缺少密钥')
         await showToast({
           style: ToastStyle.Failure,
           title: '缺少验签密钥',
@@ -98,8 +125,8 @@ export function JwtUrlCodecCommand() {
         })
         return
       }
-      setSecretInput(clipSecret)
       const res = await verifyJwtHmacSha256(rawInput, clipSecret)
+      if (request !== requestVersion.current) return
       setVerifyMsg(res.verified ? `验签通过 (${res.algorithm})` : `验签失败: ${res.reason}`)
       await showToast({
         style: res.verified ? ToastStyle.Success : ToastStyle.Failure,
@@ -107,6 +134,8 @@ export function JwtUrlCodecCommand() {
         message: res.reason,
       })
     } catch (err) {
+      if (request !== requestVersion.current) return
+      setVerifyMsg('验签异常，未确认签名')
       await showToast({
         style: ToastStyle.Failure,
         title: '验签异常',
@@ -120,12 +149,17 @@ export function JwtUrlCodecCommand() {
       isShowingDetail={true}
       searchBarPlaceholder="粘贴 JWT Token 或 URL 链接直接解析..."
       searchText={rawInput}
-      onSearchTextChange={setRawInput}
+      onSearchTextChange={updateInput}
+      filterBar={mode === 'jwt' ? {
+        summaryText: '离线解析与 HS256 签名工具',
+        actions: [{ id: 'sign-jwt', title: '签发 JWT', onAction: () => push(<JwtSignForm
+          initialPayload={jwtState?.ok ? JSON.stringify(jwtState.result.payload, null, 2) : '{}'} onCreated={updateInput} />) }]
+      } : undefined}
       searchBarAccessory={
         <List.Dropdown
           tooltip="切换解析模式"
           value={mode}
-          onChange={(val: string) => setMode(val as CodecMode)}
+          onChange={(val: string) => { requestVersion.current++; setMode(val as CodecMode); setVerifyMsg('未验签') }}
         >
           <List.Dropdown.Item title="JWT Token 深度解析" value="jwt" />
           <List.Dropdown.Item title="URL 与 Query 参数拆解" value="url" />
@@ -142,7 +176,7 @@ export function JwtUrlCodecCommand() {
             accessories={[{ tag: { value: '解析失败', color: Color.Red } }]}
             detail={
               <List.Item.Detail
-                markdown={`### JWT 解析失败\n\n\`\`\`text\n${jwtState.error}\n\`\`\`\n\n请确认输入符合 \`Header.Payload.Signature\` 三段式 Base64URL 规范。`}
+                markdown={`### JWT 解析失败\n\n${fencedBlock(jwtState.error)}\n\n请确认输入符合 Header.Payload.Signature 三段式 Base64URL 规范。`}
               />
             }
             actions={
@@ -150,7 +184,7 @@ export function JwtUrlCodecCommand() {
                 <Action
                   title="从剪贴板载入 Token"
                   icon={Icon.Clipboard}
-                  onAction={() => void handleLoadFromClipboard()}
+                  onAction={handleLoadFromClipboard}
                 />
               </ActionPanel>
             }
@@ -166,21 +200,13 @@ export function JwtUrlCodecCommand() {
             subtitle={jwtState.result.expiryCountdownText}
             icon={Icon.Key}
             accessories={[
-              jwtState.result.isExpired
-                ? { tag: { value: 'TOKEN 已过期', color: Color.Red } }
-                : { tag: '有效期内' },
+              ['已过期', '尚未生效', '时间声明异常'].includes(jwtState.result.timeStatus)
+                ? { tag: { value: jwtState.result.timeStatus, color: Color.Red } }
+                : { tag: jwtState.result.timeStatus },
             ]}
             detail={
               <List.Item.Detail
-                markdown={`### Payload JSON\n\`\`\`json\n${JSON.stringify(
-                  jwtState.result.payload,
-                  null,
-                  2,
-                )}\n\`\`\`\n\n### Header JSON\n\`\`\`json\n${JSON.stringify(
-                  jwtState.result.header,
-                  null,
-                  2,
-                )}\n\`\`\``}
+                markdown={`### Payload JSON\n${fencedBlock(JSON.stringify(jwtState.result.payload, null, 2), 'json')}\n\n### Header JSON\n${fencedBlock(JSON.stringify(jwtState.result.header, null, 2), 'json')}`}
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
@@ -222,12 +248,12 @@ export function JwtUrlCodecCommand() {
                 <Action
                   title="使用剪贴板密钥校验 HS256 签名"
                   icon={Icon.Shield}
-                  onAction={() => void handleVerifyFromClipboardSecret()}
+                  onAction={handleVerifyFromClipboardSecret}
                 />
                 <Action
                   title="从剪贴板重新读取 Token"
                   icon={Icon.Clipboard}
-                  onAction={() => void handleLoadFromClipboard()}
+                  onAction={handleLoadFromClipboard}
                 />
               </ActionPanel>
             }
@@ -242,11 +268,7 @@ export function JwtUrlCodecCommand() {
               accessories={[{ tag: typeof claimVal }]}
               detail={
                 <List.Item.Detail
-                  markdown={`### Claim: \`${claimKey}\`\n\n\`\`\`json\n${JSON.stringify(
-                    claimVal,
-                    null,
-                    2,
-                  )}\n\`\`\``}
+                  markdown={`### Claim 名称\n${fencedBlock(claimKey)}\n\n### Claim 值\n${fencedBlock(JSON.stringify(claimVal, null, 2), 'json')}`}
                 />
               }
               actions={
@@ -272,7 +294,7 @@ export function JwtUrlCodecCommand() {
             subtitle={urlState.error}
             icon={Icon.ExclamationMark}
             accessories={[{ tag: { value: '格式错误', color: Color.Red } }]}
-            detail={<List.Item.Detail markdown={`### URL 解析异常\n\n\`\`\`text\n${urlState.error}\n\`\`\``} />}
+            detail={<List.Item.Detail markdown={`### URL 解析异常\n\n${fencedBlock(urlState.error)}`} />}
           />
         </List.Section>
       )}
@@ -287,16 +309,7 @@ export function JwtUrlCodecCommand() {
             accessories={[{ tag: urlState.result.protocol.toUpperCase() }]}
             detail={
               <List.Item.Detail
-                markdown={`### 解码后完整 URL\n\`\`\`text\n${urlState.result.decodedFullUrl}\n\`\`\`\n\n### Query 参数 JSON\n\`\`\`json\n${JSON.stringify(
-                  Object.fromEntries(
-                    urlState.result.queryParams.map((p: UrlQueryParamItem) => [
-                      p.key,
-                      p.decodedValue,
-                    ]),
-                  ),
-                  null,
-                  2,
-                )}\n\`\`\``}
+                markdown={`### 解码预览（保留编码的 URL 用于请求）\n${fencedBlock(urlState.result.decodedFullUrl)}\n\n### Query 参数 JSON\n${fencedBlock(queryParamsToJson(urlState.result.queryParams), 'json')}`}
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label title="协议 (Protocol)" text={urlState.result.protocol} />
@@ -311,22 +324,14 @@ export function JwtUrlCodecCommand() {
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard
-                  title="复制解码后完整 URL"
-                  content={urlState.result.decodedFullUrl}
+                  title="复制完整 URL（保留编码）"
+                  content={urlState.result.encodedFullUrl}
                 />
                 <Action.CopyToClipboard
                   title="复制 Query 参数 JSON"
-                  content={JSON.stringify(
-                    Object.fromEntries(
-                      urlState.result.queryParams.map((p: UrlQueryParamItem) => [
-                        p.key,
-                        p.decodedValue,
-                      ]),
-                    ),
-                    null,
-                    2,
-                  )}
+                  content={queryParamsToJson(urlState.result.queryParams)}
                 />
+                <Action.CopyToClipboard title="复制解码预览" content={urlState.result.decodedFullUrl} />
               </ActionPanel>
             }
           />
@@ -346,7 +351,7 @@ export function JwtUrlCodecCommand() {
               ]}
               detail={
                 <List.Item.Detail
-                  markdown={`### 参数 \`${param.key}\`\n\n#### 解码值\n\`\`\`text\n${param.decodedValue}\n\`\`\`\n\n#### 原始编码值\n\`\`\`text\n${param.rawValue}\n\`\`\``}
+                  markdown={`### 参数名称\n${fencedBlock(param.key)}\n\n#### 解码值\n${fencedBlock(param.decodedValue)}\n\n#### 原始编码值\n${fencedBlock(param.rawValue)}`}
                 />
               }
               actions={
@@ -354,7 +359,7 @@ export function JwtUrlCodecCommand() {
                   <Action.CopyToClipboard title="复制解码值" content={param.decodedValue} />
                   <Action.CopyToClipboard
                     title="复制 key=value"
-                    content={`${param.key}=${param.rawValue}`}
+                    content={`${param.rawKey}=${param.rawValue}`}
                   />
                 </ActionPanel>
               }

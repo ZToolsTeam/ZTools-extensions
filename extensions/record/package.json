@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-record",
+  "version": "1.0.0",
+  "description": "录制整个桌面为 MP4 视频或 GIF 动图（不录声音，需要本机已安装 ffmpeg）",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

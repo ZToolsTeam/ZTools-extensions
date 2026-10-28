@@ -1,5 +1,3 @@
-export type SvgExportFormat = 'minified' | 'react-tsx' | 'vue-sfc' | 'data-uri'
-
 export interface SvgOptimizeMetrics {
   originalBytes: number
   optimizedBytes: number
@@ -7,7 +5,7 @@ export interface SvgOptimizeMetrics {
   savedPercentage: number
   viewBox: string
   pathCount: number
-  removedDangerousNodes: number
+  removedItems: number
 }
 
 export interface SvgProcessResult {
@@ -17,5 +15,6 @@ export interface SvgProcessResult {
   vueSfcCode: string
   dataUri: string
   base64DataUri: string
+  warnings: string[]
   metrics: SvgOptimizeMetrics
 }

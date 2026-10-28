@@ -1,0 +1,30 @@
+{
+  "id": "ocr",
+  "name": "图片识字",
+  "description": "用 Windows 系统文字识别在本机识别图片和屏幕截图中的简体中文、英文、日文、韩文文字，结果可复制到剪贴板或导出为文本文件",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "办公效率",
+    "AI工具"
+  ],
+  "permissions": [
+    "fs",
+    "clipboard",
+    "screen",
+    "dialog",
+    "shell"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

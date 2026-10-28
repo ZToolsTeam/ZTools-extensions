@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-qq-cleaner",
+  "version": "1.0.0",
+  "description": "智能识别腾讯 QQ / NTQQ 本地账号目录，安全清理群聊图片缓存、过期视频、表情包碎片与升级包残留",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/qq-cleaner.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

@@ -1,9 +1,9 @@
 {
   "id": "ssh-proxy-helper",
   "name": "主机与代理",
-  "version": "1.0.1",
-  "description": "解析 ~/.ssh/config 一键唤起终端直连或建立端口转发隧道；一键为 Git、NPM、终端开启或关闭本地代理端口",
-  "author": "ZTools Official",
+  "version": "1.0.4",
+  "description": "管理 SSH 主机连接、端口转发及 Git、NPM 和新终端的本地代理配置",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -41,7 +41,7 @@
     },
     {
       "code": "ssh-proxy-toggle",
-      "explain": "一键快速切换 Git / NPM / 终端的本地代理开关 (7890/10808)",
+      "explain": "分别管理 Git、NPM 用户配置，或打开带代理的新终端",
       "cmds": [
         "切换代理",
         "开启git代理",
@@ -58,5 +58,6 @@
         "建立隧道"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

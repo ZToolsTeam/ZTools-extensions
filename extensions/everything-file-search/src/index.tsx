@@ -5,7 +5,6 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   showToast,
   Toast,
   Clipboard,
@@ -17,7 +16,8 @@ import {
   formatBytes,
   truncatePath,
   getFileCategory,
-  SAMPLE_FILES,
+  NOT_IN_CLIENT_MESSAGE,
+  supportsSystemQuickLook,
   sortAndFilterFiles,
   searchLocalFiles,
   getFileQuickLook,
@@ -41,8 +41,8 @@ export * from "./types.js";
 export * from "./search-service.js";
 
 /**
- * 空格即时预览视图 (Space Quick Look Detail View)
- * 100% 对齐 Raycast quickLookSelection 原生手感
+ * 即时预览视图（从动作面板进入）
+ * 显示选中文件的内容预览，或文件夹的直接子项
  */
 export function FileQuickLookDetailView({
   file,
@@ -68,9 +68,9 @@ export function FileQuickLookDetailView({
   let markdown = `# ${file.name}\n\n`;
 
   if (!ql) {
-    markdown += `⏳ 正在抽取文件头部数据与语法分析...`;
+    markdown += `正在读取文件内容…`;
   } else if (ql.previewType === "error") {
-    markdown += `> **读取异常**: ${ql.error || "无法访问该文件"}\n\n可能原因：文件已被删除、权限不足或宿主未授权读取该路径。可在动作面板中使用「Quick Look 快速预览」由系统预览。`;
+    markdown += `> **读取异常**: ${ql.error || "无法访问该文件"}\n\n可能原因：文件已被删除、权限不足或宿主未授权读取该路径。${supportsSystemQuickLook() ? "可在动作面板中使用「Quick Look 快速预览」由系统预览。" : "可按 Enter 用默认应用打开。"}`;
   } else if (ql.previewType === "empty") {
     markdown += `> **空文件**: 该文件长度为 0 字节。`;
   } else if (ql.previewType === "directory") {
@@ -107,7 +107,7 @@ export function FileQuickLookDetailView({
   return (
     <Detail
       markdown={markdown}
-      navigationTitle={`Quick Look: ${file.name}`}
+      navigationTitle={`即时预览：${file.name}`}
       metadata={
         <Detail.Metadata>
           <Detail.Metadata.Label title="文件名" text={file.name} icon={Icon.Document} />
@@ -120,7 +120,7 @@ export function FileQuickLookDetailView({
           />
           <Detail.Metadata.Label
             title="修改时间"
-            text={new Date(file.mtime).toLocaleString("zh-CN")}
+            text={file.mtime > 0 ? new Date(file.mtime).toLocaleString("zh-CN") : "未知"}
             icon={Icon.Calendar}
           />
           {ql?.totalLines !== undefined && ql.previewType === "code" && (
@@ -140,7 +140,6 @@ export function FileQuickLookDetailView({
           <Detail.Metadata.TagList title="分类">
             <Detail.Metadata.TagList.Item
               text={file.isDir ? "目录" : `.${ext.toUpperCase() || "FILE"}`}
-              color={file.isDir ? Color.Orange : Color.Blue}
             />
           </Detail.Metadata.TagList>
         </Detail.Metadata>
@@ -158,12 +157,14 @@ export function FileQuickLookDetailView({
             shortcut={{ modifiers: ["ctrl"], key: "enter" }}
             onAction={async () => toastResult(await revealFile(file.path))}
           />
-          <Action
-            title="Quick Look 快速预览"
-            icon={Icon.Eye}
-            shortcut={{ modifiers: ["ctrl"], key: "y" }}
-            onAction={async () => toastResult(await quickLookFile(file.path))}
-          />
+          {supportsSystemQuickLook() ? (
+            <Action
+              title="Quick Look 快速预览"
+              icon={Icon.Eye}
+              shortcut={{ modifiers: ["ctrl"], key: "y" }}
+              onAction={async () => toastResult(await quickLookFile(file.path))}
+            />
+          ) : null}
           <Action.CopyToClipboard
             title="复制文件绝对路径"
             content={file.path}
@@ -195,11 +196,10 @@ export default function EverythingFileSearchCommand() {
   const [query, setQuery] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
-  const [allFiles, setAllFiles] = useState<FileRecord[]>(() =>
-    isRealElectronHost() ? [] : SAMPLE_FILES
-  );
+  // 不在客户端里运行时直接显示提示，不显示任何示例文件
+  const [allFiles, setAllFiles] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(() => isRealElectronHost());
-  const [searchError, setSearchError] = useState("");
+  const [searchError, setSearchError] = useState(() => (isRealElectronHost() ? "" : NOT_IN_CLIENT_MESSAGE));
   // 每次检索递增；慢的旧请求晚返回时序号已过期，结果直接丢弃，不能覆盖新关键词的结果
   const searchSeqRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -276,7 +276,7 @@ export default function EverythingFileSearchCommand() {
     <List
       isLoading={isLoading}
       isShowingDetail={false}
-      searchBarPlaceholder="搜索文件名、拼音或扩展名..."
+      searchBarPlaceholder="搜索文件名或扩展名..."
       onSearchTextChange={handleSearchTextChange}
       filterBar={{
         summaryText: searchError ? `搜索失败：${searchError}` : `当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
@@ -313,7 +313,11 @@ export default function EverythingFileSearchCommand() {
         </List.Dropdown>
       }
     >
-      {searchError && <List.Item id="search-error" title="读取文件索引失败" subtitle={searchError} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title="重新搜索" onAction={() => runSearch(query, 0)} /></ActionPanel>} />}
+      {searchError === NOT_IN_CLIENT_MESSAGE ? (
+        <List.Item id="search-error" title={NOT_IN_CLIENT_MESSAGE} subtitle="在 ZTools 中打开「文件秒搜」后再搜索" icon={Icon.ExclamationMark} />
+      ) : searchError ? (
+        <List.Item id="search-error" title="读取文件索引失败" subtitle={searchError} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title="重新搜索" onAction={() => runSearch(query, 0)} /></ActionPanel>} />
+      ) : null}
       {displayedFiles.map((file) => {
         const isDir = file.isDir;
         const category = getFileCategory(file.name, isDir);
@@ -349,16 +353,19 @@ export default function EverythingFileSearchCommand() {
                     shortcut={{ modifiers: ["ctrl"], key: "enter" }}
                     onAction={async () => toastResult(await revealFile(file.path))}
                   />
-                  <Action
-                    title="Quick Look 快速预览"
-                    icon={Icon.Eye}
-                    shortcut={{ modifiers: ["ctrl"], key: "y" }}
-                    onAction={async () => toastResult(await quickLookFile(file.path))}
-                  />
+                  {/* 系统快速预览只在 macOS 上有；Windows 上不提供，避免把「在资源管理器中定位」当成预览成功 */}
+                  {supportsSystemQuickLook() ? (
+                    <Action
+                      title="Quick Look 快速预览"
+                      icon={Icon.Eye}
+                      shortcut={{ modifiers: ["ctrl"], key: "y" }}
+                      onAction={async () => toastResult(await quickLookFile(file.path))}
+                    />
+                  ) : null}
                   <Action.Push
-                    title="即时预览 (Quick Look)"
+                    title="即时预览"
                     icon={Icon.Eye}
-                    shortcut={{ modifiers: ["ctrl"], key: "y" }}
+                    shortcut={{ modifiers: ["ctrl", "shift"], key: "p" }}
                     target={() => <FileQuickLookDetailView file={file} />}
                   />
                 </ActionPanel.Section>

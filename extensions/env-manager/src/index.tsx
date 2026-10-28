@@ -1,238 +1,116 @@
-import React, {
-  Action,
-  ActionPanel,
-  Clipboard,
-  Color,
-  Form,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useEffect,
-  useMemo,
-  useState,
-  useNavigation
-} from '@ztools/declarative-ui'
-import {
-  cleanInvalidPathEntries,
-  exportEnvSnapshot,
-  filterEnvItems,
-  loadAllEnvVariables,
-  writeEnvVariable
-} from './env-service'
-import type { EnvFilterCategory, EnvItem, EnvScope } from './types'
+import React, { Action, ActionPanel, Clipboard, Form, Icon, List, Toast, confirmAlert, showToast, useEffect, useNavigation, useRef, useState } from '@ztools/declarative-ui'
+import { applyEnvironment, cancelEnvironment, exportEnvSnapshot, loadEnvironment, prepareEnvironment } from './env-service.js'
+import type { EnvChange, EnvItem, EnvScope, EnvSnapshot } from './types.js'
+export * from './types.js'
+export * from './env-service.js'
+const failure = (error: unknown) => error instanceof Error ? error.message : String(error)
+const sourceName = (scope: EnvItem['scope'], platform: string) => scope === 'process' ? '当前进程 · 只读' : scope === 'system' ? '系统配置' : platform === 'darwin' ? '终端配置' : '用户配置'
 
-export * from './types'
-export * from './env-service'
-
-export function EnvVarForm({
-  initialItem,
-  onSaved
-}: {
-  initialItem?: EnvItem
-  onSaved: (item: EnvItem) => void
-}) {
+export function EnvVarForm({ item, snapshot, onSave }: { item?: EnvItem; snapshot: EnvSnapshot; onSave: (change: EnvChange, isCurrent: () => boolean) => Promise<boolean> }) {
   const { pop } = useNavigation()
-  const [key, setKey] = useState(initialItem?.key ?? '')
-  const [value, setValue] = useState(initialItem?.value ?? '')
-  const [scope, setScope] = useState<EnvScope>(initialItem?.scope ?? 'user')
-
-  const handleSubmit = async () => {
-    if (!key.trim()) {
-      await showToast({ style: Toast.Style.Failure, title: '变量名不能为空' })
-      return
-    }
-    onSaved({
-      key: key.trim(),
-      value: value.trim(),
-      scope,
-      isPathItem: initialItem?.isPathItem ?? false,
-      index: initialItem?.index,
-      isInvalid: false
-    })
-    await showToast({ style: Toast.Style.Success, title: `已保存变量 ${key.trim()}` })
-    pop()
+  const [key, setKey] = useState(item?.key || ''), [value, setValue] = useState(item?.value || '')
+  const [source, setSource] = useState<EnvScope>(item?.scope === 'system' ? 'system' : 'user'), [busy, setBusy] = useState(false), [error, setError] = useState('')
+  const active = useRef(false), alive = useRef(true)
+  useEffect(() => { alive.current = true; return () => { alive.current = false; if (active.current) void cancelEnvironment().catch(e => console.warn('表单关闭后取消未确认', e)) } }, [])
+  const submit = async () => {
+    if (active.current) return
+    active.current = true; setBusy(true); setError('')
+    try {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key.trim())) throw new Error('变量名只能含字母、数字和下划线，且不能以数字开头')
+      if (await onSave({ kind: 'set', source, key: key.trim(), value }, () => alive.current) && alive.current) pop()
+    } catch (e) { if (alive.current) { setError(failure(e)); await showToast(Toast.Style.Failure, '环境变量未保存', failure(e)) } }
+    finally { active.current = false; if (alive.current) setBusy(false) }
   }
-
-  return (
-    <Form
-      navigationTitle={initialItem ? '编辑环境变量' : '新建环境变量'}
-      actions={
-        <ActionPanel>
-          <Action.SubmitForm title="保存环境变量" icon={Icon.CheckCircle} onSubmit={handleSubmit} />
-        </ActionPanel>
-      }
-    >
-      <Form.TextField id="key" title="变量名" placeholder="如：JAVA_HOME" value={key} onChange={setKey} />
-      <Form.TextField id="value" title="变量值" placeholder="如：C:\Program Files\Java\jdk-21" value={value} onChange={setValue} />
-      <Form.Dropdown id="scope" title="作用域" value={scope} onChange={(v: string) => setScope(v as EnvScope)}>
-        <Form.Dropdown.Item title="当前用户变量 (HKCU\Environment)" value="user" />
-        <Form.Dropdown.Item title="全局系统变量 (HKLM)" value="system" />
-      </Form.Dropdown>
-    </Form>
-  )
+  return <Form navigationTitle={item?.scope === 'process' ? '写入持久配置' : item ? '编辑环境变量' : '新建环境变量'} isLoading={busy}
+    actions={<ActionPanel><Action.SubmitForm title="预览并保存" onSubmit={submit} /><Action title="取消返回" onAction={pop} /></ActionPanel>}>
+    {item ? <Form.Description title="变量名" text={key} /> : <Form.TextField id="key" title="变量名" value={key} onChange={setKey} placeholder="例如 JAVA_HOME" />}
+    <Form.TextArea id="value" title="变量值" value={value} onChange={setValue} placeholder="保留原样写入，包括空值、空格和换行" />
+    <Form.Dropdown id="source" title="保存位置" value={source} onChange={v => setSource(v as EnvScope)}>
+      {snapshot.sources.map(s => <Form.Dropdown.Item key={s.id} value={s.id} title={s.label} />)}
+    </Form.Dropdown>
+    <Form.Description title="生效范围" text={snapshot.notice} />
+    {snapshot.platform === 'darwin' && <Form.Description title="字面量保存" text="变量值按文字保存；$HOME、反引号和命令表达式不会被执行。PATH 请使用完整目录路径，以冒号分隔。" />}
+    {error && <Form.Description title="未保存" text={error} />}
+  </Form>
 }
 
-export interface EnvManagerCommandProps {
-  featureCode?: string
-  initialItems?: EnvItem[]
-  hostOverride?: unknown
-}
-
-export function EnvManagerCommand(props: EnvManagerCommandProps = {}) {
+export function EnvManagerCommand({ featureCode = 'env-all' }: { featureCode?: string } = {}) {
   const { push } = useNavigation()
-  const defaultCategory: EnvFilterCategory =
-    props.featureCode === 'env-path-clean' ? 'path-invalid' : 'all'
-
-  const [envItems, setEnvItems] = useState<EnvItem[]>(props.initialItems ?? [])
-  const [filterCategory, setFilterCategory] = useState<EnvFilterCategory>(defaultCategory)
-  const [searchText, setSearchText] = useState<string>('')
-  const [isLoading, setIsLoading] = useState<boolean>(!props.initialItems)
-
-  useEffect(() => {
-    if (!props.initialItems) {
-      void (async () => {
-        setIsLoading(true)
-        try {
-          const loaded = await loadAllEnvVariables(undefined, props.hostOverride)
-          setEnvItems(loaded)
-        } finally {
-          setIsLoading(false)
-        }
-      })()
-    }
-  }, [])
-
-  const invalidCount = useMemo(
-    () => envItems.filter((x) => x.isPathItem && x.isInvalid).length,
-    [envItems]
-  )
-
-  const filteredItems = useMemo(
-    () => filterEnvItems(envItems, searchText, filterCategory),
-    [envItems, searchText, filterCategory]
-  )
-
-  const handleCleanInvalidPaths = async () => {
-    const rawPath = envItems
-      .filter((x) => x.isPathItem)
-      .map((x) => x.value)
-      .join(';')
-    const res = await cleanInvalidPathEntries({ rawPath }, props.hostOverride)
-    const removed = res.removedCount || envItems.filter((x) => x.isPathItem && x.isInvalid).length
-    setEnvItems((prev) => prev.filter((x) => !(x.isPathItem && x.isInvalid)))
-    await showToast({
-      style: Toast.Style.Success,
-      title: `已清理 ${removed} 个失效的 PATH 幽灵路径`
-    })
+  const [snapshot, setSnapshot] = useState<EnvSnapshot | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [category, setCategory] = useState(featureCode === 'env-backup' ? 'backups' : featureCode === 'env-path-clean' ? 'invalid' : 'all'), [query, setQuery] = useState('')
+  const active = useRef(false), alive = useRef(true), current = useRef<EnvSnapshot | null>(null)
+  const reload = async () => {
+    current.current = null; setSnapshot(null)
+    const result = await loadEnvironment()
+    if (alive.current) { current.current = result; setSnapshot(result) }
   }
-
-  const handleExportBackup = async () => {
-    const json = exportEnvSnapshot(envItems)
-    await Clipboard.copy(json)
-    await showToast({
-      style: Toast.Style.Success,
-      title: '环境变量 JSON 备份快照已复制到剪贴板'
-    })
+  const work = async (fn: () => Promise<void>) => {
+    if (active.current) return
+    active.current = true; setBusy(true); setError('')
+    try { await fn() } catch (e) { if (alive.current) { setError(failure(e)); await showToast(Toast.Style.Failure, '环境变量操作未完成', failure(e)) } }
+    finally { active.current = false; if (alive.current) setBusy(false) }
   }
-
-  const handleOpenCreateForm = () => {
-    push(
-      <EnvVarForm
-        onSaved={async (item) => {
-          const res = await writeEnvVariable(item.key, item.value, item.scope, undefined, props.hostOverride)
-          if (!res.ok) {
-            await showToast({
-              style: Toast.Style.Failure,
-              title: '写入环境变量失败',
-              message: res.error
-            })
-            return
-          }
-          setEnvItems((prev) => [item, ...prev.filter((x) => x.key !== item.key || x.isPathItem)])
-        }}
-      />
-    )
+  const refresh = () => work(reload)
+  useEffect(() => { alive.current = true; void refresh(); return () => { alive.current = false; if (active.current) void cancelEnvironment().catch(e => console.warn('环境变量取消未确认', e)) } }, [])
+  const mutate = async (change: EnvChange, isCurrent: () => boolean = () => true): Promise<boolean> => {
+    if (active.current) throw new Error('环境变量操作正在进行，请稍候')
+    const loaded = current.current
+    if (!loaded) throw new Error('请先成功读取环境变量')
+    active.current = true; setBusy(true); setError('')
+    try {
+      const plan = await prepareEnvironment(loaded.sessionId, change)
+      if (!alive.current || !isCurrent()) return false
+      const confirmed = await confirmAlert({ title: plan.summary, message: `位置：${plan.location}\n${plan.removed.length ? '仅移除以下目录：\n' + plan.removed.join('\n') + '\n' : ''}先保存并校验原配置备份，再写入和读回确认。\n${plan.notice}`, primaryAction: { title: '确认修改' }, dismissAction: { title: '取消' } })
+      if (!confirmed || !alive.current || !isCurrent()) { await cancelEnvironment(); return false }
+      let result: { backupId: string; summary: string; recoveryPath?: string } | undefined, operationError = ''
+      try { result = await applyEnvironment(plan.planId) } catch (e) { operationError = failure(e) }
+      if (!alive.current) return false
+      try { await reload() } catch (e) { operationError += `${operationError ? '；' : ''}刷新失败：${failure(e)}` }
+      if (operationError) throw new Error(operationError)
+      if (alive.current && isCurrent() && result) await showToast(Toast.Style.Success, '配置已保存并核验', result.recoveryPath ? `原文件另存于 ${result.recoveryPath}；配置备份可在“修改备份”恢复` : '原配置备份可在“修改备份”中恢复')
+      return isCurrent()
+    } finally { active.current = false; if (alive.current) setBusy(false) }
   }
-
-  return (
-    <List
-      isLoading={isLoading}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索变量名、路径关键词 (如: JAVA_HOME、npm、python) ..."
-      searchBarAccessory={
-        <List.Dropdown
-          value={filterCategory}
-          onChange={(v: string) => setFilterCategory(v as EnvFilterCategory)}
-          tooltip="筛选变量分类"
-        >
-          <List.Dropdown.Item title="全部变量与 PATH 拆解" value="all" icon={Icon.List} />
-          <List.Dropdown.Item title="PATH 明细 (含失效标红)" value="path" icon={Icon.Folder} />
-          <List.Dropdown.Item
-            title="仅查看失效 PATH 幽灵路径"
-            value="path-invalid"
-            icon={Icon.ExclamationMark}
-          />
-          <List.Dropdown.Item title="用户变量 (User)" value="user" icon={Icon.Key} />
-          <List.Dropdown.Item title="系统变量 (System)" value="system" icon={Icon.Desktop} />
-        </List.Dropdown>
-      }
-      filterBar={{
-        summaryText: `共 ${envItems.length} 个条目 · 发现 ${invalidCount} 个已失效的 PATH 幽灵路径`,
-        actions: [
-          { id: 'clean-invalid', title: '一键清理失效 PATH', onAction: handleCleanInvalidPaths },
-          { id: 'backup-env', title: '导出备份快照', onAction: handleExportBackup }
-        ]
-      }}
-    >
-      {filteredItems.map((item, idx) => (
-        <List.Item
-          key={`${item.scope}:${item.key}:${item.index ?? idx}`}
-          id={`${item.scope}:${item.key}:${item.index ?? idx}`}
-          title={item.isPathItem ? item.value : item.key}
-          subtitle={item.isPathItem ? `[PATH #${(item.index ?? idx) + 1}] ${item.key}` : item.value}
-          icon={item.isInvalid ? Icon.XMarkCircle : item.isPathItem ? Icon.Folder : Icon.Gear}
-          accessories={[
-            item.isInvalid
-              ? { tag: { value: '失效路径', color: Color.Red } }
-              : { tag: item.scope === 'system' ? '系统变量' : '用户变量' },
-            { text: item.isInvalid ? '磁盘上不存在' : '' }
-          ]}
-          actions={
-            <ActionPanel>
-              <Action.CopyToClipboard
-                title="复制变量值 / 路径"
-                content={item.value}
-                icon={Icon.Clipboard}
-              />
-              {invalidCount > 0 ? (
-                <Action
-                  title="一键移除所有失效 PATH 项"
-                  icon={Icon.Trash}
-                  style={Action.Style.Destructive}
-                  shortcut={{ modifiers: ['ctrl', 'shift'], key: 'backspace' }}
-                  onAction={handleCleanInvalidPaths}
-                />
-              ) : null}
-              <Action
-                title="新建环境变量"
-                icon={Icon.Plus}
-                shortcut={{ modifiers: ['cmd'], key: 'n' }}
-                onAction={handleOpenCreateForm}
-              />
-              <Action
-                title="导出全量环境变量备份快照"
-                icon={Icon.Download}
-                shortcut={{ modifiers: ['cmd'], key: 's' }}
-                onAction={handleExportBackup}
-              />
-            </ActionPanel>
-          }
-        />
-      ))}
-    </List>
-  )
+  const runChange = async (change: EnvChange) => { try { await mutate(change) } catch (e) { if (alive.current) { setError(failure(e)); await showToast(Toast.Style.Failure, '配置未确认修改成功', failure(e)) } } }
+  const edit = (item?: EnvItem) => { const loaded = current.current; if (loaded && !active.current) push(<EnvVarForm item={item} snapshot={loaded} onSave={mutate} />) }
+  const exportBackup = () => work(async () => {
+    if (!current.current) throw new Error('请先成功读取环境变量')
+    await Clipboard.copy(exportEnvSnapshot(current.current))
+    if (alive.current) await showToast(Toast.Style.Success, '真实变量快照已复制', '快照可能含密钥，请妥善保管；修改前的配置备份单独保存在本机')
+  })
+  const cancel = async () => { try { await cancelEnvironment() } catch (e) { if (alive.current) setError(`取消未确认：${failure(e)}`) } }
+  const q = query.trim().toLowerCase(), platform = snapshot?.platform || ''
+  const invalid = (scope: EnvItem['scope']) => snapshot?.paths.filter(p => p.scope === scope && p.status === 'missing').length || 0
+  const items = snapshot?.variables.filter(v => (category === 'all' || category === v.scope || (category === 'invalid' && v.key.toUpperCase() === 'PATH' && invalid(v.scope) > 0)) && `${v.key} ${v.value}`.toLowerCase().includes(q)) || []
+  const paths = category === 'path' ? snapshot?.paths.filter(p => p.value.toLowerCase().includes(q)) || [] : []
+  const backups = category === 'backups' ? snapshot?.backups.filter(b => `${b.createdAt} ${b.summary}`.toLowerCase().includes(q)) || [] : []
+  const count = category === 'path' ? paths.length : category === 'backups' ? backups.length : items.length
+  const rowActions = (item: EnvItem) => <ActionPanel>
+    {item.scope === 'process' ? <Action.CopyToClipboard title="复制变量值" content={item.value} /> : category === 'invalid' ? <Action title="预览清理此 PATH" onAction={() => runChange({ kind: 'clean', source: item.scope as EnvScope })} /> : <Action title="编辑变量" onAction={() => edit(item)} />}
+    {item.scope === 'process' ? <Action title="写入持久配置" onAction={() => edit(item)} /> : <Action.CopyToClipboard title="复制变量值" content={item.value} />}
+    {item.scope !== 'process' && <Action title="移除配置中的变量" onAction={() => runChange({ kind: 'delete', source: item.scope as EnvScope, key: item.key })} />}
+    {item.scope !== 'process' && category !== 'invalid' && item.key.toUpperCase() === 'PATH' && invalid(item.scope) > 0 && <Action title="预览清理此 PATH" onAction={() => runChange({ kind: 'clean', source: item.scope as EnvScope })} />}
+  </ActionPanel>
+  return <List navigationTitle="环境变量" isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索变量名、值或 PATH 目录"
+    searchBarAccessory={<List.Dropdown value={category} onChange={setCategory} tooltip="来源与视图">
+      <List.Dropdown.Item value="all" title="全部变量" /><List.Dropdown.Item value="user" title={platform === 'darwin' ? '终端配置' : '用户配置'} />
+      {snapshot?.sources.some(s => s.id === 'system') && <List.Dropdown.Item value="system" title="系统配置" />}
+      <List.Dropdown.Item value="process" title="当前进程（只读）" /><List.Dropdown.Item value="path" title="PATH 目录明细" />
+      <List.Dropdown.Item value="invalid" title="含失效目录的 PATH" /><List.Dropdown.Item value="backups" title="修改备份" />
+    </List.Dropdown>}
+    filterBar={{ summaryText: error || (busy ? '正在读取或核验环境配置…' : snapshot ? `${count} 项 · ${platform === 'darwin' ? '终端配置在新终端加载，当前进程只读' : '修改后重新登录，当前进程只读'}` : '尚未读取环境变量'), actions: busy ? [{ id: 'cancel', title: '取消', onAction: cancel }] : [{ id: 'refresh', title: '刷新', onAction: refresh }, ...(snapshot ? [{ id: category === 'backups' ? 'export' : 'new', title: category === 'backups' ? '复制变量快照' : '新建变量', onAction: category === 'backups' ? exportBackup : () => edit() }] : [])] }}>
+    {!count && <List.Item id="empty" title={error ? '环境变量读取未完成' : busy ? '正在读取' : category === 'backups' ? '还没有修改备份' : '没有符合条件的条目'} subtitle={error || (category === 'user' && platform === 'darwin' ? '这里只显示 ZTools 管理的终端变量；已有 shell 脚本保持原样。' : '成功读取后才能修改，失败不会当成空配置。')} icon={Icon.Document} />}
+    {items.map(item => <List.Item key={`${item.scope}:${item.key}`} id={`${item.scope}:${item.key}`} title={item.key} subtitle={item.value || '（空值）'} icon={Icon.Key}
+      accessories={[{ tag: sourceName(item.scope, platform) }, ...(item.key.toUpperCase() === 'PATH' ? [{ text: `${invalid(item.scope)} 个确认失效目录` }] : [])]} actions={rowActions(item)} />)}
+    {paths.map(p => <List.Item key={`${p.scope}:${p.index}`} id={`${p.scope}:path:${p.index}`} title={p.value || '（空项：当前目录）'} subtitle={`${sourceName(p.scope, platform)} · ${p.reason}`} icon={Icon.Folder}
+      actions={<ActionPanel><Action.CopyToClipboard title="复制目录" content={p.value} /></ActionPanel>} />)}
+    {backups.map(b => <List.Item key={b.id} id={`backup:${b.id}`} title={b.summary} subtitle={`${b.createdAt} · ${sourceName(b.source, platform)}`} icon={Icon.Document}
+      actions={<ActionPanel><Action title="预览恢复原配置" onAction={() => runChange({ kind: 'restore', source: b.source, backupId: b.id })} /><Action.CopyToClipboard title="复制备份编号" content={b.id} /></ActionPanel>} />)}
+  </List>
 }
-
+export const commands = {
+  'env-all': () => EnvManagerCommand(),
+  'env-path-clean': () => EnvManagerCommand({ featureCode: 'env-path-clean' }),
+  'env-backup': () => EnvManagerCommand({ featureCode: 'env-backup' })
+}
 export default EnvManagerCommand

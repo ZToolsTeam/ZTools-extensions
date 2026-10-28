@@ -1,9 +1,9 @@
 {
   "id": "env-manager",
   "name": "环境变量",
-  "version": "1.0.1",
-  "description": "可视化全宽管理系统与用户环境变量，深度拆解 PATH，自动标红磁盘上已不存在的幽灵失效路径，支持一键清理与快照备份",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "管理 Windows 注册表环境与 macOS 终端变量，查看只读进程快照，预览 PATH 清理，修改前保留可恢复备份",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -30,7 +30,7 @@
   "features": [
     {
       "code": "env-all",
-      "explain": "浏览与管理全部用户环境变量、系统环境变量与 PATH 明细",
+      "explain": "查看当前进程、管理 Windows 用户与系统变量或 macOS 终端变量",
       "cmds": [
         "环境变量",
         "path",
@@ -41,7 +41,7 @@
     },
     {
       "code": "env-path-clean",
-      "explain": "专门筛选 PATH 中在磁盘上已不存在的幽灵失效路径并一键清理",
+      "explain": "预览并清理持久配置中确认不存在的 PATH 目录",
       "cmds": [
         "清理path",
         "path失效路径",
@@ -51,7 +51,7 @@
     },
     {
       "code": "env-backup",
-      "explain": "将当前环境变量配置完整导出为 JSON 快照备份",
+      "explain": "查看和恢复修改前的配置备份，复制当前变量快照",
       "cmds": [
         "备份环境变量",
         "导出环境变量"

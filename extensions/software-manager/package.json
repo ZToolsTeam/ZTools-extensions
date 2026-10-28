@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-software-manager",
+  "version": "1.0.0",
+  "description": "列出系统登记的已安装软件与占用体积，确认后启动软件自带的卸载程序，并只读列出 AppData 目录占用",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

@@ -1,9 +1,9 @@
 {
   "id": "everything-file-search",
   "name": "文件秒搜",
-  "version": "2.0.7",
-  "description": "毫秒级全盘文件搜索，支持按文件名、后缀名与路径快速定位本机任意文件",
-  "author": "ZTools Team",
+  "version": "2.0.9",
+  "description": "按文件名或扩展名搜索本机文件和文件夹，可打开、定位、预览、复制路径或移入回收站",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "keywords": [
@@ -17,7 +17,8 @@
   ],
   "permissions": [
     "clipboard",
-    "fs"
+    "fs",
+    "shell"
   ],
   "targets": [
     {

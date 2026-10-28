@@ -1,9 +1,9 @@
 {
   "id": "curl-http",
   "name": "轻量接口调试",
-  "version": "1.0.1",
-  "description": "一键解析跨平台 cURL 命令、本地发起 HTTP 极速验证并互转 Fetch / Axios / Python / Go 请求代码",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "解析 cURL 命令（bash / cmd 写法）或网址，由客户端发起 HTTP 请求查看响应，并生成 Fetch、Axios、Python、Go 请求代码",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

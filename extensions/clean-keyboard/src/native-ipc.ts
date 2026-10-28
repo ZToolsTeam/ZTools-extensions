@@ -433,7 +433,7 @@ function makeScanResult(
 }
 
 /**
- * 调用本机 Rust NTFS MFT 硬件级索引引擎 (ztools-indexer) 毫秒级检索真实文件
+ * 调用客户端的原生文件索引组件 (ztools-indexer) 检索文件
  */
 export async function searchRealIndexedFiles(
   query: string,
@@ -816,7 +816,7 @@ export async function listDirectChildren(
 }
 
 /**
- * 获取真实文件字节大小（优先命中 MFT 硬件级索引实时缓存，再走 filesystem_get_file_size）
+ * 获取真实文件字节大小（优先用扫描结果里的大小，再走 filesystem_get_file_size）；读不到时返回 0
  */
 export async function getRealFileSize(
   filePath: string,
@@ -827,10 +827,12 @@ export async function getRealFileSize(
     const cached = realFileSizeCache.get(filePath)!
     if (cached > 0) return cached
   }
-  const res = await callHostTransport<number>('filesystem_get_file_size', { path: filePath }, hostOverride)
-  if (res.ok && typeof res.data === 'number' && Number.isFinite(res.data) && res.data >= 0) {
-    realFileSizeCache.set(filePath, res.data)
-    return res.data
+  const res = await callHostTransport<DynamicBridge>('filesystem_get_file_size', { path: filePath }, hostOverride)
+  // 客户端返回 { success, size }（目录时 size 为 -1），旧的测试替身直接返回数字
+  const size = typeof res.data === 'number' ? res.data : res.data?.size
+  if (res.ok && typeof size === 'number' && Number.isFinite(size) && size >= 0) {
+    realFileSizeCache.set(filePath, size)
+    return size
   }
   return 0
 }

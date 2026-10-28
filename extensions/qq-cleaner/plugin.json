@@ -1,0 +1,27 @@
+{
+  "id": "qq-cleaner",
+  "name": "QQ 清理",
+  "description": "扫描电脑端 QQ、TIM 的日志、缓存、聊天图片与视频、接收文件等，把勾选的文件移入回收站，聊天记录数据库不会被清理",
+  "version": "2.0.8",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "系统工具"
+  ],
+  "permissions": [
+    "fs",
+    "shell",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

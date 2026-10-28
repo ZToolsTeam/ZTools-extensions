@@ -7,7 +7,8 @@ export declare const Clipboard: {
         text?: string;
     }): Promise<void>;
     /**
-     * 复制并直接粘贴到当前前台活跃应用程序 (Raycast 原生标准能力)
+     * 复制并向原输入位置发送粘贴请求。返回只表示按键已发送，不代表目标应用已接收文本。
+     * 需要出队或删除内容的插件应保留可恢复记录；发送结果未确认时不要自动重试。
      */
     paste(content: string | number | {
         text?: string;

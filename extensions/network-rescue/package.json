@@ -1,0 +1,13 @@
+{
+  "name": "@ztools/plugin-network-rescue",
+  "version": "1.0.0",
+  "description": "Windows 网络故障排查与一键急救修复",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

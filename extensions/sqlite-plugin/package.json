@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-sqlite-plugin",
+  "version": "1.0.0",
+  "description": "查找 AppData 下的 SQLite 数据库文件，只读查看表结构与每张表前 50 行记录，并把记录导出为 CSV / JSON / SQL INSERT 文本",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

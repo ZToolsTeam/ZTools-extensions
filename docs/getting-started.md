@@ -233,7 +233,7 @@ Windows（把路径换成 ZTools 的安装目录；免安装版就是解压目�
 | 复制的是真实文件 | 符号链接（`ln -s`、快捷方式）会被忽略，要复制文件 |
 | `targets` 包含当前系统 | 清单里没声明当前平台的插件不会显示 |
 | `author` 不要写官方名称 | 作者写成 `ZTools`、`ZTools Team`、`official` 等官方名称、但又不是官方发布的插件会被隐藏 |
-| ID 不是客户端内置插件 | 随客户端内置的插件（目前是 `json-format`、`timestamp`、`calculator`、`qr-code`、`base64image`、`file-compare`、`crypto-tool`、`google-auth`、`color-picker`、`memo`、`todo`）总是加载客户端自带的那份，复制到 `Plugins/` 不生效。修改这些插件时，可以在复制出来的 `plugin.json` 里临时改一个新 ID（目录名同步改），作者改成你自己的名字再试用；提交时不要带上这些临时改动 |
+| ID 不是客户端内置插件 | 随客户端内置的插件（目前是 `json-format`、`timestamp`、`calculator`、`qr-code`、`base64image`、`file-compare`、`crypto-tool`、`google-auth`、`color-picker`、`memo`、`todo`、`batch-image`、`archive-manager`、`invoice-assistant`、`translator`、`downloads-manager`）总是加载客户端自带的那份，复制到 `Plugins/` 不生效。修改这些插件时，可以在复制出来的 `plugin.json` 里临时改一个新 ID（目录名同步改），作者改成你自己的名字再试用；提交时不要带上这些临时改动 |
 | ID 没有和客户端内置功能重名 | 客户端内置功能占用了一些 ID（名单见 [`packages/ztools-plugins-spec/reserved-ids.json`](../packages/ztools-plugins-spec/reserved-ids.json)），社区插件用了这些 ID 会被隐藏。清单校验会直接拒绝它们，换一个 ID 即可 |
 | 看错误信息 | 启动命令再加 `--remote-debugging-port=9222`，用 Chrome 打开 `chrome://inspect` 连接后，在控制台查看插件加载和运行时的报错 |
 

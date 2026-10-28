@@ -1,9 +1,9 @@
 {
   "id": "linux-http-dict",
   "name": "命令与状态码",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "离线Linux高频命令参数实例、HTTP 100~599状态码深度排障指南与常用知名网络端口速查",
-  "author": "ZTools Official",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

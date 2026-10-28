@@ -2,6 +2,60 @@ import type { CodeTargetLang, HttpResponseSnapshot, ParsedCurlRequest } from './
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
+type HostNetworkMethod = (request: {
+  messageId: string
+  timeoutMs: number
+  params: { method: string; url: string; headers: Record<string, string>; body?: string; timeout: number }
+}) => Promise<{ success: boolean; data?: unknown; error?: { code?: string; message?: string } }>
+
+let networkSequence = 0
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** 使用宿主网络通道，接口调试不受页面的 CORS 与 CSP 限制。 */
+async function requestViaHost(parsed: ParsedCurlRequest, timeoutMs: number): Promise<Pick<Response, 'ok' | 'status' | 'statusText' | 'headers' | 'text'>> {
+  const root = globalThis as unknown as {
+    window?: { __ztoolsElectron?: { transport?: { methods?: { network_http_request?: HostNetworkMethod } } } }
+  }
+  const request = root.window?.__ztoolsElectron?.transport?.methods?.network_http_request
+  if (typeof request !== 'function') throw new Error('当前客户端不支持网络请求，请升级客户端')
+  if (!['GET', 'HEAD', 'POST', 'PUT', 'DELETE'].includes(parsed.method)) {
+    throw new Error(`当前客户端不支持 ${parsed.method} 请求，可复制生成的代码执行`)
+  }
+  if (parsed.method === 'DELETE' && parsed.body) {
+    throw new Error('当前客户端不支持带请求体的 DELETE 请求，可复制生成的代码执行')
+  }
+  const envelope = await request({
+    messageId: `curl_http_${Date.now()}_${++networkSequence}`,
+    timeoutMs: timeoutMs + 250,
+    params: {
+      method: parsed.method, url: parsed.url, headers: parsed.headers, timeout: timeoutMs,
+      ...(['POST', 'PUT'].includes(parsed.method) && parsed.body !== undefined ? { body: parsed.body } : {})
+    }
+  })
+  if (!envelope.success) {
+    if (envelope.error?.code === 'REQUEST_TIMEOUT') throw new DOMException('网络请求超时', 'AbortError')
+    throw new Error(envelope.error?.message || '宿主网络请求失败')
+  }
+  const response = envelope.data
+  if (!isRecord(response) || response.success !== true || !isRecord(response.data)) {
+    throw new Error('宿主网络响应格式无效')
+  }
+  const data = response.data
+  if (typeof data.statusCode !== 'number' || !Number.isInteger(data.statusCode) || data.statusCode < 200 || data.statusCode > 599 || typeof data.body !== 'string' || typeof data.statusText !== 'string') {
+    throw new Error('宿主网络响应缺少状态码或正文')
+  }
+  const body = data.body
+  return {
+    ok: data.statusCode >= 200 && data.statusCode < 300,
+    status: data.statusCode,
+    statusText: data.statusText,
+    // 当前宿主只返回状态与正文；不能用 Response 构造器自动补出的头冒充服务器响应头。
+    headers: new Headers(),
+    text: async () => body
+  }
+}
+
 export function tokenizeShellCommand(raw: string): string[] {
   const normalized = String(raw || '')
     .replace(/\\\r?\n/g, ' ')
@@ -52,6 +106,105 @@ export function tokenizeShellCommand(raw: string): string[] {
   return tokens
 }
 
+/**
+ * 是否是 Windows cmd 写法的 cURL（例如浏览器开发者工具「Copy as cURL (cmd)」）：
+ * 用 ^" 包住参数，或用行尾 ^ 续行。
+ */
+export function isCmdStyleCurl(raw: string): boolean {
+  return /\^"/.test(raw) || /\^\r?\n/.test(raw)
+}
+
+/**
+ * 第一步：按 cmd.exe 的规则去掉转义符 ^。
+ * 引号外的 ^X 表示字面 X（^" 是字面引号，不会让 cmd 进入引号状态）；行尾 ^ 是续行，换行去掉、紧跟的下一个字符按字面保留；
+ * 引号内的 ^ 原样保留。得到的就是 curl.exe 实际收到的命令行。
+ */
+function removeCmdCarets(raw: string): string {
+  let out = ''
+  let inQuote = false
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]
+    if (ch === '"') {
+      inQuote = !inQuote
+      out += ch
+      continue
+    }
+    if (ch !== '^' || inQuote) {
+      out += ch
+      continue
+    }
+    let next = i + 1
+    if (raw[next] === '\r' && raw[next + 1] === '\n') next += 2
+    else if (raw[next] === '\n') next += 1
+    if (next < raw.length) out += raw[next]
+    i = next
+  }
+  return out
+}
+
+/**
+ * 第二步：按 Windows 程序（MSVCRT）的规则拆分参数：空白分隔，"..." 内的空白保留；
+ * 引号前的 2n 个反斜杠变成 n 个并切换引号状态，2n+1 个变成 n 个加一个字面引号；不在引号前的反斜杠按字面保留；
+ * 引号内连续两个引号表示一个字面引号。
+ */
+function splitWindowsCommandLine(commandLine: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let inQuote = false
+  let hasToken = false
+  for (let i = 0; i < commandLine.length; i++) {
+    const ch = commandLine[i]
+    if (ch === '\\') {
+      let count = 0
+      while (commandLine[i + count] === '\\') count++
+      hasToken = true
+      if (commandLine[i + count] === '"') {
+        current += '\\'.repeat(Math.floor(count / 2))
+        if (count % 2 === 1) {
+          current += '"'
+          i += count
+        } else {
+          i += count - 1
+        }
+      } else {
+        current += '\\'.repeat(count)
+        i += count - 1
+      }
+      continue
+    }
+    if (ch === '"') {
+      hasToken = true
+      if (inQuote && commandLine[i + 1] === '"') {
+        current += '"'
+        i++
+      } else {
+        inQuote = !inQuote
+      }
+      continue
+    }
+    if (/\s/.test(ch) && !inQuote) {
+      if (hasToken) {
+        args.push(current)
+        current = ''
+        hasToken = false
+      }
+      continue
+    }
+    current += ch
+    hasToken = true
+  }
+  if (inQuote) {
+    throw new Error('UNCLOSED_QUOTE_IN_CURL: cURL 命令存在未闭合引号 (")')
+  }
+  if (hasToken) args.push(current)
+  return args
+}
+
+/** 拆分 Windows cmd 写法的 cURL 命令（含 ^" 转义与 ^ 续行） */
+export function tokenizeCmdCommand(raw: string): string[] {
+  return splitWindowsCommandLine(removeCmdCarets(String(raw || '')).trim())
+}
+
 export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
   const trimmed = String(rawInput || '').trim()
   if (!trimmed) {
@@ -67,7 +220,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
     }
   }
 
-  const tokens = tokenizeShellCommand(trimmed)
+  const tokens = isCmdStyleCurl(trimmed) ? tokenizeCmdCommand(trimmed) : tokenizeShellCommand(trimmed)
   if (tokens.length === 0) {
     throw new Error('EMPTY_CURL_TOKENS: 无法从输入提取命令参数')
   }
@@ -252,28 +405,25 @@ export async function executeCurlRequest(
     fetchImpl?: typeof fetch
   },
 ): Promise<HttpResponseSnapshot> {
-  const fetchFn = options?.fetchImpl || globalThis.fetch
-  if (typeof fetchFn !== 'function') {
-    throw new Error('FETCH_UNAVAILABLE: 当前运行环境不支持 fetch 网络请求')
-  }
-
   const timeoutMs = options?.timeoutMs ?? 10000
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) {
+    throw new Error('请求超时必须为 1–300000 毫秒')
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const startedAt = Date.now()
 
   try {
-    const resp = await fetchFn(parsed.url, {
+    const resp = options?.fetchImpl ? await options.fetchImpl(parsed.url, {
       method: parsed.method,
       headers: parsed.headers,
       body: parsed.method === 'GET' || parsed.method === 'HEAD' ? undefined : parsed.body,
       signal: controller.signal,
-    })
+    }) : await requestViaHost(parsed, timeoutMs)
 
     const rawText = await resp.text()
     const elapsedMs = Math.max(1, Date.now() - startedAt)
-    const sizeBytes =
-      typeof Buffer !== 'undefined' ? Buffer.byteLength(rawText, 'utf8') : rawText.length
+    const sizeBytes = new TextEncoder().encode(rawText).byteLength
 
     let bodyText = rawText
     let truncated = false

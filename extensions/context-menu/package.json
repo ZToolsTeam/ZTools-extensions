@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-context-menu",
+  "version": "1.0.0",
+  "description": "列出并启用或禁用 Windows 资源管理器右键菜单命令项（注册表 shell 子键），切换 Windows 11 经典右键菜单",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

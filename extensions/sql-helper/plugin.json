@@ -1,9 +1,9 @@
 {
   "id": "sql-helper",
   "name": "SQL格式化转换",
-  "version": "1.0.0",
-  "description": "SQL一键美化与压缩、MyBatis日志带问号参数自动拼合为完整SQL、CREATE TABLE建表语句转TS/Go/Java实体类",
-  "author": "ZTools Official",
+  "version": "1.0.1",
+  "description": "SQL美化与精简、MyBatis日志参数核对、CREATE TABLE转TypeScript/Go/Java模型；支持多行编辑与剪贴板输入",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -27,7 +27,7 @@
   "features": [
     {
       "code": "sql-formatter",
-      "explain": "SQL语句一键美化对齐（关键字大写/自动缩进）与压缩为单行",
+      "explain": "SQL分句排版与精简空白，保留标识符、字符串、注释和必要换行",
       "cmds": [
         "sql格式化",
         "sql美化",
@@ -38,7 +38,7 @@
     },
     {
       "code": "mybatis-merge",
-      "explain": "自动提取 MyBatis 日志中的 Preparing 与 Parameters 并拼合为完整可执行 SQL",
+      "explain": "核对同一次调用的Preparing与Parameters，生成参数还原参考SQL",
       "cmds": [
         "mybatis日志",
         "mybatis还原",

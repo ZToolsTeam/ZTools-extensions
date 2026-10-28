@@ -1,7 +1,6 @@
-// calendar 第二轮修复的集成测试：真实声明式运行时 + 按宿主语义模拟的日程库与对话框 / 写文件 IPC，含故障注入
-// 覆盖：日期显示与分组（calendar-2）、时间校验（calendar-3）、ICS 导出为文件（calendar-7）、
-// 会议链接校验（calendar-8）、Enter / ⌘Enter 作用于选中日程（calendar-10）、删除需确认且不占用 ⌘X（calendar-11）、
-// 读取失败如实提示并保留列表（calendar-14）
+// calendar 集成测试：真实声明式运行时 + 按宿主语义模拟的日程库与对话框 / 写文件 IPC，含故障注入
+// 覆盖：日期显示与分组、时间校验、ICS 导出为文件、会议链接校验、Enter / ⌘Enter 作用于选中日程、
+// 删除需确认且不占用 ⌘X、读取失败如实提示并保留列表
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { getComponentFactory } from '@ztools/declarative-ui'
@@ -83,10 +82,10 @@ async function openCreateForm(view) {
 test.beforeEach(() => host.reset())
 
 // ---------------------------------------------------------------------------
-// calendar-2：日期
+// 日期
 // ---------------------------------------------------------------------------
 
-test('[calendar-2] 列表按「今天 / 明天 / 具体日期」分组，已结束的日程带「已结束」，摘要与详情带日期', async () => {
+test('列表按「今天 / 明天 / 具体日期」分组，已结束的日程带「已结束」，摘要与详情带日期', async () => {
   const todayStart = todayAt(0)
   installCalendarHost([
     { id: 'ended', title: '晨会站会', startTime: todayStart, endTime: todayStart + 1, calendarName: 'Work' },
@@ -113,7 +112,7 @@ test('[calendar-2] 列表按「今天 / 明天 / 具体日期」分组，已结�
   view.unmount()
 })
 
-test('[calendar-2] 跨天日程的时间段带结束日期；地点为空时摘要不拼「@」', async () => {
+test('跨天日程的时间段带结束日期；地点为空时摘要不拼「@」', async () => {
   const evt = { id: 'x', title: '通宵', startTime: '23:00', endTime: '01:00', startAt: todayAt(23), endAt: todayAt(1, 0, 1), location: '', calendarName: 'Work', notes: '', attendees: [] }
   const tomorrow = new Date(todayAt(1, 0, 1))
   assert.equal(formatEventRange(evt), `23:00 - ${tomorrow.getMonth() + 1}月${tomorrow.getDate()}日 01:00`)
@@ -122,7 +121,7 @@ test('[calendar-2] 跨天日程的时间段带结束日期；地点为空时摘�
   assert.equal(formatEventRange({ ...evt, startAt: undefined, endAt: undefined }), '23:00 - 01:00')
 })
 
-test('[calendar-2] 表单有日期字段（默认今天），选其他日期后按该日期保存，并出现在对应日期分组里', async () => {
+test('表单有日期字段（默认今天），选其他日期后按该日期保存，并出现在对应日期分组里', async () => {
   const db = installCalendarHost([])
   const view = await mount(CalendarCommand)
   await settle()
@@ -149,10 +148,10 @@ test('[calendar-2] 表单有日期字段（默认今天），选其他日期后�
 })
 
 // ---------------------------------------------------------------------------
-// calendar-3：时间校验
+// 时间校验
 // ---------------------------------------------------------------------------
 
-test('[calendar-3] 时间解析：HH:MM 范围、日期合法性、先后顺序与跨天写法', () => {
+test('时间解析：HH:MM 范围、日期合法性、先后顺序与跨天写法', () => {
   const date = formatDateKey(todayAt(0))
   const ok = parseEventTimes({ date, startTime: '09:30', endTime: '10:00' })
   assert.deepEqual(ok, { ok: true, startAt: todayAt(9, 30), endAt: todayAt(10) })
@@ -181,7 +180,7 @@ test('[calendar-3] 时间解析：HH:MM 范围、日期合法性、先后顺序�
   assert.equal(parseEventTimes({ date: 'bad', startTime: '2026-10-25 14:00', endTime: '2026-10-25 15:00' }).ok, true)
 })
 
-test('[calendar-3] 表单里填非法时间：不调用宿主、字段标红、提示失败、停留在表单；改正后能保存', async () => {
+test('表单里填非法时间：不调用宿主、字段标红、提示失败、停留在表单；改正后能保存', async () => {
   const db = installCalendarHost([])
   const view = await mount(CalendarCommand)
   await settle()
@@ -215,7 +214,7 @@ test('[calendar-3] 表单里填非法时间：不调用宿主、字段标红、�
   view.unmount()
 })
 
-test('[calendar-3][故障注入] 宿主创建失败时提示中文原因，不带错误码，表单保留', async () => {
+test('[故障注入] 宿主创建失败时提示中文原因，不带错误码，表单保留', async () => {
   installCalendarHost([])
   host.ipc.calendar_create_event = async () => {
     throw Object.assign(new Error('database is locked'), { code: 'INTERNAL_ERROR' })
@@ -238,7 +237,7 @@ test('[calendar-3][故障注入] 宿主创建失败时提示中文原因，不�
 })
 
 // ---------------------------------------------------------------------------
-// calendar-7：导出 ICS 文件
+// 导出 ICS 文件
 // ---------------------------------------------------------------------------
 
 function installFileHost({ pick = '/Users/test/Desktop/ztools-calendar.ics', writeError = null, dialogError = null } = {}) {
@@ -255,7 +254,7 @@ function installFileHost({ pick = '/Users/test/Desktop/ztools-calendar.ics', wri
   return writes
 }
 
-test('[calendar-7] ⌘E 弹出另存为并写入 .ics 文件（内容来自宿主），提示保存路径；剪贴板不变', async () => {
+test('⌘E 弹出另存为并写入 .ics 文件（内容来自宿主），提示保存路径；剪贴板不变', async () => {
   installCalendarHost([
     { id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) },
     { id: 'b', title: '复盘', startTime: todayAt(10, 0, 1), endTime: todayAt(11, 0, 1) }
@@ -288,7 +287,7 @@ test('[calendar-7] ⌘E 弹出另存为并写入 .ics 文件（内容来自宿�
   view.unmount()
 })
 
-test('[calendar-7][故障注入] 宿主导出失败：提示失败，不弹另存为、不写文件、不改剪贴板；取消另存为不提示成功；写文件失败如实提示', async () => {
+test('[故障注入] 宿主导出失败：提示失败，不弹另存为、不写文件、不改剪贴板；取消另存为不提示成功；写文件失败如实提示', async () => {
   installCalendarHost([{ id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) }])
   const writes = installFileHost()
   host.clipboard.text = 'SENTINEL'
@@ -326,7 +325,7 @@ test('[calendar-7][故障注入] 宿主导出失败：提示失败，不弹另�
   view.unmount()
 })
 
-test('[calendar-7] 复制 ICS 文本作为次要动作；本地生成的 ICS 带 DTSTAMP / DTSTART / DTEND、转义并折行', async () => {
+test('复制 ICS 文本作为次要动作；本地生成的 ICS 带 DTSTAMP / DTSTART / DTEND、转义并折行', async () => {
   installCalendarHost([{ id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) }])
   const view = await mount(CalendarCommand)
   await settle()
@@ -349,7 +348,7 @@ test('[calendar-7] 复制 ICS 文本作为次要动作；本地生成的 ICS 带
   assert.equal(ics.split('\r\n').map((l, i) => (i > 0 && l.startsWith(' ') ? l.slice(1) : '\n' + l)).join('').includes(`DESCRIPTION:${longNotes}`), true, '折行后能还原')
 })
 
-test('[calendar-7] 文件名去掉非法字符；没有宿主环境时导出文件直接报不支持', async () => {
+test('文件名去掉非法字符；没有宿主环境时导出文件直接报不支持', async () => {
   assert.equal(defaultIcsFileName([{ id: 'x', title: 'a/b:c*?', startTime: '', endTime: '', location: '', calendarName: '', notes: '', attendees: [] }]), 'a_b_c_.ics')
   const stub = {
     calendar_export_ics: async () => ({ success: true, data: { ics: 'BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nEND:VEVENT\r\nEND:VCALENDAR' } }),
@@ -359,10 +358,10 @@ test('[calendar-7] 文件名去掉非法字符；没有宿主环境时导出文�
 })
 
 // ---------------------------------------------------------------------------
-// calendar-8：会议链接
+// 会议链接
 // ---------------------------------------------------------------------------
 
-test('[calendar-8] 会议链接规范化：缺协议补 https://，非 http/https、带凭据、含空格的拒绝', () => {
+test('会议链接规范化：缺协议补 https://，非 http/https、带凭据、含空格的拒绝', () => {
   assert.deepEqual(normalizeConferenceUrl(''), {})
   assert.deepEqual(normalizeConferenceUrl('  '), {})
   assert.deepEqual(normalizeConferenceUrl('vc.feishu.cn/j/999'), { url: 'https://vc.feishu.cn/j/999' })
@@ -376,7 +375,7 @@ test('[calendar-8] 会议链接规范化：缺协议补 https://，非 http/http
   assert.match(normalizeConferenceUrl('会议室').error, /http/)
 })
 
-test('[calendar-8] 表单填 zoommtg:// 时字段报错不保存；没写协议时自动补 https:// 再保存', async () => {
+test('表单填 zoommtg:// 时字段报错不保存；没写协议时自动补 https:// 再保存', async () => {
   const db = installCalendarHost([])
   const view = await mount(CalendarCommand)
   await settle()
@@ -400,7 +399,7 @@ test('[calendar-8] 表单填 zoommtg:// 时字段报错不保存；没写协议�
   view.unmount()
 })
 
-test('[calendar-8] 宿主里旧的非网址会议链接不标「可一键入会」，只在详情里如实展示；缺协议的旧链接补 https://', async () => {
+test('宿主里旧的非网址会议链接不标「可一键入会」，只在详情里如实展示；缺协议的旧链接补 https://', async () => {
   installCalendarHost([
     { id: 'deep', title: '会议深链', startTime: todayAt(20), endTime: todayAt(21), conferenceUrl: 'zoommtg://zoom.us/join?confno=123456' },
     { id: 'bare', title: '飞书会', startTime: todayAt(21), endTime: todayAt(22), conferenceUrl: 'vc.feishu.cn/j/999' }
@@ -423,10 +422,10 @@ test('[calendar-8] 宿主里旧的非网址会议链接不标「可一键入会�
 })
 
 // ---------------------------------------------------------------------------
-// calendar-10 / calendar-11：动作顺序与删除
+// 动作顺序与删除
 // ---------------------------------------------------------------------------
 
-test('[calendar-10] Enter / ⌘Enter 作用于选中日程：会议是「加入 / 复制会议链接」，普通日程是「复制摘要 / 导出此日程」；新建与导出全部排在后面', async () => {
+test('Enter / ⌘Enter 作用于选中日程：会议是「加入 / 复制会议链接」，普通日程是「复制摘要 / 导出此日程」；新建与导出全部排在后面', async () => {
   installCalendarHost([
     { id: 'm', title: '架构评审', startTime: todayAt(20), endTime: todayAt(21), conferenceUrl: 'https://zoom.us/j/111' },
     { id: 'gym', title: '健身', startTime: todayAt(21), endTime: todayAt(22), location: '健身房' }
@@ -453,7 +452,7 @@ test('[calendar-10] Enter / ⌘Enter 作用于选中日程：会议是「加入 
   view.unmount()
 })
 
-test('[calendar-11] 删除不再占用 ⌘X，改为 ⌘⇧⌫，且必须确认；取消确认不删除，确认后删除', async () => {
+test('删除不再占用 ⌘X，改为 ⌘⇧⌫，且必须确认；取消确认不删除，确认后删除', async () => {
   const db = installCalendarHost([
     { id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) },
     { id: 'b', title: '复盘', startTime: todayAt(21), endTime: todayAt(22) }
@@ -489,7 +488,7 @@ test('[calendar-11] 删除不再占用 ⌘X，改为 ⌘⇧⌫，且必须确认
   view.unmount()
 })
 
-test('[calendar-11][故障注入] 确认删除后宿主失败：提示失败并保留条目', async () => {
+test('[故障注入] 确认删除后宿主失败：提示失败并保留条目', async () => {
   installCalendarHost([{ id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) }])
   host.ipc.calendar_delete_event = async () => {
     throw Object.assign(new Error('database is locked'), { code: 'INTERNAL_ERROR' })
@@ -504,10 +503,10 @@ test('[calendar-11][故障注入] 确认删除后宿主失败：提示失败并�
 })
 
 // ---------------------------------------------------------------------------
-// calendar-14：读取失败
+// 读取失败
 // ---------------------------------------------------------------------------
 
-test('[calendar-14][故障注入] 首次读取失败：提示失败，空状态是「读取失败，按 Enter 重试」而不是「暂无日程」；重试成功后恢复', async () => {
+test('[故障注入] 首次读取失败：提示失败，空状态是「读取失败，按 Enter 重试」而不是「暂无日程」；重试成功后恢复', async () => {
   const db = [{ id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21) }]
   installCalendarHost(db)
   const realList = host.ipc.calendar_list_events
@@ -531,7 +530,7 @@ test('[calendar-14][故障注入] 首次读取失败：提示失败，空状态�
   view.unmount()
 })
 
-test('[calendar-14][故障注入] 已有列表时切换范围读取失败：保留原列表并在状态条说明，⌘R 重新读取', async () => {
+test('[故障注入] 已有列表时切换范围读取失败：保留原列表并在状态条说明，⌘R 重新读取', async () => {
   const db = [
     { id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21), conferenceUrl: 'https://zoom.us/j/1' },
     { id: 'b', title: '健身', startTime: todayAt(21), endTime: todayAt(22) }
@@ -559,7 +558,7 @@ test('[calendar-14][故障注入] 已有列表时切换范围读取失败：保�
   view.unmount()
 })
 
-test('[calendar-14] fetchCalendarPage：宿主失败或格式不对时抛 LOAD_EVENTS_FAILED，宿主返回空数组时就是空', async () => {
+test('fetchCalendarPage：宿主失败或格式不对时抛 LOAD_EVENTS_FAILED，宿主返回空数组时就是空', async () => {
   const stub = (value) => ({ calendar_list_events: async () => value, calendar_count_events: async () => ({ success: true, data: { total: 0 } }) })
   await assert.rejects(() => fetchCalendarPage('all', '', stub({ success: false, error: { message: 'database is locked' } })), /LOAD_EVENTS_FAILED: database is locked/)
   await assert.rejects(() => fetchCalendarPage('all', '', stub({ success: true, data: { foo: 1 } })), /LOAD_EVENTS_FAILED: 宿主返回的日程格式无法识别/)

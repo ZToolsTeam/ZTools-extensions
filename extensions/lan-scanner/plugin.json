@@ -1,9 +1,9 @@
 {
   "id": "lan-scanner",
   "name": "局域网扫描",
-  "version": "1.0.1",
-  "description": "并发扫描内网在线主机、MAC、设备品牌与开放端口，回车直通服务或一键发送 Wake-on-LAN 魔术包远程开机",
-  "author": "ZTools Official",
+  "version": "1.0.4",
+  "description": "探测局域网设备与常见 TCP 端口，支持 MAC 收藏及 Wake-on-LAN 广播唤醒；每次分段扫描最多 256 个地址",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -29,7 +29,7 @@
   "features": [
     {
       "code": "lan-scan-all",
-      "explain": "并发扫描当前局域网内的所有在线主机与设备详情",
+      "explain": "扫描所选网卡网段中的在线响应与常见端口",
       "cmds": [
         "局域网扫描",
         "扫描ip",
@@ -50,5 +50,6 @@
         "唤醒电脑"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

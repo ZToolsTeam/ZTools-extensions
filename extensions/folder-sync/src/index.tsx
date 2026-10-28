@@ -1,332 +1,87 @@
-import React, {
-  Action,
-  ActionPanel,
-  Color,
-  Icon,
-  List,
-  Toast,
-  showToast,
-  useEffect,
-  useMemo,
-  useState
-} from '@ztools/declarative-ui'
-import { callHostTransport } from './native-ipc'
-import {
-  compareFolderTrees,
-  executeFolderSync,
-  filterSyncDiffItems,
-  formatSyncBytes,
-  shortenFolderPath
-} from './sync-service'
-import type { DiffFilterType, FolderSyncDiffItem, SyncMode } from './types'
+import React, { Action, ActionPanel, Icon, List, Toast, showToast, useEffect, useMemo, useRef, useState } from '@ztools/declarative-ui'
+import { chooseFolder, compareFolderTrees, executeFolderSync, filterSyncDiffItems, formatSyncBytes, revealRecovery } from './sync-service.js'
+import type { DiffFilterType, FolderSyncDiffItem, SyncMode } from './types.js'
 
-export * from './types'
-export * from './sync-service'
-
-export interface FolderSyncCommandProps {
-  featureCode?: string
-  initialSourceDir?: string
-  initialTargetDir?: string
-  initialSyncMode?: SyncMode
-  hostOverride?: unknown
+export function FolderSyncCommand() {
+  const [sourceDir, setSourceDir] = useState(''), [targetDir, setTargetDir] = useState('')
+  const [syncMode, setSyncMode] = useState<SyncMode>('incremental'), [ignoreDevJunk, setIgnoreDevJunk] = useState(true)
+  const [diffFilter, setDiffFilter] = useState<DiffFilterType>('all'), [searchText, setSearchText] = useState('')
+  const [diffItems, setDiffItems] = useState<FolderSyncDiffItem[]>([]), [checked, setChecked] = useState<Set<string>>(new Set())
+  const [planId, setPlanId] = useState(''), [busy, setBusy] = useState(false), [recovery, setRecovery] = useState<string[]>([])
+  const [status, setStatus] = useState('选择两个目录后比对；先检查右侧清单，再执行')
+  const controller = useRef<AbortController | null>(null), mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; controller.current?.abort() } }, [])
+  const invalidate = () => { setPlanId(''); setDiffItems([]); setChecked(new Set()); setStatus('配置已变化，请重新比对') }
+  const run = async (work: (signal: AbortSignal) => Promise<void>) => {
+    if (controller.current) return
+    const active = new AbortController(); controller.current = active; setBusy(true)
+    try { await work(active.signal) }
+    catch (error) {
+      if (mounted.current) {
+        const text = active.signal.aborted ? '操作已停止；如已开始执行，请检查备份目录后重新比对' : error instanceof Error ? error.message : String(error)
+        setPlanId(''); setStatus(text)
+        await showToast({ style: Toast.Style.Failure, title: text })
+      }
+    } finally { controller.current = null; if (mounted.current) setBusy(false) }
+  }
+  const pick = () => run(async () => {
+    const source = await chooseFolder('选择源文件夹'); if (!source) return
+    const target = await chooseFolder('选择目标文件夹'); if (!target || !mounted.current) return
+    setSourceDir(source); setTargetDir(target); invalidate()
+  })
+  const compare = () => run(async signal => {
+    if (!sourceDir || !targetDir) throw new Error('请先选择源目录和目标目录')
+    invalidate(); setStatus('正在读取文件内容并比对…')
+    const result = await compareFolderTrees({ sourceDir, targetDir, syncMode, ignoreDevJunk }, signal)
+    if (!mounted.current) return
+    setDiffItems(result.diffs); setPlanId(result.planId)
+    setChecked(new Set(result.diffs.filter(item => item.direction !== 'delete-dst' && item.direction !== 'conflict').map(item => item.relPath)))
+    setStatus(result.diffs.length ? `比对完成，共 ${result.diffs.length} 项；移入回收站的文件需手动勾选` : '文件内容一致；空目录不参与同步')
+  })
+  const execute = () => run(async signal => {
+    if (!planId || !checked.size) throw new Error('请先比对并勾选待执行文件')
+    const id = planId; setPlanId(''); setStatus('正在备份、校验并同步…')
+    const result = await executeFolderSync(id, [...checked], signal)
+    if (!mounted.current) return
+    setRecovery(result.recoveryPaths); setChecked(new Set())
+    const summary = `已写入 ${result.syncedCount} 项，已移入回收站 ${result.deletedCount} 项，未完成 ${result.remainingCount} 项`
+    setStatus(`${summary}${result.error ? `；${result.error}` : '；备份已保留，请重新比对查看最新差异'}`)
+    await showToast({ style: result.ok ? Toast.Style.Success : Toast.Style.Failure, title: summary, message: result.error })
+  })
+  const visible = useMemo(() => filterSyncDiffItems(diffItems, diffFilter, searchText), [diffItems, diffFilter, searchText])
+  const actionable = visible.filter(item => item.direction !== 'conflict')
+  const selected = diffItems.filter(item => checked.has(item.relPath))
+  const counts = { add: selected.filter(item => item.diffType === 'added' || item.diffType === 'reverse-add').length,
+    replace: selected.filter(item => item.diffType === 'modified').length, trash: selected.filter(item => item.direction === 'delete-dst').length }
+  const all = actionable.length > 0 && actionable.every(item => checked.has(item.relPath))
+  const toggle = (names: string[]) => {
+    if (busy || !planId) return
+    setChecked(previous => { const next = new Set(previous), remove = names.every(name => next.has(name)); for (const name of names) { if (remove) next.delete(name); else next.add(name) } return next })
+  }
+  return <List navigationTitle="目录同步" isLoading={busy} isShowingDetail={false} searchText={searchText} onSearchTextChange={setSearchText}
+    searchBarPlaceholder="搜索差异文件" searchBarAccessory={<List.Dropdown value={diffFilter} onChange={value => setDiffFilter(value as DiffFilterType)}>
+      <List.Dropdown.Item title="全部差异" value="all" /><List.Dropdown.Item title="新增" value="added" />
+      <List.Dropdown.Item title="覆盖" value="modified" /><List.Dropdown.Item title="移入回收站" value="orphan" /><List.Dropdown.Item title="冲突" value="conflict" />
+    </List.Dropdown>}
+    filterBar={{ summaryText: status, actions: busy ? [{ id: 'cancel', title: '停止', onAction: () => controller.current?.abort() }] : [
+      { id: 'pick', title: '选择目录', onAction: pick }, { id: 'compare', title: '重新比对', onAction: compare }] }}
+    workbenchPanel={{ title: '同步配置', subtitle: '覆盖前保留备份；链接或读取失败会停止扫描', fields: [
+      { id: 'mode', label: '模式', type: 'select', value: syncMode, options: [{ label: '单向增量', value: 'incremental' }, { label: '双向合并', value: 'two-way' }, { label: '镜像（Mac）', value: 'mirror' }], onChange: value => { if (!busy) { setSyncMode(value as SyncMode); invalidate() } } },
+      { id: 'ignore', label: '忽略 .git、node_modules 和系统缩略图', type: 'toggle', value: ignoreDevJunk, onChange: value => { if (!busy) { setIgnoreDevJunk(Boolean(value)); invalidate() } } },
+      { id: 'source', label: '源目录', type: 'info', value: sourceDir || '未选择' },
+      { id: 'target', label: '目标目录', type: 'info', value: targetDir || '未选择' },
+      { id: 'limit', label: '范围', type: 'info', value: '仅普通文件；最多 5000 项，单文件 2 GiB；空目录不复制' },
+      ...recovery.map((file, index) => ({ id: `backup-${index}`, label: '备份目录', type: 'info' as const, value: file }))
+    ], previewCard: { title: `已选 ${selected.length} 项`, subtitle: `新增 ${counts.add} · 覆盖 ${counts.replace} · 回收 ${counts.trash} · 写入 ${formatSyncBytes(selected.filter(item => item.direction !== 'delete-dst').reduce((sum, item) => sum + item.sizeBytes, 0))}` } }}
+    subList={{ title: '执行清单', subtitle: '空格勾选；Enter 执行已选项；冲突文件需自行处理后重新比对', emptyText: planId ? '没有符合筛选条件的差异' : '请先选择目录并比对',
+      checkable: Boolean(planId && actionable.length), checked: all ? true : actionable.some(item => checked.has(item.relPath)) ? 'indeterminate' : false,
+      onCheckChange: () => toggle(actionable.map(item => item.relPath)), items: visible.map(item => <List.Item key={item.relPath} id={item.relPath}
+        title={item.relPath} subtitle={item.reasonText} icon={item.direction === 'delete-dst' ? Icon.Trash : Icon.Document}
+        checkable={Boolean(planId && item.direction !== 'conflict')} checked={checked.has(item.relPath)} onCheckChange={() => toggle([item.relPath])}
+        accessories={[{ tag: item.actionBadge }, { text: formatSyncBytes(item.sizeBytes) }]} actions={<ActionPanel>
+          <Action title={`执行已选 ${selected.length} 项`} icon={Icon.Play} onAction={execute} />
+          <Action.ShowInFinder title="查看文件" path={item.sourceFullPath || item.targetFullPath} />
+          {recovery.map((file, index) => <Action key={file} title={`查看备份 ${index + 1}`} icon={Icon.Folder} onAction={() => run(async () => { await revealRecovery(file) })} />)}
+        </ActionPanel>} />) }} />
 }
-
-export function FolderSyncCommand(props: FolderSyncCommandProps = {}) {
-  const [sourceDir, setSourceDir] = useState<string>(props.initialSourceDir ?? '')
-  const [targetDir, setTargetDir] = useState<string>(props.initialTargetDir ?? '')
-  const [syncMode, setSyncMode] = useState<SyncMode>(props.initialSyncMode ?? 'incremental')
-  const [ignoreDevJunk, setIgnoreDevJunk] = useState<boolean>(true)
-  const [diffFilter, setDiffFilter] = useState<DiffFilterType>('all')
-  const [searchText, setSearchText] = useState<string>('')
-  const [diffItems, setDiffItems] = useState<FolderSyncDiffItem[]>([])
-  const [checkedSet, setCheckedSet] = useState<Set<string>>(new Set())
-  const [isBusy, setIsBusy] = useState<boolean>(false)
-
-  const handleCompareDirectories = async (
-    customSource = sourceDir,
-    customTarget = targetDir,
-    customMode = syncMode,
-    customIgnore = ignoreDevJunk
-  ) => {
-    if (!customSource || !customTarget) {
-      setDiffItems([])
-      setCheckedSet(new Set())
-      return
-    }
-    setIsBusy(true)
-    try {
-      const res = await compareFolderTrees({
-        sourceDir: customSource,
-        targetDir: customTarget,
-        syncMode: customMode,
-        ignoreDevJunk: customIgnore,
-        hostOverride: props.hostOverride
-      })
-      if (!res.ok) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: res.error || '目录差异比对失败'
-        })
-        setDiffItems([])
-        setCheckedSet(new Set())
-        return
-      }
-      setDiffItems(res.diffs)
-      setCheckedSet(new Set(res.diffs.map((d) => d.relPath)))
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    if (sourceDir && targetDir) {
-      void handleCompareDirectories(sourceDir, targetDir, syncMode, ignoreDevJunk)
-    }
-  }, [sourceDir, targetDir, syncMode, ignoreDevJunk])
-
-  const filteredDiffs = useMemo(
-    () => filterSyncDiffItems(diffItems, diffFilter, searchText),
-    [diffItems, diffFilter, searchText]
-  )
-
-  const checkedItems = useMemo(
-    () => diffItems.filter((d) => checkedSet.has(d.relPath)),
-    [diffItems, checkedSet]
-  )
-
-  const transferBytes = useMemo(
-    () =>
-      checkedItems
-        .filter((d) => d.direction !== 'delete-dst')
-        .reduce((acc, d) => acc + d.sizeBytes, 0),
-    [checkedItems]
-  )
-
-  const allChecked =
-    filteredDiffs.length > 0 && filteredDiffs.every((d) => checkedSet.has(d.relPath))
-  const someChecked =
-    !allChecked && filteredDiffs.some((d) => checkedSet.has(d.relPath))
-
-  const toggleCheck = (relPath: string) => {
-    setCheckedSet((prev) => {
-      const next = new Set(prev)
-      if (next.has(relPath)) next.delete(relPath)
-      else next.add(relPath)
-      return next
-    })
-  }
-
-  const toggleAllVisible = () => {
-    setCheckedSet((prev) => {
-      const next = new Set(prev)
-      if (allChecked) {
-        for (const d of filteredDiffs) next.delete(d.relPath)
-      } else {
-        for (const d of filteredDiffs) next.add(d.relPath)
-      }
-      return next
-    })
-  }
-
-  const handleSelectDirectories = async () => {
-    const srcRes = await callHostTransport<{ filePaths?: string[]; paths?: string[] }>(
-      'dialog_show_open',
-      { properties: ['openDirectory'], title: '选择源文件夹 (Source Folder)' },
-      props.hostOverride
-    )
-    const pickedSrc = srcRes.data?.filePaths?.[0] ?? srcRes.data?.paths?.[0]
-    if (!pickedSrc) return
-
-    const dstRes = await callHostTransport<{ filePaths?: string[]; paths?: string[] }>(
-      'dialog_show_open',
-      { properties: ['openDirectory'], title: '选择目标备份文件夹 (Target Folder)' },
-      props.hostOverride
-    )
-    const pickedDst = dstRes.data?.filePaths?.[0] ?? dstRes.data?.paths?.[0]
-    if (!pickedDst) return
-
-    setSourceDir(pickedSrc)
-    setTargetDir(pickedDst)
-  }
-
-  const handleExecuteSync = async () => {
-    if (checkedItems.length === 0) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '请先勾选至少一项待同步差异文件'
-      })
-      return
-    }
-    setIsBusy(true)
-    try {
-      const res = await executeFolderSync({
-        sourceDir,
-        targetDir,
-        syncMode,
-        ignoreDevJunk,
-        selectedRelPaths: checkedItems.map((d) => d.relPath),
-        hostOverride: props.hostOverride
-      })
-      if (!res.ok && res.failures.length === 0) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: res.error || '目录增量同步失败'
-        })
-        return
-      }
-      if (res.failures.length > 0) {
-        await showToast({
-          style: Toast.Style.Failure,
-          title: `同步完成 ${res.syncedCount} 项，但有 ${res.failures.length} 个文件被占用跳过 (${res.failures[0]!.relPath})`
-        })
-      } else {
-        await showToast({
-          style: Toast.Style.Success,
-          title: `增量同步完成：已写入 ${res.syncedCount} 个文件 (${formatSyncBytes(res.transferredBytes)})`
-        })
-      }
-      await handleCompareDirectories(sourceDir, targetDir, syncMode, ignoreDevJunk)
-    } finally {
-      setIsBusy(false)
-    }
-  }
-
-  return (
-    <List
-      navigationTitle="目录增量同步"
-      isLoading={isBusy}
-      isShowingDetail={false}
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder="在差异文件队列中搜索文件名或相对路径..."
-      searchBarAccessory={
-        <List.Dropdown
-          value={diffFilter}
-          onChange={(val) => setDiffFilter(val as DiffFilterType)}
-          tooltip="按差异类型筛选"
-        >
-          <List.Dropdown.Item title="全部差异文件" value="all" icon={Icon.List} />
-          <List.Dropdown.Item title="仅看新增文件 (+)" value="added" icon={Icon.Plus} />
-          <List.Dropdown.Item title="仅看已修改文件 (↑)" value="modified" icon={Icon.Pencil} />
-          <List.Dropdown.Item
-            title="仅看目标端多余文件 (-)"
-            value="orphan"
-            icon={Icon.Trash}
-          />
-        </List.Dropdown>
-      }
-      filterBar={{
-        summaryText: `比对完成：共发现 ${diffItems.length} 处差异 · 已勾选 ${checkedItems.length} 项（待传输 ${formatSyncBytes(transferBytes)}）`,
-        actions: [
-          {
-            id: 'pick-dirs',
-            title: '选择源/目标目录',
-            onAction: () => {
-              void handleSelectDirectories()
-            }
-          },
-          {
-            id: 'rescan',
-            title: '重新比对',
-            onAction: () => {
-              void handleCompareDirectories()
-            }
-          }
-        ]
-      }}
-      workbenchPanel={{
-        title: '同步策略与目录配置',
-        subtitle: `${shortenFolderPath(sourceDir)} → ${shortenFolderPath(targetDir)}`,
-        fields: [
-          {
-            id: 'syncMode',
-            label: '同步模式',
-            type: 'select',
-            value: syncMode,
-            options: [
-              { label: '单向增量备份 (仅新增/更新，最安全)', value: 'incremental' },
-              { label: '双向最新合并 (两边互相同步)', value: 'two-way' },
-              { label: '单向镜像克隆 (清理目标端多余项)', value: 'mirror' }
-            ],
-            onChange: (val: unknown) => setSyncMode(val as SyncMode)
-          },
-          {
-            id: 'ignoreDevJunk',
-            label: '忽略缓存目录 (node_modules/.git)',
-            type: 'toggle',
-            value: ignoreDevJunk,
-            onChange: (val: unknown) => setIgnoreDevJunk(Boolean(val))
-          },
-          {
-            id: 'sourceInfo',
-            label: '源文件夹',
-            type: 'info',
-            value: sourceDir || '未选择'
-          },
-          {
-            id: 'targetInfo',
-            label: '目标文件夹',
-            type: 'info',
-            value: targetDir || '未选择'
-          }
-        ],
-        previewCard: {
-          title: '本次同步传输预估',
-          subtitle: `预计写入 ${checkedItems.length} 个文件 · 共 ${formatSyncBytes(transferBytes)}`
-        }
-      }}
-      subList={{
-        title: `待同步差异文件明细 (${filteredDiffs.length} 项)`,
-        subtitle: '按空格勾选或取消，按 Enter 开始执行增量同步',
-        emptyText: '源目录与目标目录内容完全一致，无需同步',
-        checkable: filteredDiffs.length > 0,
-        checked: allChecked ? true : someChecked ? 'indeterminate' : false,
-        onCheckChange: toggleAllVisible,
-        items: filteredDiffs.map((item) => (
-          <List.Item
-            key={item.relPath}
-            id={item.relPath}
-            title={item.relPath}
-            subtitle={item.reasonText}
-            icon={
-              item.diffType === 'added' || item.diffType === 'reverse-add'
-                ? Icon.Plus
-                : item.diffType === 'modified'
-                  ? Icon.ArrowUp
-                  : Icon.Trash
-            }
-            checkable={true}
-            checked={checkedSet.has(item.relPath)}
-            onCheckChange={() => toggleCheck(item.relPath)}
-            accessories={[
-              item.diffType === 'orphan'
-                ? { tag: { value: '目标多余(移入回收站)', color: Color.Red } }
-                : { tag: item.actionBadge },
-              { text: formatSyncBytes(item.sizeBytes) }
-            ]}
-            actions={
-              <ActionPanel>
-                <Action
-                  title={`开始执行增量同步 (${checkedItems.length} 个文件)`}
-                  icon={Icon.Play}
-                  onAction={handleExecuteSync}
-                />
-                <Action.ShowInFinder
-                  title="在资源管理器中查看源文件"
-                  path={item.sourceFullPath || item.targetFullPath}
-                />
-                <Action
-                  title="更换源目录与目标目录"
-                  icon={Icon.Folder}
-                  onAction={handleSelectDirectories}
-                />
-              </ActionPanel>
-            }
-          />
-        ))
-      }}
-    />
-  )
-}
-
 export default FolderSyncCommand

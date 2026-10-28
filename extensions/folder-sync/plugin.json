@@ -1,9 +1,9 @@
 {
   "id": "folder-sync",
   "name": "目录同步",
-  "version": "1.0.1",
-  "description": "快速比对两个文件夹（本地磁盘、移动硬盘、U盘、NAS）的新增与修改差异，一键执行高速增量备份或双向同步",
-  "author": "ZTools Team",
+  "version": "1.0.3",
+  "description": "比对普通文件内容后增量或双向同步，覆盖前保留校验备份；Mac 支持镜像移入回收站（单文件最大 2 GiB）",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -51,5 +51,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

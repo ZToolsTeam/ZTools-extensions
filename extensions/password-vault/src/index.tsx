@@ -4,10 +4,10 @@ import React, {
   ActionPanel,
   Action,
   Icon,
-  Clipboard,
   LocalStorage,
   showToast,
   Toast,
+  confirmAlert,
   useNavigation,
   useState,
   useEffect,
@@ -15,7 +15,7 @@ import React, {
   useCallback,
   useRef
 } from '@ztools/declarative-ui'
-import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types'
+import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types.js'
 import {
   copySecretWithAutoClear,
   createVaultEntry,
@@ -24,12 +24,27 @@ import {
   generateSecurePassword,
   validateMasterPassword,
   validateNewEntryInput
-} from './vault-crypto'
+} from './vault-crypto.js'
 
-export * from './types'
-export * from './vault-crypto'
+export * from './types.js'
+export * from './vault-crypto.js'
 
 const VAULT_STORAGE_KEY = 'ztools.password-vault.envelope.v1'
+
+function parseStoredEnvelope(raw: unknown): EncryptedVaultEnvelope {
+  const value: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('保险箱数据格式无效')
+  }
+  const envelope = value as Record<string, unknown>
+  if ((envelope.version !== 1 && !(envelope.version === 2 && Number.isSafeInteger(envelope.kdfIterations))) ||
+      typeof envelope.saltBase64 !== 'string' || !envelope.saltBase64 ||
+      typeof envelope.ivBase64 !== 'string' || !envelope.ivBase64 ||
+      typeof envelope.cipherTextBase64 !== 'string' || !envelope.cipherTextBase64) {
+    throw new Error('保险箱数据不完整或版本不受支持')
+  }
+  return envelope as unknown as EncryptedVaultEnvelope
+}
 
 function getCategoryIcon(category: VaultCategory): Icon {
   switch (category) {
@@ -48,17 +63,21 @@ function getCategoryIcon(category: VaultCategory): Icon {
 
 interface VaultEntryFormProps {
   initialPassword?: string
+  initialEntry?: VaultEntry
   onSave: (input: VaultNewEntryInput) => Promise<void>
 }
 
-export function VaultEntryForm({ initialPassword = '', onSave }: VaultEntryFormProps) {
+export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: VaultEntryFormProps) {
   const { pop } = useNavigation()
-  const [title, setTitle] = useState('')
-  const [category, setCategory] = useState<VaultCategory>('login')
-  const [username, setUsername] = useState('')
-  const [endpoint, setEndpoint] = useState('')
-  const [secretPlain, setSecretPlain] = useState(initialPassword)
-  const [note, setNote] = useState('')
+  const [title, setTitle] = useState(initialEntry?.title ?? '')
+  const [category, setCategory] = useState<VaultCategory>(initialEntry?.category ?? 'login')
+  const [username, setUsername] = useState(initialEntry?.username ?? '')
+  const [endpoint, setEndpoint] = useState(initialEntry?.endpoint ?? '')
+  const [secretPlain, setSecretPlain] = useState(initialEntry?.secretPlain ?? initialPassword)
+  const [note, setNote] = useState(initialEntry?.note ?? '')
+
+  const submitting = useRef(false)
+  const [saving, setSaving] = useState(false)
 
   const handleGenerate = useCallback(async () => {
     const pwd = generateSecurePassword(20, true)
@@ -87,13 +106,17 @@ export function VaultEntryForm({ initialPassword = '', onSave }: VaultEntryFormP
       })
       return
     }
-    await onSave(input)
-    pop()
+    if (submitting.current) return
+    submitting.current = true; setSaving(true)
+    try { await onSave(input); pop() }
+    catch (error) { await showToast({ style: Toast.Style.Failure, title: '未保存，原数据保留', message: error instanceof Error ? error.message : String(error) }) }
+    finally { submitting.current = false; setSaving(false) }
   }, [title, category, username, endpoint, secretPlain, note, onSave, pop])
 
   return (
     <Form
-      navigationTitle="新建加密凭据"
+      navigationTitle={initialEntry ? '编辑加密凭据' : '新建加密凭据'}
+      isLoading={saving}
       actions={
         <ActionPanel>
           <Action.SubmitForm title="加密保存至保险箱" icon={Icon.Lock} onSubmit={handleSubmit} />
@@ -174,18 +197,23 @@ export function PasswordVault({
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [revealedId, setRevealedId] = useState<string | null>(null)
   const [authError, setAuthError] = useState<string>('')
+  const [loadError, setLoadError] = useState('')
+  const [reloadCount, setReloadCount] = useState(0)
 
   const mountedRef = useRef<boolean>(true)
-  const clearTimersRef = useRef<ReturnType<typeof setTimeout>[]>([])
+  const readReadyRef = useRef(false)
+  const authenticatingRef = useRef(false)
+  const mutatingRef = useRef(false)
+  const rawEnvelopeRef = useRef<unknown>(undefined)
+  const entriesRef = useRef<VaultEntry[]>(initialUnlockedEntries || [])
+  const sessionEpoch = useRef(0)
+  const currentSession = sessionEpoch.current
 
   useEffect(() => {
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      for (const timer of clearTimersRef.current) {
-        clearTimeout(timer)
-      }
-      clearTimersRef.current = []
+      sessionEpoch.current++
     }
   }, [])
 
@@ -194,20 +222,25 @@ export function PasswordVault({
       return
     }
     let active = true
+    readReadyRef.current = false
+    setIsLoading(true)
+    setLoadError('')
     ;(async () => {
       try {
-        const raw = await LocalStorage.getItem<string>(VAULT_STORAGE_KEY)
+        const raw = await LocalStorage.getItem(VAULT_STORAGE_KEY)
         if (!active || !mountedRef.current) return
-        if (raw) {
-          const parsed = JSON.parse(raw) as EncryptedVaultEnvelope
-          setStoredEnvelope(parsed)
+        if (raw !== undefined) {
+          setStoredEnvelope(parseStoredEnvelope(raw))
           setHasExistingVault(true)
         } else {
+          setStoredEnvelope(null)
           setHasExistingVault(false)
         }
+        rawEnvelopeRef.current = raw
+        readReadyRef.current = true
       } catch {
         if (active && mountedRef.current) {
-          setHasExistingVault(false)
+          setLoadError('无法读取保险箱，原数据未被修改。请重试；如果仍然失败，请先保留数据并联系支持。')
         }
       } finally {
         if (active && mountedRef.current) {
@@ -218,25 +251,39 @@ export function PasswordVault({
     return () => {
       active = false
     }
-  }, [initialUnlockedEntries])
+  }, [initialUnlockedEntries, reloadCount])
 
-  const persistEntries = useCallback(
-    async (pwd: string, nextEntries: VaultEntry[]) => {
-      const envelope = await encryptVaultEntries(pwd, nextEntries)
-      await LocalStorage.setItem(VAULT_STORAGE_KEY, JSON.stringify(envelope))
-      if (mountedRef.current) {
-        setStoredEnvelope(envelope)
-        setHasExistingVault(true)
+  const persistEntries = useCallback(async (pwd: string, nextEntries: VaultEntry[], initialize = false) => {
+    if (!mountedRef.current || !readReadyRef.current) throw new Error('请重新读取并解锁保险箱')
+    if (mutatingRef.current) throw new Error('正在保存，请稍候')
+    const epoch = sessionEpoch.current, expected = initialize ? undefined : rawEnvelopeRef.current
+    if (!initialize && expected === undefined) throw new Error('保险箱状态已变化，请重新读取')
+    mutatingRef.current = true
+    try {
+      const envelope = await encryptVaultEntries(pwd, nextEntries), serialized = JSON.stringify(envelope)
+      if (!mountedRef.current || epoch !== sessionEpoch.current) throw new Error('保险箱已锁定或关闭，本次未写入')
+      const saved = await LocalStorage.compareAndSet(VAULT_STORAGE_KEY, expected, serialized)
+      if (!saved) {
+        readReadyRef.current = false; sessionEpoch.current++
+        if (mountedRef.current) {
+          setIsUnlocked(false); setMasterPassword(''); setEntries([]); entriesRef.current = []
+          setLoadError('保险箱数据已变化，原数据未被覆盖。请重新读取并解锁后重试。')
+        }
+        throw new Error('保险箱数据已变化，原数据未被覆盖。请重新读取后重试。')
       }
-    },
-    []
-  )
+      if (mountedRef.current && epoch === sessionEpoch.current) {
+        rawEnvelopeRef.current = serialized
+        setStoredEnvelope(envelope); setHasExistingVault(true)
+      }
+    } finally { mutatingRef.current = false }
+  }, [])
 
   const handleUnlockOrInitialize = useCallback(async () => {
+    if (!readReadyRef.current || isLoading || loadError || authenticatingRef.current || mutatingRef.current) return
     setAuthError('')
-    const check = validateMasterPassword(passwordInput)
+    const check = validateMasterPassword(passwordInput, { isNewVault: !(hasExistingVault && storedEnvelope) })
     if (!check.valid) {
-      setAuthError(check.error || '主密码长度至少 6 位')
+      setAuthError(check.error || '主密码长度不足')
       await showToast({
         style: Toast.Style.Failure,
         title: '主密码格式不合法',
@@ -245,11 +292,13 @@ export function PasswordVault({
       return
     }
 
+    authenticatingRef.current = true
     try {
       if (hasExistingVault && storedEnvelope) {
         const decrypted = await decryptVaultEntries(passwordInput, storedEnvelope)
         if (!mountedRef.current) return
         setMasterPassword(passwordInput)
+        entriesRef.current = decrypted; sessionEpoch.current++
         setEntries(decrypted)
         setIsUnlocked(true)
         setPasswordInput('')
@@ -259,9 +308,10 @@ export function PasswordVault({
           message: `成功解密 ${decrypted.length} 项凭据`
         })
       } else {
-        await persistEntries(passwordInput, [])
+        await persistEntries(passwordInput, [], true)
         if (!mountedRef.current) return
         setMasterPassword(passwordInput)
+        entriesRef.current = []; sessionEpoch.current++
         setEntries([])
         setIsUnlocked(true)
         setPasswordInput('')
@@ -273,18 +323,30 @@ export function PasswordVault({
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
+      const title = hasExistingVault ? '主密码错误或保险箱数据损坏，无法解锁' : '无法创建保险箱，原数据未被修改'
       if (mountedRef.current) {
-        setAuthError('主密码错误，无法解密保险箱数据')
+        setAuthError(title)
+        if (!hasExistingVault) {
+          readReadyRef.current = false
+          setLoadError(msg)
+        }
       }
       await showToast({
         style: Toast.Style.Failure,
-        title: '主密码错误，无法解密保险箱数据',
+        title,
         message: msg
       })
+    } finally {
+      authenticatingRef.current = false
     }
-  }, [passwordInput, hasExistingVault, storedEnvelope, persistEntries])
+  }, [passwordInput, hasExistingVault, storedEnvelope, persistEntries, isLoading, loadError])
 
   const handleLockVault = useCallback(async () => {
+    if (mutatingRef.current) {
+      await showToast({ style: Toast.Style.Failure, title: '正在保存，请完成后再锁定' })
+      return
+    }
+    sessionEpoch.current++; entriesRef.current = []
     setIsUnlocked(false)
     setMasterPassword('')
     setEntries([])
@@ -295,59 +357,41 @@ export function PasswordVault({
     })
   }, [])
 
-  const handleSaveEntry = useCallback(
-    async (input: VaultNewEntryInput) => {
-      const created = createVaultEntry(input)
-      const next = [created, ...entries]
-      if (masterPassword) {
-        await persistEntries(masterPassword, next)
-      }
-      if (mountedRef.current) {
-        setEntries(next)
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: '凭据已加密保存',
-        message: created.title
-      })
-    },
-    [entries, masterPassword, persistEntries]
-  )
+  const handleSaveEntry = useCallback(async (input: VaultNewEntryInput, existingId?: string) => {
+    if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error('保险箱已锁定，请重新解锁')
+    const created = createVaultEntry(input)
+    if (existingId && !entriesRef.current.some(entry => entry.id === existingId)) throw new Error('此凭据已不存在，请重新读取')
+    const next = existingId ? entriesRef.current.map(entry => entry.id === existingId ? { ...created, id: existingId } : entry) : [created, ...entriesRef.current]
+    await persistEntries(masterPassword, next)
+    if (!mountedRef.current || currentSession !== sessionEpoch.current) return
+    entriesRef.current = next; setEntries(next)
+    await showToast({ style: Toast.Style.Success, title: '凭据已加密保存', message: created.title })
+  }, [masterPassword, persistEntries, currentSession])
 
-  const handleDeleteEntry = useCallback(
-    async (id: string) => {
-      const next = entries.filter((e: VaultEntry) => e.id !== id)
-      if (masterPassword) {
-        await persistEntries(masterPassword, next)
-      }
-      if (mountedRef.current) {
-        setEntries(next)
-      }
-      await showToast({
-        style: Toast.Style.Success,
-        title: '已从加密保险箱中移除该凭据'
-      })
-    },
-    [entries, masterPassword, persistEntries]
-  )
+  const handleDeleteEntry = useCallback(async (id: string) => {
+    const target = entriesRef.current.find(entry => entry.id === id)
+    // 删除不可恢复：必须由用户明确确认，取消或无法弹出确认框时不删除
+    const confirmed = await confirmAlert({
+      title: `删除凭据「${target?.title || '未命名'}」？`,
+      message: '删除后无法恢复，保险箱里不会留下副本。',
+      primaryAction: { title: '删除', style: 'destructive' },
+      dismissAction: { title: '取消' }
+    })
+    if (!confirmed) return
+    try {
+      if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error('保险箱已锁定，请重新解锁')
+      const next = entriesRef.current.filter(entry => entry.id !== id)
+      await persistEntries(masterPassword, next)
+      if (!mountedRef.current || currentSession !== sessionEpoch.current) return
+      entriesRef.current = next; setEntries(next)
+      await showToast({ style: Toast.Style.Success, title: '已从加密保险箱中移除该凭据' })
+    } catch (error) {
+      await showToast({ style: Toast.Style.Failure, title: '未删除，原数据保留', message: error instanceof Error ? error.message : String(error) })
+    }
+  }, [masterPassword, persistEntries, currentSession])
 
   const handleCopySecretWithAutoClear = useCallback(async (item: VaultEntry) => {
-    await copySecretWithAutoClear(
-      item.secretPlain,
-      {
-        copy: (text) => Clipboard.copy(text),
-        readText: () => Clipboard.readText(),
-        clear: () => Clipboard.clear()
-      },
-      {
-        ttlMs: 30000,
-        scheduleTimer: (fn, ms) => {
-          const timer = setTimeout(fn, ms)
-          clearTimersRef.current.push(timer)
-          return timer
-        }
-      }
-    )
+    await copySecretWithAutoClear(item.secretPlain)
     await showToast({
       style: Toast.Style.Success,
       title: '已复制密码 / Secret',
@@ -357,22 +401,7 @@ export function PasswordVault({
 
   const handleQuickGeneratePassword = useCallback(async () => {
     const generated = generateSecurePassword(20, true)
-    await copySecretWithAutoClear(
-      generated,
-      {
-        copy: (text) => Clipboard.copy(text),
-        readText: () => Clipboard.readText(),
-        clear: () => Clipboard.clear()
-      },
-      {
-        ttlMs: 30000,
-        scheduleTimer: (fn, ms) => {
-          const timer = setTimeout(fn, ms)
-          clearTimersRef.current.push(timer)
-          return timer
-        }
-      }
-    )
+    await copySecretWithAutoClear(generated)
     await showToast({
       style: Toast.Style.Success,
       title: '已生成 20 位高强度随机密码并复制',
@@ -395,6 +424,27 @@ export function PasswordVault({
       )
     })
   }, [entries, searchText, categoryFilter])
+
+  if (!isUnlocked && (isLoading || loadError)) {
+    return (
+      <Form
+        isLoading={isLoading}
+        navigationTitle={isLoading ? '正在读取密码保险箱' : '保险箱暂不可用'}
+        actions={!isLoading ? (
+          <ActionPanel>
+            <Action title="重新读取保险箱" onAction={() => {
+              readReadyRef.current = false
+              setIsLoading(true)
+              setLoadError('')
+              setReloadCount((count) => count + 1)
+            }} />
+          </ActionPanel>
+        ) : undefined}
+      >
+        <Form.Description text={loadError || '读取完成后才能解锁或创建保险箱。'} />
+      </Form>
+    )
+  }
 
   if (!isUnlocked) {
     return (
@@ -421,7 +471,7 @@ export function PasswordVault({
           text={
             hasExistingVault
               ? '请输入主密码以派生 AES-256-GCM 密钥解密本地保险箱。主密码绝不落盘或上传。'
-              : '首次使用请设置至少 6 位的主密码（PBKDF2 100,000 次迭代 + AES-256-GCM 本地零明文加密）。'
+              : '首次使用请设置至少 8 位的主密码（PBKDF2-SHA256 600,000 次迭代 + AES-256-GCM 本地加密）。'
           }
         />
         <Form.PasswordField
@@ -500,10 +550,9 @@ export function PasswordVault({
                 onAction={() => setRevealedId((cur: string | null) => (cur === item.id ? null : item.id))}
               />
               <Action.Push
-                title="新建加密凭据"
-                icon={Icon.Plus}
-                shortcut={{ modifiers: ['cmd'], key: 'n' }}
-                target={<VaultEntryForm onSave={handleSaveEntry} />}
+                title="编辑此凭据"
+                icon={Icon.Pencil}
+                target={<VaultEntryForm initialEntry={item} onSave={input => handleSaveEntry(input, item.id)} />}
               />
               <Action
                 title="立即生成 20 位高强度随机密码并复制"
@@ -527,4 +576,14 @@ export function PasswordVault({
 }
 
 export const PasswordVaultCommand = PasswordVault
+
+/**
+ * 两个入口对应的根组件。客户端调用根组件时不传参数，靠 commands 按 featureCode 找到入口；
+ * 「随机密码」入口解锁后，「新建凭据」会预先填入一个随机密码。
+ */
+export const commands = {
+  'vault-list': () => PasswordVault({ featureCode: 'vault-list' }),
+  'vault-generator': () => PasswordVault({ featureCode: 'vault-generator' })
+}
+
 export default PasswordVault

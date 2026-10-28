@@ -1,19 +1,13 @@
 {
   "id": "hosts-switcher",
   "name": "域名映射",
-  "version": "1.0.1",
-  "description": "多套 Hosts 环境方案自由组合切换，一键管理员提权写入系统 hosts 并自动静默刷新 DNS 缓存",
-  "author": "ZTools Official",
+  "version": "1.0.5",
+  "description": "保存并切换多套 Hosts 方案；Mac 写入前预览、校验和备份，通过系统授权应用并支持恢复",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
   "targets": [
-    {
-      "id": "windows-electron-any",
-      "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
     {
       "id": "macos-electron-any",
       "platform": "macos",
@@ -40,7 +34,7 @@
     },
     {
       "code": "hosts-flush-dns",
-      "explain": "一键刷新本机系统 DNS 解析缓存 (ipconfig /flushdns)",
+      "explain": "经系统授权刷新本机 DNS 解析缓存",
       "cmds": [
         "刷新dns",
         "flushdns",
@@ -56,5 +50,6 @@
         "添加域名映射"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

@@ -1,0 +1,27 @@
+{
+  "id": "screen-color-picker",
+  "name": "屏幕取色",
+  "description": "鼠标跟随像素级放大镜取色器，一键拾取屏幕任意位置颜色并复制 HEX / RGB / HSL 色值",
+  "version": "2.0.6",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "开发工具",
+    "图像媒体"
+  ],
+  "permissions": [
+    "screen",
+    "clipboard"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

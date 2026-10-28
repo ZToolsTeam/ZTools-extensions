@@ -9,7 +9,7 @@
  * - 统一以 ES2022 模块输出（宿主加载器同时兼容 ESM 与 CommonJS，这里固定一种避免各插件 tsconfig 不一致）
  * - .tsx 默认按 React.createElement 输出（插件里 import React from '@ztools/declarative-ui'）
  * - 构建前清空 dist/，避免残留已删除源码的旧产物
- * - shared/ 下的公共源码（hash.ts、native-ipc.ts、volume-ipc.ts、host-compat.ts）以复制方式进入插件，构建前校验副本与源文件一致
+ * - shared/ 下的公共源码（hash.ts、native-ipc.ts、volume-ipc.ts、host-compat.ts、qr-encoder.ts）以复制方式进入插件，构建前校验副本与源文件一致
  * - 同一份脚本在内部插件仓库与公开插件仓库（ZTools-extensions，插件位于 extensions/）都能直接运行
  */
 import { execFileSync } from 'node:child_process'
@@ -18,7 +18,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SHARED = ['hash.ts', 'native-ipc.ts', 'volume-ipc.ts', 'host-compat.ts']
+const SHARED = ['hash.ts', 'native-ipc.ts', 'volume-ipc.ts', 'host-compat.ts', 'qr-encoder.ts']
 
 // 插件所在目录：仓库里有 extensions/ 时在 extensions/ 下，否则就是本脚本上一级目录
 const pluginsRoot = fs.existsSync(path.join(root, 'extensions')) ? path.join(root, 'extensions') : root
@@ -89,6 +89,11 @@ for (const id of ids) {
     failed++
     continue
   }
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+  if (manifest.revoked === true) {
+    console.log(`[${id}] 已下架，跳过构建`)
+    continue
+  }
   let staleCopy = false
   for (const name of SHARED) {
     const copy = path.join(dir, 'src', name)
@@ -124,7 +129,7 @@ for (const id of ids) {
     failed++
     continue
   }
-  const entry = JSON.parse(fs.readFileSync(manifestPath, 'utf8')).entry || 'dist/index.js'
+  const entry = manifest.entry || 'dist/index.js'
   if (!fs.existsSync(path.join(dir, entry))) {
     console.error(`[${id}] 编译后缺少入口文件 ${entry}`)
     failed++

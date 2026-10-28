@@ -1,13 +1,17 @@
 {
   "id": "calendar",
   "name": "日程日历",
-  "version": "2.0.5",
-  "description": "查看今日与近期日程、一键加入视频会议，支持快速新建提醒事项并导出日历文件",
-  "author": "ZTools Team",
+  "version": "2.0.7",
+  "description": "在本机记录和查看日程，用浏览器打开日程里的视频会议链接，可新建、删除日程并导出 ICS 日历文件",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
-    "clipboard"
+    "clipboard",
+    "dialog",
+    "fs",
+    "shell",
+    "database"
   ],
   "targets": [
     {

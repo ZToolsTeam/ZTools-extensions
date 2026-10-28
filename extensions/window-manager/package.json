@@ -1,0 +1,14 @@
+{
+  "name": "@ztools/plugin-window-manager",
+  "version": "1.0.0",
+  "description": "基于 Win32 原生窗口 API 枚举全部活动桌面窗口，支持一键窗口置顶 (Always on Top)、透明度调节、尺寸锁定与极速分屏贴靠",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test tests/window-manager.test.mjs"
+  },
+  "dependencies": {
+    "@ztools/declarative-ui": "workspace:*"
+  }
+}

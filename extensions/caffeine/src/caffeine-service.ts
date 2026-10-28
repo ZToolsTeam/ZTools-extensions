@@ -1,48 +1,46 @@
-import { invokePluginService } from './native-ipc'
+import { callHostTransport } from './native-ipc.js'
 import type {
   CaffeineActionResult,
   CaffeineMode,
   CaffeinePreset,
   CaffeineStatus
-} from './types'
-
-export const CAFFEINE_PLUGIN_NAME = 'CaffeinePlugin'
+} from './types.js'
 
 export const CAFFEINE_PRESETS: ReadonlyArray<CaffeinePreset> = [
   {
     id: 'caffeine-0',
     minutes: 0,
-    title: '无限期保持常亮（直到手动关闭）',
-    subtitle: '阻止系统自动进入睡眠或关闭显示器背光'
+    title: '无限期防休眠（直到手动关闭）',
+    subtitle: '按所选模式持续保持唤醒'
   },
   {
     id: 'caffeine-15',
     minutes: 15,
-    title: '保持常亮 15 分钟',
+    title: '防休眠 15 分钟',
     subtitle: '适合短时文件传输、会议投屏演示或临时离开座位'
   },
   {
     id: 'caffeine-30',
     minutes: 30,
-    title: '保持常亮 30 分钟',
+    title: '防休眠 30 分钟',
     subtitle: '适合阅读长文、线上分享或常规构建打包'
   },
   {
     id: 'caffeine-60',
     minutes: 60,
-    title: '保持常亮 1 小时',
+    title: '防休眠 1 小时',
     subtitle: '适合编译大型工程、下载大体积镜像或导出视频'
   },
   {
     id: 'caffeine-120',
     minutes: 120,
-    title: '保持常亮 2 小时',
+    title: '防休眠 2 小时',
     subtitle: '适合长时间模型推理、数据库迁移或备份任务'
   },
   {
     id: 'caffeine-240',
     minutes: 240,
-    title: '保持常亮 4 小时',
+    title: '防休眠 4 小时',
     subtitle: '适合半天无人值守批处理任务，到期后自动恢复系统休眠策略'
   }
 ]
@@ -54,7 +52,7 @@ export function formatRemainingDuration(
 ): string {
   if (!active) return '未开启'
   if (durationMinutes === 0 || remainingMs === null) {
-    return '无限期常亮（手动关闭）'
+    return '无限期（手动关闭）'
   }
   const totalSec = Math.max(0, Math.ceil(remainingMs / 1000))
   if (totalSec < 60) {
@@ -115,118 +113,45 @@ export function getDefaultInactiveStatus(mode: CaffeineMode = 'display'): Caffei
   }
 }
 
-export async function getCaffeineStatus(hostOverride?: unknown): Promise<CaffeineActionResult> {
-  const res = await invokePluginService<Record<string, unknown>>(
-    CAFFEINE_PLUGIN_NAME,
-    'getStatus',
-    {},
-    hostOverride
+async function callPowerSession(
+  action: 'status' | 'start' | 'stop' | 'toggle',
+  hostOverride?: unknown,
+  options: { durationMinutes?: number; mode?: CaffeineMode } = {}
+): Promise<CaffeineActionResult> {
+  const res = await callHostTransport<Record<string, unknown>>(
+    'system_power_session', { action, ...options }, hostOverride
   )
-  if (!res.ok || !res.data || res.data.ok === false) {
-    return {
-      ok: false,
-      errorCode: String(res.data?.errorCode ?? 'STATUS_QUERY_FAILED'),
-      error: String(res.data?.error ?? res.error ?? '查询防休眠状态失败')
-    }
+  if (!res.ok || !res.data) return { ok: false, error: res.error || '无法读取系统防休眠状态' }
+  const raw = res.data
+  if (typeof raw.active !== 'boolean' || !['display', 'system'].includes(String(raw.mode)) ||
+      !Number.isInteger(raw.durationMinutes) || !Number.isInteger(raw.sessionId) ||
+      (raw.active && (typeof raw.startedAtMs !== 'number' || !Number.isFinite(raw.startedAtMs))) ||
+      (raw.expiresAtMs !== null && (typeof raw.expiresAtMs !== 'number' || !Number.isFinite(raw.expiresAtMs)))) {
+    return { ok: false, error: '宿主返回的防休眠状态无效，请升级客户端后重试' }
   }
-  return {
-    ok: true,
-    status: normalizeCaffeineStatus(res.data)
-  }
+  return { ok: true, status: normalizeCaffeineStatus(raw) }
+}
+
+export function getCaffeineStatus(hostOverride?: unknown): Promise<CaffeineActionResult> {
+  return callPowerSession('status', hostOverride)
 }
 
 export async function startCaffeineSession(
   durationMinutes: number,
   mode: CaffeineMode = 'display',
-  hostOverride?: unknown,
-  extraParams: Record<string, unknown> = {}
+  hostOverride?: unknown
 ): Promise<CaffeineActionResult> {
-  const num = Number(durationMinutes)
-  if (!Number.isFinite(num) || num < 0 || num > 10080) {
-    return {
-      ok: false,
-      errorCode: 'INVALID_DURATION',
-      error: 'INVALID_DURATION: 防休眠时长必须为 0（无限期）或 1~10080 分钟之间的有效数值'
-    }
+  if (!Number.isInteger(durationMinutes) || durationMinutes < 0 || durationMinutes > 10080) {
+    return { ok: false, errorCode: 'INVALID_DURATION', error: '防休眠时长必须为 0~10080 的整数分钟，0 表示无限期' }
   }
-  if (mode !== 'display' && mode !== 'system') {
-    return {
-      ok: false,
-      errorCode: 'INVALID_MODE',
-      error: 'INVALID_MODE: 防休眠模式仅支持 display 或 system'
-    }
-  }
-
-  const res = await invokePluginService<Record<string, unknown>>(
-    CAFFEINE_PLUGIN_NAME,
-    'start',
-    {
-      durationMinutes: num,
-      mode,
-      ...extraParams
-    },
-    hostOverride
-  )
-
-  if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '开启防休眠失败')
-    const errCode = String(res.data?.errorCode ?? (errText.match(/^([A-Z0-9_]+):/)?.[1] || 'START_CAFFEINE_FAILED'))
-    return {
-      ok: false,
-      errorCode: errCode,
-      error: errText
-    }
-  }
-
-  return {
-    ok: true,
-    status: normalizeCaffeineStatus(res.data)
-  }
+  if (mode !== 'display' && mode !== 'system') return { ok: false, errorCode: 'INVALID_MODE', error: '防休眠模式无效' }
+  return callPowerSession('start', hostOverride, { durationMinutes, mode })
 }
 
-export async function stopCaffeineSession(
-  hostOverride?: unknown,
-  extraParams: Record<string, unknown> = {}
-): Promise<CaffeineActionResult> {
-  const res = await invokePluginService<Record<string, unknown>>(
-    CAFFEINE_PLUGIN_NAME,
-    'stop',
-    extraParams,
-    hostOverride
-  )
-  if (!res.ok || !res.data || res.data.ok === false) {
-    return {
-      ok: false,
-      errorCode: String(res.data?.errorCode ?? 'STOP_CAFFEINE_FAILED'),
-      error: String(res.data?.error ?? res.error ?? '停止防休眠失败')
-    }
-  }
-  return {
-    ok: true,
-    status: normalizeCaffeineStatus(res.data)
-  }
+export function stopCaffeineSession(hostOverride?: unknown): Promise<CaffeineActionResult> {
+  return callPowerSession('stop', hostOverride)
 }
 
-export async function toggleCaffeineSession(
-  mode: CaffeineMode = 'display',
-  hostOverride?: unknown,
-  extraParams: Record<string, unknown> = {}
-): Promise<CaffeineActionResult> {
-  const res = await invokePluginService<Record<string, unknown>>(
-    CAFFEINE_PLUGIN_NAME,
-    'toggle',
-    { mode, ...extraParams },
-    hostOverride
-  )
-  if (!res.ok || !res.data || res.data.ok === false) {
-    return {
-      ok: false,
-      errorCode: String(res.data?.errorCode ?? 'TOGGLE_CAFFEINE_FAILED'),
-      error: String(res.data?.error ?? res.error ?? '切换防休眠状态失败')
-    }
-  }
-  return {
-    ok: true,
-    status: normalizeCaffeineStatus(res.data)
-  }
+export function toggleCaffeineSession(mode: CaffeineMode = 'display', hostOverride?: unknown): Promise<CaffeineActionResult> {
+  return callPowerSession('toggle', hostOverride, { mode })
 }

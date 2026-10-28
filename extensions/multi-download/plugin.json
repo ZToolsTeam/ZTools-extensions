@@ -1,0 +1,32 @@
+{
+  "id": "multi-download",
+  "name": "多线程下载",
+  "description": "把 HTTP、FTP 与磁力链接交给本机运行的 aria2 按 16 / 8 / 4 / 1 线程下载；没有 aria2 时 HTTP 链接由客户端单连接下载。同时可按类型查看、打开、定位或移入回收站「下载」文件夹里的文件",
+  "version": "2.0.6",
+  "draft": true,
+  "draftReason": "多线程分块下载需要用户自行安装并运行 aria2（开启 RPC、不设密钥、允许跨域），插件和客户端都不提供；没有 aria2 时只能单连接下载 HTTP 链接（单个文件不超过 1 GiB，需在 5 分钟内下完），FTP 与磁力链接无法下载。等客户端提供多线程下载能力并在 Windows 上实测通过后再发布",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "category": [
+    "网络工具"
+  ],
+  "permissions": [
+    "network",
+    "fs",
+    "shell",
+    "clipboard",
+    "dialog",
+    "system"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ]
+}

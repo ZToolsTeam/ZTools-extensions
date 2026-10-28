@@ -1,9 +1,9 @@
 {
   "id": "audio-device",
   "name": "音频设备切换",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "秒级切换系统默认扬声器、耳机与麦克风，支持音量调节、快速静音与蓝牙/显示器音频直达",
-  "author": "ZTools Team",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -50,21 +50,17 @@
         "取消静音",
         "mute",
         "unmute"
-      ]
+      ],
+      "mode": "no-view"
     }
   ],
   "targets": [
-    {
-      "id": "windows-electron-any",
-      "platform": "windows",
-      "runtime": "electron",
-      "arch": "any"
-    },
     {
       "id": "macos-electron-any",
       "platform": "macos",
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

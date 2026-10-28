@@ -1,7 +1,6 @@
 import React, {
   Action,
   ActionPanel,
-  Color,
   Icon,
   List,
   Toast,
@@ -12,11 +11,11 @@ import React, {
 import {
   generateMockBatchUsers,
   generateMockSingleItems
-} from './mock-service'
-import type { MockDataTab } from './types'
+} from './mock-service.js'
+import type { MockDataTab } from './types.js'
 
-export * from './types'
-export * from './mock-service'
+export * from './types.js'
+export * from './mock-service.js'
 
 export interface MockDataCommandProps {
   featureCode?: string
@@ -30,7 +29,7 @@ export function MockDataCommand(props: MockDataCommandProps = {}) {
 
   const [tab, setTab] = useState<MockDataTab>(defaultTab)
   const [searchText, setSearchText] = useState<string>('')
-  const [seed, setSeed] = useState<number>(props.initialSeed ?? 20261025)
+  const [seed, setSeed] = useState<number>(() => props.initialSeed ?? Date.now())
 
   const singleItems = useMemo(() => {
     const all = generateMockSingleItems(seed)
@@ -81,7 +80,7 @@ export function MockDataCommand(props: MockDataCommandProps = {}) {
       searchBarAccessory={
         <List.Dropdown
           value={tab}
-          onChange={(v) => setTab(v as MockDataTab)}
+          onChange={(v) => { setTab(v as MockDataTab); setSearchText('') }}
           tooltip="切换测试数据生成模式"
         >
           <List.Dropdown.Item title="单项极速生成 (带校验位)" value="single" icon={Icon.Document} />
@@ -191,6 +190,11 @@ ${batchJsonString}
       )}
     </List>
   )
+}
+
+export const commands = {
+  'mock-quick': () => <MockDataCommand initialTab="single" />,
+  'mock-batch-json': () => <MockDataCommand initialTab="batch" />
 }
 
 export default MockDataCommand

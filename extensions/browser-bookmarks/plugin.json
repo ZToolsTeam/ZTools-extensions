@@ -1,9 +1,9 @@
 {
   "id": "browser-bookmarks",
   "name": "网页书签",
-  "version": "1.0.1",
-  "description": "免锁极速聚合 Edge、Chrome、360安全与极速、QQ浏览器、Firefox 等本地书签，支持汉字、拼音全拼与首字母秒级检索，一键打开或复制链接",
-  "author": "ZTools Team",
+  "version": "1.0.2",
+  "description": "只读聚合本机浏览器的多个配置，支持中文、拼音、网址与文件夹检索，打开或复制书签；无法读取的来源会明确提示",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

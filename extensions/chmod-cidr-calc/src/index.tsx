@@ -7,11 +7,11 @@ import React, {
   useState,
   useMemo,
 } from '@ztools/declarative-ui'
-import type { CalcMode, ChmodRoleBreakdown } from './types'
-import { calculateIpv4Cidr, convertChmod } from './chmod-cidr-service'
+import type { CalcMode, ChmodRoleBreakdown } from './types.js'
+import { calculateIpv4Cidr, convertChmod } from './chmod-cidr-service.js'
 
-export * from './types'
-export * from './chmod-cidr-service'
+export * from './types.js'
+export * from './chmod-cidr-service.js'
 
 const PRESET_CIDRS = [
   '192.168.1.0/24',
@@ -66,17 +66,18 @@ export function ChmodCidrCalcCommand() {
       searchBarPlaceholder={
         mode === 'cidr'
           ? '输入 IPv4/CIDR（如 192.168.1.0/24 或 10.0.0.1/28）...'
-          : '输入八进制权限（如 755、600）或符号权限（如 rwxr-xr-x）...'
+          : '输入八进制权限（如 755、4755）或符号权限（如 rwxr-xr-x）...'
       }
       searchText={queryText}
       onSearchTextChange={(val: string) => {
         setQueryText(val)
         const trimmed = (val || '').trim()
         if (trimmed) {
-          if (trimmed.includes('.') || trimmed.includes('/')) {
-            setMode('cidr')
-          } else if (/^[0-7]{3}$/.test(trimmed) || /^[rwx-]{9}$/i.test(trimmed)) {
+          if (/^chmod(?:[ \t]|$)/.test(trimmed) || /^[0-7]{3,4}$/.test(trimmed) || /^[dlcbps-]?[rwxstST-]{9}$/.test(trimmed)) {
             setMode('chmod')
+          } else if (trimmed.includes('.') || trimmed.includes('/')) {
+            setMode('cidr')
+
           }
         }
       }}
@@ -102,7 +103,7 @@ export function ChmodCidrCalcCommand() {
             title="无法解析 IPv4 CIDR"
             subtitle={cidrState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '输入错误', color: Color.Red } }]}
+            accessories={[{ tag: '输入错误' }]}
             detail={
               <List.Item.Detail
                 markdown={`### IPv4 CIDR 校验错误\n\n\`\`\`text\n${cidrState.error}\n\`\`\`\n\n示例格式：\`192.168.1.0/24\`、\`10.0.0.0/8\`、\`172.16.0.1/32\`。`}
@@ -122,7 +123,7 @@ export function ChmodCidrCalcCommand() {
             accessories={[{ tag: `掩码 ${cidrState.result.netmask}` }]}
             detail={
               <List.Item.Detail
-                markdown={`### 子网规划详情 (\`${cidrState.result.input}\`)\n\n- **可用主机范围**: \`${cidrState.result.firstUsableIp}\` - \`${cidrState.result.lastUsableIp}\`\n- **32位二进制掩码**:\n\`\`\`text\n${cidrState.result.netmaskBinary}\n\`\`\`\n- **地址段属性**: ${cidrState.result.addressScope}\n- **路由说明**: ${cidrState.result.usageHint}`}
+                markdown={`### 子网规划详情 (\`${cidrState.result.input}\`)\n\n- **可用主机范围**: \`${cidrState.result.firstUsableIp}\` - \`${cidrState.result.lastUsableIp}\`\n- **32位二进制掩码**:\n\`\`\`text\n${cidrState.result.netmaskBinary}\n\`\`\`\n- **输入地址用途**: ${cidrState.result.addressScope}\n- **路由说明**: ${cidrState.result.usageHint}`}
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
@@ -138,7 +139,7 @@ export function ChmodCidrCalcCommand() {
                       text={cidrState.result.wildcardMask}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="广播地址 (Broadcast)"
+                      title={cidrState.result.hasBroadcast ? "广播地址 (Broadcast)" : "范围末地址（无独立广播）"}
                       text={cidrState.result.broadcastAddress}
                     />
                     <List.Item.Detail.Metadata.Separator />
@@ -201,7 +202,7 @@ export function ChmodCidrCalcCommand() {
             title="无法解析 chmod 权限值"
             subtitle={chmodState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '格式错误', color: Color.Red } }]}
+            accessories={[{ tag: '格式错误' }]}
             detail={
               <List.Item.Detail
                 markdown={`### chmod 权限格式错误\n\n\`\`\`text\n${chmodState.error}\n\`\`\``}
@@ -252,9 +253,10 @@ export function ChmodCidrCalcCommand() {
                       text={chmodState.result.symbolic}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="ls -l 显示格式"
+                      title="ls -l 权限示例"
                       text={chmodState.result.lsSymbolic}
                     />
+                    <List.Item.Detail.Metadata.Label title="特殊权限位" text={chmodState.result.specialBits.join(" / ") || "无"} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -285,8 +287,9 @@ export function ChmodCidrCalcCommand() {
               subtitle={item.desc}
               icon={Icon.Key}
               accessories={[
+                // 预设列表保持灰阶；只有实际计算结果是全局可写时才用红色警示
                 item.code === '777'
-                  ? { tag: { value: '风险权限', color: Color.Red } }
+                  ? { tag: '全局可写' }
                   : { tag: '常用预设' },
               ]}
               actions={

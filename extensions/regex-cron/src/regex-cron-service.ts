@@ -1,16 +1,16 @@
-import type { CronParseResult, RegexMatchResult, RegexPresetItem } from './types'
+import type { CronParseResult, RegexPresetItem } from './types.js'
 
 export const REGEX_PRESETS: RegexPresetItem[] = [
   {
     id: 'cn-id-card-18',
-    title: '18位二代居民身份证号（严格地区与年月日校验）',
+    title: '18位居民身份证号（常见格式）',
     category: 'identity',
     categoryLabel: '身份与通信',
     tags: ['身份证', '实名认证', 'GB11643'],
     pattern:
       '^(?:1[1-5]|2[1-3]|3[1-7]|4[1-6]|5[0-4]|6[1-5]|71|8[1-3])\\d{4}(?:19|20)\\d{2}(?:(?:0[13578]|1[02])(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)(?:0[1-9]|[12]\\d|30)|02(?:0[1-9]|1\\d|2[0-9]))\\d{3}[\\dX]$',
     description:
-      '校验前2位合法省级行政区划码、4位地市区县码、1900~2099出生年份、大小月及2月合法日期、3位顺序码及末位数字或大写X校验码。',
+      '匹配常见省级代码、1900~2099年份及日期外形，不核实区县代码、闰年或末位校验码，不能代替身份核验。',
     scope: 'JavaScript / Java / Go / Python',
     validExamples: ['11010519900307281X', '440305199510241028'],
     invalidExamples: ['11010520261301281X', '990105199003072812', '11010519900230281X']
@@ -105,134 +105,18 @@ export const REGEX_PRESETS: RegexPresetItem[] = [
   },
   {
     id: 'email-rfc5322',
-    title: '电子邮箱地址（RFC 5322 企业邮箱兼容版）',
+    title: '电子邮箱地址（常见 ASCII 格式）',
     category: 'format',
     categoryLabel: '开发常用格式',
     tags: ['邮箱', 'Email', '账号'],
-    pattern: '^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$',
+    pattern: '^[a-zA-Z0-9_%+-]+(?:\\.[a-zA-Z0-9_%+-]+)*@(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+[a-zA-Z]{2,}$',
     recommendedFlags: 'i',
-    description: '支持含加号别名（+tag）、点号、连字符及多级企业子域名的标准电子邮件地址。',
+    description: '匹配常见 ASCII 邮箱，支持加号别名与多级域名，不支持引号本地部分或国际化邮箱，不验证地址是否可投递。',
     scope: '全平台通用',
     validExamples: ['dev+ztools@example.com', 'admin@mail.ztools.cn'],
     invalidExamples: ['plainaddress', '@missing-user.com', 'user@.invalid.com']
   }
 ]
-
-/**
- * 静态检测是否存在恶性嵌套量词（如 `(a+)+`, `([a-z]+)*`）导致灾难性回溯 ReDoS
- */
-export function hasCatastrophicBacktracking(pattern: string): boolean {
-  const clean = String(pattern ?? '')
-  // 检测括号内包含 +/*/{m,} 且括号外紧跟 +/*/{m,}
-  return /\([^()]*[+*][^()]*\)[+*]|\([^()]*\{[0-9]+,\}[^()]*\)[+*]/.test(clean)
-}
-
-/**
- * 解析形如 `/pattern/flags` 或纯 `pattern` 字符串
- */
-export function parseRegexInput(rawInput: string, defaultFlags = 'g'): {
-  pattern: string
-  flags: string
-} {
-  const trimmed = String(rawInput ?? '').trim()
-  if (trimmed.startsWith('/') && trimmed.lastIndexOf('/') > 0) {
-    const lastSlash = trimmed.lastIndexOf('/')
-    const pattern = trimmed.slice(1, lastSlash)
-    const rawFlags = trimmed.slice(lastSlash + 1)
-    const validFlags = Array.from(new Set((rawFlags || defaultFlags).split('')))
-      .filter((f) => 'gimsuyd'.includes(f))
-      .join('')
-    return { pattern, flags: validFlags || 'g' }
-  }
-  return { pattern: trimmed, flags: defaultFlags }
-}
-
-/**
- * 安全执行正则匹配与捕获组拆解（含 ReDoS 拦截与超长文本保护）
- */
-export function runSafeRegexMatch(
-  rawPatternInput: string,
-  testText: string,
-  explicitFlags = 'g'
-): RegexMatchResult {
-  const startMs = performance.now()
-  const { pattern, flags } = parseRegexInput(rawPatternInput, explicitFlags)
-
-  if (!pattern) {
-    return {
-      isValidRegex: false,
-      errorMessage: '请输入待测试的正则表达式',
-      totalMatches: 0,
-      elapsedMs: 0,
-      matches: []
-    }
-  }
-
-  if (hasCatastrophicBacktracking(pattern)) {
-    return {
-      isValidRegex: false,
-      errorMessage:
-        'REDOS_RISK: 检测到嵌套量词（如 (a+)+），存在灾难性回溯卡死风险，已由安全沙箱自动熔断',
-      totalMatches: 0,
-      elapsedMs: Number((performance.now() - startMs).toFixed(2)),
-      matches: []
-    }
-  }
-
-  let regex: RegExp
-  try {
-    const finalFlags = flags.includes('g') ? flags : `${flags}g`
-    regex = new RegExp(pattern, finalFlags)
-  } catch (err) {
-    return {
-      isValidRegex: false,
-      errorMessage: err instanceof Error ? err.message : '正则表达式语法错误',
-      totalMatches: 0,
-      elapsedMs: Number((performance.now() - startMs).toFixed(2)),
-      matches: []
-    }
-  }
-
-  const safeText = String(testText ?? '').slice(0, 50_000)
-  const matches: RegexMatchResult['matches'] = []
-  let idx = 0
-
-  for (const m of safeText.matchAll(regex)) {
-    const fullText = m[0] ?? ''
-    const start = m.index ?? 0
-    const end = start + fullText.length
-    const groups: RegexMatchResult['matches'][number]['groups'] = []
-
-    for (let gIdx = 1; gIdx < m.length; gIdx++) {
-      const gVal = m[gIdx] ?? ''
-      const gOffset = fullText.indexOf(gVal)
-      groups.push({
-        groupIndex: gIdx,
-        value: gVal,
-        start: gOffset >= 0 ? start + gOffset : start,
-        end: gOffset >= 0 ? start + gOffset + gVal.length : start
-      })
-    }
-
-    matches.push({
-      index: idx++,
-      text: fullText,
-      start,
-      end,
-      groups
-    })
-
-    if (matches.length >= 200) break
-    if (fullText.length === 0) break
-  }
-
-  return {
-    isValidRegex: true,
-    totalMatches: matches.length,
-    elapsedMs: Number((performance.now() - startMs).toFixed(2)),
-    matches
-  }
-}
 
 const WEEKDAY_MAP: Record<string, number> = {
   SUN: 0,
@@ -261,12 +145,13 @@ const MONTH_MAP: Record<string, number> = {
 
 interface ParsedFieldSpec {
   any: boolean
+  wildcard: boolean
   values: Set<number>
   raw: string
 }
 
 function replaceNamedTokens(token: string, map: Record<string, number>): string {
-  return token.toUpperCase().replace(/[A-Z]{3}/g, (m) => {
+  return token.toUpperCase().replace(/[A-Z]+/g, (m) => {
     return map[m] !== undefined ? String(map[m]) : m
   })
 }
@@ -276,67 +161,46 @@ function parseCronField(
   min: number,
   max: number,
   fieldName: string,
-  aliasMap?: Record<string, number>
+  aliasMap?: Record<string, number>,
+  allowQuestion = false,
+  spring = false
 ): ParsedFieldSpec {
+  const weekday = fieldName === '周 (Day of Week)'
   const token = aliasMap ? replaceNamedTokens(rawToken.trim(), aliasMap) : rawToken.trim()
-  if (token === '*' || token === '?') {
+  if (token === '*' || (allowQuestion && token === '?')) {
     const all = new Set<number>()
-    for (let v = min; v <= max; v++) all.add(v)
-    return { any: true, values: all, raw: rawToken }
+    for (let v = min; v <= max; v++) all.add(weekday && v === 7 ? 0 : v)
+    return { any: true, wildcard: true, values: all, raw: rawToken }
   }
 
   const values = new Set<number>()
   const parts = token.split(',')
 
   for (const part of parts) {
-    if (part.includes('/')) {
-      const [rangePart, stepPart] = part.split('/')
-      const step = Number(stepPart)
-      if (!Number.isInteger(step) || step <= 0 || step > max) {
-        throw new Error(`字段 [${fieldName}] 步长值 "${part}" 不合法`)
-      }
-      let start = min
-      let end = max
-      if (rangePart && rangePart !== '*' && rangePart !== '?') {
-        if (rangePart.includes('-')) {
-          const [s, e] = rangePart.split('-').map(Number)
-          if (!Number.isInteger(s) || !Number.isInteger(e) || s! < min || e! > max || s! > e!) {
-            throw new Error(`字段 [${fieldName}] 区间 "${part}" 超出有效范围 (${min}~${max})`)
-          }
-          start = s!
-          end = e!
-        } else {
-          const s = Number(rangePart)
-          if (!Number.isInteger(s) || s < min || s > max) {
-            throw new Error(`字段 [${fieldName}] 起始值 "${part}" 超出有效范围 (${min}~${max})`)
-          }
-          start = s
-        }
-      }
-      for (let v = start; v <= end; v += step) {
-        values.add(fieldName === '周 (Day of Week)' && v === 7 ? 0 : v)
-      }
-    } else if (part.includes('-')) {
-      const [s, e] = part.split('-').map(Number)
-      if (!Number.isInteger(s) || !Number.isInteger(e) || s! < min || e! > max || s! > e!) {
-        throw new Error(`字段 [${fieldName}] 区间 "${part}" 超出有效范围 (${min}~${max})`)
-      }
-      for (let v = s!; v <= e!; v++) {
-        values.add(fieldName === '周 (Day of Week)' && v === 7 ? 0 : v)
-      }
-    } else {
-      const v = Number(part)
-      if (!Number.isInteger(v) || v < min || v > max) {
-        throw new Error(`字段 [${fieldName}] 取值 "${part}" 超出有效范围 (${min}~${max})`)
-      }
-      values.add(fieldName === '周 (Day of Week)' && v === 7 ? 0 : v)
+    // 先验证完整语法，不能让 Number('')、科学计数法或被 split 丢弃的尾部悄悄通过。
+    const match = part.match(/^(\*|\d+(?:-\d+)?)(?:\/(\d+))?$/)
+    if (!match) throw new Error(`字段 [${fieldName}] 语法 "${part}" 不支持；仅支持整数、*、列表、范围与步长，六位表达式的日/周可单独使用 ?`)
+    const range = match[1]!
+    const step = match[2] === undefined ? 1 : Number(match[2])
+    if (!Number.isSafeInteger(step) || step <= 0) throw new Error(`字段 [${fieldName}] 步长值 "${part}" 不合法`)
+    const [first, last] = range.split('-')
+    if (!spring && match[2] !== undefined && range !== '*' && last === undefined) throw new Error(`字段 [${fieldName}] 五位 Linux 语法的步长须跟在 * 或范围后`)
+    let start = range === '*' ? min : Number(first)
+    let end = range === '*' ? max : last !== undefined ? Number(last) : match[2] !== undefined ? max : start
+    if (weekday && last !== undefined) {
+      if (spring && start === 7) start = 0
+      if (!spring && start > end && end === 0) end = 7
     }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < (weekday ? 0 : min) || end > max || start > end) {
+      throw new Error(`字段 [${fieldName}] 取值 "${part}" 超出有效范围 (${min}~${max})`)
+    }
+    for (let v = start; v <= end; v += step) values.add(weekday && v === 7 ? 0 : v)
   }
 
   if (values.size === 0) {
     throw new Error(`字段 [${fieldName}] 未能解析出有效时间点`)
   }
-  return { any: false, values, raw: rawToken }
+  return { any: false, wildcard: token.startsWith('*'), values, raw: rawToken }
 }
 
 function pad2(n: number): string {
@@ -368,62 +232,26 @@ function explainSlotMeaning(name: string, raw: string): string {
 }
 
 function buildChineseCronSummary(
-  secToken: string,
-  minToken: string,
-  hourToken: string,
-  domToken: string,
-  monToken: string,
-  dowToken: string
+  secToken: string, minToken: string, hourToken: string,
+  domToken: string, monToken: string, dowToken: string, daysUseAnd: boolean
 ): string {
-  const parts: string[] = []
-  if (monToken !== '*' && monToken !== '?') {
-    parts.push(`每年 ${monToken} 月`)
-  }
-  if (domToken !== '*' && domToken !== '?') {
-    parts.push(`每月 ${domToken} 日`)
-  } else if (dowToken !== '*' && dowToken !== '?') {
-    const upper = dowToken.toUpperCase()
-    if (upper === 'MON-FRI' || upper === '1-5') {
-      parts.push('每周一至周五（工作日）')
-    } else {
-      parts.push(`每周 (${dowToken})`)
-    }
-  } else if (parts.length === 0) {
-    if (hourToken !== '*' && hourToken !== '?') {
-      parts.push('每天')
-    }
-  }
-
-  if (hourToken.startsWith('*/')) {
-    parts.push(`每隔 ${hourToken.slice(2)} 小时`)
-  } else if (hourToken !== '*' && hourToken !== '?') {
-    const h = Number(hourToken)
-    if (Number.isInteger(h)) {
-      const period = h < 6 ? '凌晨' : h < 12 ? '上午' : h === 12 ? '中午' : h < 18 ? '下午' : '晚上'
-      parts.push(`${period} ${pad2(h)}:${pad2(Number(minToken) || 0)}:${pad2(Number(secToken) || 0)}`)
-    } else {
-      parts.push(`${hourToken} 时`)
-    }
-  }
-
-  if (minToken.startsWith('*/')) {
-    parts.push(`每隔 ${minToken.slice(2)} 分钟`)
-  } else if ((hourToken === '*' || hourToken === '?') && minToken !== '*' && minToken !== '?') {
-    parts.push(`每小时的第 ${minToken} 分钟`)
-  }
-
-  if (secToken.startsWith('*/')) {
-    parts.push(`每隔 ${secToken.slice(2)} 秒`)
-  }
-
-  if (parts.length === 0) {
-    return '每秒/每分钟持续执行一次'
-  }
-  return `${parts.join(' ')} 执行一次`
+  const unrestricted = (value: string) => value === '*' || value === '?'
+  const days: string[] = []
+  if (!unrestricted(domToken)) days.push(`日期 ${domToken}`)
+  if (!unrestricted(dowToken)) days.push(`星期 ${dowToken}`)
+  const calendar = [
+    ...(!unrestricted(monToken) ? [`月份 ${monToken}`] : []),
+    days.length ? `（${days.join(daysUseAnd ? ' 且 ' : ' 或 ')}）` : '每天'
+  ].join(' ')
+  // 仅把纯数字时分秒合成时刻，不能把 0,30 或 * 转成虚假的 00 分。
+  const time = [hourToken, minToken, secToken].every(value => /^\d+$/.test(value))
+    ? `${pad2(Number(hourToken))}:${pad2(Number(minToken))}:${pad2(Number(secToken))}`
+    : `小时 ${hourToken}；分钟 ${minToken}；秒 ${secToken}`
+  return `${calendar} ${time} 执行`
 }
 
 /**
- * 解析 5 位（Linux Crontab）或 6 位（Spring/Quartz）Cron 表达式，输出中文语义与未来 5 次触发时间
+ * 解析 5 位（Linux Crontab）或 6 位（Spring 基础语法）Cron 表达式，输出中文语义与未来 5 次触发时间
  */
 export function parseAndExplainCron(
   rawExpression: string,
@@ -463,15 +291,20 @@ export function parseAndExplainCron(
   const dowToken = isSixField ? tokens[5]! : tokens[4]!
 
   try {
-    const secSpec = parseCronField(secToken, 0, 59, '秒 (Second)')
-    const minSpec = parseCronField(minToken, 0, 59, '分 (Minute)')
-    const hourSpec = parseCronField(hourToken, 0, 23, '时 (Hour)')
-    const domSpec = parseCronField(domToken, 1, 31, '日 (Day of Month)')
-    const monSpec = parseCronField(monToken, 1, 12, '月 (Month)', MONTH_MAP)
-    const dowSpec = parseCronField(dowToken, 0, 7, '周 (Day of Week)', WEEKDAY_MAP)
+    if (trimmed.length > 1000) throw new Error('表达式超过 1000 字符限制')
+    if (!Number.isFinite(baseDate.getTime())) throw new Error('起算时间无效')
+    if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error('推算次数须为 1~50 的整数')
+    const secSpec = parseCronField(secToken, 0, 59, '秒 (Second)', undefined, false, isSixField)
+    const minSpec = parseCronField(minToken, 0, 59, '分 (Minute)', undefined, false, isSixField)
+    const hourSpec = parseCronField(hourToken, 0, 23, '时 (Hour)', undefined, false, isSixField)
+    const domSpec = parseCronField(domToken, 1, 31, '日 (Day of Month)', undefined, isSixField, isSixField)
+    const monSpec = parseCronField(monToken, 1, 12, '月 (Month)', MONTH_MAP, false, isSixField)
+    const dowSpec = parseCronField(dowToken, isSixField ? 1 : 0, 7, '周 (Day of Week)', isSixField ? { ...WEEKDAY_MAP, SUN: 7 } : WEEKDAY_MAP, isSixField, isSixField)
+    // Linux 的两个受限日期字段用 OR；含通配符时用 AND。Spring 六位始终逐字段匹配。
+    const daysUseAnd = isSixField || domSpec.wildcard || dowSpec.wildcard
 
     // 校验永远不可能存在的静态非法月日组合（如 2月30日/2月31日/4月31日）
-    if (!monSpec.any && !domSpec.any) {
+    if (daysUseAnd && !monSpec.any && !domSpec.any) {
       const maxDaysPerMonth: Record<number, number> = {
         1: 31,
         2: 29,
@@ -510,9 +343,7 @@ export function parseAndExplainCron(
 
     const nextRuns: CronParseResult['nextRuns'] = []
     const baseMs = baseDate.getTime()
-    const cursor = new Date(baseMs)
-    cursor.setMilliseconds(0)
-    cursor.setSeconds(cursor.getSeconds() + 1)
+    const cursor = new Date(Math.floor(baseMs / 1000) * 1000 + 1000)
 
     let iterations = 0
     const maxIterations = 200_000
@@ -527,14 +358,7 @@ export function parseAndExplainCron(
 
       const domMatch = domSpec.values.has(cursor.getDate())
       const dowMatch = dowSpec.values.has(cursor.getDay())
-      const dayMatches =
-        !domSpec.any && !dowSpec.any
-          ? domMatch || dowMatch
-          : !domSpec.any
-            ? domMatch
-            : !dowSpec.any
-              ? dowMatch
-              : true
+      const dayMatches = daysUseAnd ? domMatch && dowMatch : domMatch || dowMatch
 
       if (!dayMatches) {
         cursor.setDate(cursor.getDate() + 1)
@@ -543,36 +367,38 @@ export function parseAndExplainCron(
       }
 
       if (!hourSpec.values.has(cursor.getHours())) {
-        cursor.setHours(cursor.getHours() + 1, 0, 0, 0)
+        cursor.setTime(cursor.getTime() + (3600 - cursor.getMinutes() * 60 - cursor.getSeconds()) * 1000)
         continue
       }
 
       if (!minSpec.values.has(cursor.getMinutes())) {
-        cursor.setMinutes(cursor.getMinutes() + 1, 0, 0)
+        cursor.setTime(cursor.getTime() + (60 - cursor.getSeconds()) * 1000)
         continue
       }
 
       if (!secSpec.values.has(cursor.getSeconds())) {
-        cursor.setSeconds(cursor.getSeconds() + 1, 0)
+        cursor.setTime(cursor.getTime() + 1000)
         continue
       }
 
       const ts = cursor.getTime()
       nextRuns.push({
         formattedTime: formatDateTime(cursor),
+        utcOffset: `UTC${cursor.getTimezoneOffset() <= 0 ? '+' : '-'}${pad2(Math.floor(Math.abs(cursor.getTimezoneOffset()) / 60))}:${pad2(Math.abs(cursor.getTimezoneOffset()) % 60)}`,
         relativeTime: formatRelativeDiff(ts, baseMs),
         timestamp: ts
       })
 
-      cursor.setSeconds(cursor.getSeconds() + 1, 0)
+      // 绝对时间前进，不用本地 setSeconds；夏令时回拨的重复小时也能逐次命中。
+      cursor.setTime(cursor.getTime() + 1000)
     }
 
-    if (nextRuns.length === 0) {
+    if (nextRuns.length < count) {
       return {
         isValid: false,
         expression: trimmed,
         chineseSummary: '无法推算出有效触发时间',
-        errorMessage: '在安全搜索步长内未找到下一次触发时间',
+        errorMessage: `在安全搜索步长内未找到完整的 ${count} 次触发时间`,
         slots: [],
         nextRuns: []
       }
@@ -592,7 +418,10 @@ export function parseAndExplainCron(
     return {
       isValid: true,
       expression: trimmed,
-      chineseSummary: buildChineseCronSummary(secToken, minToken, hourToken, domToken, monToken, dowToken),
+      chineseSummary: buildChineseCronSummary(secToken, minToken, hourToken, domToken, monToken, dowToken, daysUseAnd),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      calculatedAt: formatDateTime(baseDate),
+      dialect: isSixField ? 'Spring 六位基础语法（日与周同时匹配）' : 'Linux 五位语法（受限的日与周任一匹配）',
       slots,
       nextRuns
     }

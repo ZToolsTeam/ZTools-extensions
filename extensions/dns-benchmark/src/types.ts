@@ -15,6 +15,8 @@ export interface DnsBenchmarkItem extends DnsProviderPreset {
   primaryMs: number | null
   secondaryMs: number | null
   timeout: boolean
+  /** 宿主没有返回此节点的结果（不是超时） */
+  noResult?: boolean
   isCurrentActive: boolean
 }
 
@@ -32,6 +34,8 @@ export interface DnsActionResponse {
   currentDns?: string[]
   isDhcp?: boolean
   flushed?: boolean
+  /** 修改已生效但刷新缓存失败的原因 */
+  flushError?: string
   errorCode?: string
   error?: string
 }

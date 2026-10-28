@@ -8,6 +8,7 @@ import React, {
   showToast,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useNavigation
 } from '@ztools/declarative-ui'
@@ -19,11 +20,11 @@ import {
   launchQuicklink,
   saveQuicklinks,
   validateQuicklinkUrlPattern
-} from './quicklinks-storage'
-import type { Quicklink, QuicklinkCategory } from './types'
+} from './quicklinks-storage.js'
+import type { Quicklink, QuicklinkCategory } from './types.js'
 
-export * from './types'
-export * from './quicklinks-storage'
+export * from './types.js'
+export * from './quicklinks-storage.js'
 
 export function CreateQuicklinkForm({
   onCreated
@@ -117,7 +118,7 @@ export function EditQuicklinkForm({
   onUpdated
 }: {
   item: Quicklink
-  onUpdated?: (updated: Quicklink) => void
+  onUpdated: (updated: Quicklink) => Promise<void>
 }) {
   const { pop } = useNavigation()
   const [title, setTitle] = useState(item.title)
@@ -144,7 +145,7 @@ export function EditQuicklinkForm({
       description: description.trim() || undefined,
       updatedAt: Date.now()
     }
-    onUpdated?.(updatedItem)
+    await onUpdated(updatedItem)
     pop()
   }
 
@@ -219,19 +220,32 @@ export interface QuicklinksCommandProps {
 
 export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
   const { push } = useNavigation()
-  const [links, setLinks] = useState<Quicklink[]>(props.initialLinks ?? DEFAULT_QUICKLINKS)
+  const [links, setLinks] = useState<Quicklink[]>(props.initialLinks ?? [])
   const [selectedCategory, setSelectedCategory] = useState<'all' | QuicklinkCategory>(() => {
     if (props.featureCode === 'quicklinks-search-engines') return 'search'
     if (props.featureCode === 'quicklinks-open-groups') return 'group'
     return 'all'
   })
   const [searchText, setSearchText] = useState<string>('')
+  const [isLoading, setIsLoading] = useState(!props.initialLinks)
+  const [loadError, setLoadError] = useState('')
+  const openedNewRef = useRef(false)
 
   useEffect(() => {
+    let active = true
     if (!props.initialLinks) {
-      void getQuicklinks().then(setLinks)
+      void getQuicklinks().then((items) => { if (active) setLinks(items) }).catch((error) => {
+        if (active) setLoadError(error instanceof Error ? error.message : String(error))
+      }).finally(() => { if (active) setIsLoading(false) })
     }
+    return () => { active = false }
   }, [props.initialLinks])
+
+  useEffect(() => {
+    if (props.featureCode !== 'quicklinks-new' || isLoading || loadError || openedNewRef.current) return
+    openedNewRef.current = true
+    push(<CreateQuicklinkForm onCreated={(created) => setLinks((current) => [created, ...current])} />)
+  }, [props.featureCode, isLoading, loadError, push])
 
   const filtered = useMemo(
     () => filterQuicklinks(links, searchText, selectedCategory),
@@ -248,12 +262,16 @@ export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
   }
 
   const handleResetDefaults = async () => {
-    setLinks([...DEFAULT_QUICKLINKS])
     await saveQuicklinks([...DEFAULT_QUICKLINKS])
+    setLinks([...DEFAULT_QUICKLINKS])
     await showToast({
       style: Toast.Style.Success,
       title: '已恢复默认预设快开列表'
     })
+  }
+
+  if (isLoading || loadError) {
+    return <List isLoading={isLoading}><List.Item id="load-state" title={loadError ? '无法读取快捷链接' : '正在读取快捷链接'} subtitle={loadError || undefined} /></List>
   }
 
   return (
@@ -267,7 +285,7 @@ export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
       searchBarAccessory={
         <List.Dropdown
           value={selectedCategory}
-          onChange={(val) => setSelectedCategory(val as 'all' | QuicklinkCategory)}
+          onChange={(val) => { setSelectedCategory(val as 'all' | QuicklinkCategory); setSearchText('') }}
           tooltip="按类型筛选"
         >
           <List.Dropdown.Item title="全部快捷链接" value="all" icon={Icon.Globe} />
@@ -292,9 +310,7 @@ export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
           {
             id: 'reset-default',
             title: '恢复默认预设',
-            onAction: () => {
-              void handleResetDefaults()
-            }
+            onAction: handleResetDefaults
           }
         ]
       }}
@@ -332,12 +348,11 @@ export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
                     push(
                       <EditQuicklinkForm
                         item={item}
-                        onUpdated={(u) => {
-                          setLinks((prev) => {
-                            const next = prev.map((x) => (x.id === u.id ? u : x))
-                            void saveQuicklinks(next)
-                            return next
-                          })
+                        onUpdated={async (updated) => {
+                          const current = await getQuicklinks()
+                          const next = current.map((item) => item.id === updated.id ? updated : item)
+                          await saveQuicklinks(next)
+                          setLinks(next)
                         }}
                       />
                     )
@@ -354,3 +369,10 @@ export function QuicklinksCommand(props: QuicklinksCommandProps = {}) {
 }
 
 export default QuicklinksCommand
+
+export const commands = {
+  'quicklinks-all': QuicklinksCommand,
+  'quicklinks-search-engines': () => <QuicklinksCommand featureCode="quicklinks-search-engines" />,
+  'quicklinks-open-groups': () => <QuicklinksCommand featureCode="quicklinks-open-groups" />,
+  'quicklinks-new': () => <QuicklinksCommand featureCode="quicklinks-new" />
+}

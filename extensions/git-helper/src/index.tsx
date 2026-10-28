@@ -11,13 +11,14 @@ import {
   COMMIT_TYPES,
   GITIGNORE_STACK_TEMPLATES,
   buildConventionalCommit,
+  buildEmergencyGuide,
   generateGitignoreContent,
   searchGitEmergencies
-} from './git-helper-service'
-import type { GitHelperMode } from './types'
+} from './git-helper-service.js'
+import type { GitHelperMode } from './types.js'
 
-export * from './types'
-export * from './git-helper-service'
+export * from './types.js'
+export * from './git-helper-service.js'
 
 export interface GitHelperCommandProps {
   featureCode?: string
@@ -46,7 +47,7 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
   const parsedCommitInput = useMemo(() => {
     const raw = searchText.trim()
     if (!raw) {
-      return { scope: 'core', subject: '新增声明式插件独立开发与安全扫描支持' }
+      return { scope: '', subject: '' }
     }
     const colonIdx = raw.indexOf(':')
     if (colonIdx > 0 && colonIdx < 24) {
@@ -116,7 +117,7 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
 ${item.primaryCommand}
 \`\`\`
 
-#### 分步安全排障操作
+#### 操作指引（按所处情形选择，不要整段连续执行）
 ${item.steps
   .map(
     (s, i) => `${i + 1}. **${s.title}**
@@ -144,9 +145,8 @@ ${s.cmd}
                 <ActionPanel>
                   <Action.CopyToClipboard title="复制首选救命命令" content={item.primaryCommand} />
                   <Action.CopyToClipboard
-                    title="复制全部自救步骤命令"
-                    content={item.steps.map((s) => `# ${s.title}\n${s.cmd}`).join('\n\n')}
-                    shortcut={{ modifiers: ['cmd', 'shift'], key: 'c' }}
+                    title="复制带说明的操作指南"
+                    content={buildEmergencyGuide(item)}
                   />
                 </ActionPanel>
               }
@@ -173,9 +173,9 @@ ${s.cmd}
                 accessories={[{ tag: `前缀 ${t.type}:` }]}
                 detail={
                   <List.Item.Detail
-                    markdown={`### 规范提交命令预览
+                    markdown={`### 规范提交命令预览（Bash / zsh / Git Bash）
 \`\`\`bash
-${built.gitCommand}
+${built.gitCommand || '# 请先输入提交说明'}
 \`\`\`
 
 #### 生成的 Commit Message
@@ -191,7 +191,7 @@ ${t.examples.map((ex) => `- \`${ex}\``).join('\n')}
                   />
                 }
                 actions={
-                  <ActionPanel>
+                  built.isValid ? <ActionPanel>
                     <Action.CopyToClipboard
                       title="复制完整 git commit 命令"
                       content={built.gitCommand}
@@ -199,9 +199,8 @@ ${t.examples.map((ex) => `- \`${ex}\``).join('\n')}
                     <Action.CopyToClipboard
                       title="仅复制中文提交备注文本"
                       content={built.message}
-                      shortcut={{ modifiers: ['cmd'], key: 'c' }}
                     />
-                  </ActionPanel>
+                  </ActionPanel> : undefined
                 }
               />
             )
@@ -213,7 +212,7 @@ ${t.examples.map((ex) => `- \`${ex}\``).join('\n')}
         <List.Section
           title={`.gitignore 模板多选合成（已选 ${selectedStacks.length} 个栈，去重后 ${gitignoreOutput.totalUniqueRules} 条规则）`}
         >
-          {GITIGNORE_STACK_TEMPLATES.map((tpl) => {
+          {GITIGNORE_STACK_TEMPLATES.filter(tpl => `${tpl.id} ${tpl.name} ${tpl.category}`.toLowerCase().includes(searchText.trim().toLowerCase())).map((tpl) => {
             const checked = selectedStacks.includes(tpl.id)
             return (
               <List.Item
@@ -257,7 +256,6 @@ ${gitignoreOutput.content}
                     <Action
                       title={checked ? `取消勾选 ${tpl.name}` : `勾选加入 ${tpl.name}`}
                       icon={checked ? Icon.XMarkCircle : Icon.CheckCircle}
-                      shortcut={{ modifiers: ['cmd'], key: 't' }}
                       onAction={() => toggleStack(tpl.id)}
                     />
                   </ActionPanel>
@@ -269,6 +267,12 @@ ${gitignoreOutput.content}
       )}
     </List>
   )
+}
+
+export const commands = {
+  'git-emergency': () => <GitHelperCommand initialMode="emergency" />,
+  'git-commit-builder': () => <GitHelperCommand initialMode="commit" />,
+  'gitignore-generator': () => <GitHelperCommand initialMode="gitignore" />
 }
 
 export default GitHelperCommand

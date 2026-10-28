@@ -1,10 +1,10 @@
-import { callHostTransport } from './native-ipc'
+import { callHostTransport } from './native-ipc.js'
 import type {
   ActiveNetworkAdapter,
   DnsActionResponse,
   DnsBenchmarkItem,
   DnsProviderPreset
-} from './types'
+} from './types.js'
 
 export const PUBLIC_DNS_PRESETS: readonly DnsProviderPreset[] = Object.freeze([
   {
@@ -175,22 +175,21 @@ export async function getActiveNetworkAdapters(
     },
     hostOverride
   )
-  if (res.ok && res.data && Array.isArray(res.data.adapters)) {
-    return (res.data.adapters as Array<Record<string, unknown>>).map((a) => {
+  if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.adapters)) {
+    throw new Error(String(res.data?.error ?? res.error ?? 'DNS_ADAPTER_QUERY_FAILED: 无法枚举系统活动网卡'))
+  }
+  return (res.data.adapters as Array<Record<string, unknown>>)
+    .map((a) => {
       const currentDns = Array.isArray(a.currentDns) ? a.currentDns.map(String) : []
       return {
-        name: String(a.name ?? 'WLAN'),
-        description: String(a.description ?? a.name ?? 'WLAN'),
-        ipv4: String(a.ipv4 ?? '192.168.1.100'),
+        name: String(a.name ?? ''),
+        description: String(a.description ?? a.name ?? ''),
+        ipv4: String(a.ipv4 ?? ''),
         isDhcp: Boolean(a.isDhcp ?? currentDns.length === 0),
         currentDns
       }
     })
-  }
-  if (!res.ok) {
-    throw new Error(res.error || 'DNS_ADAPTER_QUERY_FAILED: 无法枚举系统活动网卡')
-  }
-  return []
+    .filter((a) => a.name)
 }
 
 export function sortAndMarkDnsItems(
@@ -214,24 +213,28 @@ export function sortAndMarkDnsItems(
 
   const items: DnsBenchmarkItem[] = presets.map((preset) => {
     const matched = resultById.get(preset.id) ?? resultById.get(preset.primary)
-    const timeout = Boolean(matched?.timeout ?? (matched === undefined))
-    const rawAvg = Number(matched?.avgMs ?? 1500)
-    const avgMs = Number.isFinite(rawAvg) && rawAvg > 0 ? Math.round(rawAvg) : 1500
+    // 没有结果不等于超时：不显示延迟、不参与“最快”判断
+    const noResult = matched === undefined
+    const timeout = matched?.timeout === true
+    const rawAvg = Number(matched?.avgMs)
+    const avgMs = Number.isFinite(rawAvg) && rawAvg > 0 ? Math.round(rawAvg) : 0
     const isCurrentActive =
       activeSet.has(preset.primary) || (Boolean(preset.secondary) && activeSet.has(preset.secondary))
 
     return {
       ...preset,
-      avgMs: timeout ? 1500 : avgMs,
-      primaryMs: matched?.primaryMs ?? (timeout ? null : avgMs),
-      secondaryMs: matched?.secondaryMs ?? (timeout ? null : avgMs + 2),
+      avgMs: timeout || noResult ? 0 : avgMs,
+      primaryMs: matched?.primaryMs ?? null,
+      secondaryMs: matched?.secondaryMs ?? null,
       timeout,
+      ...(noResult ? { noResult } : {}),
       isCurrentActive
     }
   })
 
   items.sort((a, b) => {
-    if (a.timeout !== b.timeout) return a.timeout ? 1 : -1
+    const rank = (item: DnsBenchmarkItem) => (item.noResult ? 2 : item.timeout ? 1 : 0)
+    if (rank(a) !== rank(b)) return rank(a) - rank(b)
     if (a.avgMs !== b.avgMs) return a.avgMs - b.avgMs
     return a.name.localeCompare(b.name, 'zh-CN')
   })
@@ -260,21 +263,22 @@ export async function runDnsBenchmark(
     hostOverride
   )
 
-  const rawResults =
-    res.ok && res.data && Array.isArray(res.data.results)
-      ? (res.data.results as Array<{
-          id?: string
-          primary?: string
-          avgMs?: number
-          primaryMs?: number | null
-          secondaryMs?: number | null
-          timeout?: boolean
-        }>)
-      : []
+  // 测速接口失败要如实报错，不能显示成“所有节点超时”
+  if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.results)) {
+    throw new Error(String(res.data?.error ?? res.error ?? 'DNS 测速未完成'))
+  }
+  const rawResults = res.data.results as Array<{
+    id?: string
+    primary?: string
+    avgMs?: number
+    primaryMs?: number | null
+    secondaryMs?: number | null
+    timeout?: boolean
+  }>
 
   const sorted = sortAndMarkDnsItems(presets, rawResults, activeDnsList)
-  const fastestDns = sorted.find((item) => !item.timeout) ?? null
-  const allTimeout = sorted.every((item) => item.timeout)
+  const fastestDns = sorted.find((item) => !item.timeout && !item.noResult) ?? null
+  const allTimeout = sorted.length > 0 && sorted.every((item) => item.timeout)
   return {
     items: sorted,
     fastestDns,
@@ -328,18 +332,16 @@ export async function applyAdapterDns(
     }
   }
 
-  const currentDns = Array.isArray(res.data?.currentDns)
-    ? (res.data.currentDns as unknown[]).map(String)
-    : secondary
-      ? [primary.trim(), secondary.trim()]
-      : [primary.trim()]
-
+  // 以宿主重新读出的系统实际 DNS 为准；读不到时不假定已生效
+  const currentDns = Array.isArray(res.data?.currentDns) ? (res.data.currentDns as unknown[]).map(String) : undefined
+  const flushError = typeof res.data?.flushError === 'string' ? res.data.flushError : undefined
   return {
     ok: true,
     adapterName: adapterName.trim(),
-    currentDns,
-    isDhcp: false,
-    flushed: true
+    ...(currentDns ? { currentDns } : {}),
+    isDhcp: res.data?.isDhcp === true,
+    flushed: res.data?.flushed === true,
+    ...(flushError ? { flushError } : {})
   }
 }
 
@@ -378,12 +380,15 @@ export async function resetAdapterToDhcp(
     }
   }
 
+  const currentDns = Array.isArray(res.data?.currentDns) ? (res.data.currentDns as unknown[]).map(String) : undefined
+  const flushError = typeof res.data?.flushError === 'string' ? res.data.flushError : undefined
   return {
     ok: true,
     adapterName: adapterName.trim(),
-    currentDns: [],
-    isDhcp: true,
-    flushed: true
+    ...(currentDns ? { currentDns } : {}),
+    isDhcp: res.data?.isDhcp !== false,
+    flushed: res.data?.flushed === true,
+    ...(flushError ? { flushError } : {})
   }
 }
 

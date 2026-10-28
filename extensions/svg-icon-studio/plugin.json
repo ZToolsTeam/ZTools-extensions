@@ -1,9 +1,9 @@
 {
   "id": "svg-icon-studio",
   "name": "SVG预览与压缩",
-  "version": "1.0.1",
-  "description": "SVG 源码无损净化压缩（剔除注释/编辑器元数据/XSS 危险标签/小数精度收敛）与 React TSX / Vue 3 SFC / Base64 Data URI 导出工具",
-  "author": "ZTools Official",
+  "version": "1.0.3",
+  "description": "静态 SVG 校验、清理与代码预览，保留文字和数值精度，导出 React TSX / Vue 3 SFC / Data URI",
+  "author": "ZTools Community",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -27,7 +27,7 @@
   "features": [
     {
       "code": "svg-icon-studio",
-      "explain": "无损压缩 SVG 代码并一键导出 React / Vue 组件或 Data URI",
+      "explain": "校验清理静态 SVG，预览并导出 React / Vue 组件或 Data URI",
       "cmds": [
         "svg",
         "svgo",

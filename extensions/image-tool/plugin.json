@@ -1,0 +1,27 @@
+{
+  "id": "image-tool",
+  "name": "图像转换与元数据",
+  "description": "图片格式转换与分辨率、体积等元数据查看",
+  "version": "1.0.0",
+  "revoked": true,
+  "revokedReason": "功能未完成（只有示例数据）",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "permissions": [],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": []
+}

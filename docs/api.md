@@ -134,7 +134,7 @@ export default function Command() {
 | --- | --- |
 | `Action` | 调用 `onAction`。`onAction` 抛错时客户端显示「操作失败」和错误信息，不需要自己再包一层提示；`style: Action.Style.Destructive` 标记危险操作 |
 | `Action.CopyToClipboard` | 把 `content` 写入剪贴板并提示「已复制到剪贴板」，然后调用 `onCopy` |
-| `Action.Paste` | 把 `content` 粘贴到前台应用。macOS 需要用户给 ZTools 授予辅助功能权限，粘贴失败时会如实提示 |
+| `Action.Paste` | 复制 `content` 并向原输入位置发送粘贴请求。macOS 需要辅助功能权限，目标变化时停止。返回只说明按键已发送，不保证目标应用已接收；需要出队的插件应保留可恢复记录，结果未确认时不要自动重试 |
 | `Action.OpenInBrowser` | 用系统默认浏览器打开 `url` |
 | `Action.ShowInFinder` | 在文件管理器（访达 / 资源管理器）中显示 `path` |
 | `Action.OpenWith` / `Action.Open` | 用系统默认程序打开 `path` |
@@ -159,6 +159,13 @@ export default function Command() {
 | `usePopoutState(key, initialValue)` | 和 `useState` 一样，但用户把插件「弹出到独立窗口」时状态会带过去 |
 
 ## 系统能力
+
+### 定时防休眠
+
+`window.ztools.sys.managePowerSession({ action, mode?, durationMinutes? })` 在 Windows 和 macOS 上管理当前窗口、当前插件的防休眠请求。`action` 为 `status`、`start`、`stop` 或 `toggle`；`mode` 为 `display`（保持屏幕常亮）或 `system`（允许息屏、保持系统运行）；`durationMinutes` 为 0~10080 的整数，0 表示手动停止。
+
+返回实际 `active`、`mode`、`startedAtMs`、`expiresAtMs` 和 `remainingMs`。倒计时由主进程负责，离开插件页面仍继续，关闭所属窗口或退出客户端会释放。停止只释放当前插件的请求，其他应用或插件仍可能保持系统唤醒。该接口不阻止手动锁屏和合盖休眠；调用失败应显示错误，不能当成已关闭或已开启。
+
 
 | API | 说明 |
 | --- | --- |
