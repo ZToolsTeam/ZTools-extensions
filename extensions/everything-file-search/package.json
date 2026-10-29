@@ -1,6 +1,6 @@
 {
   "name": "everything-file-search",
-  "version": "2.0.10",
+  "version": "2.0.13",
   "description": "基于自研 MFT / USN 硬件级极速文件检索",
   "type": "module",
   "main": "dist/index.js",

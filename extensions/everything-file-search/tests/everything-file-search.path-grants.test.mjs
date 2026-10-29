@@ -161,7 +161,7 @@ test('异常：授权过期（或换了窗口）后打开 / 定位 / 哈希 / �
   const { grants, calls } = installGrantHost()
   const view = await mountList()
   grants.clear()
-  for (const action of ['打开文件', REVEAL_TITLE, 'Quick Look 快速预览']) {
+  for (const action of ['打开文件', '在访达中定位', 'Quick Look 快速预览']) {
     await view.run(view.item(reportTxt), action)
     const t = host.lastToast()
     assert.equal(t.style, 'FAILURE', action)
