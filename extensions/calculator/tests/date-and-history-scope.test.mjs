@@ -33,8 +33,8 @@ test('[边界] 不存在的日期仍报错', () => {
 
 // 夏令时只在有夏令时的时区里出现：用子进程固定 TZ，结果不依赖跑测试的机器
 test('[夏令时] 纽约时区：跳过的时刻报错，小时加减按实际经过时间', () => {
-  const dist = fileURLToPath(new URL('../dist/index.js', import.meta.url))
-  const harness = fileURLToPath(new URL('../../shared/test-harness.mjs', import.meta.url))
+  const dist = new URL('../dist/index.js', import.meta.url).href
+  const harness = new URL('../../shared/test-harness.mjs', import.meta.url).href
   const script = `
     const { createHost } = await import(${JSON.stringify(harness)}); createHost();
     const m = await import(${JSON.stringify(dist)});
