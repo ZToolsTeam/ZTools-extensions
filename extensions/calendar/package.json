@@ -1,6 +1,6 @@
 {
   "name": "calendar",
-  "version": "1.0.0",
+  "version": "2.0.8",
   "description": "万年历与节气助手：公历农历互查、二十四节气、法定节假日休假安排与传统老黄历宜忌查询",
   "type": "module",
   "main": "dist/index.js",

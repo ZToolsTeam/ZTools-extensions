@@ -2,7 +2,7 @@
   "id": "batch-audio",
   "name": "音频转换",
   "description": "支持 MP3/FLAC/WAV/AAC 批量格式转换、音量均衡调节、静音片段裁剪与多段音频合并",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -17,10 +17,11 @@ const entry = (path, size) => ({ name: path.split('\\').pop(), path, is_dir: fal
 function installCleanerHost(host, { homeOk = true } = {}) {
   host.ipc.system_get_path = async ({ name }) => {
     if (!homeOk) throw new Error('读取失败')
-    const map = { home: HOME, temp: TEMP, downloads: DOWNLOADS, appData: `${HOME}\\AppData\\Roaming` }
+    const map = { home: HOME, temp: `${HOME}\\PluginTemp`, downloads: DOWNLOADS, appData: `${HOME}\\AppData\\Roaming` }
     if (!map[name]) throw new Error(`未知目录 ${name}`)
     return { path: map[name] }
   }
+  host.ipc.system_list_common_folders = async () => ({ folders: [{ id: 'temp', path: TEMP, exists: true }] })
   host.ipc.system_get_disk_usage = async () => ({ total: 500e9, used: 400e9, available: 100e9, percent: 80 })
   const tree = {
     [TEMP]: [entry(`${TEMP}\\a.tmp`, 3000), entry(`${TEMP}\\b.tmp`, 2000)],
@@ -190,6 +191,7 @@ test('不在客户端中运行时只显示空状态，不显示示例数据', as
 
 test('目录读取兜底结果里的子目录不会成为样本文件', async () => {
   const hostOverride = {
+    system_list_common_folders: async () => ({ folders: [{ id: 'temp', path: TEMP, exists: true }] }),
     system_get_path: async ({ name }) => ({ path: name === 'home' ? HOME : name === 'temp' ? TEMP : `${HOME}\\${name}` }),
     system_search_files: async () => ({ files: [], subdirs: [], total_matches: 0 }),
     filesystem_get_directory_contents: async ({ path }) =>
@@ -201,3 +203,11 @@ test('目录读取兜底结果里的子目录不会成为样本文件', async ()
   const temp = groups.find(g => g.id === 'group-sys-temp')
   assert.deepEqual(temp.sampleFiles.map(f => f.path), [`${TEMP}\\x.tmp`])
 })
+
+
+test('TEMP 读取失败时显示错误，不退回插件隔离目录', async () => {
+  const host = createHost(); installCleanerHost(host);
+  host.ipc.system_list_common_folders = async () => { throw new Error('读取用户 TEMP 失败') };
+  await assert.rejects(() => logic.fetchCleanRulesAndScan(), /读取用户 TEMP 失败/);
+  assert.equal(host.ipcCalls.some(([m]) => m === 'system_search_files'), false);
+});

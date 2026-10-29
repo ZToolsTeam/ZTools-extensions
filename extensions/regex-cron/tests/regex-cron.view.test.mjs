@@ -89,3 +89,70 @@ test('Cron返回页面和手动刷新以当前时刻重算，复制结果含时�
     assert.match(host.clipboard.text, /^2026-10-25 19:45:00 UTC[+-]\d{2}:\d{2}/)
   } finally { view.unmount() }
 })
+
+test('[边界] 待测文本与命中含反引号或 Markdown 时只作为代码原文显示，不提前结束代码块', async () => {
+  const sample = '```\n![probe](https://example.invalid/x.png)\n```'
+  const view = await mount(() => RegexCronCommand({ initialMode: 'tester', initialSearchText: '/`+|!\\[/g', initialTestSample: sample }))
+  try {
+    await settled(view)
+    const md = view.item('tester-summary').props.detail.props.markdown
+    assert.ok(md.includes('````text\n' + sample + '\n````'), md)
+    // 命中的 ``` 用更长的定界符包裹，不会与外层语法冲突
+    assert.match(md, /Match #1\*\*: `{4} `{3} `{4}/)
+    assert.doesNotMatch(md.replace(/````text[\s\S]*?````/, ''), /!\[probe\]\(/)
+  } finally { view.unmount() }
+})
+
+test('[边界] 未输入正则时显示中性提示而非红色异常', async () => {
+  const view = await mount(() => RegexCronCommand({ initialMode: 'tester', initialSearchText: '', initialTestSample: 'abc' }))
+  try {
+    await settled(view)
+    const item = view.item('tester-summary')
+    assert.equal(item.props.title, '等待输入正则表达式')
+    assert.deepEqual(item.props.accessories, [{ tag: '待输入' }])
+    assert.doesNotMatch(view.text(), /异常拦截/)
+  } finally { view.unmount() }
+})
+
+test('Cron 摘要含星号时以行内代码原样显示，不被 Markdown 吃掉；普通摘要加粗', async () => {
+  const view = await mount(commands['cron-explainer'])
+  try {
+    await view.search('0 0 */2 * *')
+    const md = view.item('cron-live-result').props.detail.props.markdown
+    assert.match(md, /> `（日期 \*\/2），每天|> `（日期 \*\/2） 00:00 执行`/)
+    await view.search('*/15 * * * *')
+    assert.match(view.item('cron-live-result').props.detail.props.markdown, /> \*\*每 15 分钟执行\*\*/)
+  } finally { view.unmount() }
+})
+
+test('正则字典详情用可换行的行内代码显示长正则，银行卡号归入金融与支付', async () => {
+  const view = await mount(RegexCronCommand)
+  try {
+    const card = view.item('bank-card-number')
+    assert.equal(card.props.subtitle, '金融与支付')
+    const md = card.props.detail.props.markdown
+    assert.doesNotMatch(md, /```/)
+    assert.match(md, /`\^\[1-9\]\\d\{15,18\}\$`/)
+    assert.doesNotMatch(md, /\(Pass\)|\(Reject\)/)
+  } finally { view.unmount() }
+})
+
+test('Cron 常用模板均为五位 Linux 写法、可解析且不与默认输入重复', async () => {
+  const { CRON_TEMPLATES, parseAndExplainCron } = await import('../dist/index.js')
+  assert.ok(CRON_TEMPLATES.length >= 3)
+  for (const tpl of CRON_TEMPLATES) {
+    assert.equal(tpl.expr.trim().split(/\s+/).length, 5, `${tpl.id} 应为五位`)
+    assert.doesNotMatch(tpl.expr, /\?|[A-Z]{3}/, `${tpl.id} 不应含 Quartz 写法`)
+    assert.equal(parseAndExplainCron(tpl.expr).isValid, true, tpl.id)
+    assert.notEqual(tpl.expr, '*/15 * * * *')
+  }
+  const view = await mount(commands['cron-explainer'])
+  const tree = view.tree()
+  assert.match(tree.props.searchBarPlaceholder, /五位/)
+  assert.doesNotMatch(tree.props.searchBarPlaceholder, /\?/)
+  const tpl = view.item('cron-workday-930')
+  assert.ok(tpl)
+  await view.run(tpl, '推算此 Cron 模板')
+  assert.equal(view.tree().props.searchText, '30 9 * * 1-5')
+  assert.match(view.item('cron-live-result').props.subtitle, /30 9 \* \* 1-5/)
+})

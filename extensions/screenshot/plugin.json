@@ -2,7 +2,7 @@
   "id": "screenshot",
   "name": "截图历史",
   "description": "截取全部屏幕，浏览本机截图历史，支持复制、回贴、列表置顶与批量清理",
-  "version": "2.0.9",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

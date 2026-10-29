@@ -92,11 +92,56 @@ test('删除前必须确认：取消时不改密文、条目保留；确认框�
   await v.run(v.item(originalEntry.id), '删除此凭据')
   assert.deepEqual(await read(), [])
 })
-test('两个入口通过 commands 区分：「随机密码」入口新建凭据时预填 20 位随机密码，列表入口不预填', async () => {
+test('「随机密码」入口不要求解锁：直接列出可复制的随机密码，走宿主敏感复制', async () => {
   assert.equal(typeof commands['vault-list'], 'function'); assert.equal(typeof commands['vault-generator'], 'function')
-  const gen = await open(commands['vault-generator']); await globalAction(gen, 'new-entry'); const genForm = await form()
-  assert.equal(genForm.field('secretPlain').props.value.length, 20)
-  gen.unmount(); host.pushed.length = 0
+  const gen = await mount(commands['vault-generator'], host); views.push(gen)
+  assert.equal(field(gen.tree(), 'masterPassword'), undefined); assert.doesNotMatch(gen.text(), /主密码/)
+  const items = gen.items(); assert.equal(items.length, 4)
+  const first = gen.item('strong-20'); assert.equal(first.props.title.length, 20)
+  assert.equal(gen.item('strong-32').props.title.length, 32)
+  assert.equal(gen.actions(first)[0].props.title, '复制密码')
+  await gen.run(first, '复制密码')
+  assert.deepEqual(host.ipcCalls.at(-1), ['clipboard_copy_text', { text: first.props.title, sensitive: true }])
+  assert.equal(host.lastToast().style, 'SUCCESS')
+  await gen.run(first, '重新生成'); assert.notEqual(gen.item('strong-20').props.title, first.props.title)
+  assert.equal((await read()).length, 1)
+})
+test('[破坏性] 生成器复制时宿主未确认自动清除，提示失败而不是成功', async () => {
+  const gen = await mount(commands['vault-generator'], host); views.push(gen)
+  host.ipc.clipboard_copy_text = async () => ({ success: true })
+  await gen.run(gen.item('plain-16'), '复制密码')
+  assert.equal(host.lastToast().style, 'FAILURE'); assert.match(host.lastToast().message, /未确认自动清除/)
+})
+test('[破坏性] 系统随机源不可用时生成器显示错误与重新生成，不退回弱随机', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'crypto')
+  Object.defineProperty(globalThis, 'crypto', { value: undefined, configurable: true })
+  let gen
+  try { gen = await mount(commands['vault-generator'], host); views.push(gen) }
+  finally { Object.defineProperty(globalThis, 'crypto', original) }
+  assert.equal(gen.items().length, 1); assert.match(gen.item('generate-error').props.subtitle, /VAULT_CRYPTO_UNAVAILABLE/)
+  await gen.run(gen.item('generate-error'), '重新生成'); assert.equal(gen.items().length, 4)
+})
+test('生成器「存入保险箱」解锁后新建凭据预填所选密码；列表入口新建不预填', async () => {
+  const gen = await mount(commands['vault-generator'], host); views.push(gen)
+  const chosen = gen.item('plain-20'); const push = gen.actions(chosen).find(a => a.props.title === '存入保险箱…')
+  assert.equal(push.type, 'Action.Push'); host.pushed.push(push.props.target)
+  const vault = await form(); field(vault.tree(), 'masterPassword').props.onChange(password); await tick(); await vault.run(null, '解锁保险箱')
+  await globalAction(vault, 'new-entry'); const genForm = await form()
+  assert.equal(genForm.field('secretPlain').props.value, chosen.props.title)
+  host.pushed.length = 0
   const list = await open(commands['vault-list']); await globalAction(list, 'new-entry'); const listForm = await form()
   assert.equal(listForm.field('secretPlain').props.value, '')
+})
+test('备注默认不在列表明文显示，显示明文后才出现；显示快捷键避开 macOS ⌘H 隐藏应用', async () => {
+  const withNote = createVaultEntry({ title: '带备注', category: 'login', secretPlain: 'note-secret-fixture', note: 'recovery-code-fixture' })
+  await store([withNote])
+  const v = await open(); views.push(v)
+  const shown = () => JSON.stringify([v.item(withNote.id).props.subtitle, v.item(withNote.id).props.accessories])
+  assert.ok(!shown().includes('recovery-code-fixture')); assert.ok(!shown().includes('note-secret-fixture'))
+  assert.match(v.item(withNote.id).props.subtitle, /有加密备注/)
+  const reveal = v.actions(v.item(withNote.id)).find(a => /显示明文/.test(a.props.title))
+  assert.notEqual(reveal.props.shortcut.key.toLowerCase(), 'h')
+  await reveal.props.onAction(); await tick()
+  assert.ok(shown().includes('recovery-code-fixture')); assert.ok(shown().includes('note-secret-fixture'))
+  await v.search('recovery'); assert.equal(v.items().length, 1)
 })

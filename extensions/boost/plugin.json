@@ -2,7 +2,7 @@
   "id": "boost",
   "name": "开机启动项",
   "description": "列出内存占用最高的进程、“启动”文件夹里的开机启动项和临时文件，勾选并确认后结束进程，或把启动项和临时文件移入回收站",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

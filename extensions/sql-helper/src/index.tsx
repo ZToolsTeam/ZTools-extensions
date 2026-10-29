@@ -8,6 +8,12 @@ interface Source { text: string; dialect: SqlDialect }
 interface Output { id: string; title: string; language: string; content: string }
 const MODES: Record<SqlHelperTab, string> = { formatter: 'SQL 美化与精简', mybatis: 'MyBatis 日志还原', ddl: '建表语句转模型' }
 const EMPTY: Source = { text: '', dialect: 'mysql' }
+// 每个模式的空状态引导：说明需要什么输入、会得到什么；快捷键由底栏显示，这里不重复
+const GUIDES: Record<SqlHelperTab, { title: string; detail: string }> = {
+  formatter: { title: '载入 SQL 开始美化与精简', detail: '把 SQL 复制到剪贴板后按回车载入，或打开多行编辑器粘贴。\n\n同时输出美化和精简两种格式；保留大小写、字符串与注释，只调整排版，不检查数据库语法。可选择 MySQL、PostgreSQL 或 SQLite 方言。' },
+  mybatis: { title: '载入 MyBatis 日志还原 SQL', detail: '需要同一次调用的 Preparing 和 Parameters 两行日志，复制后按回车载入，或打开多行编辑器粘贴。\n\n参数按所选方言转成字面量填回 SQL；日志是有损文本，日期、二进制及自定义类型需核对原始绑定。' },
+  ddl: { title: '载入建表语句生成模型', detail: '需要一条 CREATE TABLE 语句，一次处理一张表，复制后按回车载入，或打开多行编辑器粘贴。\n\n生成 TypeScript、Go 与 Java 模型代码。' },
+}
 function convert(tab: SqlHelperTab, source: Source): { outputs: Output[]; notice: string } {
   if (!source.text.trim()) throw new Error('请先输入 SQL 或日志')
   if (tab === 'formatter') {
@@ -52,7 +58,7 @@ export function SqlSourceForm({ tab, source, save }: { tab: SqlHelperTab; source
       <Form.Dropdown.Item value="sqlite" title="SQLite" />
     </Form.Dropdown>
     <Form.TextArea id="source" title={tab === 'mybatis' ? '两行 MyBatis 日志' : tab === 'ddl' ? 'CREATE TABLE 语句' : 'SQL 源码'} value={text} onChange={setText} />
-    <Form.Description text="只在本地处理，最多 256 KiB。⌘/Ctrl+Enter 生成结果，Esc 取消编辑。" />
+    <Form.Description text="只在本地处理，最多 256 KiB。" />
   </Form>
 }
 export function SqlHelperCommand({ initialTab = 'formatter' }: { initialTab?: SqlHelperTab } = {}) {
@@ -87,8 +93,8 @@ export function SqlHelperCommand({ initialTab = 'formatter' }: { initialTab?: Sq
     </List.Dropdown>}
     filterBar={output ? { summaryText: `${MODES[tab]} · ${source.dialect}`, actions: [{ id: 'clipboard', title: '载入剪贴板', onAction: () => void clipboard() }, { id: 'edit', title: '编辑源码', onAction: edit }] } : undefined}
   >
-    {!output && <List.Item id="input" title={state.kind === 'error' ? '输入无法处理' : `开始${MODES[tab]}`} subtitle={state.kind === 'error' ? state.message : 'Enter 载入剪贴板；⌘/Ctrl+Enter 多行编辑'} icon={Icon.Code}
-      detail={<List.Item.Detail markdown={state.kind === 'error' ? fenced(state.message) : '源码请放入多行编辑器或剪贴板。编辑器可选择 MySQL、PostgreSQL 或 SQLite 方言。\n\nMyBatis 需要同一次调用的 Preparing 和 Parameters 两行。模型转换一次处理一张表。'} />}
+    {!output && <List.Item id="input" title={state.kind === 'error' ? '输入无法处理' : GUIDES[tab].title} subtitle={state.kind === 'error' ? state.message : '回车载入剪贴板，也可以打开多行编辑'} icon={Icon.Code}
+      detail={<List.Item.Detail markdown={state.kind === 'error' ? fenced(state.message) : GUIDES[tab].detail} />}
       actions={<ActionPanel><Action title="载入剪贴板" onAction={() => void clipboard()} /><Action title="编辑源码" onAction={edit} shortcut={{ modifiers: ['cmd'], key: 'enter' }} /></ActionPanel>}
     />}
     {output?.outputs.filter(item => `${item.title} ${item.language}`.toLowerCase().includes(query.trim().toLowerCase())).map(item => <List.Item key={item.id} id={item.id} title={item.title} icon={Icon.Code}

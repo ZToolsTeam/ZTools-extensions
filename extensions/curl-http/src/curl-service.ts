@@ -56,53 +56,146 @@ async function requestViaHost(parsed: ParsedCurlRequest, timeoutMs: number): Pro
   }
 }
 
-export function tokenizeShellCommand(raw: string): string[] {
-  const normalized = String(raw || '')
-    .replace(/\\\r?\n/g, ' ')
-    .replace(/\^\r?\n/g, ' ')
-    .replace(/`\r?\n/g, ' ')
-    .trim()
+const unclosedQuote = (quote: string): Error =>
+  new Error(`UNCLOSED_QUOTE_IN_CURL: cURL 命令存在未闭合引号 (${quote})`)
 
+/** 读取 bash 的 $'...' 字符串（浏览器「Copy as cURL (bash)」在内容含单引号、换行或控制字符时使用），返回解码后的内容与结束位置。 */
+function readAnsiCString(src: string, start: number): { value: string; end: number } {
+  let value = ''
+  let i = start
+  const simple: Record<string, string> = {
+    a: String.fromCharCode(7), b: '\b', e: String.fromCharCode(27), E: String.fromCharCode(27), f: '\f', n: '\n', r: '\r', t: '\t', v: '\v',
+    '\\': '\\', "'": "'", '"': '"', '?': '?'
+  }
+  while (i < src.length) {
+    const ch = src[i]
+    if (ch === "'") return { value, end: i + 1 }
+    if (ch !== '\\') {
+      value += ch
+      i++
+      continue
+    }
+    const esc = src[i + 1]
+    if (esc === undefined) break
+    if (esc in simple) {
+      value += simple[esc]
+      i += 2
+      continue
+    }
+    const readDigits = (pattern: RegExp, max: number, from: number): string => {
+      let digits = ''
+      while (digits.length < max && from + digits.length < src.length && pattern.test(src[from + digits.length])) {
+        digits += src[from + digits.length]
+      }
+      return digits
+    }
+    if (esc === 'x' || esc === 'u' || esc === 'U') {
+      const digits = readDigits(/[0-9a-fA-F]/, esc === 'x' ? 2 : esc === 'u' ? 4 : 8, i + 2)
+      if (!digits) {
+        value += `\\${esc}`
+        i += 2
+        continue
+      }
+      const code = parseInt(digits, 16)
+      if (esc === 'x') {
+        value += String.fromCharCode(code)
+      } else if (code > 0x10ffff) {
+        throw new Error(`INVALID_CURL_ESCAPE: $'...' 中的 \\${esc}${digits} 超出 Unicode 范围`)
+      } else {
+        value += String.fromCodePoint(code)
+      }
+      i += 2 + digits.length
+      continue
+    }
+    if (/[0-7]/.test(esc)) {
+      const digits = readDigits(/[0-7]/, 3, i + 1)
+      value += String.fromCharCode(parseInt(digits, 8) & 0xff)
+      i += 1 + digits.length
+      continue
+    }
+    if (esc === 'c' && i + 2 < src.length) {
+      value += String.fromCharCode(src.charCodeAt(i + 2) & 0x1f)
+      i += 3
+      continue
+    }
+    // 未知转义按 bash 规则原样保留反斜杠
+    value += `\\${esc}`
+    i += 2
+  }
+  throw unclosedQuote("$'")
+}
+
+/**
+ * 按 bash 规则拆分命令：单引号内全部按字面；双引号内反斜杠只转义 $ ` " \ 和换行；
+ * 引号外反斜杠转义下一个字符，行尾反斜杠为续行；支持 $'...'；空字符串参数（'' 或 ""）保留为空参数。
+ */
+export function tokenizeShellCommand(raw: string): string[] {
+  const src = String(raw || '').replace(/`\r?\n/g, ' ').trim()
   const tokens: string[] = []
   let current = ''
-  let quoteChar: "'" | '"' | null = null
-  let escaped = false
-
-  for (let i = 0; i < normalized.length; i++) {
-    const ch = normalized[i]
-    if (escaped) {
-      current += ch
-      escaped = false
+  let hasToken = false
+  const flush = (): void => {
+    if (hasToken) tokens.push(current)
+    current = ''
+    hasToken = false
+  }
+  let i = 0
+  while (i < src.length) {
+    const ch = src[i]
+    if (/\s/.test(ch)) {
+      flush()
+      i++
       continue
     }
-    if (ch === '\\' && quoteChar !== "'") {
-      escaped = true
+    if (ch === '\\') {
+      const next = src[i + 1]
+      if (next === '\n') { i += 2; continue }
+      if (next === '\r' && src[i + 2] === '\n') { i += 3; continue }
+      if (next === undefined) { i++; continue }
+      current += next
+      hasToken = true
+      i += 2
       continue
     }
-    if ((ch === "'" || ch === '"') && !quoteChar) {
-      quoteChar = ch
+    if (ch === "'") {
+      const end = src.indexOf("'", i + 1)
+      if (end < 0) throw unclosedQuote("'")
+      current += src.slice(i + 1, end)
+      hasToken = true
+      i = end + 1
       continue
     }
-    if (ch === quoteChar) {
-      quoteChar = null
+    if (ch === '$' && src[i + 1] === "'") {
+      const result = readAnsiCString(src, i + 2)
+      current += result.value
+      hasToken = true
+      i = result.end
       continue
     }
-    if (/\s/.test(ch) && !quoteChar) {
-      if (current.length > 0) {
-        tokens.push(current)
-        current = ''
+    if (ch === '"') {
+      hasToken = true
+      i++
+      let closed = false
+      while (i < src.length) {
+        const c = src[i]
+        if (c === '"') { closed = true; i++; break }
+        if (c === '\\' && i + 1 < src.length) {
+          const n = src[i + 1]
+          if (n === '\n') { i += 2; continue }
+          if (n === '\r' && src[i + 2] === '\n') { i += 3; continue }
+          if (n === '$' || n === '`' || n === '"' || n === '\\') { current += n; i += 2; continue }
+        }
+        current += c
+        i++
       }
+      if (!closed) throw unclosedQuote('"')
       continue
     }
     current += ch
+    hasToken = true
+    i++
   }
-
-  if (quoteChar) {
-    throw new Error(`UNCLOSED_QUOTE_IN_CURL: cURL 命令存在未闭合引号 (${quoteChar})`)
-  }
-  if (current.length > 0) {
-    tokens.push(current)
-  }
+  flush()
   return tokens
 }
 
@@ -205,6 +298,85 @@ export function tokenizeCmdCommand(raw: string): string[] {
   return splitWindowsCommandLine(removeCmdCarets(String(raw || '')).trim())
 }
 
+/** 不影响请求内容、可以安全忽略的开关 */
+const HARMLESS_FLAGS = new Set([
+  '--compressed', '-s', '--silent', '-S', '--show-error', '-v', '--verbose', '-i', '--include',
+  '-g', '--globoff', '-L', '--location', '--http1.1', '--http2', '--http2-prior-knowledge',
+  '-N', '--no-buffer', '-#', '--progress-bar', '-f', '--fail', '--fail-with-body', '--path-as-is'
+])
+
+/** 需要跟一个参数、但本插件不处理的选项：跳过它的参数，避免把参数（如 -e 的来源网址、-x 的代理地址）误当成目标网址 */
+const IGNORED_VALUE_OPTIONS = new Set([
+  '-o', '--output', '-x', '--proxy', '-U', '--proxy-user', '-m', '--max-time', '--connect-timeout',
+  '-c', '--cookie-jar', '-w', '--write-out', '-r', '--range', '-E', '--cert', '--cert-type', '--key',
+  '--key-type', '--cacert', '--capath', '--resolve', '--connect-to', '--retry', '--retry-delay',
+  '--retry-max-time', '-y', '--speed-time', '-Y', '--speed-limit', '--limit-rate', '--interface',
+  '--dns-servers', '--max-redirs', '-z', '--time-cond', '--proxy-header', '-D', '--dump-header',
+  '--trace', '--trace-ascii', '--stderr', '-C', '--continue-at', '--ciphers', '--tls-max', '--noproxy',
+  '--pinnedpubkey', '--expect100-timeout', '-Q', '--quote', '--local-port', '--max-filesize',
+  '--variable', '--happy-eyeballs-timeout-ms', '--proto', '--proto-redir'
+])
+
+/** 本插件无法如实发出的选项：直接报错，避免发出和原命令不一样的请求 */
+const UNSUPPORTED_OPTIONS: Record<string, string> = {
+  '-F': '表单上传（-F）', '--form': '表单上传（--form）', '--form-string': '表单上传（--form-string）',
+  '-T': '上传文件（-T）', '--upload-file': '上传文件（--upload-file）',
+  '-K': '读取配置文件（-K）', '--config': '读取配置文件（--config）',
+  '--unix-socket': 'Unix 套接字（--unix-socket）', '--abstract-unix-socket': 'Unix 套接字（--abstract-unix-socket）'
+}
+
+const SHORT_VALUE_OPTIONS = new Set(['X', 'H', 'd', 'b', 'u', 'A', 'e', 'F', 'T', 'o', 'x', 'U', 'm', 'c', 'w', 'r', 'E', 'K', 'y', 'Y', 'z', 'D', 'C', 'Q'])
+const SHORT_FLAGS = new Set(['s', 'S', 'v', 'i', 'g', 'L', 'N', '#', 'f', 'k', 'G', 'I'])
+
+/** curl --data-urlencode 的编码：只保留字母、数字与 -._~ */
+function curlUrlEncode(value: string): string {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+function encodeDataUrlencode(arg: string): string {
+  const eq = arg.indexOf('=')
+  if (eq >= 0) {
+    const name = arg.slice(0, eq)
+    return name ? `${name}=${curlUrlEncode(arg.slice(eq + 1))}` : curlUrlEncode(arg.slice(eq + 1))
+  }
+  if (arg.includes('@')) {
+    throw new Error('UNSUPPORTED_CURL_FILE: --data-urlencode 的 @文件 写法需要读取本地文件，请把文件内容直接写进命令')
+  }
+  return curlUrlEncode(arg)
+}
+
+function utf8Base64(text: string): string {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const b of bytes) binary += String.fromCharCode(b)
+  return btoa(binary)
+}
+
+function deleteHeader(headers: Record<string, string>, name: string): void {
+  for (const key of Object.keys(headers)) {
+    if (key.toLowerCase() === name.toLowerCase()) delete headers[key]
+  }
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  return Object.keys(headers).some((key) => key.toLowerCase() === name.toLowerCase())
+}
+
+function normalizeTargetUrl(raw: string): string {
+  // 与 curl 一致：没写协议时按 http 处理
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`
+  let parsed: URL
+  try {
+    parsed = new URL(candidate)
+  } catch {
+    throw new Error(`INVALID_TARGET_URL: 无法识别网址 ${raw}`)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`UNSUPPORTED_PROTOCOL: 只支持 http / https 网址，当前为 ${parsed.protocol.replace(/:$/, '')}`)
+  }
+  return candidate
+}
+
 export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
   const trimmed = String(rawInput || '').trim()
   if (!trimmed) {
@@ -214,9 +386,10 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
   if (/^https?:\/\//i.test(trimmed) && !/\s/.test(trimmed)) {
     return {
       method: 'GET',
-      url: trimmed,
+      url: normalizeTargetUrl(trimmed),
       headers: {},
       rawCommand: `curl -X GET "${trimmed}"`,
+      ignoredOptions: [],
     }
   }
 
@@ -230,64 +403,174 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
 
   let method = ''
   let url = ''
+  let useGet = false
+  let useHead = false
   const headers: Record<string, string> = {}
   const bodyParts: string[] = []
+  const ignoredOptions: string[] = []
   let cookies: string | undefined
+  let jsonBody = false
+
+  const applyOption = (option: string, value: string | undefined): void => {
+    const requireValue = (): string => {
+      if (typeof value !== 'string') throw new Error(`MISSING_CURL_VALUE: ${option} 参数后缺少内容`)
+      return value
+    }
+    if (UNSUPPORTED_OPTIONS[option]) {
+      throw new Error(`UNSUPPORTED_CURL_OPTION: 不支持${UNSUPPORTED_OPTIONS[option]}，请改用其他工具发送`)
+    }
+    switch (option) {
+      case '-X': case '--request': {
+        const next = requireValue()
+        if (!next) throw new Error('MISSING_CURL_METHOD: -X 参数后缺少 HTTP 方法')
+        method = next.toUpperCase()
+        return
+      }
+      case '-H': case '--header': {
+        const next = requireValue()
+        if (next.startsWith('@')) {
+          throw new Error('UNSUPPORTED_CURL_FILE: -H @文件 写法需要读取本地文件，请把请求头直接写进命令')
+        }
+        const colonIdx = next.indexOf(':')
+        if (colonIdx > 0) {
+          const key = next.slice(0, colonIdx).trim()
+          const val = next.slice(colonIdx + 1).trim()
+          deleteHeader(headers, key)
+          // curl 中 "Name:" 表示去掉该请求头，"Name;" 表示发送空值请求头
+          if (val) headers[key] = val
+        } else if (/^[^:;\s]+;\s*$/.test(next)) {
+          const key = next.slice(0, next.indexOf(';')).trim()
+          deleteHeader(headers, key)
+          headers[key] = ''
+        } else {
+          throw new Error(`INVALID_CURL_HEADER: 无法识别请求头 ${next}`)
+        }
+        return
+      }
+      case '-d': case '--data': case '--data-ascii': case '--data-binary': case '--json': {
+        const next = requireValue()
+        if (next.startsWith('@')) {
+          throw new Error(`UNSUPPORTED_CURL_FILE: ${option} @文件 写法需要读取本地文件，请把文件内容直接写进命令`)
+        }
+        bodyParts.push(next)
+        if (option === '--json') jsonBody = true
+        return
+      }
+      case '--data-raw':
+        bodyParts.push(requireValue())
+        return
+      case '--data-urlencode':
+        bodyParts.push(encodeDataUrlencode(requireValue()))
+        return
+      case '-b': case '--cookie': {
+        const next = requireValue()
+        if (!next.includes('=')) {
+          throw new Error('UNSUPPORTED_CURL_FILE: -b 后面是 Cookie 文件名，需要读取本地文件，请改成 "name=value" 写法')
+        }
+        cookies = next
+        headers['Cookie'] = next
+        return
+      }
+      case '-u': case '--user': {
+        const next = requireValue()
+        if (!next) throw new Error('MISSING_CURL_USER: -u 参数后缺少认证信息')
+        headers['Authorization'] = `Basic ${utf8Base64(next.includes(':') ? next : `${next}:`)}`
+        return
+      }
+      case '--oauth2-bearer':
+        headers['Authorization'] = `Bearer ${requireValue()}`
+        return
+      case '-A': case '--user-agent':
+        deleteHeader(headers, 'User-Agent')
+        headers['User-Agent'] = requireValue()
+        return
+      case '-e': case '--referer':
+        deleteHeader(headers, 'Referer')
+        headers['Referer'] = requireValue()
+        return
+      case '--url': {
+        const next = requireValue()
+        if (!next) throw new Error('MISSING_CURL_URL: --url 参数后缺少目标地址')
+        if (url) ignoredOptions.push(`额外网址 ${next}`)
+        else url = next
+        return
+      }
+      case '-G': case '--get':
+        useGet = true
+        return
+      case '-I': case '--head':
+        useHead = true
+        return
+      case '-k': case '--insecure':
+        ignoredOptions.push(`${option}（客户端仍会校验 HTTPS 证书）`)
+        return
+      default:
+        if (HARMLESS_FLAGS.has(option)) return
+        if (IGNORED_VALUE_OPTIONS.has(option)) {
+          requireValue()
+          ignoredOptions.push(option)
+          return
+        }
+        ignoredOptions.push(option)
+    }
+  }
+
+  const takesValue = (option: string): boolean =>
+    IGNORED_VALUE_OPTIONS.has(option) ||
+    ['-X', '--request', '-H', '--header', '-d', '--data', '--data-ascii', '--data-binary', '--data-raw',
+      '--data-urlencode', '--json', '-b', '--cookie', '-u', '--user', '--oauth2-bearer', '-A', '--user-agent',
+      '-e', '--referer', '--url'].includes(option) ||
+    option in UNSUPPORTED_OPTIONS
 
   for (let i = startIdx; i < tokens.length; i++) {
     const token = tokens[i]
-    if (token === '-X' || token === '--request') {
-      const next = tokens[++i]
-      if (!next) throw new Error('MISSING_CURL_METHOD: -X 参数后缺少 HTTP 方法')
-      method = next.toUpperCase()
-    } else if (token === '-H' || token === '--header') {
-      const next = tokens[++i]
-      if (!next) throw new Error('MISSING_CURL_HEADER: -H 参数后缺少 Header 内容')
-      const colonIdx = next.indexOf(':')
-      if (colonIdx > 0) {
-        const key = next.slice(0, colonIdx).trim()
-        const val = next.slice(colonIdx + 1).trim()
-        headers[key] = val
-      }
-    } else if (
-      token === '-d' ||
-      token === '--data' ||
-      token === '--data-raw' ||
-      token === '--data-binary' ||
-      token === '--data-urlencode'
-    ) {
-      const next = tokens[++i]
-      if (typeof next !== 'string') {
-        throw new Error(`MISSING_CURL_BODY: ${token} 参数后缺少请求体数据`)
-      }
-      bodyParts.push(next)
-    } else if (token === '-b' || token === '--cookie') {
-      const next = tokens[++i]
-      if (!next) throw new Error('MISSING_CURL_COOKIE: -b 参数后缺少 Cookie 内容')
-      cookies = next
-      headers['Cookie'] = next
-    } else if (token === '-u' || token === '--user') {
-      const next = tokens[++i]
-      if (!next) throw new Error('MISSING_CURL_USER: -u 参数后缺少认证信息')
-      const encoded =
-        typeof Buffer !== 'undefined' ? Buffer.from(next, 'utf8').toString('base64') : btoa(next)
-      headers['Authorization'] = `Basic ${encoded}`
-    } else if (token === '--url') {
-      const next = tokens[++i]
-      if (!next) throw new Error('MISSING_CURL_URL: --url 参数后缺少目标地址')
-      url = next
-    } else if (token.startsWith('http://') || token.startsWith('https://')) {
-      url = token
+    if (token.startsWith('--') && token.length > 2) {
+      applyOption(token, takesValue(token) ? tokens[++i] : undefined)
+      continue
     }
+    if (token.startsWith('-') && token.length > 1) {
+      // 短选项可以合写（如 -sSL、-XPOST、-sX POST）：遇到要参数的选项时，剩余部分或下一个参数就是它的值
+      const cluster = token.slice(1)
+      for (let j = 0; j < cluster.length; j++) {
+        const letter = cluster[j]
+        if (SHORT_VALUE_OPTIONS.has(letter)) {
+          const rest = cluster.slice(j + 1)
+          applyOption(`-${letter}`, rest ? rest : tokens[++i])
+          break
+        }
+        if (!SHORT_FLAGS.has(letter) && cluster.length > 1) {
+          ignoredOptions.push(`-${letter}`)
+          continue
+        }
+        applyOption(`-${letter}`, undefined)
+      }
+      continue
+    }
+    if (url) ignoredOptions.push(`额外网址 ${token}`)
+    else url = token
   }
 
   if (!url) {
     throw new Error('MISSING_TARGET_URL: 未能在 cURL 命令中识别出合法的 http/https URL')
   }
+  url = normalizeTargetUrl(url)
 
-  const body = bodyParts.length > 0 ? bodyParts.join('&') : undefined
+  let body = bodyParts.length > 0 ? bodyParts.join('&') : undefined
+  if (jsonBody) {
+    if (!hasHeader(headers, 'Content-Type')) headers['Content-Type'] = 'application/json'
+    if (!hasHeader(headers, 'Accept')) headers['Accept'] = 'application/json'
+  }
+  if (useGet) {
+    // -G：把 -d 的内容拼到网址查询串里，按 GET 发送
+    if (body !== undefined) {
+      const hashIdx = url.indexOf('#')
+      const base = hashIdx >= 0 ? url.slice(0, hashIdx) : url
+      url = `${base}${base.includes('?') ? '&' : '?'}${body}`
+    }
+    body = undefined
+  }
   if (!method) {
-    method = body !== undefined ? 'POST' : 'GET'
+    method = useHead ? 'HEAD' : useGet ? 'GET' : body !== undefined ? 'POST' : 'GET'
   }
 
   return {
@@ -297,6 +580,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
     body,
     cookies,
     rawCommand: trimmed,
+    ignoredOptions,
   }
 }
 
@@ -398,6 +682,37 @@ export function generateCodeFromCurl(parsed: ParsedCurlRequest, lang: CodeTarget
   return goLines.join('\n')
 }
 
+/** 由客户端网络层自动生成的连接类请求头：浏览器（如 Firefox）复制的 cURL 常带这些头，发送时去掉并告知用户 */
+const AUTO_MANAGED_HEADERS = new Set(['connection', 'content-length', 'keep-alive', 'proxy-connection', 'te', 'trailer', 'transfer-encoding'])
+/** 客户端不允许插件自定义、去掉后会改变请求含义的请求头 */
+const CLIENT_FORBIDDEN_HEADERS = new Set(['host', 'proxy-authorization', 'upgrade'])
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/
+const MAX_REQUEST_BODY_CHARS = 768 * 1024
+
+/** 发送前整理请求头：去掉连接类请求头，客户端无法发送的请求头明确报错，不发出和原命令含义不同的请求。 */
+export function prepareRequestHeaders(headers: Record<string, string>): { headers: Record<string, string>; ignoredHeaders: string[] } {
+  const result: Record<string, string> = {}
+  const ignoredHeaders: string[] = []
+  for (const [name, value] of Object.entries(headers)) {
+    const lower = name.toLowerCase()
+    if (AUTO_MANAGED_HEADERS.has(lower)) {
+      ignoredHeaders.push(name)
+      continue
+    }
+    if (CLIENT_FORBIDDEN_HEADERS.has(lower)) {
+      throw new Error(`客户端不能自定义 ${name} 请求头，可复制生成的代码执行`)
+    }
+    if (!HEADER_NAME_PATTERN.test(name)) {
+      throw new Error(`请求头名称无效：${name}`)
+    }
+    if (/[\r\n\0]/.test(value)) {
+      throw new Error(`请求头 ${name} 的值含有换行或空字符`)
+    }
+    result[name] = value
+  }
+  return { headers: result, ignoredHeaders }
+}
+
 export async function executeCurlRequest(
   parsed: ParsedCurlRequest,
   options?: {
@@ -409,17 +724,22 @@ export async function executeCurlRequest(
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) {
     throw new Error('请求超时必须为 1–300000 毫秒')
   }
+  if (parsed.body !== undefined && parsed.body.length > MAX_REQUEST_BODY_CHARS) {
+    throw new Error(`请求体超过 ${MAX_REQUEST_BODY_CHARS / 1024} KB 上限，可复制生成的代码执行`)
+  }
+  const prepared = prepareRequestHeaders(parsed.headers)
+  const request: ParsedCurlRequest = { ...parsed, headers: prepared.headers }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const startedAt = Date.now()
 
   try {
-    const resp = options?.fetchImpl ? await options.fetchImpl(parsed.url, {
-      method: parsed.method,
-      headers: parsed.headers,
-      body: parsed.method === 'GET' || parsed.method === 'HEAD' ? undefined : parsed.body,
+    const resp = options?.fetchImpl ? await options.fetchImpl(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : request.body,
       signal: controller.signal,
-    }) : await requestViaHost(parsed, timeoutMs)
+    }) : await requestViaHost(request, timeoutMs)
 
     const rawText = await resp.text()
     const elapsedMs = Math.max(1, Date.now() - startedAt)
@@ -427,13 +747,15 @@ export async function executeCurlRequest(
 
     let bodyText = rawText
     let truncated = false
+    let isJson = false
     if (sizeBytes > MAX_RESPONSE_BYTES) {
       truncated = true
-      bodyText = `${rawText.slice(0, 65536)}\n\n... [响应体超过 5MB 上限 (${sizeBytes} bytes)，已安全截断保护渲染性能]`
+      bodyText = `${rawText.slice(0, 65536)}\n\n... [响应体超过 5MB 上限 (${sizeBytes} bytes)，只显示前 65536 个字符]`
     } else {
       try {
         const parsedJson = JSON.parse(rawText)
         bodyText = JSON.stringify(parsedJson, null, 2)
+        isJson = true
       } catch {
         bodyText = rawText
       }
@@ -451,7 +773,9 @@ export async function executeCurlRequest(
       elapsedMs,
       sizeBytes,
       truncated,
+      isJson,
       responseHeaders,
+      ignoredHeaders: prepared.ignoredHeaders,
       bodyText,
     }
   } catch (err) {

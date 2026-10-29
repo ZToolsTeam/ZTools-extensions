@@ -10,7 +10,7 @@
 import {
   formatBytes,
   getRealSystemPath,
-  invokeHostCapability,
+  callHostTransport,
   isRealElectronHost,
   scanRealDirectoryTree,
   showRealItemInFolder,
@@ -217,13 +217,13 @@ export async function fetchSqliteWorkspace(
       return { ...createEmptySqliteWorkspace(found.error || NO_DATABASE_MESSAGE), databases };
     }
 
-    const inspectRes = await invokeHostCapability<DynamicBridge>(
-      "sqlite.inspectWorkspace",
-      { dbPath: targetDbPath },
+    const inspectRes = await callHostTransport<DynamicBridge>(
+      "dllplugin_call",
+      { plugin: "SqlitePlugin", func: "inspectWorkspace", params: { dbPath: targetDbPath } },
       hostBridge
     );
     if (!inspectRes.ok || !inspectRes.data || !Array.isArray(inspectRes.data.tables)) {
-      const reason = inspectRes.error || inspectRes.message || "客户端没有返回表结构";
+      const reason = inspectRes.error || "客户端没有返回表结构";
       return {
         ...createEmptySqliteWorkspace(`读取 ${baseName(targetDbPath)} 失败：${reason}`),
         databases,
@@ -231,6 +231,9 @@ export async function fetchSqliteWorkspace(
       };
     }
 
+    if (!databases.some(db => db.path === targetDbPath)) {
+      databases.push({ id: "selected", name: baseName(targetDbPath), path: targetDbPath, sizeBytes: Math.max(0, Number(inspectRes.data.sizeBytes) || 0) });
+    }
     const tables: SqliteTableMeta[] = (inspectRes.data.tables as DynamicBridge[])
       .map((t) => {
         const tableName = String(t?.name ?? t?.tableName ?? "");
@@ -271,13 +274,13 @@ export async function fetchTableRows(
   if (!dbPath || !tableName) {
     return { ok: false, rows: [], error: "没有选择数据库或数据表" };
   }
-  const res = await invokeHostCapability<DynamicBridge>(
-    "sqlite.query",
-    { dbPath, tableName, limit: PREVIEW_LIMIT },
+  const res = await callHostTransport<DynamicBridge>(
+    "dllplugin_call",
+    { plugin: "SqlitePlugin", func: "executeQuery", params: { dbPath, tableName, limit: PREVIEW_LIMIT } },
     hostBridge
   );
   if (!res.ok || !res.data || !Array.isArray(res.data.rows)) {
-    return { ok: false, rows: [], error: res.error || res.message || "客户端没有返回记录" };
+    return { ok: false, rows: [], error: res.error || "客户端没有返回记录" };
   }
   return { ok: true, rows: mapRowRecords(tableName, res.data.rows) };
 }

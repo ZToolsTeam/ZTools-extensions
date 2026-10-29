@@ -2,7 +2,7 @@
   "id": "batch-image",
   "name": "图片压缩",
   "description": "批量压缩与转换 PNG/JPG/WebP/BMP 图片：三档画质重新编码、限制最长边、转 JPG/PNG、扫描件转灰度，报销附件场景会标出仍超过 300KB 的图片；结果另存为原图同目录的 *_opt 文件，不覆盖原图",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

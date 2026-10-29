@@ -79,3 +79,66 @@ test('编辑页等分析时 Esc 返回，迟到的新文本不会替换当前文
   let finish; host.ipc.markdown_document = () => new Promise(resolve => { finish = resolve })
   const saving = form.run(null, '载入文档'); await tick(); form.unmount(); finish({ success: true, summary: summary('迟到修改') }); await saving; assert.match(v.text(), /测试文档/); assert.doesNotMatch(v.text(), /迟到修改/)
 })
+test('保存窗口限定 .docx：默认文件名去掉非法字符与开头的点；去掉扩展名时明确报错且不导出', async () => {
+  const { docxName } = await import('../dist/md-to-office-service.js')
+  assert.equal(docxName('a/b:c'), 'a_b_c.docx'); assert.equal(docxName('..隐藏标题. '), '隐藏标题.docx'); assert.equal(docxName('...'), 'Markdown 文档.docx')
+  const v = await open(); const dialogs = []
+  host.ipc.window_show_save_dialog = async p => { dialogs.push(p); return { canceled: false, filePath: '/tmp/没有扩展名' } }
+  await v.run(v.item('document'), '另存 Word 新副本')
+  assert.equal(dialogs[0].filters, 'Word 文档|*.docx'); assert.equal(dialogs[0].defaultName, '测试文档.docx')
+  assert.equal(calls('export').length, 0); assert.match(v.text(), /\.docx 扩展名/); assert.equal(host.lastToast().style, 'FAILURE')
+  host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/tmp/大写.DOCX' })
+  await v.run(v.item('document'), '另存 Word 新副本'); assert.equal(calls('export').length, 1)
+})
+test('搜索框不再是无意义的“当前文档”：输入内容带进编辑框，载入后清空；载入失败保留输入', async () => {
+  const v = await open()
+  assert.doesNotMatch(v.tree().props.searchBarPlaceholder, /^当前文档$/)
+  assert.equal(typeof v.tree().props.onSearchTextChange, 'function')
+  await v.search('# 新草稿')
+  assert.equal(v.item('draft').props.subtitle, '# 新草稿')
+  assert.ok(v.item('document'), '已载入的文档仍在')
+  await v.run(v.item('draft'), '在编辑框中继续')
+  const form = await mountPushed(host); views.push(form)
+  assert.equal(form.field('markdown').props.value, '# 新草稿')
+  // 宿主解析失败：不清空搜索框，表单显示错误
+  host.ipc.markdown_document = async () => { throw new Error('解析失败') }
+  await form.run(undefined, '载入文档')
+  assert.equal(v.tree().props.searchText, '# 新草稿')
+  host.ipc.markdown_document = async p => ({ success: true, summary: summary(p.markdown) })
+  await form.fill('markdown', '# 新草稿\n\n正文')
+  await form.run(undefined, '载入文档')
+  assert.equal(v.tree().props.searchText, '')
+  assert.equal(v.item('document').props.title, '新草稿')
+  assert.throws(() => v.item('draft'), /找不到列表项/)
+})
+test('没有文档时输入草稿只显示一条新建入口，不与“输入 Markdown 文本”重复', async () => {
+  host.clipboard.text = ''
+  host.ipc.clipboard_read_text = async () => ({ success: true, text: '' })
+  const v = await open()
+  if (v.items().some(i => i.props.id === 'document')) return
+  assert.ok(v.item('empty'))
+  await v.search('abc')
+  assert.ok(v.item('draft'))
+  assert.throws(() => v.item('empty'), /找不到列表项/)
+})
+
+test('没有标题的剪贴板内容用“剪贴板内容”作文档名，不拿正文第一行；有标题用首个标题', async () => {
+  host.clipboard.text = '1793206282'
+  const v = await open(); assert.equal(v.item('document').props.title, '剪贴板内容')
+  host.ipc.window_show_save_dialog = async p => { assert.equal(p.defaultName, '剪贴板内容.docx'); return { canceled: true } }
+  await v.run(v.item('document'), '另存 Word 新副本')
+  host.clipboard.text = '```\n# 代码里的井号\n```\n正文'; await button(v, 'clipboard'); assert.equal(v.item('document').props.title, '剪贴板内容')
+  host.clipboard.text = '前言\n\n大标题\n===\n'; await button(v, 'clipboard'); assert.equal(v.item('document').props.title, '前言')
+  host.clipboard.text = '# 测试文档\n正文'; await button(v, 'clipboard'); assert.equal(v.item('document').props.title, '测试文档')
+  await button(v, 'open'); assert.equal(v.item('document').props.title, '文件内容')
+  host.ipc.markdown_document = async p => p.action === 'read' ? { success: true, markdown: '只有正文' } : { success: true, summary: summary(p.markdown) }
+  await button(v, 'open'); assert.equal(v.item('document').props.title, 'input')
+})
+test('字数与结构块只在文档条目显示，状态栏与左栏不重复主动作', async () => {
+  const v = await open(); const bar = v.tree().props.filterBar.summaryText
+  assert.match(v.item('document').props.subtitle, /字 · 2 个结构块/); assert.doesNotMatch(bar, /结构块/); assert.equal(bar, '已载入剪贴板内容')
+  const panel = v.tree().props.workbenchPanel; assert.equal(panel.previewCard, undefined)
+  assert.ok(!JSON.stringify(panel).includes('另存'))
+  host.ipc.clipboard_read_text = async () => ({ success: true, text: '   ' }); await button(v, 'clipboard')
+  assert.match(v.tree().props.filterBar.summaryText, /请输入 Markdown/); assert.equal(v.item('document').props.title, '测试文档')
+})

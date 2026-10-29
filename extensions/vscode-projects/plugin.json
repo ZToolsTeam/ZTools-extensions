@@ -1,9 +1,9 @@
 {
   "id": "vscode-projects",
   "name": "最近项目",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "聚合检索 VS Code、Cursor、Trae、Windsurf 与 JetBrains 的本地最近项目，查看 Git 分支并打开编辑器或终端",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

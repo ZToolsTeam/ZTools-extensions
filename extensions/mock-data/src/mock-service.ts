@@ -277,35 +277,38 @@ export function generateMockSingleItems(seed?: number): MockSingleItem[] {
     {
       id: 'mock-id-card',
       fieldKey: 'idCard',
-      label: '18位居民身份证号 (GB 11643-1999)',
+      label: '18位居民身份证号（GB 11643-1999）',
       value: idInfo.idCard,
       category: '实名身份',
       standard: 'GB 11643-1999',
       formatType: '18位加权模11',
-      breakdownMarkdown: `- **发证归属地**：${idInfo.areaName} (\`${idInfo.idCard.slice(0, 6)}\`)\n- **出生日期**：\`${idInfo.birthDate}\`\n- **性别标识**：${idInfo.gender} · 末位校验码：\`${idInfo.idCard.slice(17)}\``,
-      algorithmNote: '前 17 位按权重 [7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2] 求和模 11 映射校验码，100% 通过实名格式校验。'
+      breakdownMarkdown: `- **发证归属地**：${idInfo.areaName}（\`${idInfo.idCard.slice(0, 6)}\`）\n- **出生日期**：\`${idInfo.birthDate}\`\n- **性别标识**：${idInfo.gender} · 末位校验码：\`${idInfo.idCard.slice(17)}\``,
+      algorithmNote: '前 17 位按权重 [7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2] 求和模 11 映射校验码，可通过格式与校验码检查（不代表真实身份可核验）。',
+      hasCheckDigit: true
     },
     {
       id: 'mock-credit-code',
       fieldKey: 'creditCode',
-      label: '18位统一社会信用代码 (GB 32100-2015)',
+      label: '18位统一社会信用代码（GB 32100-2015）',
       value: creditCode,
       category: '企业工商',
       standard: 'GB 32100-2015',
       formatType: '18位加权模31',
-      breakdownMarkdown: `- **登记管理部门**：工商 (\`91\`)\n- **登记机关区划码**：\`${creditCode.slice(2, 8)}\`\n- **主体标识码**：\`${creditCode.slice(8, 17)}\` · 末位校验码：\`${creditCode.slice(17)}\``,
-      algorithmNote: '严格剔除 I、O、Z、S、V 易混淆字符，第 18 位按 3^i mod 31 加权计算。'
+      breakdownMarkdown: `- **登记管理部门**：工商（\`91\`）\n- **登记机关区划码**：\`${creditCode.slice(2, 8)}\`\n- **主体标识码**：\`${creditCode.slice(8, 17)}\` · 末位校验码：\`${creditCode.slice(17)}\``,
+      algorithmNote: '严格剔除 I、O、Z、S、V 易混淆字符，第 18 位按 3^i mod 31 加权计算。',
+      hasCheckDigit: true
     },
     {
       id: 'mock-bank-card',
       fieldKey: 'bankCard',
-      label: '银联借记卡号 (Luhn 模10校验)',
+      label: '银联借记卡号（Luhn 模10校验）',
       value: bankInfo.cardNo,
       category: '金融结算',
       standard: 'ISO/IEC 7812',
       formatType: `${bankInfo.cardNo.length}位 Luhn`,
-      breakdownMarkdown: `- **发卡机构 BIN**：${bankInfo.bankName} (\`${bankInfo.cardNo.slice(0, 6)}\`)\n- **Luhn 末位校验码**：\`${bankInfo.cardNo.slice(-1)}\``,
-      algorithmNote: '从右向左偶数位翻倍求和模 10 为 0，可通过收银台与绑卡前端 Luhn 校验。'
+      breakdownMarkdown: `- **发卡机构 BIN**：${bankInfo.bankName}（\`${bankInfo.cardNo.slice(0, 6)}\`）\n- **Luhn 末位校验码**：\`${bankInfo.cardNo.slice(-1)}\``,
+      algorithmNote: '从右向左偶数位翻倍求和模 10 为 0，可通过收银台与绑卡前端 Luhn 校验。',
+      hasCheckDigit: true
     },
     {
       id: 'mock-mobile-phone',
@@ -316,18 +319,21 @@ export function generateMockSingleItems(seed?: number): MockSingleItem[] {
       standard: '工信部号段规范',
       formatType: '11位纯数字',
       breakdownMarkdown: `- **运营商号段**：\`${phone.slice(0, 3)}\`\n- **完整号码**：\`${phone}\``,
-      algorithmNote: '基于三大运营商及广电真实分配号段随机生成。'
+      algorithmNote: '在三大运营商及广电已分配号段内随机生成后 8 位，没有校验位，号码可能真实存在，请勿用于发送短信或拨打。',
+      hasCheckDigit: false
     },
     {
       id: 'mock-person-company',
-      fieldKey: 'companyName',
+      fieldKey: 'nameAndCompany',
       label: '测试人员姓名与企业主体名称',
       value: `${fullName} · ${company}`,
       category: '主体资料',
       standard: '中文业务常用',
       formatType: 'UTF-8 中文',
-      breakdownMarkdown: `- **测试联系人**：\`${fullName}\` (${idInfo.gender})\n- **测试企业名**：\`${company}\``,
-      algorithmNote: '合成优雅无敏感词的中文姓名与企业主体全称。'
+      breakdownMarkdown: `- **测试联系人**：\`${fullName}\`（${idInfo.gender}）\n- **测试企业名**：\`${company}\``,
+      algorithmNote: '从固定词表随机组合中文姓名与企业名称，没有校验规则，可能与真实人名或企业重名。',
+      hasCheckDigit: false,
+      jsonValue: { name: fullName, companyName: company }
     }
   ]
 }
@@ -360,7 +366,7 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
       age: now.getFullYear() - birthYear! - Number(birthdayPending),
       idCard: idInfo.idCard,
       phone,
-      email: `user_${i + 1}_${phone.slice(-4)}@example.ztools.cn`,
+      email: `user_${i + 1}_${phone.slice(-4)}@example.com`,
       companyName: `北京${COMPANY_WORDS[i % COMPANY_WORDS.length]!}信息科技有限公司`,
       creditCode,
       bankCard: bankInfo.cardNo,

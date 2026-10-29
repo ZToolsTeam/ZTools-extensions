@@ -67,9 +67,40 @@ test('卸载后迟到的选文件结果不读取', async () => {
 test('三个命令显式注册，导出原图入口写 ZIP', async () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url)))
   assert.deepEqual(Object.keys(commands).sort(), manifest.features.map(f => f.code).sort())
+  host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/tmp/测试_images.zip' })
   const view = await open(commands['office-extract-images']); await pick(view); await process(view)
   assert.equal(writes()[0][1].action, 'extract')
+  assert.equal(host.ipcCalls.find(([method]) => method === 'window_show_save_dialog')[1].filters, 'ZIP 压缩包|*.zip')
   assert.match(host.ipcCalls.find(([method]) => method === 'window_show_save_dialog')[1].defaultName, /_images.zip$/)
+})
+test('系统窗口不加处理时限（窗口打开期间不会超时报错），文档处理仍限时；保存窗口按格式限定扩展名', async () => {
+  const methods = globalThis.__ztoolsElectron.transport.methods, requests = []
+  globalThis.__ztoolsElectron.transport.methods = new Proxy(methods, { get(target, method) { return typeof target[method] === 'function' ? request => { requests.push([method, request]); return target[method](request) } : target[method] } })
+  const view = await open(); await pick(view); await process(view)
+  const of = method => requests.filter(([m]) => m === method).map(([, r]) => r)
+  assert.equal(Object.hasOwn(of('window_show_open_dialog')[0], 'timeoutMs'), false)
+  assert.equal(Object.hasOwn(of('window_show_save_dialog')[0], 'timeoutMs'), false)
+  assert.equal(of('office_document')[0].timeoutMs, 120000)
+  assert.equal(of('window_show_save_dialog')[0].params.filters, 'DOCX 文档|*.docx')
+  host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/tmp/去掉了扩展名' })
+  await process(view); assert.match(host.lastToast().title, /\.docx 扩展名/); assert.equal(writes().length, 1)
+})
+test('导出原图：文档没有图片时不弹保存窗口、不写入，直接说明原因', async () => {
+  host.ipc.office_document = async params => params.action === 'inspect' ? { success: true, summary: { ...summary, images: [] } } : result
+  const view = await open(commands['office-extract-images']); await pick(view); await process(view)
+  assert.match(host.lastToast().title, /没有可导出的原图/)
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'window_show_save_dialog').length, 0); assert.equal(writes().length, 0)
+})
+test('未选文档时 Enter 主动作为“选择文档…”，执行后读取真实检查结果；读取失败不显示文档', async () => {
+  for (const code of Object.keys(commands)) {
+    const view = await open(commands[code]); assert.equal(view.items().length, 0)
+    assert.equal(view.actions(null)[0].props.title, '选择文档…'); views.pop(); view.unmount()
+  }
+  const view = await open()
+  host.ipc.office_document = async () => { throw new Error('文档已损坏') }
+  await view.run(null, '选择文档…'); assert.equal(view.items().length, 0); assert.match(host.lastToast().title, /损坏/)
+  host.ipc.office_document = async params => params.action === 'inspect' ? { success: true, summary } : result
+  await view.run(null, '选择文档…'); assert.ok(view.item('document')); assert.equal(writes().length, 0)
 })
 test('旧客户端明确提示升级，不回退到 DLL', async () => {
   globalThis.__ztoolsElectron.transport.methods = {}

@@ -1,9 +1,9 @@
 {
   "id": "env-manager",
   "name": "环境变量",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "管理 Windows 注册表环境与 macOS 终端变量，查看只读进程快照，预览 PATH 清理，修改前保留可恢复备份",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -23,14 +23,13 @@
   ],
   "permissions": [
     "fs",
-    "shell",
     "system",
     "clipboard"
   ],
   "features": [
     {
       "code": "env-all",
-      "explain": "查看当前进程、管理 Windows 用户与系统变量或 macOS 终端变量",
+      "explain": "查看当前进程变量；在 Windows 上管理用户与系统变量，在 macOS 上管理新终端加载的变量",
       "cmds": [
         "环境变量",
         "path",
@@ -57,5 +56,6 @@
         "导出环境变量"
       ]
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.5"
 }

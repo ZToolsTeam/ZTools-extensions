@@ -126,7 +126,9 @@ test('分类快捷入口筛选正确，分类切换清掉旧查询，取消新�
   const form = await mountPushed(host)
   try {
     await form.fill('title', '取消后不能保存')
-    await form.run(null, '取消返回')
+    // 表单不再提供与 Esc 重复的“取消返回”，Esc 由宿主出栈
+    assert.deepEqual(form.actions(null).map((a) => a.props.title), ['保存短语'])
+    host.pushed.pop()
     assert.equal(host.pushed.length, 0)
     assert.equal(host.storage.has(key), false)
   } finally { form.unmount(); view.unmount() }
@@ -221,4 +223,77 @@ test('并发删除后旧窗口复制不会重建短语；存储损坏和缺少�
       if (mode !== 'deleted') assert.equal(host.lastToast().title, '已复制，但使用次数保存失败')
     } finally { view.unmount() }
   }
+})
+
+test('删除前确认：取消时不删除、不提示成功；确认后才删除', async () => {
+  const host = createHost()
+  seed(host, [fixture('要删的')])
+  const view = await mount(Snippets)
+  try {
+    host.setConfirm(false)
+    await view.run(view.item('要删的'), '删除短语')
+    assert.equal(host.confirms.length, 1)
+    assert.equal(host.confirms[0].primaryAction.style, 'destructive')
+    assert.deepEqual(saved(host).map(item => item.title), ['要删的'])
+    assert.ok(!host.toasts.some(toast => toast.style === 'SUCCESS'))
+    host.setConfirm(true)
+    await view.run(view.item('要删的'), '删除短语')
+    assert.deepEqual(saved(host), [])
+  } finally { view.unmount() }
+})
+
+test('[边界] 内容按原样保存：代码首行缩进与结尾换行不被裁掉；只有空白时拒绝保存', async () => {
+  const host = createHost()
+  seed(host, [])
+  const view = await mount(commands['snippets-new'])
+  const form = await mountPushed(host)
+  try {
+    await form.fill('title', '缩进代码')
+    await form.fill('content', '   ')
+    await form.run(null, '保存短语')
+    assert.deepEqual(saved(host), [])
+    await form.fill('content', '    if (ok) {\n      run()\n    }\n')
+    await form.run(null, '保存短语')
+    assert.equal(saved(host)[0].content, '    if (ok) {\n      run()\n    }\n')
+    assert.equal(saved(host)[0].previewText, 'if (ok) { run() }')
+  } finally { form.unmount(); view.unmount() }
+})
+
+test('没有短语时显示新建引导条目，回车打开新建表单；筛选无结果给出无匹配提示', async () => {
+  const host = createHost()
+  seed(host, [])
+  const view = await mount(Snippets)
+  try {
+    assert.deepEqual(view.items().map((i) => i.props.id), ['empty-state'])
+    assert.match(view.item('empty-state').props.title, /还没有短语/)
+    assert.doesNotMatch(view.tree().props.filterBar.summaryText, /cursor/)
+    await view.run(view.item('empty-state'), '新建短语')
+    assert.equal(host.pushed.length, 1)
+    const form = await mountPushed(host)
+    try {
+      await form.fill('title', '首条'); await form.fill('content', '内容')
+      await form.run(null, '保存短语')
+    } finally { form.unmount() }
+    await tick()
+    assert.deepEqual(saved(host).map((i) => i.title), ['首条'])
+    await view.search('不存在')
+    assert.equal(view.item('empty-state').props.title, '没有匹配的短语')
+  } finally { view.unmount() }
+})
+
+test('新建表单只列出已实现的宏变量：不提 {cursor}，列出的变量都能真正展开', async () => {
+  const { resolveMacroTemplate } = await import('../dist/macro-engine.js')
+  const host = createHost()
+  seed(host, [])
+  const view = await mount(commands['snippets-new'])
+  const form = await mountPushed(host)
+  try {
+    const text = form.text()
+    assert.doesNotMatch(text, /cursor|暂不移动光标/)
+    const listed = [...new Set(text.match(/\{[a-z]+\}/g))]
+    assert.deepEqual([...listed].sort(), ['{clipboard}', '{date}', '{datetime}', '{time}'].sort())
+    const out = resolveMacroTemplate(['{clipboard}', '{date}', '{datetime}', '{time}'].join('|'), '剪贴', { fixedDate: '2026-01-02', fixedTime: '03:04:05' }).text
+    assert.equal(out, '剪贴|2026-01-02|2026-01-02 03:04:05|03:04:05')
+    assert.equal(resolveMacroTemplate('旧{cursor}短语', '').text, '旧短语', '旧数据里的 {cursor} 仍被移除，不残留标记')
+  } finally { form.unmount(); view.unmount() }
 })

@@ -84,3 +84,60 @@ test('等待读取或删除确认时离开页面，迟到结果不再修改倒�
   const deleting = v.run(v.item('a'),'删除倒数日'); await tick(); v.unmount(); releaseConfirm(true); await deleting
   assert.equal((await loadCountdowns()).length,1)
 })
+
+test('[并发] 每秒轮询进行中时按键不被吞掉；操作前发出的轮询结果迟到也不覆盖操作回执', async () => {
+  state = fresh()
+  const v = await open()
+  let releasePoll
+  host.ipc.focus_get_current = () => new Promise(resolve => { releasePoll = () => resolve({ ...fresh(), remainingMs: 1_400_000 }) })
+  await new Promise(resolve => setTimeout(resolve, 1100))
+  assert.equal(typeof releasePoll, 'function', '轮询已发出且未返回')
+  await v.run(v.item('pomodoro-timer'), '暂停专注')
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'focus_pause').length, 1, '轮询期间的暂停仍然发给宿主')
+  assert.match(v.text(), /专注已暂停/)
+  releasePoll(); await tick()
+  assert.match(v.text(), /专注已暂停/, '迟到的旧轮询结果没有把状态改回进行中')
+  host.ipc.focus_get_current = async () => state
+})
+
+test('宿主状态冲突的英文错误转成中文原因', async () => {
+  state = fresh()
+  const v = await open()
+  host.ipc.focus_pause = async () => { throw new Error('No active running focus session to pause') }
+  await v.run(v.item('pomodoro-timer'), '暂停专注')
+  assert.match(host.lastToast().message, /当前没有进行中的计时/)
+  assert.doesNotMatch(v.text(), /No active/)
+})
+
+test('短休息中打开“立即开始专注”给出提示，回车结束休息并真正开始专注', async () => {
+  state = { ...fresh(), id: 'break-1', title: '5 分钟短休息', phase: 'short_break', totalDurationMs: 300_000, remainingMs: 200_000, completedCycles: 1 }
+  const v = await open(commands['pomodoro-start'])
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'focus_start').length, 0)
+  assert.match(host.lastToast().title, /正在短休息，未开始新的专注/)
+  assert.equal(v.actions(v.item('pomodoro-timer'))[0].props.title, '结束休息并开始专注')
+  await v.run(v.item('pomodoro-timer'), '结束休息并开始专注')
+  assert.deepEqual(host.ipcCalls.filter(([m]) => /focus_(cancel|start)/.test(m)).map(([m]) => m), ['focus_cancel', 'focus_start'])
+  assert.equal(state.phase, 'focus'); assert.match(v.text(), /专注进行中/)
+  assert.ok(!v.actions(v.item('pomodoro-timer')).some(a => a.props.title === '结束休息并开始专注'))
+})
+
+test('[故障注入] 结束休息后开始专注失败，不冒充已开始，提示失败并可重新读取', async () => {
+  state = { ...fresh(), phase: 'long_break', title: '15 分钟长休息', totalDurationMs: 900_000, remainingMs: 600_000 }
+  const v = await open(commands['pomodoro-start'])
+  assert.match(host.lastToast().title, /正在长休息/)
+  host.ipc.focus_start = async () => { throw new Error('通知权限未授予') }
+  await v.run(v.item('pomodoro-timer'), '结束休息并开始专注')
+  assert.equal(host.lastToast().title, '未能开始专注，请刷新状态')
+  assert.doesNotMatch(v.text(), /专注进行中/); assert.equal(state.status, 'cancelled')
+  await v.run(v.item('load-error'), '重新读取'); assert.match(v.text(), /番茄钟已就绪/)
+})
+
+test('普通入口在休息中只把“结束休息并开始专注”作为次动作；专注进行中再次快捷开始只提示不重复开始', async () => {
+  state = { ...fresh(), phase: 'short_break', title: '5 分钟短休息', totalDurationMs: 300_000, remainingMs: 100_000 }
+  const v = await open()
+  assert.deepEqual(v.actions(v.item('pomodoro-timer')).slice(0, 2).map(a => a.props.title), ['暂停短休息', '结束休息并开始专注'])
+  state = fresh(); v.unmount()
+  await open(commands['pomodoro-start'])
+  assert.match(host.lastToast().title, /已有进行中的专注/)
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'focus_start').length, 0)
+})

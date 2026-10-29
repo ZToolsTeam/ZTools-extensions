@@ -1,9 +1,9 @@
 {
   "id": "paste-stack",
   "name": "纯文本与粘贴栈",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "一键清除剪贴板富文本脏格式转为纯文本；支持多项连续复制入栈、跨窗口依次顺序或倒序自动上屏粘贴",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

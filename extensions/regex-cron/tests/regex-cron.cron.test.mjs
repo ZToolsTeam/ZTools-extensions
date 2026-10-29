@@ -35,7 +35,7 @@ test('月份星期别名、范围列表、闰年和非法月日均按真实日�
   assert.equal(parseAndExplainCron('0 0 30 2 *', base).isValid, false)
   assert.equal(parseAndExplainCron('0 0 0 31 2 MON', base).isValid, false)
   const complex = parseAndExplainCron('0,30 9 * * *', base)
-  assert.match(complex.chineseSummary, /分钟 0,30/)
+  assert.equal(complex.chineseSummary, '9 点的第 0,30 分执行')
   assert.doesNotMatch(complex.chineseSummary, /09:00:00/)
 })
 
@@ -91,4 +91,32 @@ test('无效起算日期与异常次数不返回成功或部分结果', () => {
     assert.equal(result.isValid, false)
     assert.deepEqual(result.nextRuns, [])
   }
+})
+
+test('常见写法翻译成自然语句，五位表达式不提秒', () => {
+  const cases = [
+    ['*/15 * * * *', '每 15 分钟执行'],
+    ['* * * * *', '每分钟执行'],
+    ['30 * * * *', '每小时第 30 分执行'],
+    ['0 */2 * * *', '每 2 小时的第 0 分执行'],
+    ['*/10 9 * * *', '9 点内每 10 分钟执行'],
+    ['0 9 * * *', '每天 09:00 执行'],
+    ['0 0 2 * * ?', '每天 02:00:00 执行'],
+    ['*/5 * * * * *', '每 5 秒执行'],
+    ['0 */15 * * * *', '每 15 分钟执行'],
+    ['10 */15 * * * *', '每 15 分钟的第 10 秒执行'],
+    ['0 30 9 ? * MON-FRI', '（星期 MON-FRI） 09:30:00 执行'],
+    ['*/15 * 1 * *', '（日期 1），每 15 分钟执行']
+  ]
+  for (const [expression, expected] of cases) assert.equal(parseAndExplainCron(expression, base).chineseSummary, expected, expression)
+  for (const expression of ['*/15 * * * *', '0 9 * * *', '30 * * * *']) assert.doesNotMatch(parseAndExplainCron(expression, base).chineseSummary, /秒/, expression)
+})
+
+test('字段错误提示与字段说明不带英文括注', () => {
+  const bad = parseAndExplainCron('61 * * * *', base)
+  assert.match(bad.errorMessage, /字段 \[分钟\]/)
+  assert.doesNotMatch(bad.errorMessage, /Minute/)
+  const ok = parseAndExplainCron('*/15 * * * *', base)
+  assert.deepEqual(ok.slots.map(s => s.name), ['分钟', '小时', '日期', '月份', '星期'])
+  assert.equal(ok.slots[0].meaning, '每隔 15 分钟触发')
 })

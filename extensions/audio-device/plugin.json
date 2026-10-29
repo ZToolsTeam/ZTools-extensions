@@ -1,9 +1,9 @@
 {
   "id": "audio-device",
   "name": "音频设备切换",
-  "version": "1.0.3",
-  "description": "秒级切换系统默认扬声器、耳机与麦克风，支持音量调节、快速静音与蓝牙/显示器音频直达",
-  "author": "ZTools Community",
+  "version": "1.0.5",
+  "description": "秒级切换系统默认扬声器、耳机与麦克风，支持音量调节、快速静音，可按蓝牙、USB、显示器等连接方式搜索设备",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -12,8 +12,7 @@
   ],
   "permissions": [
     "audio",
-    "system",
-    "shell"
+    "system"
   ],
   "requireAdmin": false,
   "nativeComponents": [],

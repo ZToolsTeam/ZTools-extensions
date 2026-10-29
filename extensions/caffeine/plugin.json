@@ -1,9 +1,9 @@
 {
   "id": "caffeine",
   "name": "防休眠常亮",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "阻止系统自动休眠与息屏，支持定时倒计时自动恢复与一键常亮切换",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -11,8 +11,7 @@
     "效率工具"
   ],
   "permissions": [
-    "system",
-    "shell"
+    "system"
   ],
   "requireAdmin": false,
   "nativeComponents": [],

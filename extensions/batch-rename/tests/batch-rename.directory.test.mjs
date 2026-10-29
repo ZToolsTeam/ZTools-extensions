@@ -105,7 +105,11 @@ test('batch-rename: 拒绝 macOS 受保护目录（/System、/Library、/usr、~
   for (const p of ['/System/Library/a.txt', '/Library/Developer/x.h', '/usr/share/man/a.1', '/Users/alice/Library/Caches/a.db']) {
     assert.ok(logic.FORBIDDEN_TARGET_PATTERN.test(p), p)
   }
-  for (const p of ['/Users/alice/Downloads/a.txt', '/Users/alice/Documents/Library/a.txt', '/private/tmp/x/a.txt', 'LibraryNotes.txt']) {
+  for (const p of ['C:\\Windows\\System32\\a.dll', 'D:/Program Files/app/a.txt', 'C:\\ProgramData\\x.ini', '\\\\?\\C:\\Windows\\a.txt', '/Users/alice/../bob/a.txt']) {
+    assert.ok(logic.FORBIDDEN_TARGET_PATTERN.test(p), p)
+  }
+  for (const p of ['/Users/alice/Downloads/a.txt', '/Users/alice/Documents/Library/a.txt', '/private/tmp/x/a.txt', 'LibraryNotes.txt',
+    '/Users/alice/Code/windows/a.txt', '/Users/alice/Documents/Program Files/a.txt', 'D:\\Backup\\Windows\\a.txt', 'Windows', 'a..b.txt']) {
     assert.ok(!logic.FORBIDDEN_TARGET_PATTERN.test(p), p)
   }
   const host = await setup()
@@ -124,4 +128,16 @@ test('batch-rename 界面：Downloads 不存在时显示空态提示，不列出
   for (const hit of GLOBAL_HITS) assert.ok(!text.includes(path.basename(hit)), `不应出现 ${hit}`)
   assert.equal(keywordSearches(host).length, 0)
   view.unmount()
+})
+
+test('batch-rename: 目录下拉与规则名不带英文括注', async () => {
+  const host = await setup({ authorized: [downloads] })
+  const view = await mount(BatchRenameCommand, host)
+  try {
+    await tick()
+    const titles = view.tree().props.searchBarAccessory.children.map((i) => i.props.title)
+    assert.ok(titles.includes('下载目录'), titles.join('|'))
+    for (const title of titles) assert.doesNotMatch(title, /[(（][A-Za-z ]+[)）]/, title)
+    for (const preset of logic.RENAME_RULE_PRESETS) assert.doesNotMatch(preset.label, /[(（][A-Za-z ]+[)）]/, preset.label)
+  } finally { view.unmount() }
 })

@@ -74,6 +74,17 @@ describe("text-formatter 插件端到端集成测试与健壮性验证", () => {
     assert.equal(toSnakeCase("helloWorldTestCase"), "hello_world_test_case");
     assert.equal(toKebabCase("helloWorld_TestCase"), "hello-world-test-case");
 
+    // 多行：每行一个标识符，不把整段并成一个；保留驼峰与缩写边界；空行与行数不变
+    const lines = "userName id\r\nHTTPServer Error\n\nv2Beta, release!\n中文";
+    assert.equal(toCamelCase(lines), "userNameId\nhttpServerError\n\nv2BetaRelease\n");
+    assert.equal(toSnakeCase(lines), "user_name_id\nhttp_server_error\n\nv2_beta_release\n");
+    assert.equal(toKebabCase(lines), "user-name-id\nhttp-server-error\n\nv2-beta-release\n");
+    // 没有任何 ASCII 单词时如实给出空结果（界面显示“无输出”），不输出夹杂中文和标点的伪标识符
+    assert.equal(toSnakeCase("中文，标点！"), "");
+    assert.equal(toKebabCase("😀"), "");
+    // 每行行首单词总是大写
+    assert.equal(toTitleCase("the end\nthe start of it"), "The End\nThe Start of It");
+
     // 边界与异常
     assert.equal(toUpperCase(""), "");
     assert.equal(toLowerCase(""), "");

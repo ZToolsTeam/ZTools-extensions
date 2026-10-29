@@ -44,7 +44,7 @@ test('window-management: executeWindowAction 真实 IPC 桥接与失败时返回
     }
   })
   assert.equal(okRes.success, true)
-  assert.equal(invokedPayload?.action, 'left-half')
+  assert.deepEqual(invokedPayload, { action: 'left-half' }, '不得向只接受动作名的宿主传递插件窗口句柄或估算矩形')
   assert.equal(okRes.rect?.width, 960)
 
   // 异常场景 1：空 actionId 校验失败

@@ -61,6 +61,10 @@ export function IdWatermarkCommand({ clipboardFirst = false }: { clipboardFirst?
   }, [])
   const visible = image && image.fileName.toLowerCase().includes(search.trim().toLowerCase())
   return <List navigationTitle="防盗水印" isLoading={loading} isShowingDetail={false} searchText={search} onSearchTextChange={setSearch} searchBarPlaceholder="搜索已选图片…"
+    actions={<ActionPanel>
+      {clipboardFirst ? <Action title="读取剪贴板图片" icon={Icon.Clipboard} onAction={() => load(true)} /> : <Action title="选择原图…" icon={Icon.Folder} onAction={() => load(false)} />}
+      {clipboardFirst ? <Action title="选择原图…" icon={Icon.Folder} onAction={() => load(false)} /> : <Action title="读取剪贴板图片" icon={Icon.Clipboard} onAction={() => load(true)} />}
+    </ActionPanel>}
     filterBar={{ summaryText: status, actions: [
       { id: 'pick', title: '选择原图', onAction: () => load(false) },
       { id: 'clipboard', title: '读取剪贴板', onAction: () => load(true) }

@@ -1,9 +1,9 @@
 {
   "id": "linux-http-dict",
   "name": "命令与状态码",
-  "version": "1.0.1",
-  "description": "离线Linux高频命令参数实例、HTTP 100~599状态码深度排障指南与常用知名网络端口速查",
-  "author": "ZTools Community",
+  "version": "1.0.4",
+  "description": "离线速查 Linux 常用命令示例、常见 HTTP 状态码含义与排查步骤、常用服务默认端口",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -41,7 +41,7 @@
     },
     {
       "code": "http-status",
-      "explain": "查阅 HTTP 状态码（100~599）RFC 定义、触发根因与线上排障处置指南",
+      "explain": "查阅常见 HTTP 状态码的标准定义、常见原因与排查步骤",
       "cmds": [
         "http状态码",
         "状态码",

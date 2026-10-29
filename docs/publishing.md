@@ -14,6 +14,7 @@ extensions/<id>/
 ├── package.json       只写 { "type": "module" } 等基本信息，不装依赖
 ├── tsconfig.json      编译配置
 ├── icon.svg           图标（也可以是 png / jpg / webp / ico）
+├── screenshots/       详情页截图（可选，PNG），见 [截图](#截图)
 ├── src/               源码
 ├── tests/             测试（*.test.mjs）
 └── README.md          插件说明
@@ -31,7 +32,7 @@ extensions/<id>/
 | `name` | 显示名称，不超过 50 个字符 |
 | `version` | 版本号，`主.次.修订` 三段数字（如 `1.2.0`），可带 `-beta.1` 这类后缀。改动规则见 [版本号](#版本号) |
 | `description` | 一句话说明插件做什么，不超过 500 个字符 |
-| `author` | 作者，字符串，或 `{ "name": "…", "email": "…", "url": "…" }`。不能写 `ZTools`、`ZTools Team`、`ZTools 官方`、`Official` 等官方名称（只有官方名单里的插件可以用），否则检查不通过 |
+| `author` | 插件作者。官方插件统一写 `ZTools Team`；社区插件推荐写作者的 GitHub 用户名，团队作品可写实际团队名称，不加 `ZTools Community` 前后缀。支持字符串或 `{ "name": "…", "email": "…", "url": "…" }`，详见下方[作者署名](#作者署名) |
 | `entry` | 编译后的入口，通常是 `dist/index.js`。必须是插件目录内的相对路径 |
 | `icon` | 图标文件的相对路径，如 `icon.svg` |
 | `permissions` | 用到的权限，见 [API 参考 · 权限](api.md#权限)；不用任何权限写 `[]` |
@@ -49,8 +50,21 @@ extensions/<id>/
 | `draft` / `draftReason` | 草稿，见 [草稿](#草稿) |
 | `revoked` / `revokedReason` | 下架，见 [下架](#下架) |
 | `minAppVersion` | 最低客户端版本，见 [最低客户端版本](#最低客户端版本) |
+| `screenshots` | 插件详情页展示的截图，见 [截图](#截图) |
 
 Schema 里还有其他字段（如 `homepage`、`license`、`category`）。没有列在上表的字段，客户端不一定会用到，写之前先确认它确实生效。
+
+## 作者署名
+
+`author` 用于标明插件的作者或维护团队，与是否开源、由谁审核发布无关。
+
+- **官方插件**：统一署名 `ZTools Team`，并由维护者登记到 `packages/ztools-plugins-spec/official-ids.json`。市场的官方标记以这份名单为准。
+- **社区独立投稿**：推荐直接使用 GitHub 用户名，例如 `"author": "octocat"`；团队共同维护的作品可填写实际团队或 GitHub 组织名称。不要写成 `ZTools Community`、`ZTools Community / octocat` 等泛称，也不要保留脚手架的 `ZTools Developer` 占位值。
+- **参与已有插件**：修复问题、增加功能或适配平台时保留原作者署名，个人贡献通过 PR 和 Git 提交记录体现；维护权转交时由原作者与维护者确认后再修改。
+
+审核社区投稿时，会核对署名与投稿者的 GitHub 账号或其声明的团队身份。不是投稿者本人的作品，应保留原作者署名和许可证要求的归属信息。插件由官方审核、合并和发布，不代表作者变成了官方团队。
+
+`ZTools`、`ZTools Team`、`ZTools 官方`、`Official` 等官方名称仅供官方名单中的插件使用，名单外使用会被检查拦下。
 
 ## 版本号
 
@@ -94,6 +108,24 @@ Schema 里还有其他字段（如 `homepage`、`license`、`category`）。没�
 一般不用手写：发布时脚本会检查插件的运行代码（`dist/`），用到较新的宿主接口就自动写入对应的版本，对照表在 `packages/ztools-plugins-spec/src/host-requirements.js`。插件确实依赖表里没有的新能力时，在 `plugin.json` 里写 `minAppVersion`（如 `"1.1.8.3"`），两者取较高的那个。`minZToolsVersion` 是插件 API 版本，客户端不会用它判断能不能安装。
 
 插件用到旧客户端没有的接口，又能退回旧做法时（比如 `LocalStorage.updateItem` 不存在时改用读后写），优先在插件里兼容，见 `extensions/shared/host-compat.ts`，这样旧客户端也能继续更新这个插件。
+
+## 截图
+
+截图显示在客户端和官网的插件详情页，可选，最多 5 张：
+
+```json
+"screenshots": [
+  { "path": "screenshots/01.png", "title": "输入算式直接出结果" },
+  { "path": "screenshots/02.png", "title": "计算历史" }
+]
+```
+
+- 文件放在插件目录的 `screenshots/` 下，`path` 写相对路径，不能用绝对路径或 `..`；
+- 只接受 PNG（按文件头检查，改扩展名不算），每张不超过 1 MB，宽 640–2560、高 400–1600 像素；
+- `title` 是一句话说明，不超过 60 个字符，可以不写；
+- 内容要求：当前版本的真实界面、亮色主题，不含个人信息、真实账号、本机路径或其他隐私数据，示例数据用虚构内容。
+
+截图不打进安装包。发布时随版本上传到 CDN 的 `<作者>/<id>/screenshots/<版本>/` 下，插件目录里写入截图地址、说明与尺寸。换截图属于插件改动，要升版本；`screenshots/` 里没在清单中声明的图片不会发布，也不会进入本仓库。
 
 ## 草稿
 
@@ -151,6 +183,6 @@ PR 合并后由官方发布到插件市场。发布时 CI 会：
 
 1. 从源码编译全部插件；
 2. 逐个扫描、打包成 `<id>-<version>.zip`，计算 SHA-256；
-3. 生成插件目录（草稿不进目录，下架的只保留下架记录），连同安装包一起上传到 CDN。
+3. 生成插件目录（草稿不进目录，下架的只保留下架记录），连同安装包与截图一起上传到 CDN。
 
 任何一个插件编译或扫描失败，整次发布都会中止，线上插件目录保持上一版不变。发布完成后，客户端刷新插件目录即可看到新版本。

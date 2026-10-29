@@ -70,8 +70,10 @@ function sections(view) {
 }
 
 async function openCreateForm(view) {
-  const create = view.tree().props.filterBar.actions.find((a) => a.id === 'create-calendar-event')
-  create.onAction()
+  // 新建只在列表项与动作面板里出现一次（顶部筛选栏不再重复放）
+  const create = view.actions(view.items()[0]).find((a) => a.type === 'Action.Push' && a.props.title === '新建日程事件...')
+  assert.ok(create, '列表项动作面板里应有新建日程事件')
+  host.pushed.push(create.props.target)
   await tick()
   // 与宿主一样按组件工厂挂载被 push 的表单，表单状态才能响应输入
   const last = host.pushed.length - 1
@@ -442,7 +444,7 @@ test('Enter / ⌘Enter 作用于选中日程：会议是「加入 / 复制会议
   assert.equal(gym[1].props.title, '导出此日程为 ICS 文件...')
   for (const list of [meeting, gym]) {
     const titles = list.map((a) => a.props.title)
-    const firstGlobal = titles.indexOf('新建日程事件 (Create Event)...')
+    const firstGlobal = titles.indexOf('新建日程事件...')
     assert.ok(firstGlobal >= 2, '新建不占 Enter / ⌘Enter')
     assert.ok(titles.indexOf('导出当前列表为 ICS 文件...') > firstGlobal)
   }
@@ -481,8 +483,8 @@ test('删除不再占用 ⌘X，改为 ⌘⇧⌫，且必须确认；取消确�
   assert.ok(!view.items().some((i) => i.props.id === 'a'))
   assert.equal(host.lastToast().title, '已删除日程: 周会')
 
-  // 全局栏仅新建和导出，删除只属于列表行，空选择也不留下无效删除按钮。
-  assert.deepEqual(view.tree().props.filterBar.actions.map(a => a.id), ['create-calendar-event', 'export-all-ics'])
+  // 全局栏仅导出，删除只属于列表行，空选择也不留下无效删除按钮。
+  assert.deepEqual(view.tree().props.filterBar.actions.map(a => a.id), ['export-all-ics'], '新建不在顶部重复出现')
   assert.equal(view.tree().props.filterBar.groups, undefined)
   assert.ok(view.actions(view.items()[0]).some(a => a.props.title === '删除此日程...'))
   view.unmount()
@@ -530,7 +532,7 @@ test('[故障注入] 首次读取失败：提示失败，空状态是「读取�
   view.unmount()
 })
 
-test('[故障注入] 已有列表时切换范围读取失败：保留原列表并在状态条说明，⌘R 重新读取', async () => {
+test('[故障注入] 已有列表时切换范围读取失败：保留原列表并在状态条说明，可从动作面板重新读取', async () => {
   const db = [
     { id: 'a', title: '周会', startTime: todayAt(20), endTime: todayAt(21), conferenceUrl: 'https://zoom.us/j/1' },
     { id: 'b', title: '健身', startTime: todayAt(21), endTime: todayAt(22) }
@@ -551,7 +553,7 @@ test('[故障注入] 已有列表时切换范围读取失败：保留原列表�
 
   host.ipc.calendar_list_events = realList
   const reload = view.actions(view.item('a')).find((a) => a.props.title === '重新读取日程')
-  assert.deepEqual(reload.props.shortcut, { modifiers: ['ctrl'], key: 'r' })
+  assert.equal(reload.props.shortcut, undefined, '不占用 ⌘R：macOS 上被客户端“重新加载”菜单键占用')
   await view.run(view.item('a'), '重新读取日程')
   await settle()
   assert.doesNotMatch(view.tree().props.filterBar.summaryText, /读取日程失败/)
@@ -570,4 +572,115 @@ test('fetchCalendarPage：宿主失败或格式不对时抛 LOAD_EVENTS_FAILED�
   )
   // 导出也不回退
   await assert.rejects(() => exportCalendarIcs([{ id: 'a' }], { calendar_export_ics: async () => ({ success: false, error: { message: 'x' } }) }), /EXPORT_ICS_FAILED/)
+})
+
+// ---------------------------------------------------------------------------
+// 重复提交、保存中离开、新建后按当前范围重新读取、夏令时
+// ---------------------------------------------------------------------------
+
+test('[并发] 保存中连按两次只创建一个日程；保存中途离开表单，迟到的结果不再关掉列表页', async () => {
+  const db = installCalendarHost([])
+  const original = host.ipc.calendar_create_event
+  let release
+  host.ipc.calendar_create_event = (p) => new Promise((resolve) => { release = () => resolve(original(p)) })
+  const view = await mount(CalendarCommand)
+  await settle()
+  const form = await openCreateForm(view)
+  await form.fill('title', '只建一次')
+  const first = form.run(undefined, '保存日程')
+  await tick()
+  await form.run(undefined, '保存日程')
+  assert.equal(host.ipcCalls.filter(([m]) => m === 'calendar_create_event').length, 1, '第二次提交被忽略')
+  // 用户按 Esc 离开表单（宿主仍在保存）
+  host.pushed.pop()
+  form.unmount()
+  // 哨兵代表离开后导航栈上的其他页面：插件若在卸载后仍执行 pop 会把它弹掉
+  host.pushed.push('sentinel')
+  release()
+  await first
+  await settle()
+  assert.equal(db.length, 1)
+  assert.deepEqual(host.pushed, ['sentinel'], '离开后不再执行 pop')
+  assert.match(view.text(), /只建一次/, '列表已重新读取')
+  view.unmount()
+})
+
+test('新建后按当前范围重新读取：「即将开始」里不出现三天后的日程，「全部」里出现', async () => {
+  const db = installCalendarHost([])
+  host.ipc.calendar_upcoming_events = async () => db.filter((e) => e.startTime - Date.now() < DAY && e.endTime >= Date.now())
+  const view = await mount(CalendarCommand)
+  await settle()
+  await view.tree().props.searchBarAccessory.props.onChange('upcoming')
+  await settle()
+  const form = await openCreateForm(view)
+  const target = todayAt(10, 0, 3)
+  await form.fill('title', '三天后的评审')
+  await form.fill('date', formatDateKey(target))
+  await form.run(undefined, '保存日程')
+  await settle()
+  assert.equal(db.length, 1)
+  assert.doesNotMatch(view.text(), /三天后的评审/)
+  await view.tree().props.searchBarAccessory.props.onChange('all')
+  await settle()
+  assert.match(view.text(), /三天后的评审/)
+  form.unmount()
+  view.unmount()
+})
+
+test('「下一场」取最早的未结束日程；「历史日程」里不显示下一场', async () => {
+  installCalendarHost([
+    { id: 'ended', title: '早会已结束', startTime: Date.now() - 3 * HOUR, endTime: Date.now() - 2 * HOUR, calendarName: 'Work' },
+    { id: 'plain', title: '普通评审', startTime: Date.now() + HOUR, endTime: Date.now() + 2 * HOUR, calendarName: 'Work' },
+    { id: 'meet', title: '视频周会', startTime: Date.now() + 3 * HOUR, endTime: Date.now() + 4 * HOUR, conferenceUrl: 'https://vc.feishu.cn/j/1', calendarName: 'Work' }
+  ])
+  const view = await mount(CalendarCommand)
+  await settle()
+  const summary = view.tree().props.filterBar.summaryText
+  // 早会可能在昨天（凌晨运行时），只要它没被当成下一场即可
+  assert.match(summary, /下一场: 普通评审/)
+  await view.tree().props.searchBarAccessory.props.onChange('past')
+  await settle()
+  assert.doesNotMatch(view.tree().props.filterBar.summaryText, /下一场/)
+  view.unmount()
+})
+
+test('[边界] 夏令时开始当天被跳过的时刻报错，不悄悄顺延一小时', () => {
+  const previous = process.env.TZ
+  process.env.TZ = 'America/New_York'
+  try {
+    const skipped = parseEventTimes({ date: '2026-03-08', startTime: '02:30', endTime: '04:00' })
+    assert.equal(skipped.ok, false)
+    assert.match(skipped.errors.startTime, /夏令时/)
+    const ok = parseEventTimes({ date: '2026-03-08', startTime: '03:30', endTime: '04:00' })
+    assert.equal(ok.ok, true)
+    assert.equal(ok.endAt - ok.startAt, 30 * 60_000)
+  } finally {
+    if (previous === undefined) delete process.env.TZ
+    else process.env.TZ = previous
+  }
+})
+
+test('[macOS 审查] 新建入口不在顶部筛选栏重复；界面文案不再中英混排', async () => {
+  installCalendarHost([])
+  const view = await mount(CalendarCommand)
+  await settle()
+  assert.ok(!view.tree().props.filterBar.actions.some((a) => a.id === 'create-calendar-event'))
+  const empty = view.item('calendar-empty-create')
+  assert.equal(empty.props.title, '新建日程事件...')
+  const text = view.text()
+  assert.doesNotMatch(text, /\((Create|Join|All Events|Upcoming|Video Meetings|Past Events|My Schedule|Work|Engineering|Personal)/)
+  view.unmount()
+})
+
+test('[macOS 审查][异常] 读取失败时空列表只给重试与新建，新建入口不重复', async () => {
+  installCalendarHost([])
+  host.ipc.calendar_list_events = async () => { throw new Error('database is locked') }
+  const view = await mount(CalendarCommand)
+  await settle()
+  const err = view.item('calendar-load-error')
+  // 测试辅助会把 Action.Push 目标表单里的提交按钮也收进来，这里只看面板本身的动作
+  const titles = view.actions(err).map((a) => a.props.title).filter((t) => t !== '保存日程')
+  assert.deepEqual(titles, ['重新读取日程', '新建日程事件...'])
+  assert.ok(!view.tree().props.filterBar.actions.some((a) => a.id === 'create-calendar-event'))
+  view.unmount()
 })

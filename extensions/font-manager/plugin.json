@@ -1,9 +1,9 @@
 {
   "id": "font-manager",
   "name": "字体管理",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "检索本机已安装字体，输入文字查看真实字形，查看字体文件附带的许可与版权说明。",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

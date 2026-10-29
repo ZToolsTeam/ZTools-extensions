@@ -29,17 +29,26 @@ import {
 import {
   defaultScreenshotsManager,
   ScreenshotsManager,
-  generateScreenshotThumbnailSvg,
   INITIAL_SCREENSHOTS,
+  buildScreenshotDetailMarkdown,
+  fileManagerName,
+  type ScreenshotPreviewState,
   AUTHORIZE_FOLDER_ACTION_TITLE,
   formatScreenshotSize,
-  isOcrSupported
+  isOcrSupported,
+  trashName
 } from "./screenshots-service.js";
 import { isRealElectronHost } from "./native-ipc.js";
 
 export * from "./types.js";
 export * from "./screenshots-service.js";
-export { ScreenshotsManager, defaultScreenshotsManager, generateScreenshotThumbnailSvg, INITIAL_SCREENSHOTS };
+
+/** 与原来「优先取 message、否则转字符串」的结果一致；catch 参数是 unknown，不能直接读 .message */
+function errorText(err: unknown): string {
+  const message = typeof err === "object" && err !== null ? (err as { message?: unknown }).message : undefined;
+  return message ? String(message) : String(err);
+}
+export { ScreenshotsManager, defaultScreenshotsManager, INITIAL_SCREENSHOTS };
 
 function formatTotalSize(items: readonly ScreenshotItem[]): string {
   const knownBytes = items.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0);
@@ -67,33 +76,46 @@ function parentDir(filePath: string): string {
 /**
  * 独立单项详情查看页 (供导航栈或独立路由调用)
  */
-export function ScreenshotDetailView({ item }: { item: ScreenshotItem }) {
+export function ScreenshotDetailView({
+  item,
+  manager = defaultScreenshotsManager
+}: {
+  item: ScreenshotItem;
+  manager?: ScreenshotsManager;
+}) {
   const ocrEnabled = isOcrSupported();
-  const markdown = `![${item.filename}](${item.thumbnailSvg})
+  const [preview, setPreview] = useState<ScreenshotPreviewState>({ status: "loading" });
 
----
-${ocrEnabled && item.ocrText ? `
-### 识别提取文字 (OCR Result)
+  useEffect(() => {
+    let active = true;
+    setPreview({ status: "loading" });
+    manager
+      .loadPreviewDataUrl(item)
+      .then((res) => {
+        if (!active) return;
+        setPreview(res.ok ? { status: "ready", dataUrl: res.dataUrl } : { status: "unavailable", reason: res.reason });
+      })
+      .catch((error) => {
+        if (active) setPreview({ status: "unavailable", reason: error instanceof Error ? error.message : String(error) });
+      });
+    return () => {
+      active = false;
+    };
+  }, [item.id, item.path]);
 
-\`\`\`text
-${item.ocrText}
-\`\`\`
-` : ""}
-- **存储路径**: \`${item.path}\`
-- **分辨率**: **${item.dimensions}**
-- **文件大小**: ${item.formattedSize}${item.sizeBytes === null ? "" : ` (${item.sizeBytes.toLocaleString()} bytes)`}
-- **拍摄时间**: ${item.formattedDate}`;
+  const markdown = buildScreenshotDetailMarkdown(item, preview, ocrEnabled);
 
   return (
     <Detail
       markdown={markdown}
+      isLoading={preview.status === "loading"}
       navigationTitle={`截图详情: ${item.filename}`}
       metadata={
         <Detail.Metadata>
           <Detail.Metadata.Label title="文件名称" text={item.filename} icon={Icon.Image} />
           <Detail.Metadata.Label title="分辨率" text={item.dimensions} icon={Icon.Monitor} />
           <Detail.Metadata.Label title="文件大小" text={item.formattedSize} icon={Icon.HardDrive} />
-          <Detail.Metadata.Label title="拍摄时间" text={item.formattedDate} icon={Icon.Calendar} />
+          <Detail.Metadata.Label title="修改时间" text={item.formattedDate} icon={Icon.Calendar} />
           <Detail.Metadata.TagList title="状态">
             <Detail.Metadata.TagList.Item
               text={item.pinned ? "PINNED (已置顶)" : "NORMAL"}
@@ -107,21 +129,21 @@ ${item.ocrText}
       actions={
         <ActionPanel title={`截图: ${item.filename}`}>
           <Action
-            title="粘贴到活动窗口 (Paste to Active Window)"
+            title="粘贴到活动窗口"
             icon={Icon.Window}
             onAction={async () => {
               await toastResult(await defaultScreenshotsManager.pasteToActiveWindow(item));
             }}
           />
           <Action
-            title="复制图片本身 (Copy Image to Clipboard)"
+            title="复制图片本身"
             icon={Icon.Clipboard}
             onAction={async () => {
               await toastResult(await defaultScreenshotsManager.copyImageToClipboard(item));
             }}
           />
           <Action
-            title="复制图片本地路径 (Copy Image Path)"
+            title="复制图片本地路径"
             icon={Icon.Document}
             onAction={async () => {
               await Clipboard.copy(item.path);
@@ -130,7 +152,7 @@ ${item.ocrText}
           />
           {ocrEnabled ? (
             <Action
-              title="复制提取的文字 (Copy OCR Text)"
+              title="复制提取的文字"
               icon={Icon.Text}
               onAction={async () => {
                 const res = await defaultScreenshotsManager.copyOcrText(item);
@@ -229,8 +251,8 @@ export function ScreenshotsCommand() {
           res.message
         );
       }
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "回贴最新截图失败", err.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "回贴最新截图失败", errorText(err));
     }
   };
 
@@ -248,8 +270,8 @@ export function ScreenshotsCommand() {
       const text = await defaultScreenshotsManager.extractOcr(item);
       await Clipboard.copy(text);
       await showToast(Toast.Style.Success, `已复制 OCR 文字 (${text.length} 字符)`);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "提取 OCR 文字失败", err.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "提取 OCR 文字失败", errorText(err));
     }
   };
 
@@ -279,13 +301,18 @@ export function ScreenshotsCommand() {
       await showToast(Toast.Style.Failure, "没有可清理的截图", "请先在当前列表中勾选未置顶的截图");
       return;
     }
+    // 本次立即截取的文件在缓存目录，删除后不进废纸篓 / 回收站，确认框里要说清楚
+    const captureCount = targets.filter((t) => t.source === "capture").length;
     const confirmed = await confirmAlert({
-      title: `将 ${targets.length} 张截图移入废纸篓？`,
-      message: `仅清理当前列表中可见、已勾选且未置顶的截图：\n${targets
+      title: `清理 ${targets.length} 张截图？`,
+      message: `仅清理当前列表中可见、已勾选且未置顶的截图；扫描到的截图移入${trashName()}${
+        captureCount ? `，其中 ${captureCount} 张本次立即截取的截图会直接删除、无法恢复` : ""
+      }：\n${targets
         .slice(0, 5)
         .map((t) => t.filename)
         .join("\n")}${targets.length > 5 ? `\n… 等 ${targets.length} 张` : ""}`,
-      primaryAction: { title: "移入废纸篓", style: "destructive" }
+      primaryAction: { title: "清理", style: "destructive" },
+      dismissAction: { title: "取消" }
     });
     if (!confirmed) return;
 
@@ -315,65 +342,70 @@ export function ScreenshotsCommand() {
       const res = await defaultScreenshotsManager.togglePinScreenshot(item);
       reloadScreenshots();
       await toastResult(res);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "置顶操作失败", err.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "置顶操作失败", errorText(err));
     }
   };
 
   const renderActionPanel = (item: ScreenshotItem) => (
     <ActionPanel title={`截图: ${item.filename}`}>
       <Action
-        title="粘贴到活动窗口 (Paste Image to Active Window)"
+        title="粘贴到活动窗口"
         icon={Icon.Window}
-        shortcut={{ modifiers: ["cmd"], key: "enter" }}
         onAction={() => handlePasteToActive(item)}
       />
       <Action
-        title="复制图片本身 (Copy Image to Clipboard)"
+        title="复制图片本身"
         icon={Icon.Clipboard}
         shortcut={{ modifiers: ["cmd"], key: "c" }}
         onAction={() => handleCopyImage(item)}
       />
       <Action
-        title="复制图片本地路径 (Copy Image Path)"
+        title="复制图片本地路径"
         icon={Icon.Document}
         shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
         onAction={() => handleCopyPath(item)}
       />
       {ocrEnabled ? (
         <Action
-          title="复制提取的文字 (Copy Recognized Text)"
+          title="复制提取的文字"
           icon={Icon.Text}
           shortcut={{ modifiers: ["cmd", "alt"], key: "c" }}
           onAction={() => handleCopyOcr(item)}
         />
       ) : null}
+      <Action.Push
+        title="查看截图预览"
+        icon={Icon.Eye}
+        shortcut={{ modifiers: ["cmd"], key: "y" }}
+        target={<ScreenshotDetailView item={item} />}
+      />
       <Action
-        title="在资源管理器中定位 (Show in Explorer)"
+        title={`在${fileManagerName(item.path)}中显示`}
         icon={Icon.Folder}
         shortcut={{ modifiers: ["cmd"], key: "o" }}
         onAction={() => handleShowInExplorer(item)}
       />
       <Action
-        title="用默认图片查看器打开 (Open with Default App)"
+        title="用默认图片查看器打开"
         icon={Icon.ArrowRight}
         shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
         onAction={() => handleOpenWithDefault(item)}
       />
       <Action
-        title="立即截取全部屏幕 (Capture Screen Now)"
+        title="立即截取全部屏幕"
         icon={Icon.Camera}
         shortcut={{ modifiers: ["ctrl", "shift"], key: "s" }}
         onAction={handleCaptureScreenNow}
       />
       <Action
-        title={item.pinned ? "取消置顶 (Unpin Screenshot)" : "置顶此截图 (Pin Screenshot)"}
+        title={item.pinned ? "取消置顶" : "置顶此截图"}
         icon={Icon.Pin}
         shortcut={{ modifiers: ["cmd"], key: "p" }}
         onAction={() => handleTogglePin(item)}
       />
       <Action
-        title="回贴最新一张截图 (Paste Latest)"
+        title="回贴最新一张截图"
         icon={Icon.Clock}
         shortcut={{ modifiers: ["cmd", "shift"], key: "v" }}
         onAction={handlePasteLatest}
@@ -384,12 +416,12 @@ export function ScreenshotsCommand() {
         onAction={() => handleAuthorizeFolder(item)}
       />
       <Action
-        title={`批量清理已勾选截图 (${batchTargets.length}项)`}
+        title={`批量清理已勾选截图（${batchTargets.length} 项）`}
         icon={Icon.Trash}
         onAction={handleBatchDeleteChecked}
       />
       <Action
-        title="删除此截图 (Delete Screenshot)"
+        title="删除此截图"
         icon={Icon.Trash}
         shortcut={{ modifiers: ["ctrl"], key: "x" }}
         onAction={() => handleDelete(item)}
@@ -397,10 +429,8 @@ export function ScreenshotsCommand() {
     </ActionPanel>
   );
 
-  const pinnedCount = items.filter((s) => s.pinned).length;
   const visiblePinnedCount = filtered.filter((s) => s.pinned).length;
   const visibleSize = formatTotalSize(filtered);
-  const latestDimensions = items[0]?.dimensions || "无截图";
   const maxShotBytes = filtered.reduce((max, item) => Math.max(max, item.sizeBytes ?? 0), 1);
 
   const rightQueueItems = filtered.map((item) => {
@@ -414,7 +444,7 @@ export function ScreenshotsCommand() {
     return List.Item({
       id: item.id,
       title: item.filename,
-      subtitle: `${item.dimensions} · ${item.formattedDate} · ${ocrEnabled && item.ocrText ? item.ocrText.slice(0, 42).replace(/\s+/g, " ") : item.path}`,
+      subtitle: `${item.formattedDate} · ${ocrEnabled && item.ocrText ? item.ocrText.slice(0, 42).replace(/\s+/g, " ") : item.path}`,
       checkable: true,
       checked: isChecked,
       onCheckChange: (c) => {
@@ -447,7 +477,7 @@ export function ScreenshotsCommand() {
       onSearchTextChange={setSearchText}
       onSelectionChange={setSelectedId}
       filterBar={{
-        summaryText: scanError ? `截图列表不可用或已过期：${scanError}` : `截图队列共 ${filtered.length} 张 (${visibleSize}) · 已置顶 ${visiblePinnedCount} 张`,
+        summaryText: scanError ? `截图列表不可用或已过期：${scanError}` : `截图队列共 ${filtered.length} 张（${visibleSize}） · 已置顶 ${visiblePinnedCount} 张`,
         actions: [
           {
             id: "paste-latest",
@@ -488,30 +518,19 @@ export function ScreenshotsCommand() {
             id: "wb-capture-scope",
             label: "截取范围",
             type: "info",
-            value: "全部显示器（截取前自动隐藏 ZTools 窗口）"
+            value: "全部显示器"
           },
           {
             id: "wb-save-dir",
-            label: "截取文件保存位置",
+            label: "保存位置",
             type: "info",
-            value: "ZTools 缓存目录 (PNG，本次运行内保留在列表中)"
+            value: "ZTools 缓存目录"
           }
-        ],
-        previewCard: {
-          title: "截图库概览",
-          badge: "PNG",
-          subtitle: `已选 ${visibleCheckedCount}/${filtered.length} 张 · 可清理 ${batchTargets.length} 张`,
-          metrics: [
-            { label: "本机截图总数", value: `${items.length} 张` },
-            { label: "收藏置顶数", value: `${pinnedCount} 张` },
-            { label: "总占用空间", value: formatTotalSize(items) },
-            { label: "最新截图尺寸", value: latestDimensions }
-          ]
-        }
+        ]
       }}
       subList={{
-        title: "本机截图历史与回贴队列 (按拍摄时间排序，按 ↵ 回贴到活动窗口)",
-        subtitle: `${filtered.length} 张截图 · 已选 ${visibleCheckedCount} 项 · 总计 ${visibleSize}`,
+        title: "截图历史（按修改时间排序）",
+        subtitle: `已选 ${visibleCheckedCount} 项`,
         checkable: filtered.length > 0,
         checked:
           filtered.length > 0 && filtered.every((s) => checkedIds.includes(s.id))
@@ -532,12 +551,12 @@ export function ScreenshotsCommand() {
       actions={
         <ActionPanel title="屏幕截图全局操作">
           <Action
-            title="立即截取全部屏幕 (Capture Screen Now)"
+            title="立即截取全部屏幕"
             icon={Icon.Camera}
             onAction={handleCaptureScreenNow}
           />
           <Action
-            title="重新扫描截图目录 (Refresh Screenshots)"
+            title="重新扫描截图目录"
             icon={Icon.Repeat}
             onAction={() => reloadScreenshots(true)}
           />
@@ -554,10 +573,10 @@ export function ScreenshotsCommand() {
           value={category}
           onChange={(val) => setCategory(val as ScreenshotCategory)}
         >
-          <List.Dropdown.Item title="全部截图 (All Screenshots)" value="all" />
-          <List.Dropdown.Item title="已置顶截图 (Pinned)" value="pinned" />
-          <List.Dropdown.Item title="1小时内拍摄 (Recent)" value="recent" />
-          {ocrEnabled ? <List.Dropdown.Item title="包含提取文字 (With OCR Text)" value="ocr" /> : null}
+          <List.Dropdown.Item title="全部截图" value="all" />
+          <List.Dropdown.Item title="已置顶截图" value="pinned" />
+          <List.Dropdown.Item title="1小时内拍摄" value="recent" />
+          {ocrEnabled ? <List.Dropdown.Item title="包含提取文字" value="ocr" /> : null}
         </List.Dropdown>
       }
     >
@@ -576,13 +595,13 @@ export function ScreenshotsCommand() {
             detail={
               isRealHost ? undefined : (
                 <List.Item.Detail
-                  markdown={`![${item.filename}](${item.thumbnailSvg})\n\n---\n\n### OCR 文字提取识别 (Text Recognition)\n\n\`\`\`text\n${item.ocrText}\n\`\`\``}
+                  markdown={ocrEnabled && item.ocrText ? `### OCR 文字提取识别\n\n\`\`\`text\n${item.ocrText}\n\`\`\`` : ""}
                   metadata={
                     <List.Item.Detail.Metadata>
                       <List.Item.Detail.Metadata.Label title="文件名称" text={item.filename} icon={Icon.Image} />
                       <List.Item.Detail.Metadata.Label title="分辨率" text={item.dimensions} icon={Icon.Monitor} />
                       <List.Item.Detail.Metadata.Label title="文件大小" text={item.formattedSize} icon={Icon.HardDrive} />
-                      <List.Item.Detail.Metadata.Label title="拍摄时间" text={item.formattedDate} icon={Icon.Calendar} />
+                      <List.Item.Detail.Metadata.Label title="修改时间" text={item.formattedDate} icon={Icon.Calendar} />
                       <List.Item.Detail.Metadata.TagList title="状态">
                         <List.Item.Detail.Metadata.TagList.Item
                           text={item.pinned ? "PINNED (已置顶)" : "NORMAL"}

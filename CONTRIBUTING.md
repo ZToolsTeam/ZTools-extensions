@@ -5,6 +5,7 @@
 ## 提交前检查清单
 
 - [ ] 插件放在 `extensions/<id>/`，目录名与 `plugin.json` 的 `id` 一致，ID 不与已有插件重复。
+- [ ] `author` 按[作者署名](docs/publishing.md#作者署名)填写：社区新插件推荐 GitHub 用户名，不加 `ZTools Community`；参与已有插件保留原署名。
 - [ ] 提交了 `src/`、清单、图标和测试；没有提交 `dist/`、本机路径、凭据或构建缓存。
 - [ ] 界面只用 `@ztools/declarative-ui` 组件，按 [界面规范](docs/ui-guidelines.md) 做完「提交前自检」6 条。
 - [ ] 只声明用到的权限，并在 PR 里说明每个权限的用途（[权限说明](docs/api.md#权限)）。

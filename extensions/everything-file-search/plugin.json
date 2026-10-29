@@ -1,9 +1,9 @@
 {
   "id": "everything-file-search",
   "name": "文件秒搜",
-  "version": "2.0.9",
+  "version": "2.0.13",
   "description": "按文件名或扩展名搜索本机文件和文件夹，可打开、定位、预览、复制路径或移入回收站",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "keywords": [

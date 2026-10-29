@@ -19,7 +19,7 @@ import {
   NOT_IN_CLIENT_MESSAGE,
   supportsSystemQuickLook,
   sortAndFilterFiles,
-  searchLocalFiles,
+  searchLocalFilesDetailed,
   getFileQuickLook,
   calculateFileSha256,
   openFile,
@@ -29,6 +29,14 @@ import {
   quickLookFile
 } from "./search-service.js";
 import { isRealElectronHost } from "./native-ipc.js";
+
+/** 文件管理器与回收站的系统叫法：macOS 为「访达」「废纸篓」，Windows 为「资源管理器」「回收站」 */
+const platformNames = () => supportsSystemQuickLook()
+  ? { manager: "访达", trash: "废纸篓" }
+  : { manager: "资源管理器", trash: "回收站" };
+
+/** 预览页自动计算 SHA-256 的体积上限；更大的文件按需在列表动作里计算，不在打开预览时读完整个大文件 */
+const AUTO_SHA256_MAX_BYTES = 64 * 1024 * 1024;
 
 /** 输入停顿多久后才发起检索；同时用递增序号只采用最新一次检索的结果 */
 export const SEARCH_DEBOUNCE_MS = 150;
@@ -54,11 +62,25 @@ export function FileQuickLookDetailView({
   const [quickLook, setQuickLook] = useState<FileQuickLookResult | null>(initialQuickLook || null);
   const [sha256, setSha256] = useState<string>("");
 
+  const [sha256Note, setSha256Note] = useState<string>("");
+
   React.useEffect(() => {
+    let alive = true;
     if (!initialQuickLook) {
-      void getFileQuickLook(file).then(setQuickLook);
+      void getFileQuickLook(file).then((value) => { if (alive) setQuickLook(value); });
     }
-    void calculateFileSha256(file.path).then(setSha256).catch(() => setSha256(""));
+    // 文件夹没有哈希；大文件不在打开预览时自动读完整个文件
+    if (file.isDir) {
+      setSha256Note("");
+    } else if (file.size > AUTO_SHA256_MAX_BYTES) {
+      setSha256Note("文件较大，可在列表动作里按需计算");
+    } else {
+      void calculateFileSha256(file.path).then(
+        (hash) => { if (alive) { setSha256(hash); setSha256Note(""); } },
+        (err) => { if (alive) { setSha256(""); setSha256Note(`未能计算：${err instanceof Error ? err.message : String(err)}`); } }
+      );
+    }
+    return () => { alive = false; };
   }, [file.path]);
 
   const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -130,10 +152,10 @@ export function FileQuickLookDetailView({
               icon={Icon.List}
             />
           )}
-          {sha256 ? (
+          {sha256 || sha256Note ? (
             <Detail.Metadata.Label
               title="SHA-256"
-              text={`${sha256.slice(0, 16)}...`}
+              text={sha256 ? `${sha256.slice(0, 16)}...` : sha256Note}
               icon={Icon.Lock}
             />
           ) : null}
@@ -152,7 +174,7 @@ export function FileQuickLookDetailView({
             onAction={async () => toastResult(await openFile(file.path))}
           />
           <Action
-            title="在 Finder / 资源管理器中定位 (Show in Finder)"
+            title={`在${platformNames().manager}中定位`}
             icon={Icon.Folder}
             shortcut={{ modifiers: ["ctrl"], key: "enter" }}
             onAction={async () => toastResult(await revealFile(file.path))}
@@ -200,6 +222,8 @@ export default function EverythingFileSearchCommand() {
   const [allFiles, setAllFiles] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(() => isRealElectronHost());
   const [searchError, setSearchError] = useState(() => (isRealElectronHost() ? "" : NOT_IN_CLIENT_MESSAGE));
+  // 宿主报告搜索范围受限（全盘索引不可用 / Spotlight 失败）时的真实说明
+  const [scopeNotice, setScopeNotice] = useState("");
   // 每次检索递增；慢的旧请求晚返回时序号已过期，结果直接丢弃，不能覆盖新关键词的结果
   const searchSeqRef = useRef(0);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -211,14 +235,18 @@ export default function EverythingFileSearchCommand() {
     debounceTimerRef.current = setTimeout(async () => {
       debounceTimerRef.current = null;
       let results: FileRecord[] = [];
+      let notice = "";
       let failure = "";
       try {
-        results = await searchLocalFiles(text, 50);
+        const outcome = await searchLocalFilesDetailed(text, 50);
+        results = outcome.files;
+        notice = outcome.scopeNotice;
       } catch (err) {
         failure = err instanceof Error ? err.message : String(err);
       }
       if (seq !== searchSeqRef.current) return;
       setSearchError(failure);
+      setScopeNotice(notice);
       setAllFiles(results);
       setIsLoading(false);
     }, delayMs);
@@ -247,9 +275,9 @@ export default function EverythingFileSearchCommand() {
 
   const handleMoveToTrash = async (file: FileRecord) => {
     const confirmed = await confirmAlert({
-      title: `将「${file.name}」移入废纸篓 / 回收站？`,
+      title: `将「${file.name}」移入${platformNames().trash}？`,
       message: file.path,
-      primaryAction: { title: "移入废纸篓", style: "destructive" },
+      primaryAction: { title: `移入${platformNames().trash}`, style: "destructive" },
       dismissAction: { title: "取消" }
     });
     if (!confirmed) return;
@@ -267,8 +295,9 @@ export default function EverythingFileSearchCommand() {
       const hash = await calculateFileSha256(file.path);
       await Clipboard.copy(hash);
       await showToast(Toast.Style.Success, `已复制 SHA-256: ${hash.slice(0, 16)}...`);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, `计算 SHA-256 失败: ${err.message || String(err)}`);
+    } catch (err: unknown) {
+      const message = typeof err === "object" && err !== null ? (err as { message?: unknown }).message : undefined;
+      await showToast(Toast.Style.Failure, `计算 SHA-256 失败: ${message ? String(message) : String(err)}`);
     }
   };
 
@@ -279,7 +308,9 @@ export default function EverythingFileSearchCommand() {
       searchBarPlaceholder="搜索文件名或扩展名..."
       onSearchTextChange={handleSearchTextChange}
       filterBar={{
-        summaryText: searchError ? `搜索失败：${searchError}` : `当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
+        summaryText: searchError
+          ? `搜索失败：${searchError}`
+          : `${scopeNotice ? `${scopeNotice} · ` : ""}当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
       }}
       searchBarAccessory={
         <List.Dropdown
@@ -293,14 +324,14 @@ export default function EverythingFileSearchCommand() {
           }}
         >
           <List.Dropdown.Section title="类型筛选">
-            <List.Dropdown.Item title="全部文件与文件夹 (All)" value="type:all" />
-            <List.Dropdown.Item title="文档与表格 (Documents)" value="type:document" />
-            <List.Dropdown.Item title="图片与照片 (Images)" value="type:image" />
-            <List.Dropdown.Item title="视频与影片 (Videos)" value="type:video" />
-            <List.Dropdown.Item title="音频与音乐 (Audio)" value="type:audio" />
-            <List.Dropdown.Item title="压缩文件 (Archives)" value="type:archive" />
-            <List.Dropdown.Item title="源代码与配置 (Code)" value="type:code" />
-            <List.Dropdown.Item title="文件夹目录 (Folders)" value="type:folder" />
+            <List.Dropdown.Item title="全部文件与文件夹" value="type:all" />
+            <List.Dropdown.Item title="文档与表格" value="type:document" />
+            <List.Dropdown.Item title="图片与照片" value="type:image" />
+            <List.Dropdown.Item title="视频与影片" value="type:video" />
+            <List.Dropdown.Item title="音频与音乐" value="type:audio" />
+            <List.Dropdown.Item title="压缩文件" value="type:archive" />
+            <List.Dropdown.Item title="源代码与配置" value="type:code" />
+            <List.Dropdown.Item title="文件夹目录" value="type:folder" />
           </List.Dropdown.Section>
           <List.Dropdown.Section title="排序方式">
             <List.Dropdown.Item title="按名称升序 (A-Z)" value="sort:name-asc" />
@@ -348,7 +379,7 @@ export default function EverythingFileSearchCommand() {
                     onAction={async () => toastResult(await openFile(file.path))}
                   />
                   <Action
-                    title="在 Finder / 资源管理器中定位 (Show in Finder)"
+                    title={`在${platformNames().manager}中定位`}
                     icon={Icon.Folder}
                     shortcut={{ modifiers: ["ctrl"], key: "enter" }}
                     onAction={async () => toastResult(await revealFile(file.path))}
@@ -370,7 +401,7 @@ export default function EverythingFileSearchCommand() {
                   />
                 </ActionPanel.Section>
 
-                <ActionPanel.Section title="快捷复制 (Clipboard)">
+                <ActionPanel.Section title="快捷复制">
                   <Action.CopyToClipboard
                     title="复制文件绝对路径"
                     content={file.path}
@@ -397,9 +428,9 @@ export default function EverythingFileSearchCommand() {
 
                 {/* 宿主不允许回收文件夹（误删整个目录后果太大），文件夹结果不提供该动作 */}
                 {isDir ? null : (
-                  <ActionPanel.Section title="文件治理 (Operations)">
+                  <ActionPanel.Section title="文件治理">
                     <Action
-                      title="移入回收站 (Move to Trash)"
+                      title={`移入${platformNames().trash}`}
                       icon={Icon.Trash}
                       style="destructive"
                       shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}

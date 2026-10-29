@@ -63,13 +63,13 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
         setPeriod(String(parsed.period));
         setAlgorithm(parsed.algorithm);
         showToast(Toast.Style.Success, "成功解析 otpauth:// 链接配置");
-      } catch (err: any) {
-        setSecretError(err?.message || String(err));
+      } catch (err) {
+        setSecretError(errorText(err));
       }
     }
   };
 
-  const handleSubmit = async (values: Record<string, any>) => {
+  const handleSubmit = async (values: Record<string, string | undefined>) => {
     const accountName = values.name || name;
     const accountIssuer = values.issuer || issuer;
     let accountSecret = values.secret || secret;
@@ -107,10 +107,10 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
       if (!(await onCreated(newAccount))) return;
       await showToast(Toast.Style.Success, `已成功添加账号 ${newAccount.name}`);
       pop();
-    } catch (err: any) {
+    } catch (err) {
       // 账号名称已在上面校验，这里的错误都来自密钥或链接
-      setSecretError(err.message);
-      await showToast(Toast.Style.Failure, "添加失败", err.message);
+      setSecretError(errorText(err));
+      await showToast(Toast.Style.Failure, "添加失败", errorText(err));
     }
   };
 
@@ -166,6 +166,8 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
         },
         [
           Form.Dropdown.Item({ title: "6 位口令 (标准推荐)", value: "6" }),
+          // 链接里给出的非常用值（如 7 位）也要能选中，否则下拉框会显示成别的值
+          ...(digits !== "6" && digits !== "8" ? [Form.Dropdown.Item({ title: `${digits} 位口令（来自链接）`, value: digits })] : []),
           Form.Dropdown.Item({ title: "8 位口令", value: "8" })
         ]
       ),
@@ -178,7 +180,8 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
         },
         [
           Form.Dropdown.Item({ title: "30 秒 (标准 RFC 6238)", value: "30" }),
-          Form.Dropdown.Item({ title: "60 秒", value: "60" })
+          Form.Dropdown.Item({ title: "60 秒", value: "60" }),
+          ...(period !== "30" && period !== "60" ? [Form.Dropdown.Item({ title: `${period} 秒（来自链接）`, value: period })] : [])
         ]
       ),
       Form.Dropdown(
@@ -455,8 +458,8 @@ export default function GoogleAuthCommand() {
       allowDamagedSnapshot.current = false;
       setAccounts(next);
       return true;
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "保存失败", err?.message || String(err));
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "保存失败", errorText(err));
       return false;
     }
   };
@@ -472,6 +475,53 @@ export default function GoogleAuthCommand() {
 
   const handleReload = () => setReloadSeq((n) => n + 1);
 
+  // 从剪贴板读取 otpauth:// 链接直接保存，省去打开表单再粘贴的一步；剪贴板里不是链接或解析失败时如实提示，不写入
+  const handleImportFromClipboard = async () => {
+    if (!(await ensureWritable())) return;
+    let text: string;
+    try {
+      text = String((await Clipboard.readText()) ?? "").trim();
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "读取剪贴板失败", errorText(err));
+      return;
+    }
+    if (!text.toLowerCase().startsWith("otpauth://")) {
+      await showToast(Toast.Style.Failure, "剪贴板里没有 otpauth:// 链接", "请先复制二维码里的 otpauth:// 链接，或改用手动添加");
+      return;
+    }
+    let account: AuthAccount;
+    try {
+      const parsed = parseOTPAuthURL(text);
+      account = createAccount({
+        name: parsed.name,
+        issuer: parsed.issuer,
+        secret: parsed.secret,
+        digits: parsed.digits,
+        period: parsed.period,
+        algorithm: parsed.algorithm
+      });
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "无法解析剪贴板里的链接", errorText(err));
+      return;
+    }
+    if (await persist(current => [account, ...current])) {
+      await showToast(Toast.Style.Success, `已添加账号 ${account.name}`);
+    }
+  };
+
+  const addAction = () =>
+    Action({
+      title: "添加 2FA 账号",
+      icon: Icon.Plus,
+      onAction: handleOpenAddForm
+    });
+  const importAction = () =>
+    Action({
+      title: "从剪贴板导入 otpauth 链接",
+      icon: Icon.CopyClipboard,
+      onAction: handleImportFromClipboard
+    });
+
   const handleDeleteAccount = async (id: string, name: string) => {
     if (!(await ensureWritable())) return;
     const confirmed = await confirmAlert({
@@ -486,9 +536,40 @@ export default function GoogleAuthCommand() {
     }
   };
 
-  const handleCopyCode = async (code: string, name: string) => {
-    await Clipboard.copy(code);
-    await showToast(Toast.Style.Success, `已复制 ${name} 动态口令: ${code}`);
+  // 复制时按当下时间重新计算，避免在刷新边界复制到刚过期的口令
+  const handleCopyCode = async (account: AuthAccount) => {
+    let code: string;
+    try {
+      code = generateTOTP(account.secret, { period: account.period, digits: account.digits, algorithm: account.algorithm });
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "无法生成口令", errorText(err));
+      return;
+    }
+    try {
+      await Clipboard.copy(code);
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "复制失败", errorText(err));
+      return;
+    }
+    await showToast(Toast.Style.Success, `已复制 ${account.name} 的动态口令`, `${getRemainingSeconds(account.period)} 秒后刷新`);
+  };
+
+  // 密钥一旦进入剪贴板，可能被剪贴板历史或其他程序记录，复制前确认
+  const handleCopySecret = async (account: AuthAccount) => {
+    const confirmed = await confirmAlert({
+      title: `复制「${account.name}」的密钥？`,
+      message: "拿到密钥就能生成这个账号的全部口令。密钥会以明文进入剪贴板，可能被剪贴板历史记录，用完请清空剪贴板。",
+      primaryAction: { title: "复制密钥" },
+      dismissAction: { title: "取消" }
+    });
+    if (!confirmed) return;
+    try {
+      await Clipboard.copy(account.secret);
+    } catch (err) {
+      await showToast(Toast.Style.Failure, "复制失败", errorText(err));
+      return;
+    }
+    await showToast(Toast.Style.Success, "已复制密钥", "用完请清空剪贴板");
   };
 
   const reloadAction = () =>
@@ -545,15 +626,9 @@ export default function GoogleAuthCommand() {
     return List.Item({
       id: "empty-auth",
       title: accounts.length === 0 ? "还没有 2FA 账号" : "未找到匹配的 2FA 账号",
-      subtitle: accounts.length === 0 ? "按回车添加第一个账号，可直接粘贴 otpauth:// 链接" : "换个关键词，或按回车添加新账号",
+      subtitle: accounts.length === 0 ? "按回车添加第一个账号，或从剪贴板导入 otpauth:// 链接" : "换个关键词，或按回车添加新账号",
       icon: Icon.Document,
-      actions: ActionPanel({ title: "操作" }, [
-        Action({
-          title: "立即添加 2FA 账号",
-          icon: Icon.Plus,
-          onAction: handleOpenAddForm
-        })
-      ])
+      actions: ActionPanel({ title: "操作" }, [addAction(), importAction()])
     });
   };
 
@@ -564,11 +639,8 @@ export default function GoogleAuthCommand() {
       searchText: searchQuery,
       onSearchTextChange: (val) => setSearchQuery(val),
       actions: ActionPanel({ title: "全局操作" }, [
-        Action({
-          title: "添加 2FA 账号",
-          icon: Icon.Plus,
-          onAction: handleOpenAddForm
-        }),
+        addAction(),
+        importAction(),
         Action({
           title: "手动刷新口令",
           icon: Icon.Repeat,
@@ -592,8 +664,8 @@ export default function GoogleAuthCommand() {
                   digits: account.digits,
                   algorithm: account.algorithm
                 });
-              } catch (err: any) {
-                tokenError = err?.message || "密钥无效";
+              } catch (err) {
+                tokenError = errorText(err) || "密钥无效";
               }
               const displayToken = tokenError ? "密钥无效" : formatToken(token);
 
@@ -611,25 +683,25 @@ export default function GoogleAuthCommand() {
                   }
                 ],
                 actions: ActionPanel({ title: `${account.name} 动作` }, [
-                  Action.CopyToClipboard({
-                    title: `复制动态口令 (${token})`,
-                    content: token,
-                    icon: Icon.CopyClipboard
-                  }),
-                  Action({
-                    title: "一键复制并提示",
-                    icon: Icon.CopyClipboard,
-                    onAction: () => handleCopyCode(token, account.name)
-                  }),
-                  Action.CopyToClipboard({
-                    title: "复制 Base32 密钥",
-                    content: account.secret,
-                    icon: Icon.Key
-                  }),
+                  // 密钥无效时没有口令可复制，不提供复制动作，避免复制空内容还提示成功
+                  ...(tokenError
+                    ? []
+                    : [
+                        Action({
+                          title: "复制动态口令",
+                          icon: Icon.CopyClipboard,
+                          onAction: () => handleCopyCode(account)
+                        })
+                      ]),
                   Action({
                     title: "添加新账号",
                     icon: Icon.Plus,
                     onAction: handleOpenAddForm
+                  }),
+                  Action({
+                    title: "复制 Base32 密钥",
+                    icon: Icon.Key,
+                    onAction: () => handleCopySecret(account)
                   }),
                   Action({
                     title: "删除该账号",

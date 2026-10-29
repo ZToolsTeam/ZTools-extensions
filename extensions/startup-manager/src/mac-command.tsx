@@ -11,7 +11,7 @@ export default function MacStartupCommand({ featureCode }: { featureCode?: strin
     if (alive.current && !cancelled.current) setReport(data)
   }
   const perform = async (action = 'scan', fields: Record<string, unknown> = {}) => {
-    if (occupied.current) return
+    if (occupied.current) { await showToast({ style: Toast.Style.Failure, title: '上一项启动管理操作尚未结束', message: '请等待完成，或在状态栏点“停止操作”' }); return }
     occupied.current = true; cancelled.current = false; setBusy(true); setError('')
     if (action === 'scan') setReport(null)
     try {
@@ -26,7 +26,14 @@ export default function MacStartupCommand({ featureCode }: { featureCode?: strin
       }
       if (alive.current && !cancelled.current) await load()
     } catch (e) {
-      if (alive.current && !cancelled.current) { setReport(null); setError(e instanceof Error ? e.message : String(e)) }
+      const message = e instanceof Error ? e.message : String(e)
+      if (!alive.current || cancelled.current) return
+      if (action === 'scan' || action === 'settings') { if (action === 'scan') setReport(null); setError(message); return }
+      // 修改失败后系统状态可能已部分变化：如实提示失败，并重新读取列表，避免继续显示旧状态
+      setError(message)
+      await showToast({ style: Toast.Style.Failure, title: action === 'remove' ? '清理失效配置未确认' : action === 'restore' ? '恢复未完成' : '修改自启状态未确认', message })
+      try { if (alive.current && !cancelled.current) await load() }
+      catch (reloadError) { if (alive.current && !cancelled.current) { setReport(null); setError(`${message}；重新扫描也失败：${reloadError instanceof Error ? reloadError.message : String(reloadError)}`) } }
     } finally { pending.current = null; occupied.current = false; if (alive.current) setBusy(false) }
   }
   const stop = async () => {
@@ -53,12 +60,12 @@ export default function MacStartupCommand({ featureCode }: { featureCode?: strin
       <List.Dropdown.Item value="all" title="全部配置" /><List.Dropdown.Item value="user" title="当前用户" /><List.Dropdown.Item value="service" title="系统服务" />
       <List.Dropdown.Item value="task" title="计划任务" /><List.Dropdown.Item value="disabled" title="已禁用" /><List.Dropdown.Item value="broken" title="程序已丢失" /><List.Dropdown.Item value="backups" title="恢复记录" />
     </List.Dropdown>}
-    filterBar={{ summaryText: error || (busy ? '正在处理启动配置' : filter === 'backups' ? `${backups.length} 条恢复记录` : `${rows.length} 个启动配置 · 自启允许状态与当前运行状态分开显示`), actions: [
+    filterBar={{ summaryText: error || (busy ? '正在处理启动配置' : filter === 'backups' ? `${backups.length} 条恢复记录` : `${rows.length} 个 launchd 启动配置 · App 登录项在“系统设置 > 通用 > 登录项与扩展”中管理`), actions: [
       { id: 'scan', title: busy ? '停止操作' : '重新扫描', onAction: () => busy ? stop() : perform() },
       { id: 'settings', title: '系统登录项设置', onAction: () => perform('settings') }
     ] }}>
     {filter !== 'backups' && rows.map(item => <List.Item key={item.id} id={item.id} title={item.label} subtitle={item.program} icon={Icon.Gear}
-      accessories={[{ tag: item.enabled ? '允许自启' : '禁止自启' }, { text: item.running ? `运行中${item.pid ? ` · ${item.pid}` : ''}` : item.loaded ? '已加载' : '未加载' },
+      accessories={[{ tag: item.enabled ? '允许自启' : '禁止自启' }, { text: item.running ? `运行中${item.pid ? ` · PID ${item.pid}` : ''}` : item.loaded ? '已加载' : '未加载' },
         ...(item.scheduled ? [{ tag: '计划任务' }] : []), ...(item.requiresAdmin ? [{ tag: '系统权限' }] : []), ...(item.programState === 'missing' ? [{ tag: '程序丢失' }] : [])]}
       actions={<ActionPanel>
         <Action title={item.blockedReason ? '查看限制原因' : item.enabled ? '禁止后续自启' : '允许自启'} onAction={async () => {
@@ -72,7 +79,10 @@ export default function MacStartupCommand({ featureCode }: { featureCode?: strin
       </ActionPanel>} />)}
     {filter === 'backups' && backups.map(backup => <List.Item key={backup.id} id={backup.id} title={backup.label} subtitle={`${new Date(backup.createdAt).toLocaleString()} · ${backup.kind === 'remove' ? '失效配置清理' : `${backup.beforeEnabled ? '允许' : '禁止'} → ${backup.afterEnabled ? '允许' : '禁止'}`}`}
       actions={<ActionPanel><Action title={backup.kind === 'remove' ? '恢复启动配置' : `恢复为${backup.beforeEnabled ? '允许' : '禁止'}自启`} onAction={() => perform('restore', { id: backup.id })} /></ActionPanel>} />)}
-    {!busy && (filter === 'backups' ? !backups.length : !rows.length) && <List.Item id="empty" title={error || '没有匹配的启动配置'} subtitle="读取传统 LaunchAgents / LaunchDaemons；App 管理的登录项可在系统设置中查看" />}
-    {report?.warnings.map((warning, index) => <List.Item key={index} id={`warning-${index}`} title="部分配置读取失败" subtitle={warning} />)}
+    {!busy && (filter === 'backups' ? !backups.length : !rows.length) && <List.Item id="empty" title={error || (filter === 'backups' ? '没有恢复记录' : '没有匹配的启动配置')}
+      subtitle="只读取 ~/Library/LaunchAgents、/Library/LaunchAgents 与 /Library/LaunchDaemons；App 自行注册的登录项请在系统设置中查看"
+      actions={<ActionPanel><Action title="重新扫描" icon={Icon.ArrowClockwise} onAction={() => perform()} /><Action title="打开系统登录项设置" onAction={() => perform('settings')} /></ActionPanel>} />}
+    {filter !== 'backups' && report?.warnings.map((warning, index) => <List.Item key={`warning-${index}`} id={`warning-${index}`} icon={Icon.ExclamationMark} title="部分配置读取失败，列表不完整" subtitle={warning}
+      actions={<ActionPanel><Action.CopyToClipboard title="复制错误信息" content={warning} /><Action title="重新扫描" icon={Icon.ArrowClockwise} onAction={() => perform()} /></ActionPanel>} />)}
   </List>
 }

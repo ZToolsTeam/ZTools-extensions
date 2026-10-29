@@ -1,10 +1,28 @@
 import React, { Action, ActionPanel, Clipboard, Form, Icon, List, Toast, confirmAlert, showToast, useEffect, useNavigation, useRef, useState } from '@ztools/declarative-ui'
-import { applyEnvironment, cancelEnvironment, exportEnvSnapshot, loadEnvironment, prepareEnvironment } from './env-service.js'
+import { applyEnvironment, cancelEnvironment, darwinPathProblem, exportEnvSnapshot, isPathKey, loadEnvironment, prepareEnvironment } from './env-service.js'
 import type { EnvChange, EnvItem, EnvScope, EnvSnapshot } from './types.js'
 export * from './types.js'
 export * from './env-service.js'
 const failure = (error: unknown) => error instanceof Error ? error.message : String(error)
-const sourceName = (scope: EnvItem['scope'], platform: string) => scope === 'process' ? '当前进程 · 只读' : scope === 'system' ? '系统配置' : platform === 'darwin' ? '终端配置' : '用户配置'
+const DARWIN_PATH_NOTICE = '会整体替换新终端里的 PATH：ZTools 段之前由 .zprofile、Homebrew 等设置的目录不再生效，请写入完整目录列表。'
+const sourceName = (scope: EnvItem['scope'], platform: string) => scope === 'process' ? '当前进程' : scope === 'system' ? '系统配置' : platform === 'darwin' ? '终端配置' : '用户配置'
+/**
+ * 当前进程里由 shell 或系统自动维护、对用户没有意义的变量：`_`（上一条命令的参数）、SHLVL、OLDPWD，
+ * 以及 macOS 以双下划线开头的系统私有变量（如 __CF_USER_TEXT_ENCODING、__CFBundleIdentifier）。
+ * 只过滤当前进程；用户在配置里自己写的同名变量照常显示。
+ */
+export function isShellInternal(item: Pick<EnvItem, 'key' | 'scope'>): boolean {
+  return item.scope === 'process' && (item.key === '_' || item.key === 'SHLVL' || item.key === 'OLDPWD' || item.key.startsWith('__'))
+}
+const SCOPE_ORDER: EnvItem['scope'][] = ['user', 'system', 'process']
+/** 变量按来源分组（用户/终端、系统、当前进程），组内按变量名排序（不区分大小写）；来源只在分组标题出现一次，不在每行重复。 */
+export function groupVariables(items: EnvItem[], platform: string) {
+  return SCOPE_ORDER.map(scope => ({
+    scope,
+    title: scope === 'process' ? '当前进程（只读）' : sourceName(scope, platform),
+    items: items.filter(v => v.scope === scope).sort((a, b) => a.key.localeCompare(b.key, 'en', { sensitivity: 'base' }) || a.key.localeCompare(b.key))
+  })).filter(group => group.items.length)
+}
 
 export function EnvVarForm({ item, snapshot, onSave }: { item?: EnvItem; snapshot: EnvSnapshot; onSave: (change: EnvChange, isCurrent: () => boolean) => Promise<boolean> }) {
   const { pop } = useNavigation()
@@ -17,6 +35,8 @@ export function EnvVarForm({ item, snapshot, onSave }: { item?: EnvItem; snapsho
     active.current = true; setBusy(true); setError('')
     try {
       if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key.trim())) throw new Error('变量名只能含字母、数字和下划线，且不能以数字开头')
+      const pathProblem = snapshot.platform === 'darwin' && key.trim() === 'PATH' ? darwinPathProblem(value) : ''
+      if (pathProblem) throw new Error(pathProblem)
       if (await onSave({ kind: 'set', source, key: key.trim(), value }, () => alive.current) && alive.current) pop()
     } catch (e) { if (alive.current) { setError(failure(e)); await showToast(Toast.Style.Failure, '环境变量未保存', failure(e)) } }
     finally { active.current = false; if (alive.current) setBusy(false) }
@@ -30,6 +50,7 @@ export function EnvVarForm({ item, snapshot, onSave }: { item?: EnvItem; snapsho
     </Form.Dropdown>
     <Form.Description title="生效范围" text={snapshot.notice} />
     {snapshot.platform === 'darwin' && <Form.Description title="字面量保存" text="变量值按文字保存；$HOME、反引号和命令表达式不会被执行。PATH 请使用完整目录路径，以冒号分隔。" />}
+    {snapshot.platform === 'darwin' && key.trim() === 'PATH' && <Form.Description title="PATH 提示" text={DARWIN_PATH_NOTICE} />}
     {error && <Form.Description title="未保存" text={error} />}
   </Form>
 }
@@ -60,13 +81,20 @@ export function EnvManagerCommand({ featureCode = 'env-all' }: { featureCode?: s
     try {
       const plan = await prepareEnvironment(loaded.sessionId, change)
       if (!alive.current || !isCurrent()) return false
-      const confirmed = await confirmAlert({ title: plan.summary, message: `位置：${plan.location}\n${plan.removed.length ? '仅移除以下目录：\n' + plan.removed.join('\n') + '\n' : ''}先保存并校验原配置备份，再写入和读回确认。\n${plan.notice}`, primaryAction: { title: '确认修改' }, dismissAction: { title: '取消' } })
+      const pathWarning = loaded.platform === 'darwin' && change.kind === 'set' && change.key === 'PATH' ? DARWIN_PATH_NOTICE + '\n' : ''
+      const confirmed = await confirmAlert({ title: plan.summary, message: `位置：${plan.location}\n${pathWarning}${plan.removed.length ? '仅移除以下目录：\n' + plan.removed.join('\n') + '\n' : ''}先保存并校验原配置备份，再写入和读回确认。\n${plan.notice}`, primaryAction: { title: '确认修改' }, dismissAction: { title: '取消' } })
       if (!confirmed || !alive.current || !isCurrent()) { await cancelEnvironment(); return false }
       let result: { backupId: string; summary: string; recoveryPath?: string } | undefined, operationError = ''
       try { result = await applyEnvironment(plan.planId) } catch (e) { operationError = failure(e) }
       if (!alive.current) return false
-      try { await reload() } catch (e) { operationError += `${operationError ? '；' : ''}刷新失败：${failure(e)}` }
-      if (operationError) throw new Error(operationError)
+      let refreshError = ''
+      try { await reload() } catch (e) { refreshError = failure(e) }
+      if (operationError) throw new Error(refreshError ? `${operationError}；刷新失败：${refreshError}` : operationError)
+      if (refreshError) {
+        // 写入已读回核验，只是列表没刷新成功：如实说明已保存，不报成“未修改成功”，以免用户重复提交
+        if (alive.current) { setError(`配置已保存并核验，但刷新列表失败：${refreshError}`); await showToast(Toast.Style.Failure, '配置已保存，刷新列表失败', `${refreshError}；请稍后手动刷新，不要重复提交`) }
+        return isCurrent()
+      }
       if (alive.current && isCurrent() && result) await showToast(Toast.Style.Success, '配置已保存并核验', result.recoveryPath ? `原文件另存于 ${result.recoveryPath}；配置备份可在“修改备份”恢复` : '原配置备份可在“修改备份”中恢复')
       return isCurrent()
     } finally { active.current = false; if (alive.current) setBusy(false) }
@@ -81,15 +109,19 @@ export function EnvManagerCommand({ featureCode = 'env-all' }: { featureCode?: s
   const cancel = async () => { try { await cancelEnvironment() } catch (e) { if (alive.current) setError(`取消未确认：${failure(e)}`) } }
   const q = query.trim().toLowerCase(), platform = snapshot?.platform || ''
   const invalid = (scope: EnvItem['scope']) => snapshot?.paths.filter(p => p.scope === scope && p.status === 'missing').length || 0
-  const items = snapshot?.variables.filter(v => (category === 'all' || category === v.scope || (category === 'invalid' && v.key.toUpperCase() === 'PATH' && invalid(v.scope) > 0)) && `${v.key} ${v.value}`.toLowerCase().includes(q)) || []
+  const isPath = (item: EnvItem) => isPathKey(item.key, platform)
+  // “含失效目录的 PATH”只列可清理的持久配置；当前进程只读，不能清理
+  const items = snapshot?.variables.filter(v => !isShellInternal(v) && (category === 'all' || category === v.scope || (category === 'invalid' && v.scope !== 'process' && isPath(v) && invalid(v.scope) > 0)) && `${v.key} ${v.value}`.toLowerCase().includes(q)) || []
   const paths = category === 'path' ? snapshot?.paths.filter(p => p.value.toLowerCase().includes(q)) || [] : []
   const backups = category === 'backups' ? snapshot?.backups.filter(b => `${b.createdAt} ${b.summary}`.toLowerCase().includes(q)) || [] : []
+  const noBackups = category === 'backups' && Boolean(snapshot) && !snapshot?.backups.length
   const count = category === 'path' ? paths.length : category === 'backups' ? backups.length : items.length
   const rowActions = (item: EnvItem) => <ActionPanel>
     {item.scope === 'process' ? <Action.CopyToClipboard title="复制变量值" content={item.value} /> : category === 'invalid' ? <Action title="预览清理此 PATH" onAction={() => runChange({ kind: 'clean', source: item.scope as EnvScope })} /> : <Action title="编辑变量" onAction={() => edit(item)} />}
-    {item.scope === 'process' ? <Action title="写入持久配置" onAction={() => edit(item)} /> : <Action.CopyToClipboard title="复制变量值" content={item.value} />}
+    {/* macOS 的当前进程变量来自启动 ZTools 的环境，写进终端配置不会改变它，也容易把临时值固化下来：只提供复制 */}
+    {item.scope !== 'process' ? <Action.CopyToClipboard title="复制变量值" content={item.value} /> : platform !== 'darwin' && <Action title="写入持久配置" onAction={() => edit(item)} />}
     {item.scope !== 'process' && <Action title="移除配置中的变量" onAction={() => runChange({ kind: 'delete', source: item.scope as EnvScope, key: item.key })} />}
-    {item.scope !== 'process' && category !== 'invalid' && item.key.toUpperCase() === 'PATH' && invalid(item.scope) > 0 && <Action title="预览清理此 PATH" onAction={() => runChange({ kind: 'clean', source: item.scope as EnvScope })} />}
+    {item.scope !== 'process' && category !== 'invalid' && isPath(item) && invalid(item.scope) > 0 && <Action title="预览清理此 PATH" onAction={() => runChange({ kind: 'clean', source: item.scope as EnvScope })} />}
   </ActionPanel>
   return <List navigationTitle="环境变量" isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索变量名、值或 PATH 目录"
     searchBarAccessory={<List.Dropdown value={category} onChange={setCategory} tooltip="来源与视图">
@@ -99,9 +131,11 @@ export function EnvManagerCommand({ featureCode = 'env-all' }: { featureCode?: s
       <List.Dropdown.Item value="invalid" title="含失效目录的 PATH" /><List.Dropdown.Item value="backups" title="修改备份" />
     </List.Dropdown>}
     filterBar={{ summaryText: error || (busy ? '正在读取或核验环境配置…' : snapshot ? `${count} 项 · ${platform === 'darwin' ? '终端配置在新终端加载，当前进程只读' : '修改后重新登录，当前进程只读'}` : '尚未读取环境变量'), actions: busy ? [{ id: 'cancel', title: '取消', onAction: cancel }] : [{ id: 'refresh', title: '刷新', onAction: refresh }, ...(snapshot ? [{ id: category === 'backups' ? 'export' : 'new', title: category === 'backups' ? '复制变量快照' : '新建变量', onAction: category === 'backups' ? exportBackup : () => edit() }] : [])] }}>
-    {!count && <List.Item id="empty" title={error ? '环境变量读取未完成' : busy ? '正在读取' : category === 'backups' ? '还没有修改备份' : '没有符合条件的条目'} subtitle={error || (category === 'user' && platform === 'darwin' ? '这里只显示 ZTools 管理的终端变量；已有 shell 脚本保持原样。' : '成功读取后才能修改，失败不会当成空配置。')} icon={Icon.Document} />}
-    {items.map(item => <List.Item key={`${item.scope}:${item.key}`} id={`${item.scope}:${item.key}`} title={item.key} subtitle={item.value || '（空值）'} icon={Icon.Key}
-      accessories={[{ tag: sourceName(item.scope, platform) }, ...(item.key.toUpperCase() === 'PATH' ? [{ text: `${invalid(item.scope)} 个确认失效目录` }] : [])]} actions={rowActions(item)} />)}
+    {!count && <List.Item id="empty" title={error ? '环境变量读取未完成' : busy ? '正在读取' : noBackups ? '还没有修改备份' : '没有符合条件的条目'} subtitle={error || (noBackups ? '修改变量前会自动备份，目前还没有修改记录' : platform === 'darwin' && (category === 'user' || category === 'invalid') ? '这里只显示和清理 ZTools 管理段中的终端变量；.zshrc、.zprofile 等脚本里其他位置设置的变量保持原样，不在此列出。' : '成功读取后才能修改，失败不会当成空配置。')} icon={error ? Icon.ExclamationMark : Icon.Info} />}
+    {groupVariables(items, platform).map(group => <List.Section key={group.scope} title={group.title}>
+      {group.items.map(item => <List.Item key={`${item.scope}:${item.key}`} id={`${item.scope}:${item.key}`} title={item.key} subtitle={item.value || '（空值）'} icon={Icon.Key}
+        accessories={isPath(item) && invalid(item.scope) > 0 ? [{ text: `${invalid(item.scope)} 个确认失效目录` }] : []} actions={rowActions(item)} />)}
+    </List.Section>)}
     {paths.map(p => <List.Item key={`${p.scope}:${p.index}`} id={`${p.scope}:path:${p.index}`} title={p.value || '（空项：当前目录）'} subtitle={`${sourceName(p.scope, platform)} · ${p.reason}`} icon={Icon.Folder}
       actions={<ActionPanel><Action.CopyToClipboard title="复制目录" content={p.value} /></ActionPanel>} />)}
     {backups.map(b => <List.Item key={b.id} id={`backup:${b.id}`} title={b.summary} subtitle={`${b.createdAt} · ${sourceName(b.source, platform)}`} icon={Icon.Document}

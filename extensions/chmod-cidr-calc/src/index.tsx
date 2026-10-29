@@ -30,6 +30,31 @@ const PRESET_CHMODS = [
   { code: '777', desc: '全放开读写执行权限（存在安全风险）' },
 ]
 
+/** 常用网段排除与当前计算结果同一网段的项，避免第一行结果和下面的预设重复 */
+export function presetCidrsExcluding(networkAddress?: string, prefixLength?: number): string[] {
+  if (!networkAddress || prefixLength === undefined) return PRESET_CIDRS
+  return PRESET_CIDRS.filter((preset) => {
+    try {
+      const r = calculateIpv4Cidr(preset)
+      return !(r.networkAddress === networkAddress && r.prefixLength === prefixLength)
+    } catch {
+      return true
+    }
+  })
+}
+
+/** 常用权限排除与当前结果相同的项 */
+export function presetChmodsExcluding(octal?: string): typeof PRESET_CHMODS {
+  if (!octal) return PRESET_CHMODS
+  return PRESET_CHMODS.filter((item) => {
+    try {
+      return convertChmod(item.code).octal !== octal
+    } catch {
+      return true
+    }
+  })
+}
+
 export function ChmodCidrCalcCommand() {
   const [mode, setMode] = useState<CalcMode>('cidr')
   const [queryText, setQueryText] = useState<string>('192.168.1.0/24')
@@ -65,7 +90,7 @@ export function ChmodCidrCalcCommand() {
       isShowingDetail={true}
       searchBarPlaceholder={
         mode === 'cidr'
-          ? '输入 IPv4/CIDR（如 192.168.1.0/24 或 10.0.0.1/28）...'
+          ? '输入 IPv4/CIDR（如 192.168.1.0/24、192.168.1.5 255.255.255.0）...'
           : '输入八进制权限（如 755、4755）或符号权限（如 rwxr-xr-x）...'
       }
       searchText={queryText}
@@ -73,7 +98,7 @@ export function ChmodCidrCalcCommand() {
         setQueryText(val)
         const trimmed = (val || '').trim()
         if (trimmed) {
-          if (/^chmod(?:[ \t]|$)/.test(trimmed) || /^[0-7]{3,4}$/.test(trimmed) || /^[dlcbps-]?[rwxstST-]{9}$/.test(trimmed)) {
+          if (/^chmod(?:[ \t]|$)/.test(trimmed) || /^[0-7]{3,4}$/.test(trimmed) || /^(?:[dlcbps-][rwxstST-]{9}[@+.]?|[rwxstST-]{9})$/.test(trimmed)) {
             setMode('chmod')
           } else if (trimmed.includes('.') || trimmed.includes('/')) {
             setMode('cidr')
@@ -118,39 +143,23 @@ export function ChmodCidrCalcCommand() {
           <List.Item
             id="cidr-main"
             title={`${cidrState.result.networkAddress}/${cidrState.result.prefixLength}`}
-            subtitle={`可用范围: ${cidrState.result.firstUsableIp} ~ ${cidrState.result.lastUsableIp} (${cidrState.result.usableHosts.toLocaleString()} 台主机)`}
+            subtitle={`可用 ${cidrState.result.usableHosts.toLocaleString()} 台主机`}
             icon={Icon.Wifi}
-            accessories={[{ tag: `掩码 ${cidrState.result.netmask}` }]}
             detail={
               <List.Item.Detail
-                markdown={`### 子网规划详情 (\`${cidrState.result.input}\`)\n\n- **可用主机范围**: \`${cidrState.result.firstUsableIp}\` - \`${cidrState.result.lastUsableIp}\`\n- **32位二进制掩码**:\n\`\`\`text\n${cidrState.result.netmaskBinary}\n\`\`\`\n- **输入地址用途**: ${cidrState.result.addressScope}\n- **路由说明**: ${cidrState.result.usageHint}`}
+                markdown={`**${cidrState.result.addressScope}**\n\n${cidrState.result.usageHint}\n\n二进制掩码：\n\n\`\`\`text\n${cidrState.result.netmaskBinary}\n\`\`\``}
                 metadata={
                   <List.Item.Detail.Metadata>
+                    <List.Item.Detail.Metadata.Label title="可用范围" text={`${cidrState.result.firstUsableIp} ~ ${cidrState.result.lastUsableIp}`} />
+                    <List.Item.Detail.Metadata.Label title="子网掩码" text={cidrState.result.netmask} />
+                    <List.Item.Detail.Metadata.Label title="反掩码" text={cidrState.result.wildcardMask} />
                     <List.Item.Detail.Metadata.Label
-                      title="网络地址 (Network)"
-                      text={cidrState.result.networkAddress}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="子网掩码 (Netmask)"
-                      text={cidrState.result.netmask}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="反掩码 (Wildcard)"
-                      text={cidrState.result.wildcardMask}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title={cidrState.result.hasBroadcast ? "广播地址 (Broadcast)" : "范围末地址（无独立广播）"}
+                      title={cidrState.result.hasBroadcast ? "广播地址" : "范围末地址（无独立广播）"}
                       text={cidrState.result.broadcastAddress}
                     />
                     <List.Item.Detail.Metadata.Separator />
-                    <List.Item.Detail.Metadata.Label
-                      title="总地址容量"
-                      text={`${cidrState.result.totalHosts.toLocaleString()} 个 IP`}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="可用主机数"
-                      text={`${cidrState.result.usableHosts.toLocaleString()} 台`}
-                    />
+                    <List.Item.Detail.Metadata.Label title="总地址数" text={`${cidrState.result.totalHosts.toLocaleString()} 个`} />
+                    <List.Item.Detail.Metadata.Label title="输入地址" text={cidrState.result.ipAddress} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -173,14 +182,13 @@ export function ChmodCidrCalcCommand() {
             }
           />
 
-          {PRESET_CIDRS.map((preset: string) => (
+          {presetCidrsExcluding(cidrState.result.networkAddress, cidrState.result.prefixLength).map((preset: string) => (
             <List.Item
               key={preset}
               id={`preset-cidr-${preset}`}
-              title={`常用网段模板: ${preset}`}
-              subtitle="点击回车立即载入此网段进行子网计算"
+              title={preset}
+              subtitle="常用网段 · 按回车载入"
               icon={Icon.Globe}
-              accessories={[{ tag: '快速切换' }]}
               actions={
                 <ActionPanel>
                   <Action
@@ -226,9 +234,7 @@ export function ChmodCidrCalcCommand() {
             ]}
             detail={
               <List.Item.Detail
-                markdown={`### Linux 权限矩阵 (\`${chmodState.result.octal}\` / \`${
-                  chmodState.result.lsSymbolic
-                }\`)\n\n${
+                markdown={`### 权限矩阵\n\n${
                   chmodState.result.securityWarning
                     ? `> **${chmodState.result.securityWarning}**\n\n`
                     : ''
@@ -244,18 +250,6 @@ export function ChmodCidrCalcCommand() {
                 }\n${chmodState.result.chmodRecursiveCommand}\n\`\`\``}
                 metadata={
                   <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label
-                      title="八进制表示 (Octal)"
-                      text={chmodState.result.octal}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="符号表示 (Symbolic)"
-                      text={chmodState.result.symbolic}
-                    />
-                    <List.Item.Detail.Metadata.Label
-                      title="ls -l 权限示例"
-                      text={chmodState.result.lsSymbolic}
-                    />
                     <List.Item.Detail.Metadata.Label title="特殊权限位" text={chmodState.result.specialBits.join(" / ") || "无"} />
                   </List.Item.Detail.Metadata>
                 }
@@ -279,19 +273,15 @@ export function ChmodCidrCalcCommand() {
             }
           />
 
-          {PRESET_CHMODS.map((item) => (
+          {presetChmodsExcluding(chmodState.result.octal).map((item) => (
             <List.Item
               key={item.code}
               id={`preset-chmod-${item.code}`}
               title={`chmod ${item.code}`}
               subtitle={item.desc}
               icon={Icon.Key}
-              accessories={[
-                // 预设列表保持灰阶；只有实际计算结果是全局可写时才用红色警示
-                item.code === '777'
-                  ? { tag: '全局可写' }
-                  : { tag: '常用预设' },
-              ]}
+              // 预设列表保持灰阶，只给有风险的 777 标注；只有实际计算结果是全局可写时才用红色警示
+              accessories={item.code === '777' ? [{ tag: '全局可写' }] : []}
               actions={
                 <ActionPanel>
                   <Action

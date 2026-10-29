@@ -1,9 +1,9 @@
 {
   "id": "wifi-password-reveal",
   "name": "Wi-Fi 密码查看",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "查看本机已保存的无线网络，按需读取密码，并生成手机连网二维码",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

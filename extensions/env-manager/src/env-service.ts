@@ -33,6 +33,20 @@ export async function applyEnvironment(planId: string) {
   return { backupId: d.backupId, summary: d.summary, recoveryPath: d.recoveryPath as string | undefined }
 }
 export async function cancelEnvironment() { await invoke({ action: 'cancel' }) }
+/** PATH 变量名：Windows 注册表不区分大小写（常见为 Path），macOS shell 区分大小写，只认 PATH。 */
+export function isPathKey(key: string, platform: string) { return platform === 'win32' ? key.toUpperCase() === 'PATH' : key === 'PATH' }
+/**
+ * macOS 终端配置按字面量写入 export PATH='...'，会整体替换终端里的 PATH；
+ * $PATH、$HOME、~ 不会展开，缺少 /usr/bin、/bin 时新终端连 ls 都找不到。返回拒绝原因，合格时返回空串。
+ */
+export function darwinPathProblem(value: string) {
+  if (/[$`]/.test(value)) return 'PATH 按文字保存，$PATH、$HOME 和反引号不会展开，写入后终端会丢失原有目录；请填写完整目录，以冒号分隔'
+  const parts = value.split(':')
+  if (parts.some(p => p.startsWith('~'))) return 'PATH 按文字保存，~ 不会展开为主目录；请改成以 / 开头的完整目录'
+  if (parts.some(p => p && !p.startsWith('/'))) return 'PATH 中的每个目录都必须以 / 开头'
+  if (!parts.includes('/usr/bin') || !parts.includes('/bin')) return 'PATH 会整体替换终端原有的 PATH，必须保留 /usr/bin 和 /bin，否则新终端无法运行基本命令'
+  return ''
+}
 export function exportEnvSnapshot(snapshot: EnvSnapshot) {
   return JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), platform: snapshot.platform, notice: snapshot.notice, sources: snapshot.sources, variables: snapshot.variables, paths: snapshot.paths }, null, 2)
 }

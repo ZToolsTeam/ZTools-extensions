@@ -30,7 +30,7 @@ test('Mac 入口使用现代接口，默认无 SSH 时首项仍可 Enter，不�
   assert.equal(v.tree().props.isShowingDetail, false)
   assert.equal(v.items()[0].props.id, 'proxy:git')
   assert.equal(v.actions(v.items()[0])[0].props.title, '设置本机代理端口…')
-  assert.match(v.text(), /此文件未设置/); assert.ok(!v.text().includes('加速中'))
+  assert.match(v.item('proxy:git').props.subtitle, /^\.gitconfig 未设置通用代理$/); assert.equal(v.item('proxy:git').props.title, 'Git 代理'); assert.equal(v.item('proxy:npm').props.title, 'NPM 代理'); assert.ok(!v.text().includes('加速中'))
   assert.ok(!host.ipcCalls.some(([method]) => method === 'dllplugin_call'))
   assert.deepEqual(v.tree().props.filterBar.actions.map(a => a.id), ['refresh'])
 })
@@ -100,4 +100,16 @@ test('畸形响应、重复来源及未打开回执拒绝成功；配置路径�
   host.ipc.ssh_proxy = async () => ({ success: true, verified: true, backupId: id }); await assert.rejects(applyProxy(id))
   const text = sourceMarkdown({ ...valid.proxies[0], location: '/fixture/![x](https://example.invalid/leak)' })
   assert.ok(text.includes('\\!\\[x\\]\\(https\\:')); assert.ok(!text.includes('![x]'))
+})
+test('取消请求失败时如实提示而不是抛出未处理异常；读取失败的代理行可直接重新读取', async () => {
+  state.proxies[0] = { tool: 'git', status: 'error', error: '未找到 git 可执行文件' }
+  const v = await open()
+  assert.equal(v.actions(v.item('proxy:git'))[0].props.title, '重新读取')
+  const pending = defer()
+  host.ipc.ssh_proxy = async p => { if (p.action === 'scan') return pending.promise; if (p.action === 'cancel') throw new Error('没有正在进行的操作'); return { success: true } }
+  const reading = v.run(v.item('proxy:git'), '重新读取'); await tick()
+  assert.equal(v.tree().props.filterBar.actions[0].title, '取消操作')
+  await v.tree().props.filterBar.actions[0].onAction(); await tick()
+  assert.match(host.lastToast().title, /取消未确认/)
+  pending.resolve(structuredClone(state)); await reading; await tick()
 })

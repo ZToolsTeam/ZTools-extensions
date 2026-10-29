@@ -67,7 +67,7 @@ export function SystemBackupCommand() {
         );
       }
       setStatusBanner(
-        `已扫描本机关键配置项 · 共 ${data.items.length} 项 (${formatBytes(data.totalSizeBytes)}) · 仓库: ${data.backupVaultDir}`
+        data.error ? `读取配置列表失败：${data.error}` : `已扫描本机关键配置项 · 共 ${data.items.length} 项 (${formatBytes(data.totalSizeBytes)}) · 仓库: ${data.backupVaultDir}`
       );
     } catch (err) {
       setStatusBanner(`读取配置列表失败: ${err instanceof Error ? err.message : String(err)}`);

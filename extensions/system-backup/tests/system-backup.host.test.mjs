@@ -72,3 +72,16 @@ test('system-backup: 真实探测备份文件与归档创建/还原失败拦截�
   const restoreFail = await systemBackup.restoreBackupSnapshot(archiveItem, host)
   assert.equal(restoreFail.ok, false)
 })
+
+
+test('配置读取被拒绝时返回错误，不能冒充扫描成功且没有配置', async () => {
+  const host = createRealHostStub({
+    system_get_path: () => 'C:\\Users\\tester',
+    filesystem_get_file_size: () => { throw new Error('PERMISSION_DENIED: 路径未授权') },
+    system_search_files: () => ({ files: [] })
+  });
+  const result = await systemBackup.fetchSystemBackupSnapshot(host);
+  assert.match(result.error, /PERMISSION_DENIED/);
+  assert.deepEqual(result.items, []);
+  assert.equal(result.backupVaultDir, '');
+});

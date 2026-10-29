@@ -1,9 +1,9 @@
 {
   "id": "id-watermark",
   "name": "防盗水印",
-  "version": "1.0.3",
+  "version": "1.0.6",
   "description": "本地为 JPG、PNG、WebP 图片添加斜向文字水印，保留原图，另存 PNG 新副本或复制图片",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

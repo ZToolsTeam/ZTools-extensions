@@ -348,7 +348,7 @@ function WindowsDnsBenchmarkCommand(props: DnsBenchmarkCommandProps = {}) {
                   onAction={handleResetDhcp}
                 />
                 <Action
-                  title="仅刷新本机 DNS 解析缓存 (Flush DNS)"
+                  title="仅刷新本机 DNS 解析缓存"
                   icon={Icon.ArrowClockwise}
                   shortcut={{ modifiers: ['cmd'], key: 'r' }}
                   onAction={handleFlushDnsCache}

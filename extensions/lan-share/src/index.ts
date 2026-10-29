@@ -232,7 +232,7 @@ export function LanShareCommand() {
       subtitle: file.path,
       icon: Icon.Document,
       accessories: [
-        { tag: { value: file.isDirectory ? '文件夹' : file.shared ? '共享中' : '已暂停' } },
+        { tag: { value: file.isDirectory ? '文件夹' : !file.shared ? '已暂停' : status.running ? '共享中' : '服务未启动' } },
         { text: formatBytes(file.sizeBytes) }
       ],
       detail: List.Item.Detail({ markdown: fileDetail(file, status) }),

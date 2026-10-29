@@ -1,9 +1,9 @@
 {
   "id": "speedtest",
   "name": "网络测速",
-  "version": "1.1.5",
+  "version": "1.1.8",
   "description": "测量上下行吞吐量，检测默认网关与国内、国际节点连接；Mac 使用系统网络测速工具",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

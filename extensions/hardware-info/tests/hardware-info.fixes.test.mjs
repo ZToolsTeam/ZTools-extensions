@@ -5,13 +5,14 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import HardwareInfoCommand from '../dist/index.js'
-import { exportHardwareReport, fetchHardwareTelemetrySnapshot } from '../dist/logic.js'
+import { exportHardwareReport, fetchHardwareTelemetrySnapshot, CPU_SAMPLE_INTERVAL_MS } from '../dist/logic.js'
 
 const GB = 1024 ** 3
 
+// 快照读取时 CPU 负载要间隔 CPU_SAMPLE_INTERVAL_MS 采样两次，等待时间要覆盖这段间隔
 async function settle() {
   await tick(20)
-  await new Promise((r) => setTimeout(r, 20))
+  await new Promise((r) => setTimeout(r, CPU_SAMPLE_INTERVAL_MS + 80))
   await tick(20)
 }
 
@@ -47,7 +48,7 @@ test('全部宿主接口失败：界面不出现 Windows/x64/16GB/8 线程等假
   assert.equal(view.item('hw-cpu-spec').props.title, '处理器型号读取失败')
   assert.equal(view.item('hw-mem-spec').props.title, '物理内存容量读取失败')
   assert.equal(view.item('hw-os-spec').props.title, '操作系统读取失败')
-  // 负载余量与场景估算在数据缺失时不计算
+  // 空闲余量与场景估算在数据缺失时不计算
   assert.equal(view.items().filter((it) => String(it.props.id).startsWith('sc-')).length, 0)
   assert.equal(host.lastToast().style, 'FAILURE')
   assert.equal(host.lastToast().title, '硬件信息读取失败')
@@ -102,7 +103,7 @@ test('全部失败时导出的三种报告如实标注读取失败，JSON 为 nu
   }
 })
 
-test('只有内存接口失败：显示「占用读取失败」而不是 0% 已用，负载余量不计算，失败提示只列内存占用', async () => {
+test('只有内存接口失败：显示「占用读取失败」而不是 0% 已用，空闲余量不计算，失败提示只列内存占用', async () => {
   const host = createHost()
   host.reset()
   installMacHost(host)
@@ -188,15 +189,15 @@ test('宿主恢复后点「刷新」：数据自愈为真实值并提示「硬�
   assert.equal(view.item('hw-cpu-spec').props.title, 'Apple M1 Pro')
   assert.equal(host.lastToast().style, 'SUCCESS')
   assert.equal(host.lastToast().title, '硬件信息已刷新')
-  assert.match(view.tree().props.filterBar.summaryText, /^负载余量 44% · CPU 8 线程 \(负载 12%\)/)
+  assert.match(view.tree().props.filterBar.summaryText, /^CPU 8 线程 \(负载 12%\)/)
 
-  // 20ms 内连续 5 次刷新（⌘R 连按），最终状态正确、无失败提示
+  // 连续 5 次点「刷新」：只采用最后一次的结果，只弹一次成功提示，无失败提示
   host.toasts.length = 0
-  const cpuItem = view.item('hw-cpu-spec')
-  const refreshAction = view.actions(cpuItem).find((a) => a.props.title === '刷新硬件信息')
-  await Promise.all(Array.from({ length: 5 }, () => refreshAction.props.onAction()))
+  const refreshButton = view.tree().props.filterBar.actions.find((a) => a.id === 'refresh-hw')
+  await Promise.all(Array.from({ length: 5 }, () => refreshButton.onAction()))
   await settle()
   assert.equal(view.item('hw-cpu-spec').props.title, 'Apple M1 Pro')
+  assert.equal(host.toasts.length, 1)
   assert.ok(host.toasts.every((t) => t.style === 'SUCCESS'))
   view.unmount()
 })
@@ -209,7 +210,8 @@ test('复制报告：宿主剪贴板拒绝写入时提示「复制失败」，�
   await settle()
   // 正常复制
   host.toasts.length = 0
-  await view.run(view.item('hw-cpu-spec'), '复制 Markdown 整机硬件报告')
+  await view.tree().props.filterBar.actions.find((a) => a.id === 'export-md').onAction()
+  await settle()
   assert.match(host.clipboard.text, /Apple M1 Pro/)
   assert.equal(host.lastToast().style, 'SUCCESS')
 
@@ -247,7 +249,7 @@ test('macOS：系统行显示「系统版本 26.5.1 · Darwin 内核 25.5.0」�
   assert.equal(snap.kernelVersion, '25.5.0')
   const report = exportHardwareReport(snap, 'markdown')
   assert.match(report, /`macOS 26\.5\.1 \(Darwin 内核 25\.5\.0, arm64\)`/)
-  assert.match(exportHardwareReport(snap, 'txt'), /操作系统 \(OS\): macOS 26\.5\.1 \(Darwin 内核 25\.5\.0, arm64\)/)
+  assert.match(exportHardwareReport(snap, 'txt'), /操作系统: macOS 26\.5\.1 \(Darwin 内核 25\.5\.0, arm64\)/)
   for (const r of [report, exportHardwareReport(snap, 'txt')]) assert.doesNotMatch(r, /Build/)
   const json = JSON.parse(exportHardwareReport(snap, 'json'))
   assert.deepEqual(json.os, { name: 'macOS', version: '26.5.1', kernel: '25.5.0', build: null, arch: 'arm64' })
@@ -304,10 +306,12 @@ test('界面（下拉、状态条按钮、动作、提示）不再出现温度 /
   await settle()
   const tree = view.tree()
   const dropdownTitles = tree.props.searchBarAccessory.children.map((c) => c.props.title)
-  assert.ok(dropdownTitles.includes('显示器 (Displays)'))
-  assert.deepEqual(tree.props.filterBar.actions.map((a) => a.title), ['刷新', '复制Markdown报告'])
+  assert.ok(dropdownTitles.includes('显示器'))
+  assert.deepEqual(tree.props.filterBar.actions.map((a) => a.title), ['刷新', '复制 Markdown 报告'])
   const actionTitles = view.actions(view.item('hw-cpu-spec')).map((a) => a.props.title)
-  assert.ok(actionTitles.includes('刷新硬件信息'))
+  // 刷新与整机报告只在状态条出现一次，行动作只针对本项；不声明会撞 macOS 菜单（⌘R 重新载入）的快捷键
+  assert.deepEqual(actionTitles, ['复制当前硬件规格摘要', '复制本项详细参数'])
+  assert.ok(view.actions(view.item('hw-cpu-spec')).every((a) => !a.props.shortcut))
   await view.dropdown('display')
   assert.equal(view.items().length, 1)
   assert.match(view.items()[0].props.subtitle, /刷新率 120Hz/)
@@ -365,7 +369,7 @@ test('Windows：只走通用系统接口，不再调用 dllplugin_call；电量 
   // 卷：C 与 Z 照常显示，D 盘失败如实提示原因
   assert.ok(view.item('hw-drive-C:'))
   assert.ok(view.item('hw-drive-Z:'))
-  assert.match(view.tree().props.filterBar.summaryText, /2 个分区，可用 1\.1 TB，部分卷读取失败/)
+  assert.match(view.tree().props.filterBar.summaryText, /2 个卷，可用 1\.1 TB，部分卷读取失败/)
   assert.equal(host.lastToast().style, 'FAILURE')
   assert.equal(host.lastToast().title, '部分硬件信息读取失败')
   assert.equal(host.lastToast().message, '未能读取：部分磁盘卷。磁盘容量：D:\\: 卷容量读取失败')

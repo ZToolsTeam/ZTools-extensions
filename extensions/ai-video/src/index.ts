@@ -64,7 +64,7 @@ export function AiVideoCommand() {
         showToast({
           style: Toast.Style.Success,
           title: 'AI 视频工作台已刷新',
-          message: `已就绪 ${ws.files.length} 个视频素材 · RIFE / Real-CUGAN 管线就绪`
+          message: `已就绪 ${ws.files.length} 个视频素材 · AI 处理引擎尚未接入`
         })
       }
     } finally {
@@ -120,13 +120,14 @@ export function AiVideoCommand() {
   const rightQueueItems = filteredFiles.map(f => {
     const isChecked = checkedIds.includes(f.id)
     const volRatio = Math.max(10, Math.min(100, Math.round((f.sizeBytes / maxVidBytes) * 100)))
-    const outFpsStr = targetFps === 'source' ? `${f.sourceFps}fps` : targetFps.toUpperCase()
+    const sourceFpsStr = f.sourceFps === null ? '帧率未读取' : `${f.sourceFps}fps`
+    const outFpsStr = targetFps === 'source' ? '原帧率' : targetFps.toUpperCase()
     const outResShort = targetResolution === '4k_2160p' ? '4K' : targetResolution === '2k_1440p' ? '2K' : '1080P'
 
     return List.Item({
       id: f.id,
       title: f.name,
-      subtitle: `${f.parentDir} · ${f.sourceResolution} ${f.sourceFps}fps → ${outResShort} ${outFpsStr}`,
+      subtitle: `${f.parentDir} · ${f.sourceResolution} ${sourceFpsStr} → ${outResShort} ${outFpsStr}`,
       checkable: true,
       checked: isChecked,
       onCheckChange: c => {
@@ -244,7 +245,7 @@ export function AiVideoCommand() {
           label: '目标帧率',
           type: 'select',
           value: targetFps,
-          onChange: val => setTargetFps(val as any),
+          onChange: val => setTargetFps(val as '60fps' | '120fps' | 'source'),
           options: [
             { label: '60 FPS 丝滑 (2x 光流补帧)', value: '60fps' },
             { label: '120 FPS 电竞高刷 (4x 补帧)', value: '120fps' },
@@ -256,7 +257,7 @@ export function AiVideoCommand() {
           label: '目标分辨率',
           type: 'select',
           value: targetResolution,
-          onChange: val => setTargetResolution(val as any),
+          onChange: val => setTargetResolution(val as '4k_2160p' | '2k_1440p' | '1080p_fhd'),
           options: [
             { label: '4K UHD 2160P (3840×2160)', value: '4k_2160p' },
             { label: '2K 1440P (2560×1440)', value: '2k_1440p' },
@@ -268,7 +269,7 @@ export function AiVideoCommand() {
           label: '视频编码器',
           type: 'select',
           value: videoEncoder,
-          onChange: val => setVideoEncoder(val as any),
+          onChange: val => setVideoEncoder(val as 'hevc_nvenc' | 'h264' | 'av1'),
           options: [
             { label: 'HEVC NVENC (H.265 显卡硬编)', value: 'hevc_nvenc' },
             { label: 'H.264 全平台高兼容', value: 'h264' },

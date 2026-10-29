@@ -255,35 +255,36 @@ test('单条改名：只改当前文件；规则下无需改名或存在冲突�
   view.unmount()
 })
 
-test('定位文件：次动作固定为「在访达中显示」，未授权时先取得授权再定位；取消或失败时有提示，不回退为打开文件', async () => {
+test('定位文件：次动作使用当前平台的文件管理器，未授权时先取得授权再定位；取消或失败时有提示，不回退为打开文件', async () => {
   const { root, pictures } = makeDir({ 'a.txt': 'A' })
   const ctx = await setupHost({ pictures, home: root })
   const view = await openPictures(ctx.host)
+  const revealTitle = `在${logic.fileManagerName(pictures)}中显示`
   const titles = actionTitles(view, subItem(view, 'a.txt'))
-  assert.equal(titles[1], '在访达中显示')
+  assert.equal(titles[1], revealTitle)
   assert.equal(titles.filter((t) => /显示|定位|资源管理器/.test(t)).length, 1, '定位动作只出现一次')
-  assert.ok(titles.every((t) => !/Ctrl|Enter|资源管理器/.test(t)))
+  assert.ok(titles.every((t) => !/Ctrl|Enter/.test(t)))
 
-  await runAction(view, subItem(view, 'a.txt'), '在访达中显示')
+  await runAction(view, subItem(view, 'a.txt'), revealTitle)
   assert.equal(ctx.revealed.length, 0)
   assert.equal(ctx.host.lastToast().style, 'FAILURE')
 
   ctx.queueDialog(pictures)
-  await runAction(view, subItem(view, 'a.txt'), '在访达中显示')
+  await runAction(view, subItem(view, 'a.txt'), revealTitle)
   assert.deepEqual(ctx.revealed, [path.join(pictures, 'a.txt')])
 
   ctx.host.ipc.shell_show_item_in_folder = async () => {
     throw fail('FILE_ERROR', '文件已被移走')
   }
-  await runAction(view, subItem(view, 'a.txt'), '在访达中显示')
-  assert.match(ctx.host.lastToast().title, /无法在访达中显示/)
+  await runAction(view, subItem(view, 'a.txt'), revealTitle)
+  assert.equal(ctx.host.lastToast().title, `无法${revealTitle}`)
   assert.match(ctx.host.lastToast().message, /文件已被移走/)
 
   // 有撤销记录时次动作仍是定位，撤销进入动作面板
   ctx.queueDialog(pictures)
   await runAction(view, subItem(view, 'a.txt'), '执行批量重命名')
   const after = actionTitles(view, subItem(view, 'a_01.txt'))
-  assert.equal(after[1], '在访达中显示')
+  assert.equal(after[1], revealTitle)
   assert.ok(after.slice(2).some((t) => t.startsWith('撤销上一次重命名')))
 
   assert.equal(logic.fileManagerName('C:\\Users\\a\\Pictures'), '资源管理器')
@@ -297,7 +298,7 @@ test('列表内容：隐藏与系统元数据文件、子目录不列出；按�
       '.DS_Store': Buffer.alloc(6000),
       '.localized': '',
       '._seq_1.txt': 'x',
-      'Icon\r': '',
+      ...(process.platform === 'win32' ? {} : { 'Icon\r': '' }),
       'desktop.ini': '',
       'seq_10.txt': 's10',
       'seq_2.txt': 's2',
@@ -314,6 +315,7 @@ test('列表内容：隐藏与系统元数据文件、子目录不列出；按�
     subItems(view).map((i) => i.props.subtitle),
     ['-> big_01.bin', '-> seq_1_02.txt', '-> seq_2_03.txt', '-> seq_10_04.txt']
   )
+  assert.ok(logic.isHiddenOrSystemFile('Icon\r'))
   assert.ok(logic.isHiddenOrSystemFile('Thumbs.db'))
   assert.ok(!logic.isHiddenOrSystemFile('photo.jpg'))
   view.unmount()
@@ -495,4 +497,22 @@ test('不在客户端里运行：只显示“需要在 ZTools 客户端中使用
   } finally {
     globalThis.__ztoolsElectron = saved
   }
+})
+
+test('规则行只给当前生效的规则加标签，图标用编辑语义而非文件', async () => {
+  const { root, pictures } = makeDir({ 'a.txt': 'A' })
+  const ctx = await setupHost({ pictures, home: root }, { dialog: [pictures] })
+  const view = await openPictures(ctx.host)
+  const ruleItems = () => view.items().filter((i) => String(i.props.id).startsWith('nav-rule-'))
+  const tagged = () => ruleItems().filter((i) => (i.props.accessories || []).length > 0)
+  assert.ok(ruleItems().length > 1)
+  assert.equal(tagged().length, 1)
+  assert.equal(tagged()[0].props.accessories[0].tag.value, '当前生效')
+  assert.equal(view.text().includes('规则预设'), false)
+  for (const item of ruleItems()) assert.equal(item.props.icon, 'pencil')
+  view.items().find((i) => i.props.id === 'nav-rule-suffix').props.onSelect()
+  await tick(10)
+  assert.equal(tagged().length, 1)
+  assert.equal(tagged()[0].props.id, 'nav-rule-suffix')
+  view.unmount()
 })

@@ -1,9 +1,9 @@
 {
   "id": "office-slim",
   "name": "办公文档瘦身",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "本地重新压缩 Word、PPT、Excel 文档，保留图片原字节，可移除作者属性与批注、导出原图 ZIP；只另存新副本",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

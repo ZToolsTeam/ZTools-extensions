@@ -77,3 +77,41 @@ test('日志按足够长的围栏转义，CR 换行也不能提前退出代码�
   assert.ok(markdown.includes('\n````\n\n### 标准错误输出'))
   assert.equal(containerWebUrl('0.0.0.0:3306->3306/tcp, 127.0.0.1:8080->80/tcp'), 'http://127.0.0.1:8080')
 })
+
+test('空列表提示区分原因：已连上但无匹配不再提示启动 Docker，连接失败显示真实错误', async () => {
+  rows = []; const v = await open()
+  assert.equal(v.items()[0].props.id, 'empty'); assert.match(v.items()[0].props.subtitle, /还没有容器/); assert.doesNotMatch(v.text(), /请确认本机 Docker 引擎已启动/)
+  rows = [container(a)]; const filtered = await open(commands['docker-running'])
+  assert.equal(filtered.items()[0].props.title, '没有符合条件的容器'); assert.match(filtered.items()[0].props.subtitle, /搜索词或状态筛选/)
+  host.ipc.docker_manager = async () => { throw new Error('无法连接本机 Docker 引擎。请启动 Docker Desktop、Colima 或 OrbStack，再点击刷新') }
+  const failed = await open(); assert.equal(failed.items()[0].props.title, '无法连接本机 Docker 引擎'); assert.match(failed.items()[0].props.subtitle, /OrbStack/)
+  assert.equal(failed.tree().props.filterBar.summaryText, 'Docker 未就绪')
+  // 刷新只在空状态行出现一次，顶部不重复
+  assert.equal(failed.tree().props.filterBar.actions.some(a => a.id === 'refresh'), false)
+  // 引擎未启动不是没装 Docker：只给刷新，不推下载页
+  assert.deepEqual(failed.actions(failed.items()[0]).map(a => a.props.title), ['刷新'])
+})
+
+test('未找到 Docker 命令行：错误只在条目出现一次，主动作打开官网下载页，重试会重新读取', async () => {
+  const message = '未找到 Docker 命令行。请安装并启动 Docker Desktop，或配置已有的 Colima / OrbStack Docker 环境后重试'
+  let fail = true; const original = host.ipc.docker_manager
+  host.ipc.docker_manager = async p => { if (fail) throw new Error(message); return original(p) }
+  const v = await open(); const row = v.items()[0]
+  assert.equal(v.tree().props.filterBar.summaryText, 'Docker 未就绪')
+  assert.equal(row.props.title, '未找到 Docker 命令行'); assert.match(row.props.subtitle, /Docker Desktop/)
+  assert.notEqual(row.props.icon, 'document')
+  const titles = v.actions(row).map(a => a.props.title)
+  assert.deepEqual(titles, ['打开 Docker 官网下载页', '刷新'])
+  assert.equal(v.tree().props.filterBar.actions.some(a => a.id === 'refresh'), false)
+  assert.equal(v.actions(row)[0].props.url, 'https://www.docker.com/products/docker-desktop/')
+  fail = false; await v.run(row, '刷新'); await tick()
+  assert.equal(v.items().length, 2); assert.equal(v.tree().props.filterBar.summaryText.includes('未就绪'), false)
+  // 连上后列表有容器，刷新回到顶部状态条
+  assert.ok(v.tree().props.filterBar.actions.some(a => a.id === 'refresh'))
+})
+
+test('清单只声明实际用到的 shell 权限，不声明未使用的网络或文件权限', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const manifest = JSON.parse(await readFile(new URL('../plugin.json', import.meta.url), 'utf8'))
+  assert.deepEqual(manifest.permissions, ['shell'])
+})

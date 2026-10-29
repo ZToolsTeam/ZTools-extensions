@@ -109,9 +109,10 @@ test('AES / HMAC 表单不再声明「返回」动作：第 1 个动作是执行
 
   host.reset()
   const hmac = await openForm('HMAC 计算…')
-  assert.deepEqual(actionTitles(hmac), ['复制 HMAC'])
+  assert.deepEqual(actionTitles(hmac), [], '消息和密钥都为空时不提供复制')
   await hmac.fill('text', 'msg')
   await hmac.fill('key', 'k')
+  assert.deepEqual(actionTitles(hmac), ['复制 HMAC'])
   await hmac.run(null, '复制 HMAC')
   assert.equal(host.clipboard.text, crypto.createHmac('sha256', 'k').update('msg').digest('hex'))
   assert.equal(host.pushed.length, 1, '复制后表单仍在，没有被关闭')
@@ -212,10 +213,12 @@ test('[异常] Base64：空输入、非法字符、二进制数据都不开空�
   const view = await mount(CryptoToolCommand)
   await view.dropdown('base64-decode')
   assert.equal(view.tree().props.isShowingDetail, false)
+  assert.deepEqual(view.actions(view.item('empty')).map(a => a.props.title), ['从剪贴板粘贴'])
   assert.equal(view.item('empty').props.detail, undefined)
   for (const bad of ['!!!not-base64!!!', Buffer.from([0xff, 0xfe, 0x00]).toString('base64')]) {
     await view.search(bad)
-    assert.equal(view.items().length, 1)
+    assert.equal(view.items().length, 2, '编码结果仍然给出，解码失败单独提示')
+    assert.ok(view.item('encoded'))
     assert.equal(view.item('decode-error').props.detail, undefined)
   }
   await view.search('   ')

@@ -1,9 +1,9 @@
 {
   "id": "md-to-office",
   "name": "AI文档转Word",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "本地将 Markdown 文本或文件转换为 Word 新副本，保留标题、列表、表格和代码块，支持公文、商务和学术排版及富文本复制",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

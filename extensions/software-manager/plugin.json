@@ -2,7 +2,7 @@
   "id": "software-manager",
   "name": "软件卸载",
   "description": "列出系统登记的已安装软件与占用体积，确认后启动软件自带的卸载程序，并只读列出 AppData 目录占用",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

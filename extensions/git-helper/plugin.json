@@ -1,9 +1,9 @@
 {
   "id": "git-helper",
   "name": "Git救命锦囊",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "description": "大白话场景检索Git回滚自救命令、交互式规范提交(Conventional Commits)生成器与多语言.gitignore模板合成",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

@@ -18,7 +18,6 @@ export interface ScreenshotItem {
   readonly pinned: boolean;
   readonly ocrText: string;
   readonly ocrStatus: "ready" | "pending" | "empty" | "failed";
-  readonly thumbnailSvg: string;
   /** capture = 本次运行中「立即截取」得到的缓存文件；缺省为宿主扫描到的截图 */
   readonly source?: "capture" | undefined;
 }

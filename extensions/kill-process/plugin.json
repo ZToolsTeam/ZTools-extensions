@@ -1,7 +1,7 @@
 {
   "id": "kill-process",
   "name": "结束进程",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "按内存或 CPU 占用列出正在运行的进程，确认后结束单个进程或整个进程树，可用于关闭无响应的程序",
   "author": "ZTools Team",
   "entry": "dist/index.js",

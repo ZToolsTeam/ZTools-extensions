@@ -8,12 +8,13 @@ export function detectAndParse(rawText: string, hasHeader = true, source: Source
   if (rawText.length > 2_000_000) throw new Error('单次输入最多 200 万字符，请拆分后转换。')
   const text = rawText.replace(/^\uFEFF/, ''), trimmed = text.trim()
   if (!text.length) return { format: 'empty', grid: makeGrid([], []) }
-  let format: Exclude<DetectedSourceFormat, 'empty'>
+  let format: Exclude<DetectedSourceFormat, 'empty' | 'unrecognized'>
   if (source !== 'auto') format = source
   else if (/^[\[{]/.test(trimmed)) format = 'json'
   else if (/^INSERT\b/i.test(trimmed)) format = 'sql'
   else if (/^<(?:table\b|!--)/i.test(trimmed)) format = 'html'
-  else if (/^\s*\|?\s*:?-{3,}:?\s*\|/m.test(text)) format = 'markdown'
+  // GFM 分隔行：每格至少一个 -，可带 : 对齐标记（|-|-|、|:-:|--:|、--- | --- 均合法）
+  else if (/^[ \t]*\|?(?:[ \t]*:?-+:?[ \t]*\|)+(?:[ \t]*:?-+:?[ \t]*)?$/m.test(text)) format = 'markdown'
   else {
     // 仅统计首条记录引号外的分隔符，避免把 CSV 单元格内的制表符识别成 TSV。
     let quoted = false, tabs = 0, commas = 0
@@ -28,6 +29,8 @@ export function detectAndParse(rawText: string, hasHeader = true, source: Source
         if (char === ',') commas++
       }
     }
+    // 自动识别时，单行且没有任何分隔符的普通文本不是表格，交给界面给出中性引导而不是“0 行 × 1 列”。
+    if (trimmed && !tabs && !commas && !/[\r\n]/.test(trimmed)) return { format: 'unrecognized', grid: makeGrid([], []) }
     format = tabs > commas ? 'tsv' : 'csv'
   }
   const grid = format === 'json' ? jsonGrid(trimmed, hasHeader)
@@ -94,7 +97,10 @@ export function buildAllConversionTargets(grid: TableGrid, sqlTableName = 'my_ta
   const specs = [
     ['markdown', 'Markdown 对齐表格', '文字表格；嵌套值转为 JSON 文本', '文档', () => gridToMarkdown(grid)],
     ['json', 'JSON 结构化对象数组', '保留 JSON 原类型；文本列仅推断可安全转换的数字和布尔值', '结构数据', () => gridToJson(grid)],
-    ['sql', `SQLite INSERT 语句 (${sqlTableName})`, 'SQLite 字面量语法；嵌套值转为 JSON 文本，缺失键映射 NULL', 'SQLite', () => gridToSql(grid, sqlTableName)],
+    ['sql', `SQLite INSERT 语句（${sqlTableName}）`, 'SQLite 字面量语法；嵌套值转为 JSON 文本，缺失键映射 NULL', 'SQLite', () => {
+      if (grid.headers.length && !grid.rows.length) throw new Error('没有数据行，无法生成 INSERT 语句。首行已作为表头时，请补充数据行或切换为“无表头”。')
+      return gridToSql(grid, sqlTableName)
+    }],
     ['html', 'HTML 表格源码', '文字表格；单元格内容转义后输出', '网页', () => gridToHtml(grid)],
     ['csv', 'CSV 表格', 'CRLF 分行；null 与缺失键输出为空单元格，嵌套值为 JSON 文本', '表格文本', () => gridToCsv(grid)]
   ] as const

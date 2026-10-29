@@ -2,7 +2,7 @@
   "id": "process-monitor",
   "name": "进程监控",
   "description": "查看本机进程的 CPU 与内存占用、查询本地端口被哪个进程占用，可定位程序文件，确认后结束进程",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

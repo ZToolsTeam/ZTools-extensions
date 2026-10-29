@@ -5,7 +5,7 @@ import React, {
 import type { WifiProfileInfo, WifiSecurityFilter, WifiSecurityType } from './types.js'
 import {
   NOT_IN_CLIENT_MESSAGE, fetchSavedWifiProfiles, filterAndSortWifiProfiles, generateWifiQrString,
-  generateWifiQrSvgDataUrl, revealWifiPasswordFromHost
+  generateWifiQrSvgDataUrl, hasConnectionInfo, revealWifiPasswordFromHost
 } from './wifi-service.js'
 
 export * from './types.js'
@@ -166,7 +166,15 @@ export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOv
       if (mounted.current) setReadingPassword(false)
     }
   }
-  const profiles = useMemo(() => filterAndSortWifiProfiles(allProfiles, { query: searchText, securityFilter, sortBy: 'connected' }), [allProfiles, searchText, securityFilter])
+  const connectionKnown = hasConnectionInfo(allProfiles)
+  // 系统未提供当前连接（如新版 macOS 不向命令行返回当前网络）时不提供该筛选，避免把“未知”显示成“没有连接”。
+  // macOS 不向插件提供已保存网络的加密方式（authType 为 Unknown）：说明只在状态条出现一次，不在每行重复；
+  // 全部未知时“开放网络 / 企业认证”筛选没有依据，不提供。部分未知时才在对应行标出，便于与已知行区分。
+  const unknownCount = allProfiles.filter(profile => profile.authType === 'Unknown').length
+  const allUnknown = allProfiles.length > 0 && unknownCount === allProfiles.length
+  const securityUnknownNote = !unknownCount ? '' : allUnknown ? ' · 系统未提供加密方式，生成二维码时需手动选择' : ` · 其中 ${unknownCount} 个未提供加密方式`
+  const activeFilter: WifiSecurityFilter = (securityFilter === 'connected' && !connectionKnown && !isLoading) || (allUnknown && (securityFilter === 'open' || securityFilter === 'enterprise')) ? 'all' : securityFilter
+  const profiles = useMemo(() => filterAndSortWifiProfiles(allProfiles, { query: searchText, securityFilter: activeFilter, sortBy: 'connected' }), [allProfiles, searchText, activeFilter])
   return <List
     isLoading={isLoading || readingPassword}
     isShowingDetail={false}
@@ -174,19 +182,19 @@ export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOv
     searchBarPlaceholder="搜索已保存的无线网络…"
     onSearchTextChange={setSearchText}
     filterBar={{
-      summaryText: isLoading ? '正在读取无线网络…' : loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? '读取失败，可重试' : readingPassword ? '正在读取密码，请留意系统授权提示…' : `已保存 ${allProfiles.length} 个网络`,
+      summaryText: isLoading ? '正在读取无线网络…' : loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? '读取失败，可重试' : readingPassword ? '正在读取密码，请留意系统授权提示…' : `已保存 ${allProfiles.length} 个网络${securityUnknownNote}`,
       actions: [{ id: 'refresh', title: '重新读取', onAction: () => reload(true) }]
     }}
-    searchBarAccessory={<List.Dropdown tooltip="筛选网络" value={securityFilter} onChange={value => setSecurityFilter(value as WifiSecurityFilter)}>
+    searchBarAccessory={<List.Dropdown tooltip="筛选网络" value={activeFilter} onChange={value => setSecurityFilter(value as WifiSecurityFilter)}>
       <List.Dropdown.Item title="全部网络" value="all" />
-      <List.Dropdown.Item title="当前连接" value="connected" />
-      <List.Dropdown.Item title="开放网络" value="open" />
-      <List.Dropdown.Item title="企业认证" value="enterprise" />
+      {connectionKnown && <List.Dropdown.Item title="当前连接" value="connected" />}
+      {!allUnknown && <List.Dropdown.Item title="开放网络" value="open" />}
+      {!allUnknown && <List.Dropdown.Item title="企业认证" value="enterprise" />}
     </List.Dropdown>}
   >
     {loadError ? <List.Item id="load-error" title={loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : '无法读取无线网络'} subtitle={loadError === NOT_IN_CLIENT_MESSAGE ? '在 ZTools 中打开本插件后读取已保存的网络' : loadError} icon={Icon.ExclamationMark} /> : profiles.length === 0 ? <List.Item id="empty" title={isLoading ? '正在读取…' : allProfiles.length ? '没有符合筛选条件的网络' : '没有已保存的无线网络'} icon={Icon.Wifi} /> : profiles.map(profile => <List.Item
       key={profile.id} id={profile.id} title={profile.ssid} icon={Icon.Wifi}
-      accessories={[...(profile.isConnected ? [{ text: '当前连接' }] : []), ...(profile.authType !== 'Unknown' ? [{ text: profile.authType }] : [])]}
+      accessories={[...(profile.isConnected ? [{ text: '当前连接' }] : []), ...(profile.authType !== 'Unknown' ? [{ text: profile.authType }] : allUnknown ? [] : [{ text: '加密方式未知' }])]}
       actions={<ActionPanel>
         {!profile.isOpenNetwork && !profile.isEnterprise && <Action title="复制 Wi-Fi 密码" icon={Icon.CopyClipboard} onAction={() => runProfileAction(profile, 'copy')} />}
         <Action title="查看密码与二维码" icon={Icon.Eye} onAction={() => runProfileAction(profile, 'show')} />

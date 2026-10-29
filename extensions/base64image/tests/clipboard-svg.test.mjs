@@ -230,6 +230,8 @@ test('输入框粘贴以 DOCTYPE / 注释开头或大写 <SVG> 的源码：按 S
   await view.search(PNG_B64)
   assert.equal(view.item('export-datauri').props.subtitle.startsWith('data:image/png;base64,'), true)
   await view.search('<!-- only a comment -->')
+  assert.match(view.item('item-error').props.title, /不是 SVG 图片/)
+  await view.search('!!!!')
   assert.equal(view.item('item-error').props.title, 'Base64 字符内容非法或填充位数不正确')
 })
 
@@ -251,4 +253,15 @@ test('[边界] isSvgSource：前导组合、内部子集、BOM；拒绝非 SVG �
   assert.equal(isSvgSource('<!--' + 'a'.repeat(4 * 1024 * 1024)), false)
   assert.equal(isSvgSource('<!---->'.repeat(100_000) + '<svg>'), false, '前导部分数量有上限')
   assert.ok(Date.now() - started < 1000, '超长输入应在 1 秒内返回')
+})
+
+test('[边界] 粘贴非 SVG 的 XML / HTML：明确提示不是 SVG 图片，不生成 text/plain 的「图片」写法', async () => {
+  for (const src of ['<?xml version="1.0"?><note>hi</note>', '<html><body><svg></svg></body></html>', '  <div>x</div>']) {
+    const view = await mount(Base64ImageCommand)
+    await view.search(src)
+    assert.deepEqual(view.items().map((i) => i.props.id), ['item-error'], src)
+    assert.match(view.item('item-error').props.title, /不是 SVG 图片/)
+    assert.equal(view.items().some((i) => i.props.id === 'export-datauri'), false)
+    view.unmount()
+  }
 })

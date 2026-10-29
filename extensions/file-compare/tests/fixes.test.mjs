@@ -225,3 +225,24 @@ test('编辑表单只有「开始对比」一个动作（宿主把它映射到 �
   assert.equal(again.field('left').props.value, 'a\nb\n')
   assert.equal(again.field('right').props.value, 'a\nc\n')
 })
+
+test('搜索框占位里的动作面板快捷键按平台只写一种：macOS 为 ⌘K，Windows 为 Ctrl+K', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  try {
+    for (const [platform, expected, absent] of [['MacIntel', '⌘K', /Ctrl/], ['Win32', 'Ctrl+K', /⌘/]]) {
+      Object.defineProperty(globalThis, 'navigator', { value: { platform, userAgent: '' }, configurable: true })
+      const view = await mount(FileCompareCommand)
+      try {
+        const placeholder = view.tree().props.searchBarPlaceholder
+        assert.ok(placeholder.includes(expected), placeholder)
+        assert.doesNotMatch(placeholder, absent)
+      } finally { view.unmount() }
+    }
+    // navigator 不可用时按 Windows 写法兜底，不抛错
+    Object.defineProperty(globalThis, 'navigator', { value: undefined, configurable: true })
+    const view = await mount(FileCompareCommand)
+    try { assert.match(view.tree().props.searchBarPlaceholder, /Ctrl\+K/) } finally { view.unmount() }
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original)
+  }
+})

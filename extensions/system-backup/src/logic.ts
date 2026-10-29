@@ -11,6 +11,7 @@
  */
 
 import {
+  callHostTransport,
   formatBytes,
   getRealFileSize,
   invokeHostCapability,
@@ -103,6 +104,7 @@ export interface SystemBackupSnapshot {
   items: BackupConfigItem[];
   totalSizeBytes: number;
   updatedAt: string;
+  error?: string;
 }
 
 export function validateInvocationPayload(
@@ -125,7 +127,7 @@ export function validateInvocationPayload(
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<NativeInvocationResult> {
   const validation = validateInvocationPayload(method, params);
   if (!validation.valid) {
@@ -221,7 +223,7 @@ export function createInitialSystemBackupSnapshot(): SystemBackupSnapshot {
   };
 }
 
-export async function fetchSystemBackupSnapshot(hostBridge?: any): Promise<SystemBackupSnapshot> {
+export async function fetchSystemBackupSnapshot(hostBridge?: unknown): Promise<SystemBackupSnapshot> {
   const initial = createInitialSystemBackupSnapshot();
   const isRealHost = Boolean(hostBridge) || isRealElectronHost(hostBridge) || isRealElectronHost();
   try {
@@ -299,7 +301,16 @@ export async function fetchSystemBackupSnapshot(hostBridge?: any): Promise<Syste
     ];
 
     const [probedSizes, vaultScan] = await Promise.all([
-      Promise.all(candidateConfigs.map((c) => getRealFileSize(c.path, hostBridge))),
+      Promise.all(candidateConfigs.map(async (c) => {
+        const result = await callHostTransport<number | { size?: number }>('filesystem_get_file_size', { path: c.path }, hostBridge);
+        if (!result.ok) {
+          if (/ENOENT|FILE_NOT_FOUND|不存在/i.test(result.error || '')) return 0;
+          throw new Error(result.error || '配置文件读取失败');
+        }
+        const size = typeof result.data === 'number' ? result.data : result.data?.size;
+        if (typeof size !== 'number' || !Number.isFinite(size)) throw new Error('配置文件大小返回无效');
+        return Math.max(0, size);
+      })),
       scanRealDirectoryTree(
         backupVaultDir,
         { maxDepth: 1, maxFiles: 30, filterExt: /\.(?:zip|zbak)$/i },
@@ -355,13 +366,14 @@ export async function fetchSystemBackupSnapshot(hostBridge?: any): Promise<Syste
       totalSizeBytes: fallbackItems.reduce((acc, item) => acc + item.sizeBytes, 0),
       updatedAt: new Date().toLocaleTimeString()
     };
-  } catch {
+  } catch (error: unknown) {
     if (isRealHost) {
       return {
-        backupVaultDir: "C:\\Users\\Default\\Documents\\ZToolsBackups",
+        backupVaultDir: "",
         items: [],
         totalSizeBytes: 0,
-        updatedAt: new Date().toLocaleTimeString()
+        updatedAt: new Date().toLocaleTimeString(),
+        error: error instanceof Error ? error.message : String(error)
       };
     }
     return initial;
@@ -372,7 +384,7 @@ export async function createBackupArchive(
   items: BackupConfigItem[],
   profileMode: BackupProfileMode,
   vaultDir: string,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{
   ok: boolean;
   archivePath: string;
@@ -397,7 +409,7 @@ export async function createBackupArchive(
   const archivePath = `${vaultDir.replace(/[\\/]+$/, "")}\\ZTools_Backup_${profileMode}_${stamp}.zip`;
   const validPaths = items.map((i) => i.path).filter(Boolean);
 
-  const res = await invokeHostCapability<any>(
+  const res = await invokeHostCapability<{ archivePath?: string; backupPath?: string; sizeBytes?: number; size?: number }>(
     "backup.createSnapshotArchive",
     {
       profileMode,
@@ -440,8 +452,8 @@ export async function createBackupArchive(
 
 export async function restoreBackupSnapshot(
   archivePath: string,
-  targetDirOrHost?: any,
-  hostOverride?: any
+  targetDirOrHost?: unknown,
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; message: string }> {
   const trimmed = String(archivePath || "").trim();
   const targetDir = typeof targetDirOrHost === "string" ? targetDirOrHost.trim() : undefined;
@@ -473,7 +485,7 @@ export async function restoreBackupSnapshot(
   };
 }
 
-export async function openBackupConfigLocation(targetPath: string, hostBridge?: any): Promise<boolean> {
+export async function openBackupConfigLocation(targetPath: string, hostBridge?: unknown): Promise<boolean> {
   if (!targetPath || targetPath.startsWith("HKCU")) return false;
   const shown = await showRealItemInFolder(targetPath, hostBridge);
   if (shown) return true;

@@ -259,6 +259,11 @@ export function generateWifiQrSvgDataUrl(profile: WifiProfileInfo): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
 }
 
+/** 至少一个网络带有系统给出的连接状态时，“当前连接”筛选才有意义。 */
+export function hasConnectionInfo(profiles: readonly WifiProfileInfo[]): boolean {
+  return profiles.some(item => typeof item?.isConnected === 'boolean')
+}
+
 export function filterAndSortWifiProfiles(
   profiles: readonly WifiProfileInfo[],
   options: {
@@ -331,7 +336,8 @@ function mapWifiProfile(raw: unknown, interfaceName?: string): WifiProfileInfo |
     authType,
     isOpenNetwork: authType === 'Open',
     isEnterprise: item.isEnterprise === true || authType.includes('Enterprise'),
-    isConnected: item.isConnected === true || item.current === true,
+    // 系统没给出连接状态时保持 undefined（未知），不能当成“未连接”。
+    isConnected: typeof item.isConnected === 'boolean' ? item.isConnected : typeof item.current === 'boolean' ? item.current : undefined,
     cipher: typeof item.cipher === 'string' ? item.cipher : undefined,
     band: typeof item.band === 'string' ? item.band as WifiBand : undefined,
     signalPercent: typeof item.signalPercent === 'number' && Number.isFinite(item.signalPercent) ? item.signalPercent : undefined,
