@@ -2,7 +2,7 @@
   "id": "record",
   "name": "屏幕录制",
   "description": "录制整个桌面（所有显示器）为 MP4 视频或 GIF 动图，可选帧率；不录制声音，需要本机已安装 ffmpeg",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

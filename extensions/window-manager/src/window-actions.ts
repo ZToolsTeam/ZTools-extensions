@@ -785,9 +785,19 @@ export function clearSavedWindowStates(): void {
   lastExternalForegroundHwnd = "external-active-window";
 }
 
-/**
- * 执行窗口调度动作
- */
+interface WindowHostResult {
+  ok?: boolean;
+  success?: boolean;
+  rect?: WindowRect;
+  error?: string;
+  message?: string;
+}
+interface WindowActionHost {
+  executeAction?: (action: string, options: { windowId: string; rect: WindowRect }) => Promise<WindowHostResult | void>;
+  [key: string]: unknown;
+}
+
+/** 执行窗口调度动作；真实窗口与几何由宿主决定。 */
 export async function executeWindowAction(
   actionId: string,
   options: {
@@ -796,8 +806,8 @@ export async function executeWindowAction(
     curWin?: WindowRect;
     monRect?: WindowRect;
     preferences?: Partial<WindowManagementPreferences>;
-    hostBridge?: any;
-    hostOverride?: any;
+    hostBridge?: WindowActionHost;
+    hostOverride?: WindowActionHost;
   } = {}
 ): Promise<WindowActionResult> {
   if (typeof actionId !== "string" || !actionId.trim()) {
@@ -859,8 +869,8 @@ export async function executeWindowAction(
   const customExec =
     typeof hostBridge?.executeAction === "function"
       ? hostBridge.executeAction
-      : typeof (globalThis as any).ztools?.windowManagement?.executeAction === "function"
-      ? (globalThis as any).ztools.windowManagement.executeAction
+      : typeof (globalThis as typeof globalThis & { ztools?: { windowManagement?: WindowActionHost } }).ztools?.windowManagement?.executeAction === "function"
+      ? (globalThis as typeof globalThis & { ztools?: { windowManagement?: WindowActionHost } }).ztools?.windowManagement?.executeAction
       : null;
 
   if (customExec) {
@@ -877,7 +887,7 @@ export async function executeWindowAction(
         };
       }
       hostExecuted = true;
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         success: false,
         actionId,
@@ -891,9 +901,9 @@ export async function executeWindowAction(
 
   // 2. 通过宿主 IPC window_manage_action 调度真实前台窗口
   if (!hostExecuted && (hostBridge || isRealElectronHost(hostBridge))) {
-    const ipcRes = await callHostTransport<any>(
+    const ipcRes = await callHostTransport<WindowHostResult>(
       "window_manage_action",
-      { action: actionId, windowId: targetWindowId, rect: computedRect },
+      { action: actionId },
       hostBridge
     );
     if (ipcRes.ok && ipcRes.data?.ok !== false && ipcRes.data?.success !== false) {
@@ -920,7 +930,7 @@ export async function executeWindowAction(
     if (bridge?.manageWindow) {
       try {
         await bridge.manageWindow(actionId);
-      } catch (err: any) {
+      } catch (err: unknown) {
         if (isRealElectronHost()) {
           return {
             success: false,

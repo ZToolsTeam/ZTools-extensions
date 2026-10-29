@@ -13,6 +13,9 @@ import path from 'node:path'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import * as mod from '../dist/index.js'
 import { moveToTrash, calculateFileSha256, searchLocalFiles, classifyHostFileError, describeHostFileError } from '../dist/search-service.js'
+const IS_MAC_RUNTIME = /^mac/i.test(String(globalThis.navigator?.platform || ''))
+const REVEAL_TITLE = IS_MAC_RUNTIME ? '在访达中定位' : '在资源管理器中定位'
+const TRASH_TITLE = IS_MAC_RUNTIME ? '移入废纸篓' : '移入回收站'
 
 const Command = mod.default
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'efs-grants-'))
@@ -116,9 +119,9 @@ test('文件夹结果不提供「移入回收站」，普通文件保留；直�
   const { calls } = installGrantHost()
   const view = await mountList()
   const titles = (id) => view.actions(view.item(id)).map((a) => a.props.title)
-  assert.ok(!titles(folder).includes('移入回收站 (Move to Trash)'))
+  assert.ok(!titles(folder).includes(TRASH_TITLE))
   assert.ok(titles(folder).includes('打开文件夹'))
-  assert.ok(titles(reportTxt).includes('移入回收站 (Move to Trash)'))
+  assert.ok(titles(reportTxt).includes(TRASH_TITLE))
   view.unmount()
 
   const res = await moveToTrash(folder, undefined, true)
@@ -134,7 +137,7 @@ test('授权内：打开 / 定位 / 计算哈希 / 确认后移入回收站都�
   await view.run(view.item(reportTxt), '打开文件')
   assert.equal(host.lastToast().style, 'SUCCESS')
   await view.run(view.item(folder), '打开文件夹')
-  await view.run(view.item(photoPng), '在 Finder / 资源管理器中定位 (Show in Finder)')
+  await view.run(view.item(photoPng), REVEAL_TITLE)
   assert.deepEqual(calls.opened, [reportTxt, folder])
   assert.deepEqual(calls.revealed, [photoPng])
 
@@ -145,7 +148,7 @@ test('授权内：打开 / 定位 / 计算哈希 / 确认后移入回收站都�
   assert.equal(host.ipcCalls.filter(([m]) => m === 'filesearch_sha256').length, 1, '成功时只向宿主要一次哈希')
 
   host.setConfirm(true)
-  await view.run(view.item(photoPng), '移入回收站 (Move to Trash)')
+  await view.run(view.item(photoPng), TRASH_TITLE)
   assert.deepEqual(calls.trashed, [photoPng])
   assert.equal(host.lastToast().style, 'SUCCESS')
   assert.equal(view.items().some((i) => i.props.id === photoPng), false)
@@ -158,7 +161,7 @@ test('异常：授权过期（或换了窗口）后打开 / 定位 / 哈希 / �
   const { grants, calls } = installGrantHost()
   const view = await mountList()
   grants.clear()
-  for (const action of ['打开文件', '在 Finder / 资源管理器中定位 (Show in Finder)', 'Quick Look 快速预览']) {
+  for (const action of ['打开文件', REVEAL_TITLE, 'Quick Look 快速预览']) {
     await view.run(view.item(reportTxt), action)
     const t = host.lastToast()
     assert.equal(t.style, 'FAILURE', action)
@@ -196,9 +199,9 @@ test('异常：宿主拒绝回收（系统目录 / 链接 / 授权过期）时�
   const view = await mountList()
   protectedPaths.add(reportTxt)
   host.setConfirm(true)
-  await view.run(view.item(reportTxt), '移入回收站 (Move to Trash)')
+  await view.run(view.item(reportTxt), TRASH_TITLE)
   assert.equal(host.lastToast().style, 'FAILURE')
-  assert.match(host.lastToast().title, /移入废纸篓失败: 路径未由当前窗口授权（只能回收本次搜索到的普通文件，系统目录与链接除外/)
+  assert.match(host.lastToast().title, /移入(?:废纸篓|回收站)失败: 路径未由当前窗口授权（只能回收本次搜索到的普通文件，系统目录与链接除外/)
   assert.ok(view.items().some((i) => i.props.id === reportTxt), '失败时条目不能从列表消失')
   assert.deepEqual(calls.trashed, [])
   view.unmount()

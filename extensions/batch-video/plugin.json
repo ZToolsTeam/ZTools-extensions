@@ -2,7 +2,7 @@
   "id": "batch-video",
   "name": "视频转码",
   "description": "批量把视频转为 MP4、MKV、MOV、WebM 或 GIF，或提取音轨为 MP3、M4A、WAV；调用本机已安装的 ffmpeg 按默认参数处理，单个文件处理超过 60 秒会失败；结果另存到源文件所在目录，不覆盖已有文件",
-  "version": "2.0.7",
+  "version": "2.0.8",
   "draft": true,
   "draftReason": "客户端的视频处理接口单个文件最多运行 60 秒（常见时长的视频转换会超时失败），只按输出扩展名使用 ffmpeg 默认参数（不能指定画质、分辨率、码率），并且要求用户自行安装 ffmpeg；等客户端提供可长时间运行、可取消、支持编码参数并自带 ffmpeg 的转码接口，并在 Windows 上实测通过后再发布",
   "author": "ZTools Team",

@@ -13,6 +13,7 @@ import {
   buildConventionalCommit,
   buildEmergencyGuide,
   generateGitignoreContent,
+  parseCommitInput,
   searchGitEmergencies
 } from './git-helper-service.js'
 import type { GitHelperMode } from './types.js'
@@ -27,6 +28,21 @@ export interface GitHelperCommandProps {
   initialSelectedStacks?: string[]
 }
 
+const isMacPlatform = () => {
+  try {
+    const nav = (globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator
+    return /Mac/i.test(nav?.platform || nav?.userAgent || '')
+  } catch {
+    return false
+  }
+}
+
+/** .gitignore 默认勾选：只勾当前系统的隐藏文件模板，加上常用 IDE 配置目录 */
+export const defaultGitignoreStacks = (): string[] => [isMacPlatform() ? 'macOS' : 'Windows', 'IDEs']
+
+/** 把模板 ID（如 ReactVue）换成界面上显示的名称 */
+const stackDisplayName = (id: string) => GITIGNORE_STACK_TEMPLATES.find((t) => t.id === id)?.name ?? id
+
 export function GitHelperCommand(props: GitHelperCommandProps = {}) {
   const defaultMode: GitHelperMode =
     props.initialMode ??
@@ -39,25 +55,12 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
   const [mode, setMode] = useState<GitHelperMode>(defaultMode)
   const [searchText, setSearchText] = useState<string>(props.initialSearchText ?? '')
   const [selectedStacks, setSelectedStacks] = useState<string[]>(
-    props.initialSelectedStacks ?? ['Node', 'ReactVue', 'macOS', 'Windows', 'IDEs']
+    props.initialSelectedStacks ?? defaultGitignoreStacks
   )
 
   const filteredEmergencies = useMemo(() => searchGitEmergencies(searchText), [searchText])
 
-  const parsedCommitInput = useMemo(() => {
-    const raw = searchText.trim()
-    if (!raw) {
-      return { scope: '', subject: '' }
-    }
-    const colonIdx = raw.indexOf(':')
-    if (colonIdx > 0 && colonIdx < 24) {
-      return {
-        scope: raw.slice(0, colonIdx).trim(),
-        subject: raw.slice(colonIdx + 1).trim()
-      }
-    }
-    return { scope: '', subject: raw }
-  }, [searchText])
+  const parsedCommitInput = useMemo(() => parseCommitInput(searchText), [searchText])
 
   const gitignoreOutput = useMemo(
     () => generateGitignoreContent(selectedStacks),
@@ -88,7 +91,7 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
           tooltip="切换 Git 助手工作模式"
         >
           <List.Dropdown.Item title="Git 翻车自救锦囊" value="emergency" icon={Icon.Shield} />
-          <List.Dropdown.Item title="规范提交生成器 (Commit)" value="commit" icon={Icon.Pencil} />
+          <List.Dropdown.Item title="规范提交生成器" value="commit" icon={Icon.Pencil} />
           <List.Dropdown.Item title=".gitignore 模板合成" value="gitignore" icon={Icon.Document} />
         </List.Dropdown>
       }
@@ -96,7 +99,16 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
     >
       {mode === 'emergency' && (
         <List.Section title={`高频翻车现场与自救指南（共 ${filteredEmergencies.length} 项）`}>
-          {filteredEmergencies.map((item) => (
+          {filteredEmergencies.map((item) => {
+            // 首选命令已是某一步时，只在那一步标注“回车复制”，不再单独重复一遍
+            const primaryStep = item.steps.findIndex((s) => s.cmd === item.primaryCommand)
+            const primarySection = primaryStep >= 0 ? '' : `#### 首选命令（回车复制）
+\`\`\`bash
+${item.primaryCommand}
+\`\`\`
+
+`
+            return (
             <List.Item
               key={item.id}
               id={item.id}
@@ -112,15 +124,10 @@ export function GitHelperCommand(props: GitHelperCommandProps = {}) {
                 <List.Item.Detail
                   markdown={`### 事故现场：${item.title}
 
-#### 首选救命命令（回车一键复制）
-\`\`\`bash
-${item.primaryCommand}
-\`\`\`
-
-#### 操作指引（按所处情形选择，不要整段连续执行）
+${primarySection}#### 操作指引（按所处情形选择，不要整段连续执行）
 ${item.steps
   .map(
-    (s, i) => `${i + 1}. **${s.title}**
+    (s, i) => `${i + 1}. **${s.title}**${i === primaryStep ? '（回车复制）' : ''}
 \`\`\`bash
 ${s.cmd}
 \`\`\`
@@ -134,7 +141,6 @@ ${s.cmd}
                   metadata={
                     <List.Item.Detail.Metadata>
                       <List.Item.Detail.Metadata.Label title="场景分类" text={item.categoryLabel} />
-                      <List.Item.Detail.Metadata.Label title="安全等级" text={item.safetyLevel} />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label title="上手难度" text={item.difficulty} />
                     </List.Item.Detail.Metadata>
@@ -151,12 +157,13 @@ ${s.cmd}
                 </ActionPanel>
               }
             />
-          ))}
+            )
+          })}
         </List.Section>
       )}
 
       {mode === 'commit' && (
-        <List.Section title="选择 Conventional Commits 提交类型（强制中文规范）">
+        <List.Section title="选择 Conventional Commits 提交类型">
           {COMMIT_TYPES.map((t) => {
             const built = buildConventionalCommit({
               type: t.type,
@@ -169,23 +176,22 @@ ${s.cmd}
                 id={t.type}
                 icon={Icon.Pencil}
                 title={`${t.type}: ${t.chineseMeaning}`}
-                subtitle={built.message}
-                accessories={[{ tag: `前缀 ${t.type}:` }]}
+                subtitle={t.description}
                 detail={
                   <List.Item.Detail
                     markdown={`### 规范提交命令预览（Bash / zsh / Git Bash）
 \`\`\`bash
-${built.gitCommand || '# 请先输入提交说明'}
+${built.gitCommand || `# ${built.validationHint ?? '请先输入提交说明'}`}
 \`\`\`
 
 #### 生成的 Commit Message
 > **${built.message}**
 
-#### 类型规范说明 (\`${t.type}\`)
-- **中文定义**：${t.chineseMeaning}
+#### 类型说明（\`${t.type}\`）
+- **含义**：${t.chineseMeaning}
 - **适用边界**：${t.description}
 
-#### 团队标准范例
+#### 示例
 ${t.examples.map((ex) => `- \`${ex}\``).join('\n')}
 `}
                   />
@@ -197,10 +203,16 @@ ${t.examples.map((ex) => `- \`${ex}\``).join('\n')}
                       content={built.gitCommand}
                     />
                     <Action.CopyToClipboard
-                      title="仅复制中文提交备注文本"
+                      title="仅复制提交说明"
                       content={built.message}
                     />
-                  </ActionPanel> : undefined
+                  </ActionPanel> : <ActionPanel>
+                    {/* 还没写说明：主动作复制类型前缀，先把前缀贴进编辑器再补说明 */}
+                    <Action.CopyToClipboard
+                      title={`复制类型前缀 ${t.type}:`}
+                      content={`${t.type}: `}
+                    />
+                  </ActionPanel>
                 }
               />
             )
@@ -237,7 +249,7 @@ ${gitignoreOutput.content}
                       <List.Item.Detail.Metadata>
                         <List.Item.Detail.Metadata.Label
                           title="已合并技术栈"
-                          text={gitignoreOutput.selectedStacks.join(', ')}
+                          text={gitignoreOutput.selectedStacks.map(stackDisplayName).join('、') || '未选择'}
                         />
                         <List.Item.Detail.Metadata.Label
                           title="去重后规则总数"
@@ -254,7 +266,7 @@ ${gitignoreOutput.content}
                       content={gitignoreOutput.content}
                     />
                     <Action
-                      title={checked ? `取消勾选 ${tpl.name}` : `勾选加入 ${tpl.name}`}
+                      title={checked ? '取消勾选' : '勾选'}
                       icon={checked ? Icon.XMarkCircle : Icon.CheckCircle}
                       onAction={() => toggleStack(tpl.id)}
                     />

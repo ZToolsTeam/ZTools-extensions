@@ -2,6 +2,10 @@ import React, { Action, ActionPanel, Detail, Icon, List, Toast, confirmAlert, sh
 import { applyProxy, cancelSsh, openSshTerminal, prepareProxy, scanSsh, sourceMarkdown, type ProxyChange, type ProxyRow, type ProxyTool, type Snapshot, type SshHost } from './mac-service.js'
 import { ConnectionForm } from './mac-forms.js'
 const failure = (error: unknown) => error instanceof Error ? error.message : '操作未完成'
+const TOOL_LABEL: Record<ProxyTool, string> = { git: 'Git', npm: 'NPM' }
+/** 只显示文件名（如 .gitconfig、.npmrc），完整路径在“查看配置来源”里 */
+const fileName = (location: string) => location.split(/[\\/]/).filter(Boolean).pop() || location
+
 export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'macos' }: { featureCode?: string; platform?: 'macos' | 'windows' } = {}) {
   const windows = platform === 'windows'
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('')
@@ -20,6 +24,11 @@ export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'mac
     catch (e) { if (alive.current) { setError(failure(e)); await showToast(Toast.Style.Failure, '主机与代理操作未完成', failure(e)) }; return false }
     finally { guard.current = false; if (alive.current) setBusy(false) }
   }
+  // 取消请求本身失败（如客户端已无此操作）要如实提示，不能变成未处理的异常
+  const stop = async () => {
+    try { await cancelSsh() }
+    catch (e) { if (alive.current) { setError(`取消未确认：${failure(e)}`); await showToast(Toast.Style.Failure, '取消未确认', failure(e)) } }
+  }
   useEffect(() => { void run(reload); return () => { alive.current = false; if (guard.current) void cancelSsh().catch(e => console.warn('主机操作取消未确认', e)) } }, [])
   const mutate = async (tool: ProxyTool, change: ProxyChange, active = () => true) => {
     let done = false
@@ -28,7 +37,7 @@ export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'mac
       if (!loaded || !active()) throw new Error('请刷新代理配置后再操作')
       const plan = await prepareProxy(loaded.sessionId, tool, change)
       if (!alive.current || !active()) { await cancelSsh(); return }
-      const format = (items: typeof plan.before) => items.length ? items.map(p => `${p.key}：${p.value}`).join('\n') : '此文件未设置通用代理'
+      const format = (items: typeof plan.before) => items.length ? items.map(p => `${p.key}：${p.value}`).join('\n') : `${fileName(plan.location)} 未设置通用代理`
       const confirmed = await confirmAlert({ title: plan.summary, message: `文件：${plan.location}\n\n修改前：\n${format(plan.before)}\n\n修改后：\n${format(plan.after)}\n\n先备份并核验，再修改。\n${plan.notices.join('\n')}`, primaryAction: { title: '确认并核验' }, dismissAction: { title: '取消' } })
       if (!confirmed || !alive.current || !active()) { await cancelSsh(); return }
       let operationError = '', retained = ''
@@ -49,8 +58,8 @@ export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'mac
   })
   const connect = (host: SshHost) => terminal({ action: 'connect', sessionId: current.current?.sessionId, alias: host.alias })
   const tunnel = (host: SshHost) => { if (!guard.current) push(<ConnectionForm title={`${host.alias} · 端口转发`} tunnel save={(v, active) => terminal({ action: 'tunnel', sessionId: current.current?.sessionId, alias: host.alias, tunnel: { localPort: v.port, remoteHost: v.remoteHost, remotePort: v.remotePort } }, active)} />) }
-  const editProxy = (tool?: ProxyTool) => { if (!guard.current) push(<ConnectionForm title={tool ? `${tool.toUpperCase()} · 设置代理` : '新终端代理'} save={(v, active) => tool ? mutate(tool, { kind: 'set', port: v.port }, active) : terminal({ action: 'terminal-proxy', port: v.port }, active)} />) }
-  const sources = (row: ProxyRow) => { if (row.status === 'ready') push(<Detail navigationTitle={`${row.tool.toUpperCase()} · 配置来源`} markdown={sourceMarkdown(row)} />) }
+  const editProxy = (tool?: ProxyTool) => { if (!guard.current) push(<ConnectionForm title={tool ? `${TOOL_LABEL[tool]} · 设置代理` : '新终端代理'} save={(v, active) => tool ? mutate(tool, { kind: 'set', port: v.port }, active) : terminal({ action: 'terminal-proxy', port: v.port }, active)} />) }
+  const sources = (row: ProxyRow) => { if (row.status === 'ready') push(<Detail navigationTitle={`${TOOL_LABEL[row.tool]} · 配置来源`} markdown={sourceMarkdown(row)} />) }
   const q = query.trim().toLowerCase(), showHosts = category === 'all' || category === 'hosts', showProxy = category === 'all' || category === 'proxy'
   const hosts = showHosts ? snapshot?.ssh.hosts.filter(h => `${h.alias} ${h.hostName || ''} ${h.user || ''}`.toLowerCase().includes(q)) || [] : []
   const proxies = showProxy ? snapshot?.proxies.filter(p => p.tool.includes(q) || (p.status === 'ready' && p.values.some(v => v.value.includes(q)))) || [] : []
@@ -58,7 +67,7 @@ export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'mac
   const notices = snapshot ? [snapshot.ssh.error, ...snapshot.ssh.warnings, snapshot.backupError].filter(Boolean).join('；') : ''
   return <List navigationTitle="主机与代理" isShowingDetail={false} isLoading={busy} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索 SSH 主机、Git、NPM 或代理端口"
     searchBarAccessory={<List.Dropdown value={category} onChange={setCategory} tooltip="查看内容"><List.Dropdown.Item value="all" title="全部" /><List.Dropdown.Item value="hosts" title="SSH 主机" /><List.Dropdown.Item value="proxy" title="开发代理" /><List.Dropdown.Item value="backups" title="修改备份" /></List.Dropdown>}
-    filterBar={{ summaryText: error || notices || (busy ? '正在读取或核验配置…' : snapshot ? `${snapshot.ssh.hosts.length} 个主机 · Git、NPM 分别管理` : '尚未读取配置'), actions: [{ id: 'refresh', title: busy ? '取消操作' : '刷新', onAction: () => busy ? cancelSsh() : run(reload) }] }}>
+    filterBar={{ summaryText: error || notices || (busy ? '正在读取或核验配置…' : snapshot ? `${snapshot.ssh.hosts.length} 个主机 · Git、NPM 分别管理` : '尚未读取配置'), actions: [{ id: 'refresh', title: busy ? '取消操作' : '刷新', onAction: () => busy ? stop() : run(reload) }] }}>
     {!snapshot && <List.Item id="unread" icon={Icon.Document} title={error ? '配置读取未完成' : '正在读取配置'} subtitle={error || '读取完成后可连接主机或管理代理'} />}
     {hosts.map(h => <List.Item key={h.alias} id={`ssh:${h.alias}`} title={h.alias} icon={Icon.Terminal} subtitle={`${h.hostName || '目标由 SSH 条件配置决定'}${h.user ? ` · ${h.user}` : ''}${h.port ? `:${h.port}` : ''}`}
       accessories={h.previewComplete ? [] : [{ text: '含条件配置' }]} actions={<ActionPanel>
@@ -66,8 +75,8 @@ export default function MacSshCommand({ featureCode = 'ssh-all', platform = 'mac
         <Action title={featureCode === 'ssh-tunnel' ? '在终端连接' : '建立本地端口转发…'} onAction={async () => { if (featureCode === 'ssh-tunnel') await connect(h); else tunnel(h) }} />
         <Action.CopyToClipboard title="复制连接命令" content={windows ? `ssh ${h.alias}` : `ssh '${h.alias}'`} />
       </ActionPanel>} />)}
-    {proxies.map(p => <List.Item key={p.tool} id={`proxy:${p.tool}`} title={`${p.tool.toUpperCase()} 代理`} icon={Icon.Globe} subtitle={p.status === 'error' ? p.error : p.values.length ? p.values.map(v => `${v.key}: ${v.value}`).join(' · ') : '此文件未设置通用代理'}
-      actions={<ActionPanel>{p.status === 'ready' && <Action title="设置本机代理端口…" onAction={() => editProxy(p.tool)} />}{p.status === 'ready' && p.values.length > 0 && <Action title="清除此文件中的通用代理" onAction={async () => { await mutate(p.tool, { kind: 'clear' }) }} />}{p.status === 'ready' && <Action title="查看配置来源" onAction={() => sources(p)} />}</ActionPanel>} />)}
+    {proxies.map(p => <List.Item key={p.tool} id={`proxy:${p.tool}`} title={`${TOOL_LABEL[p.tool]} 代理`} icon={Icon.Globe} subtitle={p.status === 'error' ? p.error : p.values.length ? p.values.map(v => `${v.key}: ${v.value}`).join(' · ') : `${fileName(p.location)} ${p.exists ? '未设置通用代理' : '尚未创建，未设置通用代理'}`}
+      actions={<ActionPanel>{p.status === 'error' && <Action title="重新读取" onAction={async () => { await run(reload) }} />}{p.status === 'ready' && <Action title="设置本机代理端口…" onAction={() => editProxy(p.tool)} />}{p.status === 'ready' && p.values.length > 0 && <Action title="清除此文件中的通用代理" onAction={async () => { await mutate(p.tool, { kind: 'clear' }) }} />}{p.status === 'ready' && <Action title="查看配置来源" onAction={() => sources(p)} />}</ActionPanel>} />)}
     {snapshot && showProxy && (!q || '终端 terminal'.includes(q)) && <List.Item id="terminal-proxy" title="新终端代理" subtitle="只在新窗口设置代理环境，已有终端保持原样" icon={Icon.Terminal} actions={<ActionPanel><Action title="打开带代理的新终端…" onAction={() => editProxy()} /></ActionPanel>} />}
     {snapshot && showHosts && !hosts.length && <List.Item id="hosts-empty" icon={Icon.Terminal} title={snapshot.ssh.status === 'error' ? 'SSH 配置读取失败' : q ? '没有匹配的 SSH 主机' : '没有明确的 SSH 主机别名'} subtitle={snapshot.ssh.error || `从 ${windows ? '%USERPROFILE%\\.ssh\\config' : '~/.ssh/config'} 及其 Include 文件读取 Host 别名；通配符规则不单独列为主机。`} actions={<ActionPanel><Action title={q ? '清空搜索' : '重新读取'} onAction={async () => { if (q) setQuery(''); else await run(reload) }} /></ActionPanel>} />}
     {category === 'backups' && recoveryPath && <List.Item id="retained-original" title="最近保留的原文件" subtitle={recoveryPath} icon={Icon.Document} actions={<ActionPanel><Action.CopyToClipboard title="复制原文件位置" content={recoveryPath} /></ActionPanel>} />}

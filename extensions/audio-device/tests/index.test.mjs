@@ -207,3 +207,40 @@ test('无界面静音入口只切换真实默认输出；重复调用受阻，�
   assert.match(await commands['audio-mute-toggle'](), /已静音/)
   assert.deepEqual(writes().at(-1)[1], { id: output.id, type: 'output', muted: true })
 })
+
+test('连接方式显示为中文并可按中文搜索；未知连接方式不展示', async () => {
+  devices = [{ ...output, transport: 'bluetooth' }, { ...hdmi, transport: 'hdmi' }, { ...input, transport: 'unknown' }]
+  const view = await open(commands['audio-switch'])
+  assert.match(view.item(output.id).props.subtitle, /输出 · 蓝牙 · 音量 40%/)
+  assert.doesNotMatch(view.item(input.id).props.subtitle, /unknown/)
+  await view.search('蓝牙')
+  assert.deepEqual(view.items().map(i => i.props.id), [output.id])
+  await view.search('hdmi')
+  assert.deepEqual(view.items().map(i => i.props.id), [hdmi.id])
+  const value = await manager()
+  assert.equal(value.getAllDevices().find(d => d.id === input.id).transportType, 'unknown')
+  assert.equal(writes().length, 0)
+})
+
+test('清单不声明未使用的 shell 权限', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url)))
+  assert.ok(!manifest.permissions.includes('shell'))
+})
+
+test('已是默认的设备不再主推“设为默认”，静音成为主动作；非默认设备仍以设为默认为主动作', async () => {
+  const view = await open(commands['audio-switch'])
+  const outputTitles = view.actions(view.item(output.id)).map(a => a.props.title)
+  assert.ok(!outputTitles.some(title => title.startsWith('设为默认')))
+  assert.equal(outputTitles[0], '静音设备')
+  assert.equal(view.actions(view.item(input.id)).map(a => a.props.title)[0], '静音设备')
+  assert.equal(view.actions(view.item(hdmi.id))[0].props.title, '设为默认输出')
+  await view.run(view.item(hdmi.id), '设为默认输出'); await tick()
+  assert.equal(view.actions(view.item(hdmi.id))[0].props.title, '设为常用')
+  assert.equal(view.actions(view.item(output.id))[0].props.title, '设为默认输出')
+})
+
+test('默认设备不支持静音时，设置音量成为主动作', async () => {
+  devices[0].canMute = false
+  const view = await open(commands['audio-switch'])
+  assert.equal(view.actions(view.item(output.id))[0].props.title, '设置音量…')
+})

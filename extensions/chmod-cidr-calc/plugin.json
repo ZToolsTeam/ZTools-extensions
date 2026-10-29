@@ -1,9 +1,9 @@
 {
   "id": "chmod-cidr-calc",
   "name": "网段与权限计算",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "IPv4 CIDR 子网掩码/可用地址池/32 位二进制掩码计算与 Linux chmod 八进制/符号权限位双向推演工具",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

@@ -116,8 +116,9 @@ export class SnippetStoreRepository {
       throw new Error(check.error)
     }
 
-    const content = input.content.trim()
-    const previewText = content.replace(/\s+/g, ' ').slice(0, 72)
+    // 内容按用户输入原样保存：代码片段首行缩进、结尾换行都是内容的一部分，只用 trim 判断是否为空
+    const content = input.content
+    const previewText = content.trim().replace(/\s+/g, ' ').slice(0, 72)
     const category = input.category || 'general'
     const existingIdx = input.id ? this.#items.findIndex((s) => s.id === input.id) : -1
 

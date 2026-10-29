@@ -17,6 +17,35 @@ const PINNED_STORAGE_KEY = "@ztools/screenshots/pinned";
 /** 旧版宿主的截图 id 只编码了路径前 12 字节，同目录所有截图 id 相同；读到这种置顶记录直接丢弃 */
 const LEGACY_COLLIDING_ID_RE = /^screenshot-[A-Za-z0-9_-]{16}$/;
 
+/** 取异常对象上的 message（没有或为空时返回 undefined），catch 参数是 unknown，不能直接读 .message */
+function errorMessageOf(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const message = (err as { message?: unknown }).message;
+  return message ? String(message) : undefined;
+}
+
+/** 宿主或本地扫描得到的单条截图原始记录（字段由宿主决定，逐个按需转换） */
+interface RawScreenshot {
+  id?: unknown;
+  filename?: unknown;
+  name?: unknown;
+  path?: unknown;
+  width?: unknown;
+  height?: unknown;
+  sizeBytes?: unknown;
+  size?: unknown;
+  modifiedAt?: unknown;
+  mtimeMs?: unknown;
+  createdAt?: unknown;
+  birthtimeMs?: unknown;
+  dimensions?: unknown;
+  formattedDate?: unknown;
+  pinned?: unknown;
+  ocrText?: unknown;
+  ocrStatus?: unknown;
+  source?: unknown;
+}
+
 export function formatScreenshotSize(bytes: number | null): string {
   if (bytes === null) return "未知大小";
   if (bytes === 0) return "0 B";
@@ -170,7 +199,7 @@ function isPermissionError(error: string | undefined): boolean {
 }
 
 function hostPlatform(): "mac" | "windows" | "other" {
-  const nav = (globalThis as any).navigator;
+  const nav = (globalThis as unknown as { navigator?: { platform?: unknown; userAgent?: unknown } }).navigator;
   const p = String(nav?.platform || nav?.userAgent || "");
   if (/mac|darwin/i.test(p)) return "mac";
   if (/win/i.test(p)) return "windows";
@@ -182,11 +211,23 @@ export function isOcrSupported(): boolean {
   return hostPlatform() === "windows";
 }
 
+/** 系统回收位置名称：Windows 为回收站，其余（macOS）为废纸篓 */
+export function trashName(): string {
+  return hostPlatform() === "windows" ? "回收站" : "废纸篓";
+}
+
+/** 按修改时间取最新一张（列表排序是置顶优先，不能直接取第一项当“最新”） */
+export function newestScreenshot(items: readonly ScreenshotItem[]): ScreenshotItem | undefined {
+  let newest: ScreenshotItem | undefined;
+  for (const item of items) if (!newest || item.modifiedAt > newest.modifiedAt) newest = item;
+  return newest;
+}
+
 function modKey(): string {
   return hostPlatform() === "mac" ? "⌘" : "Ctrl+";
 }
 
-export const AUTHORIZE_FOLDER_ACTION_TITLE = "授权访问截图目录 (Grant Folder Access)";
+export const AUTHORIZE_FOLDER_ACTION_TITLE = "授权访问截图目录";
 
 /** 把宿主错误整理成给用户看的原因；未授权时提示用户先授权截图目录 */
 export function describeHostError(error: string | undefined, fallback: string): string {
@@ -205,14 +246,14 @@ type DimsProbe = { width: number; height: number } | null;
  */
 async function probeImageDimensions(
   filePath: string,
-  hostOverride?: any,
+  hostOverride?: unknown,
   deniedDirs?: Set<string>
 ): Promise<DimsProbe> {
   if (!filePath) return null;
   const dir = parentDirOf(filePath);
   if (deniedDirs?.has(dir)) return null;
 
-  const ipcRes = await callHostTransport<any>(
+  const ipcRes = await callHostTransport<Uint8Array | string | { content?: unknown }>(
     "filesystem_read_file_chunk",
     { path: filePath, offset: 0, length: IMAGE_HEADER_PROBE_BYTES },
     hostOverride
@@ -233,42 +274,74 @@ async function probeImageDimensions(
   return null;
 }
 
+/** 详情页预览图的大小上限：图片以 data URL 写进视图描述，过大的文件不内联，只显示真实元数据 */
+export const SCREENSHOT_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
+
+/** 按文件头魔数识别真实图片类型（不信任扩展名）；不是可识别的图片返回 null */
+export function sniffImageMime(bytes: Uint8Array): string | null {
+  if (!bytes || bytes.length < 4) return null;
+  if (bytes.length >= 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes.length >= 6 && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x38) return "image/gif";
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return "image/bmp";
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return "image/webp";
+  return null;
+}
+
+/** 系统文件管理器名称：按截图路径判断（Windows 路径为资源管理器，其余为访达） */
+export function fileManagerName(samplePath: string): string {
+  return /^[a-zA-Z]:[\\/]|^\\\\/.test(String(samplePath || "")) ? "资源管理器" : "访达";
+}
+
+export type ScreenshotPreviewResult =
+  | { readonly ok: true; readonly dataUrl: string; readonly mime: string }
+  | { readonly ok: false; readonly reason: string };
+
+export type ScreenshotPreviewState =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly dataUrl: string }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/** Markdown 图片 alt 里去掉会打断语法的方括号与换行 */
+function markdownAlt(text: string): string {
+  return String(text || "").replace(/[\[\]\r\n]/g, " ");
+}
+
+/** 行内代码里的反引号替换掉，避免路径中的反引号打断 Markdown */
+function inlineCode(text: string): string {
+  return "`" + String(text || "").replace(/`/g, "'") + "`";
+}
+
 /**
- * 生成轻量且逼真的 SVG 缩略图数据 URL (用于双栏详情展示)
+ * 截图详情页 Markdown：预览只用真实图片内容；读不到时写明原因，元数据只列真实值（尺寸未知就写未知）
  */
-export function generateScreenshotThumbnailSvg(
-  label: string,
-  width: number,
-  height: number,
-  accentColor = "#0078D4"
+export function buildScreenshotDetailMarkdown(
+  item: ScreenshotItem,
+  preview: ScreenshotPreviewState,
+  ocrEnabled: boolean
 ): string {
-  // 尺寸未知时只按 16:9 画示意框
-  const aspect = width > 0 && height > 0 ? width / height : 16 / 9;
-  const svgWidth = 400;
-  const svgHeight = Math.max(120, Math.round(400 / aspect));
+  const previewBlock =
+    preview.status === "ready"
+      ? `![${markdownAlt(item.filename)}](${preview.dataUrl})`
+      : preview.status === "loading"
+      ? "正在读取截图…"
+      : `> 预览不可用：${preview.reason.replace(/\r?\n/g, " ")}`;
+  const ocrBlock =
+    ocrEnabled && item.ocrText
+      ? `\n### 识别提取文字\n\n\`\`\`text\n${item.ocrText}\n\`\`\`\n`
+      : "";
+  return `${previewBlock}
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgWidth}" height="${svgHeight}" viewBox="0 0 ${svgWidth} ${svgHeight}">
-  <rect width="${svgWidth}" height="${svgHeight}" rx="8" fill="#1e1e1e" />
-  <!-- 窗口标题栏 -->
-  <rect width="${svgWidth}" height="28" rx="8" fill="#2d2d2d" />
-  <circle cx="16" cy="14" r="4.5" fill="#ff5f56" />
-  <circle cx="30" cy="14" r="4.5" fill="#ffbd2e" />
-  <circle cx="44" cy="14" r="4.5" fill="#27c93f" />
-  <text x="${svgWidth / 2}" y="18" fill="#a0a0a0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="11" text-anchor="middle">${label}</text>
-  
-  <!-- 视口内容 -->
-  <rect x="20" y="44" width="${svgWidth - 40}" height="14" rx="3" fill="${accentColor}" opacity="0.8" />
-  <rect x="20" y="68" width="${Math.round(svgWidth * 0.7)}" height="10" rx="2" fill="#4a4a4a" />
-  <rect x="20" y="86" width="${Math.round(svgWidth * 0.5)}" height="10" rx="2" fill="#3a3a3a" />
-  <rect x="20" y="104" width="${Math.round(svgWidth * 0.85)}" height="10" rx="2" fill="#4a4a4a" />
-  <rect x="20" y="122" width="${Math.round(svgWidth * 0.6)}" height="10" rx="2" fill="#3a3a3a" />
-  
-  <!-- 底部徽标与尺寸 -->
-  <rect x="${svgWidth - 95}" y="${svgHeight - 24}" width="85" height="18" rx="4" fill="#000000" opacity="0.6" />
-  <text x="${svgWidth - 52}" y="${svgHeight - 11}" fill="#00ffcc" font-family="monospace" font-size="10" text-anchor="middle">${width > 0 && height > 0 ? `${width}x${height}` : "?"}</text>
-</svg>`;
-
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+---
+${ocrBlock}
+- **存储路径**: ${inlineCode(item.path)}
+- **分辨率**: ${item.dimensions}
+- **文件大小**: ${item.formattedSize}${item.sizeBytes === null ? "" : ` (${item.sizeBytes.toLocaleString()} bytes)`}
+- **修改时间**: ${item.formattedDate}`;
 }
 
 /**
@@ -294,7 +367,6 @@ export async function loadConfig(path: string) {
   return JSON.parse(text);
 }`,
     ocrStatus: "ready",
-    thumbnailSvg: generateScreenshotThumbnailSvg("VS Code - config.ts", 2560, 1440, "#0078D4")
   },
   {
     id: "ss-err-02",
@@ -312,7 +384,6 @@ export async function loadConfig(path: string) {
     ocrText: `Error 0x80070005: Access is denied.
 Please run the installer as administrator and try again.`,
     ocrStatus: "ready",
-    thumbnailSvg: generateScreenshotThumbnailSvg("Windows Error Dialog", 1920, 1080, "#E81123")
   },
   {
     id: "ss-dash-03",
@@ -332,7 +403,6 @@ Average Response Time: 120 ms
 Cache Hit Ratio: 96.4%
 Memory Usage: 2.1 GB`,
     ocrStatus: "ready",
-    thumbnailSvg: generateScreenshotThumbnailSvg("System Metrics Dashboard", 3840, 2160, "#107C41")
   },
   {
     id: "ss-db-04",
@@ -352,7 +422,6 @@ FROM notes
 ORDER BY created_at DESC LIMIT 10;
 -- 10 rows returned`,
     ocrStatus: "ready",
-    thumbnailSvg: generateScreenshotThumbnailSvg("SQLite Query Execution", 2560, 1440, "#744DA9")
   },
   {
     id: "ss-pr-05",
@@ -372,7 +441,6 @@ Changes:
 - Corrected the npm install command
 All checks passed. Ready to merge.`,
     ocrStatus: "ready",
-    thumbnailSvg: generateScreenshotThumbnailSvg("GitHub PR Review", 1920, 1080, "#238636")
   }
 ];
 
@@ -390,7 +458,7 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-function readLocalImageHeader(fs: any, filePath: string): DimsProbe {
+function readLocalImageHeader(fs: typeof import("node:fs"), filePath: string): DimsProbe {
   try {
     const fd = fs.openSync(filePath, "r");
     try {
@@ -412,20 +480,22 @@ export class ScreenshotsManager {
   private captures: ScreenshotItem[] = [];
   private scanned = false;
 
-  private mapHostScreenshot(raw: any, parsedDims?: DimsProbe): ScreenshotItem {
-    const filename = String(raw?.filename || raw?.name || "Screenshot.png");
-    const fullPath = String(raw?.path || filename);
+  private mapHostScreenshot(input: unknown, parsedDims?: DimsProbe): ScreenshotItem {
+    // 宿主记录缺失（null / undefined）时按空记录处理，各字段走默认值
+    const raw = (input ?? {}) as RawScreenshot;
+    const filename = String(raw.filename || raw.name || "Screenshot.png");
+    const fullPath = String(raw.path || filename);
     // 读不到真实尺寸时记为 0 并显示「未知尺寸」，不再伪造 1920 x 1080
-    const width = Number(raw?.width) > 0 ? Number(raw.width) : parsedDims && parsedDims.width > 0 ? parsedDims.width : 0;
-    const height = Number(raw?.height) > 0 ? Number(raw.height) : parsedDims && parsedDims.height > 0 ? parsedDims.height : 0;
+    const width = Number(raw.width) > 0 ? Number(raw.width) : parsedDims && parsedDims.width > 0 ? parsedDims.width : 0;
+    const height = Number(raw.height) > 0 ? Number(raw.height) : parsedDims && parsedDims.height > 0 ? parsedDims.height : 0;
     const known = width > 0 && height > 0;
-    const rawSize = raw?.sizeBytes ?? raw?.size;
+    const rawSize = raw.sizeBytes ?? raw.size;
     const sizeBytes = typeof rawSize === "number" && Number.isSafeInteger(rawSize) && rawSize >= 0 ? rawSize : null;
-    const modifiedAt = Number(raw?.modifiedAt ?? raw?.mtimeMs) > 0 ? Number(raw.modifiedAt ?? raw.mtimeMs) : Date.now();
-    const createdAt = Number(raw?.createdAt ?? raw?.birthtimeMs) > 0 ? Number(raw.createdAt ?? raw.birthtimeMs) : modifiedAt;
+    const modifiedAt = Number(raw.modifiedAt ?? raw.mtimeMs) > 0 ? Number(raw.modifiedAt ?? raw.mtimeMs) : Date.now();
+    const createdAt = Number(raw.createdAt ?? raw.birthtimeMs) > 0 ? Number(raw.createdAt ?? raw.birthtimeMs) : modifiedAt;
     // 没有宿主 id 时用完整路径作 id，保证同目录不同文件不会撞 id
-    const id = String(raw?.id || (raw?.path ? `ss-path:${fullPath}` : `ss-${filename.replace(/[^a-zA-Z0-9_-]/g, "")}`));
-    const hasRealOcr = typeof raw?.ocrText === "string" && raw.ocrText.trim().length > 0;
+    const id = String(raw.id || (raw.path ? `ss-path:${fullPath}` : `ss-${filename.replace(/[^a-zA-Z0-9_-]/g, "")}`));
+    const hasRealOcr = typeof raw.ocrText === "string" && raw.ocrText.trim().length > 0;
 
     return {
       id,
@@ -433,44 +503,68 @@ export class ScreenshotsManager {
       path: fullPath,
       width,
       height,
-      dimensions: String(raw?.dimensions || (known ? `${width} x ${height}` : UNKNOWN_DIMENSIONS)),
+      dimensions: String(raw.dimensions || (known ? `${width} x ${height}` : UNKNOWN_DIMENSIONS)),
       sizeBytes,
       formattedSize: formatScreenshotSize(sizeBytes),
       createdAt,
       modifiedAt,
-      formattedDate: String(raw?.formattedDate || new Date(modifiedAt).toLocaleTimeString()),
-      pinned: Boolean(raw?.pinned) || this.pinnedSet.has(id),
+      formattedDate: String(raw.formattedDate || new Date(modifiedAt).toLocaleTimeString()),
+      pinned: Boolean(raw.pinned) || this.pinnedSet.has(id),
       // 严禁拼接 `系统自动提取文件文本 [${filename}]` 假 OCR 文本
       ocrText: hasRealOcr ? String(raw.ocrText).trim() : "",
-      ocrStatus: raw?.ocrStatus ? raw.ocrStatus : hasRealOcr ? "ready" : "pending",
-      thumbnailSvg: String(raw?.thumbnailSvg || generateScreenshotThumbnailSvg(filename, width, height, "#0078D4")),
-      ...(raw?.source === "capture" ? { source: "capture" as const } : {})
+      ocrStatus: raw.ocrStatus ? raw.ocrStatus as ScreenshotItem["ocrStatus"] : hasRealOcr ? "ready" : "pending",
+      ...(raw.source === "capture" ? { source: "capture" as const } : {})
     };
   }
 
   /** 读取图片文件的 base64 内容（宿主 filesystem_read_file，需路径已授权；ZTools 缓存目录始终可读） */
-  private async readImageBase64(filePath: string, hostOverride?: any): Promise<{ ok: boolean; base64?: string; error?: string }> {
-    const res = await callHostTransport<any>("filesystem_read_file", { path: filePath, encoding: "base64" }, hostOverride);
+  private async readImageBase64(filePath: string, hostOverride?: unknown): Promise<{ ok: boolean; base64?: string; error?: string }> {
+    const res = await callHostTransport<string | { content?: unknown } | null>("filesystem_read_file", { path: filePath, encoding: "base64" }, hostOverride);
     if (!res.ok) return { ok: false, error: res.error };
-    const content = typeof res.data === "string" ? res.data : typeof res.data?.content === "string" ? res.data.content : "";
+    const data = res.data;
+    const content = typeof data === "string" ? data : typeof data?.content === "string" ? data.content : "";
     if (!content) return { ok: false, error: "读取到的图片内容为空" };
     return { ok: true, base64: content };
   }
 
   /**
+   * 读取截图真实内容生成预览 data URL（声明式 Markdown 只接受 data:image / https / ztools:// 图片）
+   * 读不到、不是图片或文件过大时返回原因，由界面显示「预览不可用」与真实元数据，绝不画示意图代替
+   */
+  public async loadPreviewDataUrl(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotPreviewResult> {
+    if (!item || !item.path) return { ok: false, reason: "无效的文件路径" };
+    if (item.sizeBytes !== null && item.sizeBytes > SCREENSHOT_PREVIEW_MAX_BYTES) {
+      return { ok: false, reason: `文件 ${formatScreenshotSize(item.sizeBytes)}，超过预览上限 ${formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES)}` };
+    }
+    const read = await this.readImageBase64(item.path, hostOverride);
+    if (!read.ok || !read.base64) {
+      return { ok: false, reason: `读取图片失败: ${describeHostError(read.error, "宿主未响应")}` };
+    }
+    const base64 = read.base64.replace(/\s+/g, "");
+    const approxBytes = Math.floor((base64.length * 3) / 4);
+    if (approxBytes > SCREENSHOT_PREVIEW_MAX_BYTES) {
+      return { ok: false, reason: `文件 ${formatScreenshotSize(approxBytes)}，超过预览上限 ${formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES)}` };
+    }
+    const head = base64ToBytes(base64.slice(0, 64));
+    const mime = head ? sniffImageMime(head) : null;
+    if (!mime) return { ok: false, reason: "文件内容不是可识别的图片格式" };
+    return { ok: true, mime, dataUrl: `data:${mime};base64,${base64}` };
+  }
+
+  /**
    * 把图片本身写入剪贴板：优先以图片格式写入（可直接粘贴进聊天/文档），宿主不支持该图片格式时退回复制文件引用
    */
-  private async copyImageFile(filePath: string, hostOverride?: any): Promise<{ ok: boolean; error?: string }> {
+  private async copyImageFile(filePath: string, hostOverride?: unknown): Promise<{ ok: boolean; error?: string }> {
     const read = await this.readImageBase64(filePath, hostOverride);
     let imageError = "";
     if (read.ok && read.base64) {
-      const img = await callHostTransport<any>("clipboard_copy_image", { image: read.base64 }, hostOverride);
+      const img = await callHostTransport<unknown>("clipboard_copy_image", { image: read.base64 }, hostOverride);
       if (img.ok) return { ok: true };
       imageError = String(img.error || "");
     } else if (isPermissionError(read.error)) {
       return { ok: false, error: read.error };
     }
-    const file = await callHostTransport<any>("clipboard_copy_file", { filePath }, hostOverride);
+    const file = await callHostTransport<unknown>("clipboard_copy_file", { filePath }, hostOverride);
     if (file.ok) return { ok: true };
     // 两条路都失败时优先报告图片本身的问题（如文件损坏、格式不受支持）
     return { ok: false, error: imageError || file.error || read.error };
@@ -482,16 +576,16 @@ export class ScreenshotsManager {
    */
   public async captureScreenNow(
     options: { copyToClipboard?: boolean } = {},
-    hostOverride?: any
+    hostOverride?: unknown
   ): Promise<ScreenshotActionResult> {
     const copyToClipboard = options?.copyToClipboard !== false;
-    let capRes: { ok: boolean; data?: any; error?: string };
-    const hideRes = await callHostTransport<any>("window_hide", {}, hostOverride);
+    let capRes: { ok: boolean; data?: unknown; error?: string };
+    const hideRes = await callHostTransport<unknown>("window_hide", {}, hostOverride);
     try {
       if (hideRes.ok) await new Promise((r) => setTimeout(r, 250));
-      capRes = await callHostTransport<any>("screen_capture", {}, hostOverride);
+      capRes = await callHostTransport<unknown>("screen_capture", {}, hostOverride);
     } finally {
-      if (hideRes.ok) await callHostTransport<any>("window_show", {}, hostOverride);
+      if (hideRes.ok) await callHostTransport<unknown>("window_show", {}, hostOverride);
     }
 
     if (!capRes.ok) {
@@ -501,7 +595,7 @@ export class ScreenshotsManager {
         error: capRes.error || "CAPTURE_FAILED"
       };
     }
-    const raw = capRes.data && typeof capRes.data === "object" ? capRes.data : {};
+    const raw = (capRes.data && typeof capRes.data === "object" ? capRes.data : {}) as { tempFile?: unknown; path?: unknown; width?: unknown; height?: unknown };
     const filePath = String(raw.tempFile || raw.path || "");
     if (!filePath) {
       return { success: false, message: "截屏失败: 宿主没有返回截图文件", error: "CAPTURE_NO_FILE" };
@@ -549,8 +643,8 @@ export class ScreenshotsManager {
    * 弹出选择目录对话框，由用户授权 ZTools 访问截图所在目录（宿主授权有效期 1 小时）
    * 授权后复制、回贴、打开、定位与读取尺寸才能访问该目录下的截图
    */
-  public async authorizeFolder(defaultPath?: string, hostOverride?: any): Promise<ScreenshotActionResult> {
-    const res = await callHostTransport<any>(
+  public async authorizeFolder(defaultPath?: string, hostOverride?: unknown): Promise<ScreenshotActionResult> {
+    const res = await callHostTransport<{ canceled?: unknown; folderPath?: unknown } | null>(
       "window_show_select_folder_dialog",
       { title: "选择要授权 ZTools 访问的截图目录", ...(defaultPath ? { defaultPath } : {}) },
       hostOverride
@@ -589,14 +683,14 @@ export class ScreenshotsManager {
   /**
    * 扫描真实截图文件并解析图片宽高
    */
-  public async scanRealScreenshots(hostOverride?: any): Promise<ScreenshotItem[]> {
+  public async scanRealScreenshots(hostOverride?: unknown): Promise<ScreenshotItem[]> {
     return this.loadScreenshots(true, hostOverride);
   }
 
   /**
    * 扫描系统磁盘中的截图文件 (优先通过 screenshots_scan IPC 调用主进程扫描，或扫描真实 Pictures / Desktop 目录并解析真实图片文件头尺寸)
    */
-  public async loadScreenshots(forceRefresh = false, hostOverride?: any): Promise<ScreenshotItem[]> {
+  public async loadScreenshots(forceRefresh = false, hostOverride?: unknown): Promise<ScreenshotItem[]> {
     const strictReal = isStrictRealHost(hostOverride);
     if (this.scanned && !forceRefresh && !hostOverride) {
       return [...this.items];
@@ -756,7 +850,7 @@ export class ScreenshotsManager {
    * 调用文字识别服务 invokePluginService('OcrPlugin', 'recognizeImage', { path: item.path }, hostBridge)；
    * 该服务只有 Windows 实现，其他平台直接报不支持，不再发出注定失败的 dllplugin_call
    */
-  public async extractOcr(item: ScreenshotItem, hostOverride?: any): Promise<string> {
+  public async extractOcr(item: ScreenshotItem, hostOverride?: unknown): Promise<string> {
     if (!item || !item.path) {
       throw new Error("INVALID_SCREENSHOT_ITEM: 截图路径不能为空");
     }
@@ -767,7 +861,7 @@ export class ScreenshotsManager {
     }
 
     // 1. 优先调用文字识别服务的 recognizeImage
-    const pluginRes = await invokePluginService<any>(
+    const pluginRes = await invokePluginService<string | { text?: unknown; content?: unknown; result?: unknown }>(
       "OcrPlugin",
       "recognizeImage",
       { path: item.path },
@@ -813,7 +907,7 @@ export class ScreenshotsManager {
    */
   public async pasteToActiveWindow(
     item: ScreenshotItem,
-    hostOverride?: any
+    hostOverride?: unknown
   ): Promise<ScreenshotActionResult> {
     if (!item || !item.path) {
       return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
@@ -822,7 +916,7 @@ export class ScreenshotsManager {
     let pasteError = "";
     const read = await this.readImageBase64(item.path, hostOverride);
     if (read.ok && read.base64) {
-      const pasteRes = await callHostTransport<any>("clipboard_hide_and_paste_image", { image: read.base64 }, hostOverride);
+      const pasteRes = await callHostTransport<unknown>("clipboard_hide_and_paste_image", { image: read.base64 }, hostOverride);
       if (pasteRes.ok) {
         return { success: true, message: `已将截图 [${item.filename}] 回贴到前台活动窗口`, screenshot: item };
       }
@@ -857,9 +951,15 @@ export class ScreenshotsManager {
   /**
    * 快速回贴最新一张截图 (优先调用 screenshots_paste_latest IPC)
    */
-  public async pasteLatestScreenshot(hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async pasteLatestScreenshot(hostOverride?: unknown): Promise<ScreenshotActionResult> {
+    // 宿主只认识扫描目录里的截图；本次「立即截取」的文件在缓存目录里，比已扫描到的都新时由插件自己回贴
+    const newestCapture = newestScreenshot(this.captures);
+    const newestScanned = newestScreenshot(this.items.filter((s) => s.source !== "capture"));
+    if (newestCapture && (!newestScanned || newestCapture.modifiedAt >= newestScanned.modifiedAt)) {
+      return this.pasteToActiveWindow(newestCapture, hostOverride);
+    }
     if (isStrictRealHost(hostOverride)) {
-      const ipcRes = await callHostTransport<any>("screenshots_paste_latest", {}, hostOverride);
+      const ipcRes = await callHostTransport<{ screenshot?: unknown; message?: string; pasted?: unknown } | null>("screenshots_paste_latest", {}, hostOverride);
       if (ipcRes.ok) {
         const target = ipcRes.data?.screenshot
           ? this.mapHostScreenshot(ipcRes.data.screenshot)
@@ -878,10 +978,11 @@ export class ScreenshotsManager {
     }
 
     const list = await this.loadScreenshots(false, hostOverride);
-    if (list.length === 0) {
+    const latest = newestScreenshot(list);
+    if (!latest) {
       return { success: false, message: "未找到近期截图", error: "NO_SCREENSHOTS" };
     }
-    return this.pasteToActiveWindow(list[0], hostOverride);
+    return this.pasteToActiveWindow(latest, hostOverride);
   }
 
   /**
@@ -889,7 +990,7 @@ export class ScreenshotsManager {
    */
   public async copyImageToClipboard(
     item: ScreenshotItem,
-    hostOverride?: any
+    hostOverride?: unknown
   ): Promise<ScreenshotActionResult> {
     if (!item || !item.path) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
 
@@ -908,7 +1009,7 @@ export class ScreenshotsManager {
   /**
    * 复制图片本地路径
    */
-  public async copyImagePath(item: ScreenshotItem, hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async copyImagePath(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     if (!item) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
     await writeRealClipboardText(item.path, hostOverride);
     return {
@@ -921,7 +1022,7 @@ export class ScreenshotsManager {
   /**
    * 复制 OCR 提取文字
    */
-  public async copyOcrText(item: ScreenshotItem, hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async copyOcrText(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     if (!item) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
     try {
       const text = await this.extractOcr(item, hostOverride);
@@ -931,10 +1032,10 @@ export class ScreenshotsManager {
         screenshot: item,
         ocrText: text
       };
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         success: false,
-        message: err?.message || "OCR 文本提取失败",
+        message: errorMessageOf(err) || "OCR 文本提取失败",
         error: "OCR_FAILED",
         screenshot: item
       };
@@ -942,12 +1043,12 @@ export class ScreenshotsManager {
   }
 
   /**
-   * 在 Finder / 资源管理器中定位 (Show in Finder / Explorer)，按宿主真实结果返回
+   * 在访达 / 资源管理器中定位，按宿主真实结果返回
    */
-  public async showInExplorer(item: ScreenshotItem, hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async showInExplorer(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     if (!item || !item.path) return { success: false, message: "无效的文件路径", error: "INVALID_PATH" };
 
-    const res = await callHostTransport<any>("shell_show_item_in_folder", { fullPath: item.path }, hostOverride);
+    const res = await callHostTransport<unknown>("shell_show_item_in_folder", { fullPath: item.path }, hostOverride);
     if (!res.ok) {
       return {
         success: false,
@@ -956,16 +1057,16 @@ export class ScreenshotsManager {
         screenshot: item
       };
     }
-    return { success: true, message: `已在 Finder / 资源管理器中定位: ${item.filename}`, screenshot: item };
+    return { success: true, message: `已在${fileManagerName(item.path)}中定位: ${item.filename}`, screenshot: item };
   }
 
   /**
    * 用默认图片查看器打开 (Open with Default App)，按宿主真实结果返回
    */
-  public async openWithDefaultApp(item: ScreenshotItem, hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async openWithDefaultApp(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     if (!item || !item.path) return { success: false, message: "无效的文件路径", error: "INVALID_PATH" };
 
-    const res = await callHostTransport<any>("shell_open_path", { fullPath: item.path }, hostOverride);
+    const res = await callHostTransport<unknown>("shell_open_path", { fullPath: item.path }, hostOverride);
     if (!res.ok) {
       return {
         success: false,
@@ -981,18 +1082,18 @@ export class ScreenshotsManager {
    * 删除截图文件：扫描到的截图走宿主 screenshots_delete（只允许操作扫描结果，移入废纸篓 / 回收站）；
    * 本次立即截取的缓存文件直接删除。宿主失败时保留列表行并返回失败原因
    */
-  public async deleteScreenshot(item: ScreenshotItem, hostOverride?: any): Promise<ScreenshotActionResult> {
+  public async deleteScreenshot(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     if (!item || !item.path) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
 
     if (isStrictRealHost(hostOverride)) {
       const res =
         item.source === "capture"
-          ? await callHostTransport<any>("filesystem_delete_file", { path: item.path }, hostOverride)
-          : await callHostTransport<any>("screenshots_delete", { filePath: item.path }, hostOverride);
+          ? await callHostTransport<unknown>("filesystem_delete_file", { path: item.path }, hostOverride)
+          : await callHostTransport<unknown>("screenshots_delete", { filePath: item.path }, hostOverride);
       if (!res.ok) {
         return {
           success: false,
-          message: `删除截图失败: ${describeHostError(res.error, "宿主未能移入废纸篓")}`,
+          message: `删除截图失败: ${describeHostError(res.error, `宿主未能移入${trashName()}`)}`,
           error: res.error || "DELETE_FAILED",
           screenshot: item
         };
@@ -1002,8 +1103,8 @@ export class ScreenshotsManager {
       if (fs && fs.existsSync(item.path)) {
         try {
           await fs.promises.unlink(item.path);
-        } catch (err: any) {
-          return { success: false, message: `删除截图失败: ${err?.message || String(err)}`, error: "DELETE_FAILED", screenshot: item };
+        } catch (err: unknown) {
+          return { success: false, message: `删除截图失败: ${errorMessageOf(err) || String(err)}`, error: "DELETE_FAILED", screenshot: item };
         }
       }
     }
@@ -1054,24 +1155,24 @@ export class ScreenshotsManager {
 
 export const defaultScreenshotsManager = new ScreenshotsManager();
 
-export async function scanRealScreenshots(hostOverride?: any): Promise<ScreenshotItem[]> {
+export async function scanRealScreenshots(hostOverride?: unknown): Promise<ScreenshotItem[]> {
   return defaultScreenshotsManager.scanRealScreenshots(hostOverride);
 }
 
-export async function extractOcr(item: ScreenshotItem, hostOverride?: any): Promise<string> {
+export async function extractOcr(item: ScreenshotItem, hostOverride?: unknown): Promise<string> {
   return defaultScreenshotsManager.extractOcr(item, hostOverride);
 }
 
 export async function pasteToActiveWindow(
   item: ScreenshotItem,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<ScreenshotActionResult> {
   return defaultScreenshotsManager.pasteToActiveWindow(item, hostOverride);
 }
 
 export async function copyImageToClipboard(
   item: ScreenshotItem,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<ScreenshotActionResult> {
   return defaultScreenshotsManager.copyImageToClipboard(item, hostOverride);
 }

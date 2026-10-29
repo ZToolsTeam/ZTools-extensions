@@ -1,9 +1,9 @@
 {
   "id": "file-inspector",
   "name": "文件透视与转码",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "按文件头识别真实格式并修正错误的扩展名；检查文本文件的编码与换行符，可另存为 UTF-8-BOM，解决 Excel 打开 CSV 乱码",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

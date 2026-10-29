@@ -29,7 +29,7 @@ test.beforeEach(() => {
   }
 })
 
-const itemByName = (view, name) => view.item((it) => it.props.title.startsWith(`${name} [`))
+const itemByName = (view, name) => view.item((it) => it.props.title === name)
 
 /** 让宿主剪贴板写入抛错（模拟 HostMethodError：剪贴板被占用 / IPC 断开），返回恢复函数 */
 function failClipboard(error) {

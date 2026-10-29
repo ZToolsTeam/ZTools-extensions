@@ -1,8 +1,15 @@
 import React, { Action, ActionPanel, Detail, Icon, List, Toast, showToast, useEffect, useMemo, useRef, useState } from '@ztools/declarative-ui'
-import { MediaClient, mediaSize } from './media-service.js'
+import { MediaClient, mediaSize, photoFormat } from './media-service.js'
 import type { CleaningMode, MediaMetadataSummary, SavedMedia } from './types.js'
 export * from './types.js'
 export * from './media-service.js'
+
+/** 每个命令只说明自己处理的格式：只读命令写音视频，清理命令写照片 */
+export function supportScope(featureCode: string): string {
+  if (featureCode === 'media-stream-info') return 'MP4 / MOV / MP3 / M4A / WAV / FLAC，只读取已有参数，不修改文件'
+  if (featureCode === 'media-clean-gps-fast') return 'JPEG / PNG / HEIC 照片，清理后另存副本'
+  return 'JPEG / PNG / HEIC 可清理，音视频只查看真实参数'
+}
 
 export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' }: { featureCode?: string } = {}) {
   const client = useMemo(() => new MediaClient(), [])
@@ -29,8 +36,9 @@ export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' 
   })
   const clean = () => operate(async signal => {
     if (!summary?.canClean || !source.current) throw new Error('请选择支持清理的照片')
-    const extension = summary.type === 'JPEG' ? 'jpg' : summary.type === 'PNG' ? 'png' : 'heic'
-    const output = await client.choose(signal, summary.name.replace(/\.[^.]+$/, '') + `_clean.${extension}`)
+    const format = photoFormat(summary.type)
+    if (!format) throw new Error('请选择支持清理的照片')
+    const output = await client.choose(signal, summary.name.replace(/\.[^.]+$/, '') + `_clean.${format.extensions[0]}`, summary.type)
     if (!output) return
     signal.throwIfAborted()
     const result = await client.clean(source.current, summary, output, mode, signal)
@@ -43,11 +51,12 @@ export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' 
   const visible = summary && summary.name.toLowerCase().includes(query.trim().toLowerCase())
   const details = <Detail markdown="读取自文件的元数据；未识别到的字段不代表不存在。" metadata={<Detail.Metadata>{summary?.fields.map(field => <Detail.Metadata.Label key={field.key} title={field.key} text={field.value} />)}</Detail.Metadata>} />
   return <List navigationTitle={readonly ? '媒体参数' : '照片隐私清理'} isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索已选文件…"
+    actions={<ActionPanel><Action title="选择文件…" icon={Icon.Folder} onAction={pick} /></ActionPanel>}
     filterBar={{ summaryText: error || (saved ? `已另存 ${saved.name} · ${mediaSize(saved.size)}` : '仅在本机处理，原文件保留 · 单文件最大 16 MiB'), actions: [{ id: 'pick', title: '选择文件', onAction: pick }] }}
     workbenchPanel={{ title: readonly ? '参数查看' : '副本处理', fields: [
       ...(readonly ? [] : [{ id: 'mode', label: '清理内容', type: 'select' as const, value: mode, options: [{ label: '定位及相关附属元数据', value: 'location' }, { label: 'EXIF / XMP / IPTC（保留显示参数）', value: 'metadata' }], onChange: (v: unknown) => { if (!active.current && (v === 'location' || v === 'metadata')) setMode(v) } }]),
-      { id: 'formats', label: '支持范围', type: 'info', value: 'JPEG / PNG / HEIC 可清理，音视频只查看真实参数' },
-      { id: 'scope', label: '清理说明', type: 'info', value: '定位模式也移除 XMP、IPTC 和厂商注记；不处理画面、文件名或文字里的个人信息' }
+      { id: 'formats', label: '支持范围', type: 'info', value: supportScope(featureCode) },
+      ...(readonly ? [] : [{ id: 'scope', label: '清理说明', type: 'info' as const, value: '定位模式也移除 XMP、IPTC 和厂商注记；不处理画面、文件名或文字里的个人信息' }])
     ] }}
     subList={{ title: '已选文件', emptyText: summary ? '没有匹配的文件' : '选择文件后读取元数据', items: visible ? [
       <List.Item id="media" key="media" title={summary.name} subtitle={`${summary.type} · ${mediaSize(summary.size)} · ${summary.hasLocation ? '检测到定位标签' : '未检测到已识别的定位标签'}`} icon={Icon.Document}

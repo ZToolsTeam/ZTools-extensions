@@ -33,7 +33,7 @@ test('[macOS] 系统识别插件生成的 PNG：中文、Emoji、Wi-Fi、长文�
   try {
     const bin = path.join(dir, 'decode')
     execFileSync('swiftc', ['-O', path.join(here, 'fixtures/decode-macos.swift'), '-o', bin])
-    const texts = ['https://ztools.cn/插件?id=1', buildWifiPayload('My;Net', 'p:a"ss', 'WPA'), '中文 😀'.repeat(30), 'z'.repeat(1200)]
+    const texts = ['https://ztools.cn/插件?id=1', buildWifiPayload('My;Net', 'p:a"ss;word', 'WPA'), '中文 😀'.repeat(30), 'z'.repeat(1200)]
     const files = []
     // 基准用例同样交给系统识别，保证 golden.json 里的矩阵是能扫出来的
     golden.forEach((g, i) => {
@@ -61,6 +61,15 @@ test('[边界] 超出最大容量时报错，而不是生成扫不出的码', ()
   assert.doesNotThrow(() => encodeQr('x'.repeat(2900), 'L'))
   assert.throws(() => buildWifiPayload('', 'p', 'WPA'), /名称/)
   assert.throws(() => buildWifiPayload('net', '', 'WPA'), /密码/)
+  // 密码长度不合规时拒绝生成（扫了也连不上）
+  assert.throws(() => buildWifiPayload('net', '1234567', 'WPA'), /8–63/)
+  assert.throws(() => buildWifiPayload('net', 'x'.repeat(64), 'WPA'), /8–63/)
+  assert.throws(() => buildWifiPayload('net', '中文密码中文密码', 'WPA'), /8–63/)
+  assert.ok(buildWifiPayload('net', 'a'.repeat(63), 'WPA'))
+  assert.ok(buildWifiPayload('net', 'ab'.repeat(32), 'WPA'), '64 位十六进制可用')
+  assert.throws(() => buildWifiPayload('net', '1234', 'WEP'), /WEP/)
+  assert.ok(buildWifiPayload('net', '12345', 'WEP'))
+  assert.ok(buildWifiPayload('net', '0123456789', 'WEP'))
   assert.equal(buildWifiPayload('a;b', '', 'nopass'), String.raw`WIFI:T:nopass;S:a\;b;;`)
 })
 

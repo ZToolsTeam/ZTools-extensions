@@ -2,7 +2,7 @@
   "id": "ai-image",
   "name": "AI 图片修复",
   "description": "把 PNG、JPG、BMP 图片按 2 倍或 4 倍放大像素尺寸（普通插值放大，不是 AI，不提升清晰度），输出到原图所在目录且不覆盖已有文件。AI 超分辨率、去背景、人像修复暂不可用",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "draft": true,
   "draftReason": "AI 超分辨率、去背景、人像修复需要客户端提供本地 AI 推理能力（模型与推理组件），当前客户端的图片处理接口只能做普通插值放大；等客户端提供该能力并在 Windows 上实测通过后再发布",
   "author": "ZTools Team",

@@ -2,7 +2,7 @@
   "id": "batch-rename",
   "name": "批量重命名",
   "description": "批量修改文件夹里的文件名：查找替换、加前缀 / 后缀 / 当天日期前缀、追加序号、去括号、下划线或全小写规范，执行前预览并确认，本次打开期间可撤销",
-  "version": "2.0.8",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

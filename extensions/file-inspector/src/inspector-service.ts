@@ -27,6 +27,31 @@ function isAvifFileTypeBox(bytes: Uint8Array): boolean {
   return brands.some((brand) => brand === 'avif' || brand === 'avis')
 }
 
+/**
+ * 以 ZIP 为容器的常见格式：文件头都是 50 4B 03 04，扩展名本来就不是 .zip，不能判为扩展名不符。
+ * 含 macOS iWork 单文件格式（pages / numbers / key），以免把文稿提示改名成 .zip。
+ */
+const ZIP_CONTAINER_EXTENSIONS = new Set([
+  'docx', 'docm', 'dotx', 'dotm', 'xlsx', 'xlsm', 'xltx', 'xltm', 'pptx', 'pptm', 'potx', 'ppsx',
+  'odt', 'ods', 'odp', 'odg', 'ott', 'ots', 'otp', 'epub', 'pages', 'numbers', 'key',
+  'jar', 'war', 'ear', 'apk', 'aab', 'aar', 'ipa', 'xpi', 'vsix', 'nupkg', 'whl',
+  'kmz', '3mf', 'cbz', 'sketch', 'xd', 'usdz', 'appx', 'msix', 'xps', 'oxps'
+])
+
+/** JPEG 的别名扩展名，与 .jpg 视为一致 */
+const JPEG_EXTENSIONS = new Set(['jpg', 'jpeg', 'jpe', 'jfif', 'pjpeg', 'pjp'])
+
+/**
+ * 只有这些“本应是二进制格式”的扩展名，内容却是 HTML 时才提示扩展名不符（例如下载到的 .pdf 其实是报错网页）。
+ * .php、.ejs、.htm 等模板或文本文件以 <!doctype html> 开头是正常的，不能提示改成 .html。
+ */
+const BINARY_FORMAT_EXTENSIONS = new Set([
+  'png', 'gif', 'webp', 'avif', 'bmp', 'ico', 'tif', 'tiff', 'heic', 'heif', 'psd', ...JPEG_EXTENSIONS,
+  'pdf', 'zip', '7z', 'rar', 'gz', 'tgz', 'bz2', 'xz', 'tar', 'dmg', 'pkg', 'exe', 'msi', 'dll', 'iso',
+  'doc', 'xls', 'ppt', 'mp3', 'mp4', 'm4a', 'mov', 'avi', 'mkv', 'flac', 'wav', 'ttf', 'otf', 'woff', 'woff2',
+  ...ZIP_CONTAINER_EXTENSIONS
+])
+
 export function detectMagicSignature(
   bytes: Uint8Array,
   currentExtension: string
@@ -98,7 +123,9 @@ export function detectMagicSignature(
     bytes[2] === 0x44 &&
     bytes[3] === 0x46
   ) {
-    return { realMimeType: 'application/pdf', realExtension: 'pdf', isKnownBinary: true }
+    // Illustrator 的 .ai 文件本身就是 PDF 兼容格式，文件头同为 %PDF，不能提示改成 .pdf
+    const ext = currentExtension === 'ai' ? 'ai' : 'pdf'
+    return { realMimeType: 'application/pdf', realExtension: ext, isKnownBinary: true }
   }
 
   // ZIP / OOXML: 50 4B 03 04
@@ -109,8 +136,7 @@ export function detectMagicSignature(
     bytes[2] === 0x03 &&
     bytes[3] === 0x04
   ) {
-    const ooxmlExts = new Set(['docx', 'pptx', 'xlsx', 'jar', 'apk'])
-    const ext = ooxmlExts.has(currentExtension) ? currentExtension : 'zip'
+    const ext = ZIP_CONTAINER_EXTENSIONS.has(currentExtension) ? currentExtension : 'zip'
     return { realMimeType: 'application/zip', realExtension: ext, isKnownBinary: true }
   }
 
@@ -276,9 +302,10 @@ export function inspectFileFromBuffer(
       )
         .trim()
         .toLowerCase()
-      if (previewHead.startsWith('<!doctype html') || previewHead.startsWith('<html')) {
+      const looksLikeHtml = previewHead.startsWith('<!doctype html') || previewHead.startsWith('<html')
+      if (looksLikeHtml) {
         realMimeType = 'text/html'
-        realExtension = 'html'
+        realExtension = BINARY_FORMAT_EXTENSIONS.has(currentExtension) || !currentExtension ? 'html' : currentExtension
       } else if (currentExtension === 'csv') {
         realMimeType = 'text/csv'
         realExtension = 'csv'
@@ -295,8 +322,8 @@ export function inspectFileFromBuffer(
     }
   }
 
-  const normalizedCur = currentExtension === 'jpeg' ? 'jpg' : currentExtension
-  const normalizedReal = realExtension === 'jpeg' ? 'jpg' : realExtension
+  const normalizedCur = JPEG_EXTENSIONS.has(currentExtension) ? 'jpg' : currentExtension
+  const normalizedReal = JPEG_EXTENSIONS.has(realExtension) ? 'jpg' : realExtension
   const extensionMismatch =
     Boolean(normalizedCur) &&
     Boolean(normalizedReal) &&

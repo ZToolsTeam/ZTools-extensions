@@ -71,6 +71,19 @@ test('刷新缓存、恢复自动和备份入口指向实际操作，缓存授�
   await v.item('flush').props.actions.children[0].props.onAction(); await settled(); assert.match(v.text(), /用户取消授权/)
   const missing = await open(MacDnsCommand, { featureCode: 'dns-reset-dhcp' }); assert.equal(missing.tree().props.selectedItemId, 'automatic')
 })
+test('解析失败的地址在提示里给出系统返回的原因；处理中再次操作会明确提示而不是没有反应', async () => {
+  host.ipc.dns_benchmark = async p => p.action === 'list' ? { success: true, services: [service] } : { success: true, domain: 'example.com', results: p.servers.map(server => ({ server, milliseconds: null, answers: [], error: 'queryA ETIMEOUT example.com' })) }
+  const v = await open()
+  const failed = v.item('223.5.5.5').props.accessories[0]
+  assert.equal(failed.text, '解析失败'); assert.match(failed.tooltip, /ETIMEOUT/)
+  const pending = deferred()
+  host.ipc.dns_benchmark = async p => p.action === 'reset' ? pending.promise : { success: true }
+  const resetting = v.item('automatic').props.actions.children[0].props.onAction(); await tick()
+  await v.item('flush').props.actions.children[0].props.onAction(); await settled()
+  assert.match(host.lastToast().title, /尚未完成/)
+  assert.ok(!host.ipcCalls.some(([, p]) => p.action === 'flush'))
+  pending.resolve({ success: true, service: { ...service, servers: [], backup } }); await resetting
+})
 test('空网络、旧客户端、无效协议均明确报错，不生成 WLAN 或默认地址', async () => {
   host.ipc.dns_benchmark = async () => ({ success: true, services: [] })
   const v = await open(); assert.match(v.text(), /未找到已连接/); assert.doesNotMatch(v.text(), /WLAN|192\.168\.1\.100/)

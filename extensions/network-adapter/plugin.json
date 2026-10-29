@@ -2,7 +2,7 @@
   "id": "network-adapter",
   "name": "网卡管理",
   "description": "查看本机网卡的 IPv4 地址、子网掩码、MAC 地址、网关与 DNS，可刷新 DNS 缓存，或把网卡 DNS 设为 223.5.5.5、恢复自动获取（修改 DNS 需要管理员权限）",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

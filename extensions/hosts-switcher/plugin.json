@@ -1,9 +1,9 @@
 {
   "id": "hosts-switcher",
   "name": "域名映射",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "保存并切换多套 Hosts 方案；Mac 写入前预览、校验和备份，通过系统授权应用并支持恢复",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -17,7 +17,6 @@
   ],
   "permissions": [
     "fs",
-    "shell",
     "system"
   ],
   "features": [

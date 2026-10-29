@@ -2,7 +2,7 @@
   "id": "downloads-manager",
   "name": "下载管理",
   "description": "聚合已识别的系统下载、网盘与接收目录，支持自定义目录、筛选、打开和安全回收；扫描不完整时明确提示",
-  "version": "2.1.5",
+  "version": "2.1.7",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -55,7 +55,7 @@
     },
     {
       "code": "downloads-clean-installers",
-      "explain": "筛选当前列出的安装包，经确认后将未保护项移入回收站",
+      "explain": "筛选当前列出的安装包，经确认后将未保护项移到回收站（macOS 为废纸篓）",
       "cmds": [
         "清理安装包",
         "删除安装包",

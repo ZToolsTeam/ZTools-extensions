@@ -3,6 +3,14 @@ import { callHostTransport } from './native-ipc.js'
 import type { AudioDevice, AudioFilterOptions } from './types.js'
 
 const FAVOURITES_KEY = 'audio-device-favourites-v1'
+// macOS 音频组件返回的连接方式代号；unknown 与未识别的值不展示，避免把不确定的信息当成事实。
+const TRANSPORT_LABELS: Record<string, string> = {
+  builtin: '内置', usb: 'USB', bluetooth: '蓝牙', bluetoothle: '蓝牙低功耗', hdmi: 'HDMI 显示器',
+  displayport: 'DisplayPort 显示器', airplay: 'AirPlay', virtual: '虚拟设备', aggregate: '聚合设备'
+}
+export function transportLabel(transport?: string): string | undefined {
+  return transport ? TRANSPORT_LABELS[transport] : undefined
+}
 export function parseAudioDevice(value: unknown): AudioDevice {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('音频设备数据无效')
   const item = value as Record<string, unknown>
@@ -54,7 +62,7 @@ export class AudioDeviceManager {
   getDefaultInputDevice(): AudioDevice | undefined { return this.getAllDevices().find(device => device.type === 'input' && device.isDefault) }
   filterDevices(options: AudioFilterOptions = {}): AudioDevice[] {
     const query = (options.query || '').trim().toLowerCase()
-    return this.getAllDevices().filter(device => (!options.ioType || options.ioType === 'all' || (options.ioType === 'favourites' ? device.isFavourite : device.type === options.ioType)) && `${device.name} ${device.transportType || ''}`.toLowerCase().includes(query))
+    return this.getAllDevices().filter(device => (!options.ioType || options.ioType === 'all' || (options.ioType === 'favourites' ? device.isFavourite : device.type === options.ioType)) && `${device.name} ${device.transportType || ''} ${transportLabel(device.transportType) || ''}`.toLowerCase().includes(query))
   }
   private find(id: string): AudioDevice {
     const device = this.devices.find(item => item.id === id)

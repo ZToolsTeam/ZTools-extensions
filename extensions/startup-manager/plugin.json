@@ -2,8 +2,8 @@
   "id": "startup-manager",
   "name": "启动管理",
   "description": "查看启动应用、后台服务与计划任务，管理自启状态；Mac 修改前保留可恢复的配置记录",
-  "version": "1.0.4",
-  "author": "ZTools Community",
+  "version": "1.0.6",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

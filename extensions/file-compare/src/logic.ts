@@ -202,10 +202,11 @@ function lcsMatch(a: string[], b: string[], maxCost: number): { matchA: Int32Arr
   };
 
   const compare = (aLo: number, aHi: number, bLo: number, bHi: number): void => {
-    if (cost > maxCost) { anchor(aLo, aHi, bLo, bHi, 0); return; }
     while (aLo < aHi && bLo < bHi && A[aLo] === B[bLo]) { match(aLo, bLo); aLo++; bLo++; }
     while (aLo < aHi && bLo < bHi && A[aHi - 1] === B[bHi - 1]) { aHi--; bHi--; match(aHi, bHi); }
     if (aLo === aHi || bLo === bHi) return;
+    // 之前的中间蛇搜索成功但已用完预算：剩余子段只能近似对比，必须如实标记（不能只在搜索失败时标记）
+    if (cost > maxCost) { approximate = true; anchor(aLo, aHi, bLo, bHi, 0); return; }
     const split = bisect(aLo, aHi, bLo, bHi);
     if (!split) { approximate = true; anchor(aLo, aHi, bLo, bHi, 0); return; }
     const [x, y] = split;
@@ -293,6 +294,16 @@ export function fencedDiffMarkdown(text: string): string {
   for (const run of text.match(/`+/g) || []) longest = Math.max(longest, run.length);
   const fence = "`".repeat(Math.max(3, longest + 1));
   return `${fence}diff\n${text}\n${fence}`;
+}
+
+/** 右侧预览单处差异最多显示的行数：整篇改写时一处差异可达数万行，全部渲染会拖慢界面；完整内容用复制动作取得 */
+export const MAX_PREVIEW_LINES = 500;
+
+export function hunkPreviewMarkdown(h: DiffHunk): string {
+  if (h.lines.length <= MAX_PREVIEW_LINES) return fencedDiffMarkdown(formatHunk(h));
+  const shown = { ...h, lines: h.lines.slice(0, MAX_PREVIEW_LINES) };
+  const body = formatHunk(shown).split("\n").slice(1).join("\n");
+  return `${fencedDiffMarkdown(`${hunkHeader(h)}\n${body}`)}\n\n这一处共 ${h.lines.length} 行，预览只显示前 ${MAX_PREVIEW_LINES} 行；完整内容请复制这一处差异或差异报告。`;
 }
 
 /** 统一格式（unified diff）报告，可直接粘贴到代码评审或 git apply */

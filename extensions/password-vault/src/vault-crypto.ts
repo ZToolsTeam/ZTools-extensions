@@ -254,6 +254,16 @@ export async function decryptVaultEntries(
   }
 }
 
+/** 无偏随机下标：拒绝落在 2^32 整数倍之外的样本，避免取模偏差让部分字符更常出现 */
+function uniformRandomIndex(cryptoObj: Crypto, n: number): number {
+  const limit = Math.floor(0x100000000 / n) * n
+  const buf = new Uint32Array(1)
+  for (;;) {
+    cryptoObj.getRandomValues(buf)
+    if (buf[0]! < limit) return buf[0]! % n
+  }
+}
+
 export function generateSecurePassword(length = 20, includeSymbols = true): string {
   const safeLen = Math.max(8, Math.min(64, Math.floor(Number(length) || 20)))
   const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
@@ -263,28 +273,17 @@ export function generateSecurePassword(length = 20, includeSymbols = true): stri
   const charset = includeSymbols ? upper + lower + digits + symbols : upper + lower + digits
 
   const cryptoObj = getWebCrypto()
-  const randomBytes = new Uint8Array(safeLen)
-  cryptoObj.getRandomValues(randomBytes)
+  const pick = (set: string) => set[uniformRandomIndex(cryptoObj, set.length)]!
 
-  const chars: string[] = []
-  chars.push(upper[randomBytes[0] % upper.length])
-  chars.push(lower[randomBytes[1] % lower.length])
-  chars.push(digits[randomBytes[2] % digits.length])
-  if (includeSymbols) {
-    chars.push(symbols[randomBytes[3] % symbols.length])
-  }
+  // 每类至少一个，其余从全集均匀抽取，最后整体洗牌打散位置
+  const chars: string[] = [pick(upper), pick(lower), pick(digits)]
+  if (includeSymbols) chars.push(pick(symbols))
+  while (chars.length < safeLen) chars.push(pick(charset))
 
-  for (let i = chars.length; i < safeLen; i++) {
-    chars.push(charset[randomBytes[i] % charset.length])
-  }
-
-  // Fisher-Yates shuffle using crypto random bytes
-  const shuffleBytes = new Uint8Array(chars.length)
-  cryptoObj.getRandomValues(shuffleBytes)
   for (let i = chars.length - 1; i > 0; i--) {
-    const j = shuffleBytes[i] % (i + 1)
-    const tmp = chars[i]
-    chars[i] = chars[j]
+    const j = uniformRandomIndex(cryptoObj, i + 1)
+    const tmp = chars[i]!
+    chars[i] = chars[j]!
     chars[j] = tmp
   }
 

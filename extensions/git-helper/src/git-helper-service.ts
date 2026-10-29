@@ -70,7 +70,7 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
       {
         title: '第二步：基于翻车前的 commit 哈希新建或恢复分支',
         cmd: 'git branch recovered-branch "确认后的提交哈希"',
-        explain: '将引号内替换为已核对的提交哈希，仅创建恢复分支，不切换或改写当前工作文件；不要假定 HEAD@{1} 就是正确版本。'
+        explain: '将引号内替换为已核对的提交哈希，仅创建恢复分支，不切换或改写当前工作文件；不要假定 HEAD@{1} 就是正确版本。误删的分支若从未检出过，HEAD 的 reflog 里可能没有它，可查看删除时 git branch -D 输出的“was 短哈希”。'
       }
     ],
     principle:
@@ -141,7 +141,7 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
         explain: '确认 HEAD 是要撤销的普通提交，先保存当前修改。合并提交需要核对主线父节点，不能一律选择 -m 1；出现冲突后应处理或 git revert --abort。'
       },
       {
-        title: '正常推送到远端仓库（无需危险的 --force）',
+        title: '核对当前分支与上游后再正常推送（无需危险的 --force）',
         cmd: 'git status -sb',
         explain: '测试反向提交并核对当前分支、远端和上游后再正常推送。不要把固定的 main 当成所有项目的目标分支。'
       }
@@ -161,44 +161,44 @@ export const COMMIT_TYPES: CommitTypeItem[] = [
   {
     type: 'feat',
     chineseMeaning: '新增业务功能或特性',
-    description: '面向用户或下游模块新增的业务能力',
-    examples: ['feat(auth): 新增企业微信扫码登录与多端会话同步', 'feat(plugin): 新增 SQL 格式化与 DDL 实体生成插件']
+    description: '新增用户能用到或可调用的功能',
+    examples: ['feat(auth): 新增邮箱验证码登录', 'feat(export): 支持把报表导出为 CSV']
   },
   {
     type: 'fix',
     chineseMeaning: '修复 Bug 或生产异常',
-    description: '修复边界崩溃、逻辑缺陷、空指针或协议解析异常',
-    examples: ['fix(network): 修复 DNS 并发测速超时未释放 Socket 句柄问题', 'fix(ui): 修复深色模式下详情栏表格边框对比度不足']
+    description: '修复错误行为、崩溃或异常结果',
+    examples: ['fix(network): 修复请求超时后连接没有释放', 'fix(ui): 修复深色模式下表格边框对比度不足']
   },
   {
     type: 'refactor',
     chineseMeaning: '代码重构（不改变外部行为）',
-    description: '内聚公共底座、消除重复代码、优化模块边界',
-    examples: ['refactor(host): 收敛内置插件特权 IPC 路由至单一咽喉底座']
+    description: '调整代码结构，对外功能和行为不变',
+    examples: ['refactor(order): 把支付逻辑从订单服务中拆分出来']
   },
   {
     type: 'perf',
     chineseMeaning: '性能与内存优化',
-    description: '降低唤醒延迟、优化算法复杂度、减少渲染重绘与常驻内存',
-    examples: ['perf(indexer): 将 MFT 增量索引过滤耗时从 45ms 降至 4ms']
+    description: '提升速度，或降低内存、CPU 等资源占用',
+    examples: ['perf(search): 为列表查询增加索引，避免全表扫描']
   },
   {
     type: 'test',
     chineseMeaning: '新增或完善集成与异常测试',
-    description: '补充端到端集成测试、边界极值与失败回滚用例',
-    examples: ['test(plugins): 补齐 41 款标杆插件全链路集成与异常拦截测试套件']
+    description: '只新增或修改测试用例，不改功能代码',
+    examples: ['test(cart): 补充库存不足与重复下单的测试']
   },
   {
     type: 'docs',
     chineseMeaning: '技术文档与注释更新',
-    description: '修改架构设计文档、API 手册或 README',
-    examples: ['docs(specs): 更新 41 款插件独立开发文档与实机渲染截图']
+    description: '只改文档、注释或 README',
+    examples: ['docs(readme): 补充本地开发与构建说明']
   },
   {
     type: 'chore',
     chineseMeaning: '构建脚本、依赖升级或工程杂务',
-    description: 'CI/CD 流水线、脚手架、打包配置与版本例行维护',
-    examples: ['chore(release): 升级 Electron 构建门禁与 AST 安全扫描规则']
+    description: '构建脚本、依赖升级、CI 配置等不影响功能的杂项',
+    examples: ['chore(deps): 升级 TypeScript 与构建工具版本']
   }
 ]
 
@@ -268,6 +268,9 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
       '*.jar',
       '*.war',
       '*.ear',
+      // 构建脚本包装器的 jar 必须提交，否则克隆后 ./gradlew、./mvnw 无法运行
+      '!gradle/wrapper/gradle-wrapper.jar',
+      '!.mvn/wrapper/maven-wrapper.jar',
       'hs_err_pid*',
       'replay_pid*'
     ]
@@ -276,25 +279,40 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
     id: 'Go',
     name: 'Go (Golang)',
     category: '语言与运行时',
-    rules: ['bin/', 'vendor/', '*.exe', '*.exe~', '*.dll', '*.so', '*.dylib', '*.test', '*.out', 'go.work']
+    // vendor/ 是否提交由项目决定（go mod vendor），默认不忽略
+    rules: ['bin/', '*.exe', '*.exe~', '*.dll', '*.so', '*.dylib', '*.test', '*.out', 'go.work']
   },
   {
     id: 'Rust',
     name: 'Rust / Cargo',
     category: '语言与运行时',
-    rules: ['target/', 'Cargo.lock', '**/*.rs.bk', '*.pdb']
+    // Cargo 官方建议提交 Cargo.lock（应用与库都适用），这里不忽略它
+    rules: ['target/', '**/*.rs.bk', '*.pdb']
   },
   {
     id: 'macOS',
     name: 'macOS 系统隐藏文件',
     category: '操作系统',
-    rules: ['.DS_Store', '.AppleDouble', '.LSOverride', '._*', '.Spotlight-V100', '.Trashes']
+    rules: [
+      '.DS_Store',
+      '.AppleDouble',
+      '.LSOverride',
+      '._*',
+      '.DocumentRevisions-V100',
+      '.fseventsd',
+      '.Spotlight-V100',
+      '.TemporaryItems',
+      '.Trashes',
+      '.VolumeIcon.icns',
+      '.com.apple.timemachine.donotpresent',
+      '.apdisk'
+    ]
   },
   {
     id: 'Windows',
     name: 'Windows 系统缩略图与临时项',
     category: '操作系统',
-    rules: ['Thumbs.db', 'Thumbs.db:encryptable', 'ehthumbs.db', 'Desktop.ini', '$RECYCLE.BIN/', '*.lnk']
+    rules: ['Thumbs.db', 'Thumbs.db:encryptable', 'ehthumbs.db', '[Dd]esktop.ini', '$RECYCLE.BIN/', '*.lnk']
   },
   {
     id: 'IDEs',
@@ -331,6 +349,24 @@ export function quotePosixShellArg(raw: string): string {
   return "'" + raw.replace(/'/g, "'\"'\"'") + "'"
 }
 
+const SCOPE_PATTERN = /^[A-Za-z0-9_\-./\u4e00-\u9fff]{1,23}$/
+
+/**
+ * 解析搜索框里的 `scope:说明`（英文冒号）。冒号前不是合法 scope（含空格、是网址协议等）时整段都当作说明；
+ * 冒号前恰好是提交类型（如 `fix: 修复…`）时视为用户顺手写了类型，去掉它，不当作 scope。
+ */
+export function parseCommitInput(raw: string): { scope: string; subject: string } {
+  const text = String(raw ?? '').trim()
+  if (!text) return { scope: '', subject: '' }
+  const colonIdx = text.indexOf(':')
+  if (colonIdx <= 0) return { scope: '', subject: text }
+  const head = text.slice(0, colonIdx).trim()
+  const rest = text.slice(colonIdx + 1)
+  if (!SCOPE_PATTERN.test(head) || rest.startsWith('//')) return { scope: '', subject: text }
+  if (COMMIT_TYPES.some((t) => t.type === head.toLowerCase())) return { scope: '', subject: rest.trim() }
+  return { scope: head, subject: rest.trim() }
+}
+
 /**
  * 构建符合 Conventional Commits 规范的提交文本与可执行 git commit 命令
  */
@@ -349,22 +385,26 @@ export function buildConventionalCommit(options: {
   const cleanScope = String(options.scope || '')
     .trim()
     .replace(/[()\r\n]/g, '')
-  const rawSubject = String(options.subject || '').trim()
+  // 换行与制表符按空格处理（粘贴多行说明时常见），其余控制字符拒绝
+  const rawSubject = String(options.subject || '').replace(/[\r\n\t]+/g, ' ').trim()
   const bang = options.breaking ? '!' : ''
   const scopePart = cleanScope ? `(${cleanScope})` : ''
 
-  if (!rawSubject || /[\u0000-\u001f\u007f]/.test(cleanType + cleanScope + rawSubject.replace(/\r?\n/g, ' '))) {
-    const placeholder = '请填写清晰明确的中文改动摘要'
+  const hasControl = /[\u0000-\u001f\u007f]/.test(cleanType + cleanScope + rawSubject)
+  if (!rawSubject || hasControl) {
+    const placeholder = '请填写本次改动的简要说明'
     const msg = `${cleanType}${scopePart}${bang}: ${placeholder}`
     return {
       isValid: false,
       message: msg,
       gitCommand: '',
-      validationHint: '提交说明不能为空，建议使用中文简述本次修改的具体目的'
+      validationHint: hasControl
+        ? '提交说明含有不可见的控制字符，请删除后重新输入'
+        : '提交说明不能为空，请简述本次修改的目的'
     }
   }
 
-  const normalizedSubject = rawSubject.replace(/\r?\n/g, ' ').trim()
+  const normalizedSubject = rawSubject
   const message = `${cleanType}${scopePart}${bang}: ${normalizedSubject}`
   const escaped = quotePosixShellArg(message)
 
@@ -386,11 +426,8 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
   const effectiveIds = [...new Set(selectedStackIds)]
 
   const seenRules = new Set<string>()
-  const sections: string[] = [
-    '# ========================================================',
-    `# Generated by ZTools Git Helper (${effectiveIds.join(' + ')})`,
-    '# ========================================================'
-  ]
+  // 首行只写来源；具体模板名已在下面每段的 ### 标题里，不再在首行罗列
+  const sections: string[] = ['# 由 ZTools Git 助手生成']
 
   for (const stackId of effectiveIds) {
     const tpl = GITIGNORE_STACK_TEMPLATES.find(

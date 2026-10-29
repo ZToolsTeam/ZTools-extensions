@@ -2,7 +2,7 @@
   "id": "invoice-assistant",
   "name": "发票助手",
   "description": "扫描下载、桌面、文档目录中的 PDF/XML 电子发票，识别发票号码、开票日期、销售方、购买方与金额（识别不到的字段需手动补全后才能导出），支持发票号查重、个人抬头提示、按模板复制规范命名的发票副本、导出报销明细 CSV 与复制表格文本",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

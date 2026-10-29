@@ -108,3 +108,25 @@ test('界面：一键清理部分成功时提示“已清理 X 个，Y 个未清
     await tick()
   }
 })
+
+test('界面：复制命令行或定位程序失败时如实提示失败，不显示成功', async () => {
+  const { createHost, mount, tick } = await import('../../shared/test-harness.mjs')
+  const { default: WindowsCommand } = require('../dist/windows-command.js')
+  const host = createHost()
+  const override = {
+    async dllplugin_call() { return { success: true, data: { ok: true, items: [valid] } } },
+    async clipboard_copy_text() { throw new Error('剪贴板被占用') },
+    async clipboard_write_text() { return { success: false, error: '剪贴板被占用' } },
+    async shell_show_item_in_folder() { throw new Error('路径不存在') },
+    async shell_open_path() { return { success: false, error: '路径不存在' } }
+  }
+  const view = await mount(() => WindowsCommand({ hostOverride: override }), host)
+  await tick()
+  const row = view.item(valid.id)
+  await view.run(row, '复制启动命令行'); await tick()
+  assert.equal(host.lastToast().title, '复制启动命令行失败')
+  await view.run(row, '在资源管理器中定位程序'); await tick()
+  assert.equal(host.lastToast().title, '无法定位程序文件')
+  assert.equal(host.toasts.filter((t) => t.style === 'success').length, 0)
+  view.unmount()
+})

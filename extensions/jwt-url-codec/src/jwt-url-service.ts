@@ -129,9 +129,13 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
   const invalidTime = ['exp', 'nbf', 'iat'].some(key => key in payloadObj && formatEpochSec(payloadObj[key]) === undefined)
     || (typeof payloadObj.nbf === 'number' && typeof payloadObj.exp === 'number' && payloadObj.nbf >= payloadObj.exp)
   const isExpired = typeof payloadObj.exp === 'number' && Number.isFinite(payloadObj.exp) && payloadObj.exp <= nowSec
+  // RFC 7519 的 NumericDate 以秒为单位；超过 1e11（约公元 5138 年）基本是误填的毫秒时间戳，按秒计算会得出“尚未过期”的错误结论
+  const millisecondLike = ['exp', 'nbf', 'iat'].filter(key => typeof payloadObj[key] === 'number' && Math.abs(payloadObj[key] as number) > 1e11)
   let timeStatus: JwtDecodedResult['timeStatus'] = '未声明到期'
   let expiryCountdownText = '未声明 exp，无法判断到期时间'
-  if (invalidTime) {
+  if (millisecondLike.length) {
+    timeStatus = '时间声明异常'; expiryCountdownText = `${millisecondLike.join('、')} 数值过大，疑似毫秒时间戳（JWT 规定以秒为单位）`
+  } else if (invalidTime) {
     timeStatus = '时间声明异常'; expiryCountdownText = 'exp、nbf 或 iat 不是有效时间，或生效时间不早于到期时间'
   } else if (isExpired) {
     timeStatus = '已过期'; expiryCountdownText = `已过期 ${formatDurationSec(nowSec - Number(payloadObj.exp))}`
@@ -326,6 +330,11 @@ export function queryParamsToJson(params: UrlQueryParamItem[]): string {
     else values[item.key] = [previous, item.decodedValue]
   }
   return JSON.stringify(values, null, 2)
+}
+
+/** 界面展示用：去掉错误信息开头的机器可读错误码（如 INVALID_JWT_HEADER:），保留中文原因 */
+export function displayError(message: string): string {
+  return String(message).replace(/^[A-Z][A-Z0-9_]*:\s*/, '')
 }
 
 /** 用户输入只作为代码块原文展示，不能闭合围栏后生成联网图片或链接。 */

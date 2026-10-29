@@ -33,7 +33,8 @@ test('解析错误清空转换动作，并在编辑表单保留完整原文', as
   let form
   try {
     assert.deepEqual(view.items().map(i => i.props.id), ['parse-error'])
-    assert.equal(view.item('parse-error').props.actions, undefined)
+    assert.deepEqual(view.actions(view.item('parse-error')).map(a => a.props.title), ['读取剪贴板', '编辑输入'])
+    assert.doesNotMatch(view.text(), /复制转换结果/)
     await action(view, 'edit-input').onAction(); form = await mountPushed(host)
     assert.equal(form.field('text').props.value, input)
     await form.run(null, '应用输入')
@@ -126,4 +127,67 @@ test('真实 SDK 复制与粘贴失败不提示成功，不触发读取或改写
     assert.equal(host.clipboard.text, '')
     assert.match(view.item('json').props.detail.props.markdown, /keep/)
   } finally { Clipboard.copy = copy; Clipboard.paste = paste; view.unmount() }
+})
+
+test('单行无分隔符的普通文本给出中性引导，不冒充 0 行表格', async () => {
+  const host = createHost(), view = await mount(() => TableConverterCommand({ featureCode: 'table-to-sql', initialRawText: '这是一段普通文字' }), host)
+  try {
+    assert.deepEqual(view.items().map(i => i.props.id), ['not-table'])
+    assert.match(view.item('not-table').props.title, /不像表格/)
+    assert.doesNotMatch(view.tree().props.filterBar.summaryText, /0 行/)
+  } finally { view.unmount() }
+})
+
+test('只有表头没有数据行时 SQL 输出明确错误条目且不可复制', async () => {
+  const host = createHost(), view = await mount(() => TableConverterCommand({ featureCode: 'table-to-sql', initialRawText: 'id,name' }), host)
+  try {
+    assert.equal(view.items()[0].props.id, 'sql')
+    assert.match(view.text(), /没有数据行，无法生成 INSERT/)
+    assert.equal(view.item('sql').props.actions, undefined)
+  } finally { view.unmount() }
+})
+
+test('多行单列文本仍按 CSV 识别，SQL 正常生成', async () => {
+  const host = createHost(), view = await mount(() => TableConverterCommand({ featureCode: 'table-to-sql', initialRawText: 'name\n甲' }), host)
+  try {
+    await view.run(view.item('sql'), '复制转换结果')
+    assert.match(host.clipboard.text, /INSERT INTO "my_table" \("name"\)/)
+  } finally { view.unmount() }
+})
+
+test('空状态与非表格提示有主动作「读取剪贴板」、次动作「编辑输入」，并按入口写明目标', async () => {
+  const host = createHost()
+  for (const [code, goal] of [['table-to-sql', /生成 SQL INSERT/], ['table-to-json', /JSON 对象数组/], ['table-to-markdown', /Markdown 表格/], ['table-auto', /Markdown、JSON、SQL/]]) {
+    host.clipboard.text = ''
+    const view = await mount(commands[code], host)
+    try {
+      const empty = view.item('empty-input')
+      assert.match(empty.props.subtitle, goal)
+      assert.deepEqual(view.actions(empty).map(a => a.props.title), ['读取剪贴板', '编辑输入'])
+      host.clipboard.text = 'a,b\n1,2'
+      await view.run(empty, '读取剪贴板')
+      assert.ok(view.items().some(i => i.props.id === 'sql'), '读取后进入转换结果')
+    } finally { view.unmount() }
+  }
+  const view = await mount(() => TableConverterCommand({ featureCode: 'table-to-sql', initialRawText: '普通文字' }), host)
+  try {
+    const item = view.item('not-table')
+    assert.match(item.props.subtitle, /生成 SQL INSERT/)
+    await view.run(item, '编辑输入')
+    const form = await mountPushed(host)
+    assert.equal(form.field('text').props.value, '普通文字')
+    form.unmount()
+  } finally { view.unmount() }
+})
+
+test('[破坏性] 空状态主动作读取剪贴板失败时保留原输入并提示失败', async () => {
+  const host = createHost(), view = await mount(() => TableConverterCommand({ initialRawText: '普通文字' }), host)
+  const read = Clipboard.readText
+  try {
+    Clipboard.readText = async () => { throw new Error('剪贴板被占用') }
+    await view.run(view.item('not-table'), '读取剪贴板')
+    assert.equal(host.lastToast().style, 'FAILURE')
+    assert.ok(view.item('not-table'))
+    assert.match(view.tree().props.filterBar.summaryText, /读取失败/)
+  } finally { Clipboard.readText = read; view.unmount() }
 })

@@ -175,13 +175,8 @@ export function detectClipboardContentType(content: string, rawFormat?: string):
     return "code";
   }
 
-  // 5. Windows / Unix 文件路径检测
-  if (/^[a-zA-Z]:\\[^\0\n]+/.test(trimmed) || (trimmed.startsWith("/") && trimmed.includes("/"))) {
-    if (!trimmed.includes(" ") || trimmed.includes("\\")) {
-      return "files";
-    }
-  }
-
+  // 文件类型只认宿主给的 format_type："像路径"的文本（例如从聊天里复制的另一台电脑的路径）仍是文本，
+  // 当成文件会对它提供粘贴文件、定位等必然失败的动作
   return "text";
 }
 
@@ -380,9 +375,57 @@ function parseHistoryFilePaths(content: string): string[] {
   return parsed;
 }
 
-function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
-  const content = String(r?.content ?? r?.text ?? "");
-  const formatType = String(r?.format_type ?? r?.type ?? "text");
+/** 宿主历史库返回的单条原始记录（新旧宿主字段名不同，逐个兼容） */
+interface RawClipboardRecord {
+  id?: unknown;
+  content?: unknown;
+  text?: unknown;
+  format_type?: unknown;
+  type?: unknown;
+  text_preview?: unknown;
+  preview?: unknown;
+  updated_at?: unknown;
+  created_at?: unknown;
+  copiedAt?: unknown;
+  is_pinned?: unknown;
+  pinned?: unknown;
+  char_count?: unknown;
+  charCount?: unknown;
+  word_count?: unknown;
+  wordCount?: unknown;
+  line_count?: unknown;
+  lineCount?: unknown;
+  source_app_name?: unknown;
+  sourceAppName?: unknown;
+  source_app_path?: unknown;
+  sourceAppPath?: unknown;
+  filePaths?: unknown;
+}
+
+/** 宿主流水粘贴返回的结果 */
+interface SequentialPasteResponse {
+  success?: unknown;
+  item?: ClipboardItem;
+  message?: unknown;
+}
+
+/** 插件窗口上 window.ztools 暴露的剪贴板历史方法（旧宿主可能都没有） */
+interface WindowClipboardHistoryApi {
+  clipboard_history_query?: (params: { limit: number }) => Promise<unknown>;
+  clipboard_history_paste_sequential?: () => Promise<SequentialPasteResponse | null | undefined>;
+  clipboard_history_reset_sequence?: () => Promise<unknown>;
+  [method: string]: unknown;
+}
+
+function windowZtools(): WindowClipboardHistoryApi | undefined {
+  return (window as unknown as { ztools?: WindowClipboardHistoryApi }).ztools;
+}
+
+function mapRawClipboardRecord(input: unknown, idx = 0): ClipboardItem {
+  // 记录缺失（null / undefined）时按空记录处理，各字段走默认值
+  const r = (input ?? {}) as RawClipboardRecord;
+  const content = String(r.content ?? r.text ?? "");
+  const formatType = String(r.format_type ?? r.type ?? "text");
   const detectedType =
     formatType === "image"
       ? "image"
@@ -390,25 +433,25 @@ function mapRawClipboardRecord(r: any, idx = 0): ClipboardItem {
       ? "files"
       : detectClipboardContentType(content, formatType);
   return {
-    id: String(r?.id || `clip-host-${idx}-${Date.now()}`),
+    id: String(r.id || `clip-host-${idx}-${Date.now()}`),
     type: detectedType,
     content,
     // 宿主会把它判定为高熵的内容的预览换成占位符，带数字的普通链接、路径、JSON 也会被误判：
     // 这几类结构化内容按原文生成预览（真正的密钥仍由插件的敏感检测遮罩），其余保留宿主的遮罩
     preview: String(
-      (HOST_MASKED_PREVIEW.test(String(r?.text_preview || "")) && NON_SECRET_TYPES.has(detectedType)
+      (HOST_MASKED_PREVIEW.test(String(r.text_preview || "")) && NON_SECRET_TYPES.has(detectedType)
         ? ""
-        : r?.text_preview || r?.preview) || content.replace(/\s+/g, " ").slice(0, 100)
+        : r.text_preview || r.preview) || content.replace(/\s+/g, " ").slice(0, 100)
     ),
     // 宿主去重命中时只更新 updated_at 并把条目移到最前，排序以它为准
-    copiedAt: Number(r?.updated_at ?? r?.created_at ?? r?.copiedAt) || Date.now(),
-    pinned: Boolean(r?.is_pinned ?? r?.pinned),
-    charCount: Number(r?.char_count ?? r?.charCount ?? content.length),
-    wordCount: Number(r?.word_count ?? r?.wordCount) || undefined,
-    lineCount: Number(r?.line_count ?? r?.lineCount ?? content.split(/\r?\n/).length),
-    sourceAppName: r?.source_app_name ?? r?.sourceAppName ?? undefined,
-    sourceAppPath: r?.source_app_path ?? r?.sourceAppPath ?? undefined,
-    filePaths: Array.isArray(r?.filePaths) ? r.filePaths : formatType === "files" ? parseHistoryFilePaths(content) : undefined
+    copiedAt: Number(r.updated_at ?? r.created_at ?? r.copiedAt) || Date.now(),
+    pinned: Boolean(r.is_pinned ?? r.pinned),
+    charCount: Number(r.char_count ?? r.charCount ?? content.length),
+    wordCount: Number(r.word_count ?? r.wordCount) || undefined,
+    lineCount: Number(r.line_count ?? r.lineCount ?? content.split(/\r?\n/).length),
+    sourceAppName: (r.source_app_name ?? r.sourceAppName ?? undefined) as string | undefined,
+    sourceAppPath: (r.source_app_path ?? r.sourceAppPath ?? undefined) as string | undefined,
+    filePaths: Array.isArray(r.filePaths) ? r.filePaths as string[] : formatType === "files" ? parseHistoryFilePaths(content) : undefined
   };
 }
 
@@ -419,9 +462,11 @@ export function isLocalRecordId(id: unknown): boolean {
   return typeof id === "string" && id.startsWith("clip-") && !id.startsWith("clip-host-");
 }
 
-function isUserLocalRecord(item: any): item is ClipboardItem {
-  if (!item || typeof item !== "object" || typeof item.content !== "string") return false;
-  const id = String(item.id);
+function isUserLocalRecord(item: unknown): item is ClipboardItem {
+  if (!item || typeof item !== "object") return false;
+  const row = item as { id?: unknown; content?: unknown };
+  if (typeof row.content !== "string") return false;
+  const id = String(row.id);
   return (
     isLocalRecordId(id) &&
     !SAMPLE_IDS.has(id) &&
@@ -475,9 +520,9 @@ async function rememberLocalText(content: string, offline: boolean, idPrefix?: s
   });
 }
 
-function hostResultSucceeded(res: { ok: boolean; data?: any }): boolean {
+function hostResultSucceeded(res: { ok: boolean; data?: unknown }): boolean {
   if (!res.ok) return false;
-  const d = res.data;
+  const d = res.data as { ok?: unknown; success?: unknown } | false | null | undefined;
   if (d === false || d?.ok === false || d?.success === false) return false;
   return true;
 }
@@ -486,11 +531,23 @@ function hostResultSucceeded(res: { ok: boolean; data?: any }): boolean {
  * 读取宿主剪贴板历史库。宿主不提供历史库（方法不存在或调用失败）时返回 null，
  * 返回数组（哪怕为空）就表示宿主历史库可用，以宿主为准。
  */
-async function queryHostHistory(hostOverride?: any): Promise<ClipboardItem[] | null> {
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_query) {
+let lastHostHistoryError = "";
+
+/**
+ * 最近一次读取宿主历史库失败的原因（读取成功或宿主没有历史库时为空）。
+ * 读取失败时列表退回插件自己存的记录，界面要据此如实提示“宿主历史没读到”，不能装作历史只有这些。
+ */
+export function getLastHostHistoryError(): string {
+  return lastHostHistoryError;
+}
+
+async function queryHostHistory(hostOverride?: unknown): Promise<ClipboardItem[] | null> {
+  lastHostHistoryError = "";
+  const ztools = typeof window !== "undefined" ? windowZtools() : undefined;
+  if (ztools?.clipboard_history_query) {
     try {
-      const records = await (window as any).ztools.clipboard_history_query({ limit: 100 });
-      if (Array.isArray(records)) return records.map((r: any, i: number) => mapRawClipboardRecord(r, i));
+      const records = await ztools.clipboard_history_query({ limit: 100 });
+      if (Array.isArray(records)) return records.map((r: unknown, i: number) => mapRawClipboardRecord(r, i));
     } catch {
       // 继续尝试下一条通道
     }
@@ -498,14 +555,17 @@ async function queryHostHistory(hostOverride?: any): Promise<ClipboardItem[] | n
 
   if (hostOverride || isRealElectronHost(hostOverride)) {
     try {
-      const ipcRes = await callHostTransport<any>("clipboard_history_query", { limit: 100 }, hostOverride);
+      const ipcRes = await callHostTransport<unknown>("clipboard_history_query", { limit: 100 }, hostOverride);
       if (ipcRes.ok && ipcRes.data !== undefined && ipcRes.data !== null) {
-        const d = ipcRes.data;
+        const d = ipcRes.data as unknown[] | { items?: unknown; records?: unknown };
         const list = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.records) ? d.records : null;
-        if (list) return list.map((r: any, i: number) => mapRawClipboardRecord(r, i));
+        if (list) return list.map((r: unknown, i: number) => mapRawClipboardRecord(r, i));
+        lastHostHistoryError = "宿主返回的剪贴板历史格式无法识别";
+      } else if (!ipcRes.ok && !isHostMethodMissing(ipcRes.error)) {
+        lastHostHistoryError = ipcRes.error || "读取宿主剪贴板历史失败";
       }
-    } catch {
-      // 继续尝试下一条通道
+    } catch (error) {
+      lastHostHistoryError = error instanceof Error ? error.message : String(error);
     }
     return null;
   }
@@ -516,7 +576,7 @@ async function queryHostHistory(hostOverride?: any): Promise<ClipboardItem[] | n
     try {
       const records = await bridge.clipboardHistory.query({ limit: 100 });
       if (Array.isArray(records) && records.length > 0) {
-        return records.map((r: any, i: number) => mapRawClipboardRecord(r, i));
+        return records.map((r: unknown, i: number) => mapRawClipboardRecord(r, i));
       }
     } catch {
       // 优雅降级
@@ -525,18 +585,20 @@ async function queryHostHistory(hostOverride?: any): Promise<ClipboardItem[] | n
   return null;
 }
 
-async function callHistoryHost(method: string, params: Record<string, unknown>, hostOverride?: any): Promise<{ ok: boolean; data?: any }> {
-  if (typeof window !== "undefined" && typeof (window as any).ztools?.[method] === "function") {
+async function callHistoryHost(method: string, params: Record<string, unknown>, hostOverride?: unknown): Promise<{ ok: boolean; data?: unknown }> {
+  const ztools = typeof window !== "undefined" ? windowZtools() : undefined;
+  const direct = ztools?.[method];
+  if (typeof direct === "function") {
     try {
-      const data = await (window as any).ztools[method](params);
-      return { ok: data !== false && data?.success !== false, data };
+      const data: unknown = await (direct as (p: Record<string, unknown>) => unknown).call(ztools, params);
+      return { ok: data !== false && (data as { success?: unknown } | null | undefined)?.success !== false, data };
     } catch {
       return { ok: false };
     }
   }
   if (hostOverride || isRealElectronHost(hostOverride)) {
     try {
-      const res = await callHostTransport<any>(method, params, hostOverride);
+      const res = await callHostTransport<unknown>(method, params, hostOverride);
       return { ok: hostResultSucceeded(res), data: res.data };
     } catch {
       return { ok: false };
@@ -575,7 +637,7 @@ const DEFAULT_HOST_WAIT: Required<HostRecordWaitOptions> = { attempts: 8, interv
  */
 async function waitForHostRecord(
   content: string,
-  hostOverride?: any,
+  hostOverride?: unknown,
   options: HostRecordWaitOptions = {}
 ): Promise<{ record: ClipboardItem | null; hostAvailable: boolean }> {
   const attempts = Math.max(1, options.attempts ?? DEFAULT_HOST_WAIT.attempts);
@@ -596,7 +658,7 @@ async function waitForHostRecord(
 /**
  * 获取剪贴板历史：宿主历史库可用时以宿主为准，并带上插件自己存的、宿主里没有的记录（不隐藏、不覆盖）
  */
-export async function getClipboardHistory(hostOverride?: any): Promise<ClipboardItem[]> {
+export async function getClipboardHistory(hostOverride?: unknown): Promise<ClipboardItem[]> {
   const realHost = isRealElectronHost(hostOverride);
 
   const host = await queryHostHistory(hostOverride);
@@ -650,7 +712,7 @@ export function buildLocalRecord(
  */
 export async function syncCurrentSystemClipboard(
   currentItems: ClipboardItem[] = [],
-  hostOverride?: any,
+  hostOverride?: unknown,
   waitOptions?: HostRecordWaitOptions
 ): Promise<{ added: boolean; item?: ClipboardItem; items: ClipboardItem[] }> {
   let liveText = "";
@@ -701,7 +763,7 @@ export async function syncCurrentSystemClipboard(
 export async function saveEditedClipboardItem(
   input: { content: string; pinned: boolean },
   original?: ClipboardItem,
-  hostOverride?: any,
+  hostOverride?: unknown,
   waitOptions?: HostRecordWaitOptions
 ): Promise<{ persisted: boolean; where?: "host" | "local"; item?: ClipboardItem; items: ClipboardItem[]; message?: string }> {
   const content = String(input?.content ?? "");
@@ -794,7 +856,7 @@ async function updateLocalRecord(id: string, fn: (item: ClipboardItem) => Clipbo
 /**
  * 切换条目置顶状态，返回是否切换成功（成功后请重新读取历史以获得真实状态）
  */
-export async function toggleClipboardItemPin(id: string, hostOverride?: any): Promise<boolean> {
+export async function toggleClipboardItemPin(id: string, hostOverride?: unknown): Promise<boolean> {
   if (!id || typeof id !== "string" || !id.trim()) return false;
   if (isLocalRecordId(id)) {
     return updateLocalRecord(id, (item) => ({ ...item, pinned: !item.pinned }));
@@ -805,7 +867,7 @@ export async function toggleClipboardItemPin(id: string, hostOverride?: any): Pr
 /**
  * 删除剪贴板单条记录
  */
-export async function deleteClipboardItem(id: string, hostOverride?: any): Promise<boolean> {
+export async function deleteClipboardItem(id: string, hostOverride?: unknown): Promise<boolean> {
   if (!id || typeof id !== "string" || !id.trim()) return false;
   if (isLocalRecordId(id)) {
     return updateLocalRecord(id, () => null);
@@ -823,7 +885,7 @@ export async function clearUnpinnedClipboardHistory(hostOverride?: unknown): Pro
   if (!hostRes.ok && (hostOverride || isRealElectronHost())) {
     throw new Error("宿主剪贴板历史清空失败，请重试");
   }
-  const data = hostRes.data;
+  const data = hostRes.data as number | { count?: unknown; clearedCount?: unknown } | null | undefined;
   let removed = hostRes.ok ? Number(typeof data === "number" ? data : data?.count ?? data?.clearedCount ?? 0) || 0 : 0;
   let localRemoved = 0;
   await updateStoredRecords((stored) => {
@@ -858,6 +920,18 @@ export async function restoreClipboardItem(item: ClipboardItem, paste = false, h
 }
 
 /**
+ * 宿主返回的 sequenceIndex 是本次粘贴条目的下标（从 0 开始）：
+ * 换成界面上的“第几项”（从 1 开始）与之后还剩几条
+ */
+export function sequencePosition(data: unknown): { offset: number; remaining: number } {
+  const record = data && typeof data === "object" ? (data as { total?: unknown; sequenceIndex?: unknown }) : {};
+  const total = Math.max(0, Number(record.total) || 0);
+  const index = Number(record.sequenceIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= total) return { offset: 0, remaining: total };
+  return { offset: index + 1, remaining: total - index - 1 };
+}
+
+/**
  * 连续流水粘贴 (Paste Sequentially)
  */
 export async function pasteSequentialClipboard(
@@ -868,39 +942,40 @@ export async function pasteSequentialClipboard(
     const res = await callHostTransport("clipboard_history_paste_sequential");
     if (!res.ok) return { success: false, pasteFailed: true, remaining: items.length, offset: 0, message: res.error || "流水粘贴失败" };
     const data = res.data;
+    const position = sequencePosition(data);
     return {
       success: data?.success === true,
       ...(data?.item ? { item: mapRawClipboardRecord(data.item) } : {}),
-      remaining: Math.max(0, Number(data?.total ?? 0) - Number(data?.sequenceIndex ?? 0)),
-      offset: Number(data?.sequenceIndex ?? 0),
+      ...position,
       ...(data?.success === false ? { pasteFailed: Boolean(data.item), message: String(data.message || "流水粘贴失败") } : {})
     };
   }
   // 宿主已取到条目但粘贴失败（如 macOS 未授权辅助功能）：如实返回失败，不能再走本地回退把它报成成功
-  const hostPasteFailure = (res: any) =>
-    res && res.success === false && res.item && typeof res.message === "string"
+  const hostPasteFailure = (raw: unknown) => {
+    const res = raw as SequentialPasteResponse | null | undefined;
+    return res && res.success === false && res.item && typeof res.message === "string"
       ? {
           success: false,
           pasteFailed: true,
           item: res.item,
-          remaining: Math.max(0, (res.total || 0) - (res.sequenceIndex || 0)),
-          offset: res.sequenceIndex || 0,
+          ...sequencePosition(res),
           message: res.message
         }
       : null;
+  };
 
   // 1. window.ztools 原生调度
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_paste_sequential) {
+  const ztools = typeof window !== "undefined" ? windowZtools() : undefined;
+  if (ztools?.clipboard_history_paste_sequential) {
     try {
-      const res = await (window as any).ztools.clipboard_history_paste_sequential();
+      const res = await ztools.clipboard_history_paste_sequential();
       const failed = hostPasteFailure(res);
       if (failed) return failed;
       if (res && res.success) {
         return {
           success: true,
           item: res.item,
-          remaining: Math.max(0, (res.total || 0) - (res.sequenceIndex || 0)),
-          offset: res.sequenceIndex || 0
+          ...sequencePosition(res)
         };
       }
     } catch { /* ignore unsupported channel error */ }
@@ -917,8 +992,7 @@ export async function pasteSequentialClipboard(
         return {
           success: true,
           item: res.item,
-          remaining: Math.max(0, (res.total || 0) - (res.sequenceIndex || 0)),
-          offset: res.sequenceIndex || 0
+          ...sequencePosition(res)
         };
       }
     } catch { /* ignore unsupported channel error */ }
@@ -951,9 +1025,19 @@ export async function pasteSequentialClipboard(
  * 重置流水粘贴指针
  */
 export async function resetPasteSequence(): Promise<void> {
-  if (typeof window !== "undefined" && (window as any).ztools?.clipboard_history_reset_sequence) {
+  pasteSequenceManager.reset();
+  if (isRealElectronHost()) {
+    // 真实客户端里指针在宿主：重置失败要让用户知道，不能提示“已重置”
+    const res = await callHostTransport("clipboard_history_reset_sequence");
+    if (!res.ok || res.data?.success === false) {
+      if (res.ok || !isHostMethodMissing(res.error)) throw new Error(res.error || "宿主未能重置流水粘贴指针");
+    }
+    return;
+  }
+  const ztools = typeof window !== "undefined" ? windowZtools() : undefined;
+  if (ztools?.clipboard_history_reset_sequence) {
     try {
-      await (window as any).ztools.clipboard_history_reset_sequence();
+      await ztools.clipboard_history_reset_sequence();
     } catch { /* ignore unsupported channel error */ }
   }
   const bridge = getDeclarativeBridge();

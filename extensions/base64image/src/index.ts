@@ -35,9 +35,12 @@ export default function Base64ImageCommand() {
   const source = loaded ? loaded.dataUri : inputText.trim();
   let parsed: ParsedImageResult = { valid: false };
   if (source) {
-    parsed = isSvgSource(source) || /^<\?xml/i.test(source)
+    parsed = isSvgSource(source)
       ? encodeSvgOrTextToBase64(source)
-      : parseBase64Image(source);
+      : /^\s*</.test(source)
+        // XML / HTML 但根元素不是 <svg>：不能当成图片编码（否则会生成 text/plain 的“图片”写法）
+        ? { valid: false, error: "这段标记不是 SVG 图片（根元素需要是 <svg>），无法转成图片 Base64" }
+        : parseBase64Image(source);
   }
 
   const handleCopy = async (content: string, label: string) => {

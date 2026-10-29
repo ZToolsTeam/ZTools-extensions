@@ -136,14 +136,20 @@ test('暂停、恢复、移出共享列表：用 id 调用客户端，界面以�
   view.unmount()
 })
 
-test('停止服务：成功后显示未运行', async () => {
+test('停止服务：文件标签停止显示共享中，重新启动后恢复', async () => {
   const state = installLanHost(host)
   state.running = true
+  state.files.set('active', { id: 'active', name: 'a.txt', path: 'D:\\Share\\a.txt', sizeBytes: 10, shared: true, isDirectory: false })
+  state.files.set('paused', { id: 'paused', name: 'b.txt', path: 'D:\\Share\\b.txt', sizeBytes: 10, shared: false, isDirectory: false })
   const view = await mount(LanShareCommand)
   await tick(20)
   await view.run(view.item('lan-service'), '停止共享服务')
   await tick(20)
   assert.equal(host.lastToast().title, '共享服务已停止')
   assert.equal(view.item('lan-service').props.title, '共享服务未运行')
+  assert.equal(view.item('lan-file-active').props.accessories[0].tag.value, '服务未启动')
+  assert.equal(view.item('lan-file-paused').props.accessories[0].tag.value, '已暂停')
+  await view.run(view.item('lan-service'), '启动共享服务'); await tick(20)
+  assert.equal(view.item('lan-file-active').props.accessories[0].tag.value, '共享中')
   view.unmount()
 })

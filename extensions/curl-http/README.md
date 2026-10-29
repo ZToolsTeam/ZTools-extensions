@@ -5,10 +5,10 @@
 ## 使用
 
 - 命令：在启动框输入“curl”或“接口调试”打开。
-- 把 cURL 命令或 http / https 网址粘贴到搜索框，也可以在动作面板里从剪贴板载入。识别 `-X`、`-H`、`-d` / `--data*`、`-b`、`-u`、`--url` 参数，多行命令可用 bash 的 `\`、cmd 的 `^` 或 PowerShell 的反引号续行；浏览器开发者工具里“Copy as cURL (bash)”和“Copy as cURL (cmd)”复制的命令都能识别（含 cmd 的 `^"` 转义）。
+- 把 cURL 命令或 http / https 网址粘贴到搜索框，也可以在动作面板里从剪贴板载入。识别 `-X`、`-H`、`-d` / `--data*`、`--json`、`-b`、`-u`、`-A`、`-e`、`-G`、`-I`、`--url` 参数，多行命令可用 bash 的 `\`、cmd 的 `^` 或 PowerShell 的反引号续行；浏览器开发者工具里“Copy as cURL (bash)”和“Copy as cURL (cmd)”复制的命令都能识别（含 bash 的 `$'...'` 与 cmd 的 `^"` 转义）。代理、超时、跳过证书校验等其他参数不会生效，界面上会列出；需要读取本地文件的写法（`-d @文件`、`-F` 表单上传、`-T`）不支持。
 - 顶部下拉框选择生成代码的语言：JavaScript Fetch、TypeScript Axios、Python Requests、Go net/http。
 - Enter：发起请求，右侧显示状态码、耗时和响应正文（JSON 自动格式化）；⌘/Ctrl+Enter：复制生成的代码；⌘/Ctrl+K：打开动作面板，可复制响应正文。
-- 只能发起 GET、HEAD、POST、PUT、DELETE 请求，DELETE、PUT 发送前需要确认，DELETE 不能带请求体，其他情况请复制生成的代码自行执行。请求超时为 10 秒；只显示响应正文，不显示响应头；正文超过 5 MB 时截断显示。
+- 只能发起 GET、HEAD、POST、PUT、DELETE 请求，DELETE、PUT 发送前需要确认，DELETE 不能带请求体，其他情况请复制生成的代码自行执行。请求超时为 10 秒；请求体最大 768 KB；`Connection`、`Content-Length` 等连接类请求头由客户端自动处理，发送时去掉，`Host` 不能自定义；只显示响应正文，不显示响应头；正文超过 5 MB 时截断显示。
 
 ## 平台与要求
 

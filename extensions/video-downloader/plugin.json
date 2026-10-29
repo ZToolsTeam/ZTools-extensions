@@ -2,7 +2,7 @@
   "id": "video-downloader",
   "name": "视频下载",
   "description": "识别剪贴板或搜索框里的视频链接：.mp4 等视频直链可下载到本机，B 站、抖音、YouTube 等平台链接只能按所选画质生成 yt-dlp 命令；同时可打开、定位或移入回收站「视频」「下载」文件夹里的视频",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "draft": true,
   "draftReason": "客户端没有视频解析能力：B 站、抖音、快手、YouTube、微博等平台链接无法下载，插件只能复制 yt-dlp 命令让用户自行下载；目前只有 .mp4 等视频直链能下载（单个文件不超过 1 GiB，需在 5 分钟内下完）。等客户端提供视频解析下载能力并在 Windows 上实测通过后再发布",
   "author": "ZTools Team",

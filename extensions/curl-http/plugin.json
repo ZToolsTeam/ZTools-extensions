@@ -1,9 +1,9 @@
 {
   "id": "curl-http",
   "name": "轻量接口调试",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "解析 cURL 命令（bash / cmd 写法）或网址，由客户端发起 HTTP 请求查看响应，并生成 Fetch、Axios、Python、Go 请求代码",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

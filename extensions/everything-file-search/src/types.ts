@@ -16,7 +16,8 @@ export type TypeFilter =
   | "code"
   | "folder"
   | "media" // 向后兼容
-  | "app";
+  | "app"
+  | "other"; // 不属于以上任何一类（以前误归为文档）
 
 export interface FileRecord {
   name: string;

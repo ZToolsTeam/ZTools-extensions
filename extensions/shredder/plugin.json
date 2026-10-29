@@ -2,7 +2,7 @@
   "id": "shredder",
   "name": "文件粉碎",
   "description": "列出临时文件夹与崩溃转储目录里的文件，勾选并确认后多次覆写文件内容再删除",
-  "version": "2.0.6",
+  "version": "2.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

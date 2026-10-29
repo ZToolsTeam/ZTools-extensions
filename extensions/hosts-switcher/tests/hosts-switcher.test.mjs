@@ -164,3 +164,26 @@ test('Windows：备份失败宿主停止写入，界面报失败并保留错误�
   host.ipc.dllplugin_call = async () => ({ ok: true, success: true, warnings: [42, '  ', null] })
   assert.deepEqual(await applyCombinedHosts('x', undefined), { success: true })
 })
+
+test('Mac：写入成功后重新读取失败，仍报告已写入而不是“结果未确认”', async () => {
+  seed(); const view = await open(), real = host.ipc.hosts_manager
+  await view.run(view.item(profile.id), '预览并启用方案'); const preview = await pushed()
+  host.ipc.hosts_manager = async p => { if (p.action === 'read') throw new Error('读取被拒'); return real(p) }
+  await preview.run(undefined, '确认应用到系统')
+  assert.equal(calls('apply').length, 1); assert.equal(host.pushed.length, 0)
+  const toast = host.lastToast()
+  assert.equal(toast.style, Toast.Style.Failure); assert.match(toast.title, /Hosts 已写入并刷新 DNS/); assert.match(toast.message, /已写入，但重新读取列表失败：读取被拒/)
+  assert.doesNotMatch(preview.text(), /结果未确认/)
+})
+test('Mac：停用时外部规则与剩余方案冲突，报告错误且不请求预览', async () => {
+  const other = { ...profile, id: 'hosts-other', name: '另一个', content: '127.0.0.5 other.local\n' }
+  seed([profile, other]); state.content = '127.0.0.9 test.local\n' + combineHosts(base, [profile, other])
+  const view = await open()
+  await view.run(view.item(other.id), '预览并停用方案')
+  assert.match(host.lastToast().message, /冲突/); assert.equal(calls('prepare').length, 0); assert.match(view.text(), /冲突/)
+})
+test('Mac：复制系统内容有成功与失败反馈', async () => {
+  const view = await open()
+  await view.run(view.item('system'), '复制当前系统内容')
+  assert.equal(host.lastToast().style, Toast.Style.Success); assert.equal(host.clipboard.text, base)
+})

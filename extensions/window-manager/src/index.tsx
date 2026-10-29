@@ -8,11 +8,14 @@ import {
   Icon,
   Color,
   showHUD,
+  showToast,
+  Toast,
   useNavigation
 } from "@ztools/declarative-ui";
 import { useState, useEffect } from "@ztools/declarative-ui";
 import {
   WindowActionDefinition,
+  WindowActionCategory,
   WindowManagementPreferences
 } from "./types.js";
 import {
@@ -27,7 +30,7 @@ import {
 export * from "./types.js";
 export * from "./window-actions.js";
 
-function getActionIcon(item: WindowActionDefinition): any {
+function getActionIcon(item: WindowActionDefinition) {
   switch (item.id) {
     case "left-half": return Icon.SidebarLeft;
     case "right-half": return Icon.SidebarRight;
@@ -248,7 +251,10 @@ export function WindowActionDetailView({
             title={`立即执行: ${action.name}`}
             icon={Icon.Checkmark}
             onAction={async () => {
-              await executeWindowAction(action.id);
+              const result = await executeWindowAction(action.id);
+              if (!result.success) {
+                await showToast({ style: Toast.Style.Failure, title: "窗口操作失败", message: result.error });
+              }
             }}
           />
           {action.shortcut && (
@@ -270,7 +276,7 @@ export function WindowActionDetailView({
  */
 export default function WindowManagementCommand() {
   const [searchText, setSearchText] = useState<string>("");
-  const [category, setCategory] = useState<string>("all");
+  const [category, setCategory] = useState<WindowActionCategory | "all">("all");
   const [isShowingDetail, setIsShowingDetail] = useState<boolean>(false);
   const [preferences, setPreferences] = useState<WindowManagementPreferences>(DEFAULT_WINDOW_PREFERENCES);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -281,7 +287,7 @@ export default function WindowManagementCommand() {
   }, []);
 
   const filtered = filterWindowActions(WINDOW_ACTIONS, {
-    category: category as any,
+    category,
     query: searchText
   });
 
@@ -294,7 +300,10 @@ export default function WindowManagementCommand() {
   const resize = filtered.filter(a => a.category === "resize");
 
   const handleExecute = async (item: WindowActionDefinition) => {
-    await executeWindowAction(item.id, { preferences });
+    const result = await executeWindowAction(item.id, { preferences });
+    if (!result.success) {
+      await showToast({ style: Toast.Style.Failure, title: "窗口操作失败", message: result.error });
+    }
   };
 
   const renderActionItem = (item: WindowActionDefinition) => (
@@ -375,7 +384,7 @@ export default function WindowManagementCommand() {
         <List.Dropdown
           tooltip="按分类筛选"
           value={category}
-          onChange={setCategory}
+          onChange={(value) => setCategory(value as WindowActionCategory | "all")}
         >
           <List.Dropdown.Item title="全部动作 (All)" value="all" icon={Icon.List} />
           <List.Dropdown.Item title="半屏对齐 (Halves)" value="halves" icon={Icon.SidebarLeft} />

@@ -1,9 +1,9 @@
 {
   "id": "calendar",
   "name": "日程日历",
-  "version": "2.0.7",
+  "version": "2.0.9",
   "description": "在本机记录和查看日程，用浏览器打开日程里的视频会议链接，可新建、删除日程并导出 ICS 日历文件",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

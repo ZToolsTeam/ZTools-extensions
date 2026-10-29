@@ -72,7 +72,7 @@ test('重复Enter只粘贴一次；粘贴过程中到来的新内容在出栈后
 
 test('监听使用确认后的事件，保留原文且不读取当前敏感剪贴板；离页注销', async () => {
   host.clipboard.text = 'fake-sensitive-content'; const view = await open()
-  assert.equal(view.items().length,0); const raw = '  code <x>\n  '
+  assert.deepEqual(view.items().map(item => item.props.id),['empty-state']); const raw = '  code <x>\n  '
   emit(raw); emit(raw); await tick(10); assert.equal(read().items.length,1); assert.equal(read().items[0].text,raw)
   const before=host.storage.get(STACK_STORAGE_KEY);view.unmount();emit('after-unmount');await tick();assert.equal(host.storage.get(STACK_STORAGE_KEY),before);assert.equal(handlers.size,0)
 })
@@ -136,4 +136,44 @@ test('发送结果未确认时不移出原队列，损坏或重复的恢复记�
   assert.match(host.lastToast().message, /结果未确认/)
   assert.throws(() => parseStackState({ ...value, sent: [{ item: value.items[0], index: 0 }] }), /条目无效/)
   assert.throws(() => parseStackState({ ...value, sent: [{ item: stackItem('saved'), index: -1 }] }), /记录无效/)
+})
+
+test('[故障注入] 剪贴板里是复制的文件时清除格式拒绝改写，不把文件替换成文件名', async () => {
+  host.clipboard.text = 'report.pdf'
+  host.ipc.clipboard_read_files = async () => ({ success: true, files: ['/Users/a/report.pdf'] })
+  await assert.rejects(CleanClipboardCommand(), /复制的文件/)
+  assert.equal(host.clipboard.text, 'report.pdf')
+  // 没有文件（或宿主查询失败）时照常清除格式
+  host.ipc.clipboard_read_files = async () => ({ success: true, files: [] })
+  assert.match(await CleanClipboardCommand(), /已移除富文本格式/)
+  host.ipc.clipboard_read_files = async () => { throw new Error('剪贴板被占用') }
+  assert.match(await CleanClipboardCommand(), /已移除富文本格式/)
+})
+
+test('空队列显示引导条目，回车主动作是切换监听，清除格式只在动作面板里', async () => {
+  write(storageValue([])); const view = await open()
+  assert.deepEqual(view.items().map(item => item.props.id), ['empty-state'])
+  assert.match(view.item('empty-state').props.title, /复制文字后会自动加入队列/)
+  const titles = view.actions(null).map(action => action.props.title)
+  assert.deepEqual(titles, ['暂停监听', '清除剪贴板格式'])
+  assert.deepEqual(view.tree().props.filterBar.actions.map(action => action.id), ['clear'], '空状态底栏已有监听开关，工具栏不重复')
+  await view.run(null, '暂停监听'); await tick()
+  assert.equal(read().isListening, false)
+  assert.match(view.item('empty-state').props.title, /监听已暂停/)
+  emit('new text'); await tick()
+  assert.deepEqual(read().items, [])
+})
+
+test('有条目时不显示空状态；搜索无结果显示无匹配', async () => {
+  write(storageValue(['first'])); const view = await open()
+  assert.deepEqual(view.items().map(item => item.props.title), ['first'])
+  view.tree().props.onSearchTextChange('不存在'); await tick()
+  assert.equal(view.item('empty-state').props.title, '没有匹配的条目')
+})
+
+test('有条目时监听开关回到工具栏，并真实切换持久化状态', async () => {
+  write(storageValue(['first'])); const view = await open()
+  assert.deepEqual(view.tree().props.filterBar.actions.map(action => action.id), ['listen', 'clear'])
+  await action(view, 'listen'); await tick(); assert.equal(read().isListening, false)
+  assert.equal(view.tree().props.filterBar.actions.find(item => item.id === 'listen').title, '开启监听')
 })

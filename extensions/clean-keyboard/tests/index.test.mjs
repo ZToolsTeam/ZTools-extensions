@@ -74,3 +74,10 @@ test('自定义时长只接受5至300整数，验证失败不会调用系统锁�
   await submit({ seconds: '45' })
   assert.equal(host.ipcCalls.find(([, p]) => p.action === 'start')[1].durationSeconds, 45)
 })
+test('仅 macOS 插件的紧急解除提示使用 Mac 按键名称', async () => {
+  const view = await open()
+  assert.match(view.tree().props.searchBarPlaceholder, /⌘\+U 或 Control\+U/)
+  await view.run(view.item('duration-15'), '开始清洁')
+  assert.match(view.item('active').props.subtitle, /Control\+U/)
+  assert.doesNotMatch(view.text() + view.tree().props.searchBarPlaceholder, /Ctrl/)
+})

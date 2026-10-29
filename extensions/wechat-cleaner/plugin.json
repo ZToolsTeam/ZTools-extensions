@@ -2,7 +2,7 @@
   "id": "wechat-cleaner",
   "name": "微信清理",
   "description": "扫描微信电脑版的缓存、日志、聊天视频与图片、接收文件等，把勾选的文件移入回收站，聊天记录数据库不会被清理",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

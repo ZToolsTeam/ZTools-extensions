@@ -7,7 +7,7 @@
 - 命令：linux命令（关键词如 `linux速查`、`tar`）、http状态码（`502排查`、`http status`）、端口速查（`常用端口`、`3306`），分别打开对应分类；搜索框旁的下拉框可切换分类。
 - 收录 10 组 Linux 命令（tar、unzip、find、lsof、ss、netstat、grep、awk、systemctl、du / df）的场景示例与参数说明；13 个 HTTP 状态码（200、301、304、400、401、403、404、429、499、500、502、503、504）的含义、常见原因与排查步骤；12 个常用端口（22、53、80、443、3306、5432、6379、8080、8848、9092、9200、27017）。
 - 搜索支持命令名、中文场景、状态码数字、端口号或服务名。
-- Linux 命令：`Enter` 复制第一条示例，`⌘/Ctrl+Enter` 复制全部示例；状态码：`Enter` 复制排查摘要，`⌘/Ctrl+Enter` 只复制状态码数字；端口：`Enter` 复制端口号，`⌘/Ctrl+Enter` 复制 `ss -tulpn | grep :端口` 排查命令。`⌘/Ctrl+K` 打开动作面板。
+- Linux 命令：`Enter` 复制第一条示例，`⌘/Ctrl+Enter` 复制全部示例；状态码：`Enter` 复制排查摘要，`⌘/Ctrl+Enter` 只复制状态码数字；端口：`Enter` 复制端口号，`⌘/Ctrl+Enter` 复制 Linux 的 `ss -tulpn | grep :端口` 排查命令，动作面板里另有 macOS（`lsof`）和 Windows（`netstat`）的对应命令。命令示例以 Linux（GNU 工具）为准，部分参数在 macOS 自带的 BSD 工具上不可用。`⌘/Ctrl+K` 打开动作面板。
 
 ## 平台与要求
 

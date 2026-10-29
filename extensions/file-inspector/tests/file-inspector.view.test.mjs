@@ -95,3 +95,66 @@ test('状态条写明编码判断依据，不显示编造的置信度；扩展�
     assert.doesNotMatch(png.text(), /"color"/)
   } finally { png.unmount() }
 })
+
+const withPlatform = async (platform, fn) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { value: { platform, userAgent: '' }, configurable: true })
+  try { return await fn() } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original)
+    else delete globalThis.navigator
+  }
+}
+
+test('三个命令各自预选目标：未选文件时主动作是选择文件，载入后转码命令与扩展名命令的主动作不同', async () => {
+  const { commands } = await import('../dist/index.js')
+  assert.deepEqual(Object.keys(commands).sort(), ['file-fix-csv-bom', 'file-fix-extension', 'file-inspector-workbench'])
+  for (const code of Object.keys(commands)) {
+    const view = await mount(commands[code])
+    try {
+      assert.equal(view.actions()[0].props.title, '选择文件…', code)
+      assert.equal(view.tree().props.workbenchPanel.title, '未选择文件')
+    } finally { view.unmount() }
+  }
+  load(Buffer.from('a,b\r\n1,2', 'utf8'))
+  host.ipc.window_show_open_dialog = () => ({ canceled: false, filePath: '/tmp/data.png' })
+  const bom = await mount(commands['file-fix-csv-bom'])
+  try {
+    await pick(bom)
+    assert.equal(bom.actions()[0].props.title, '另存为 UTF-8-BOM')
+    assert.equal(bom.actions(bom.item('line-1'))[0].props.title, '另存为 UTF-8-BOM')
+    assert.equal(bom.actions().at(-1).props.title, '选择其他文件…')
+  } finally { bom.unmount() }
+  load(Buffer.from('89504e470d0a1a0a', 'hex'))
+  host.ipc.window_show_open_dialog = () => ({ canceled: false, filePath: '/tmp/photo.jpg' })
+  const ext = await mount(commands['file-fix-extension'])
+  try {
+    await pick(ext)
+    assert.match(ext.actions()[0].props.title, /^修正扩展名为 \./)
+    assert.match(ext.actions(ext.item('line-1'))[0].props.title, /^修正扩展名为 \./)
+  } finally { ext.unmount() }
+})
+
+test('扩展名命令遇到扩展名一致的文件时不显示修正动作，主动作退回另存或选择文件', async () => {
+  const { commands } = await import('../dist/index.js')
+  load(Buffer.from('89504e470d0a1a0a', 'hex'))
+  host.ipc.window_show_open_dialog = () => ({ canceled: false, filePath: '/tmp/ok.png' })
+  const view = await mount(commands['file-fix-extension'])
+  try {
+    await pick(view)
+    assert.ok(!view.actions().some(a => a.props.title.startsWith('修正扩展名')))
+    assert.equal(view.actions()[0].props.title, '选择其他文件…')
+  } finally { view.unmount() }
+})
+
+test('目标换行符默认跟随系统：macOS 为 LF，Windows 为 CRLF，标签不带英文括注', async () => {
+  for (const [platform, expected] of [['MacIntel', 'LF'], ['Win32', 'CRLF']]) {
+    await withPlatform(platform, async () => {
+      const view = await mount(FileInspectorCommand)
+      try {
+        const field = view.tree().props.workbenchPanel.fields.find(f => f.id === 'lineEndingTarget')
+        assert.equal(field.value, expected, platform)
+        assert.ok(!/Magic Bytes/.test(view.text()))
+      } finally { view.unmount() }
+    })
+  }
+})

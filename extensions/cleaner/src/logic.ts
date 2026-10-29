@@ -241,13 +241,16 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
   if (!homeDir) {
     throw new Error('无法读取当前用户目录，未执行扫描')
   }
-  const [diskInfo, env, realTemp, realDownloads] = await Promise.all([
+  const [diskInfo, env, commonFolders, realDownloads] = await Promise.all([
     fetchSystemDiskInfo(hostOverride),
     getRealEnvPaths(hostOverride),
-    getRealSystemPath('temp', hostOverride),
+    callHostTransport<{ folders?: Array<{ id: string; path: string; exists: boolean }> }>('system_list_common_folders', {}, hostOverride),
     getRealSystemPath('downloads', hostOverride)
   ])
-  const tempDir = realTemp || env.temp
+  const tempDir = commonFolders.data?.folders?.find(folder => folder.id === 'temp' && folder.exists)?.path
+  if (!commonFolders.ok || !tempDir) {
+    throw new Error(commonFolders.error || '无法获取用户临时文件夹路径，未执行扫描')
+  }
   const downloadsDir = realDownloads || env.downloads
   const localAppData = env.localAppData || `${homeDir}\\AppData\\Local`
   const roamingAppData = env.appData || `${homeDir}\\AppData\\Roaming`

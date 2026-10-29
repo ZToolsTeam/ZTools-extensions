@@ -28,12 +28,41 @@ export interface RegexCronCommandProps {
   initialTestSample?: string
 }
 
-const CRON_TEMPLATES = [
-  { id: 'cron-daily-2am', expr: '0 0 2 * * ?', title: '每天凌晨 02:00:00 执行备份' },
-  { id: 'cron-every-15m', expr: '*/15 * * * *', title: '每隔 15 分钟轮询同步一次' },
-  { id: 'cron-workday-930', expr: '0 30 9 ? * MON-FRI', title: '每个工作日上午 09:30:00 推送日报' },
-  { id: 'cron-month-1st', expr: '0 0 0 1 * ?', title: '每月 1 号零点生成月度账单' }
+/** 常用模板统一用五位 Linux 写法，与占位提示、详情说明一致；默认输入“每 15 分钟”已在首项展示，不重复列为模板 */
+export const CRON_TEMPLATES = [
+  { id: 'cron-daily-2am', expr: '0 2 * * *', title: '每天凌晨 02:00 执行备份' },
+  { id: 'cron-hourly', expr: '0 * * * *', title: '每小时整点执行一次' },
+  { id: 'cron-workday-930', expr: '30 9 * * 1-5', title: '每个工作日上午 09:30 推送日报' },
+  { id: 'cron-month-1st', expr: '0 0 1 * *', title: '每月 1 号零点生成月度账单' }
 ]
+
+/** 用户输入只能作为代码原文显示：围栏比内容中最长的反引号串更长，内容里的 ``` 不会提前结束代码块 */
+export function fencedCode(content: string, language = 'text'): string {
+  const body = content.replace(/\r\n?/g, '\n')
+  let size = 3
+  for (const run of body.matchAll(/`+/g)) size = Math.max(size, run[0].length + 1)
+  const fence = '`'.repeat(size)
+  return `${fence}${language}\n${body}\n${fence}`
+}
+
+/**
+ * 自然语言摘要里可能含 *、_、~（如日期字段的步长写法），客户端 Markdown 不支持反斜杠转义，
+ * 含这些字符时改用行内代码原样显示，否则加粗显示，避免星号被当成格式吃掉。
+ */
+export function emphasizeLiteral(text: string): string {
+  return /[*_~`]/.test(text) ? inlineCode(text) : `**${text}**`
+}
+
+/** 行内代码：换行显示为 \n，含反引号时加长定界符，空串明确标注 */
+export function inlineCode(text: string): string {
+  if (!text) return '（空匹配）'
+  const body = text.replace(/\r\n|\r|\n/g, '\\n')
+  let size = 1
+  for (const run of body.matchAll(/`+/g)) size = Math.max(size, run[0].length + 1)
+  const ticks = '`'.repeat(size)
+  const pad = size > 1 || body.startsWith('`') || body.endsWith('`') ? ' ' : ''
+  return `${ticks}${pad}${body}${pad}${ticks}`
+}
 
 export function EditRegexText({ sample, onSave }: { sample: string; onSave: (value: string) => void }) {
   const [value, setValue] = useState(sample)
@@ -106,7 +135,7 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
       onSearchTextChange={setSearchText}
       searchBarPlaceholder={
         currentMode === 'cron'
-          ? '输入 5/6 位 Cron 表达式（如 0 0 2 * * ? 或 */15 * * * *）...'
+          ? '输入五位 Cron 表达式（如 30 9 * * 1-5），也支持六位 Spring 写法'
           : currentMode === 'tester'
             ? '输入待测试正则表达式（如 /1[3-9]\\d{9}/g）...'
             : '搜索常用中国本土正则（如：身份证、手机号、信用代码、新能源车牌）...'
@@ -141,17 +170,15 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
               detail={
                 <List.Item.Detail
                   markdown={`### ${item.title}
-\`\`\`regexp
-${item.pattern}
-\`\`\`
+${inlineCode(item.pattern)}
 
 #### 规则说明
 ${item.description}
 
-#### 合规通过用例 (Pass)
+#### 合规通过用例
 ${item.validExamples.map((ex) => `- \`${ex}\``).join('\n')}
 
-#### 拦截反例用例 (Reject)
+#### 拦截反例用例
 ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
 `}
                   metadata={
@@ -161,7 +188,7 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
                         title="推荐修饰符"
-                        text={item.recommendedFlags || '无 (默认精准匹配)'}
+                        text={item.recommendedFlags || '无（默认精准匹配）'}
                       />
                     </List.Item.Detail.Metadata>
                   }
@@ -192,16 +219,17 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
         <List.Section title="实时正则匹配与捕获组透视">
           <List.Item
             id="tester-summary"
-            icon={regexMatchResult?.isValidRegex ? Icon.CheckCircle : Icon.XMarkCircle}
+            icon={regexMatchResult?.isValidRegex ? Icon.CheckCircle : !activeTesterPattern.trim() ? Icon.Code : Icon.XMarkCircle}
             title={
               regexMatchResult?.isValidRegex
                 ? `${regexMatchResult.truncated ? '仅显示前' : '共命中'} ${regexMatchResult.totalMatches} 处匹配（耗时 ${regexMatchResult.elapsedMs}ms）`
-                : regexMatchResult ? '正则匹配未完成' : '正在匹配…'
+                : !activeTesterPattern.trim() ? '等待输入正则表达式' : regexMatchResult ? '正则匹配未完成' : '正在匹配…'
             }
             subtitle={activeTesterPattern}
             accessories={[
               regexMatchResult?.isValidRegex
                 ? { tag: '语法有效' }
+                : !activeTesterPattern.trim() ? { tag: '待输入' }
                 : regexMatchResult ? { tag: { value: '异常拦截', color: Color.Red } } : { tag: '计算中' }
             ]}
             detail={
@@ -209,14 +237,10 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
                 markdown={
                   regexMatchResult?.isValidRegex
                     ? `### 实时测试结果
-\`\`\`regexp
-/${regexMatchResult.pattern}/${regexMatchResult.flags}
-\`\`\`
+${fencedCode(`/${regexMatchResult.pattern}/${regexMatchResult.flags}`, 'regexp')}
 
 #### 待测样本原文
-\`\`\`text
-${testSample}
-\`\`\`
+${testSample ? fencedCode(testSample) : '*待测文本为空，按 Enter 编辑*'}
 
 #### 命中片段与捕获组清单 (${regexMatchResult.totalMatches} 项)
 ${
@@ -225,9 +249,9 @@ ${
     : regexMatchResult.matches
         .map(
           (m) =>
-            `- **Match #${m.index + 1}**: \`${m.text}\` *(位置 [${m.start}, ${m.end}])*\n${
+            `- **Match #${m.index + 1}**: ${inlineCode(m.text)} *(位置 [${m.start}, ${m.end}])*\n${
               m.groups.length > 0
-                ? m.groups.map((g) => `  - Group ${g.groupIndex}: ${g.start < 0 ? '未匹配' : `\`${g.value}\` (位置 [${g.start}, ${g.end}])`}`).join('\n')
+                ? m.groups.map((g) => `  - Group ${g.groupIndex}: ${g.start < 0 ? '未匹配' : `${inlineCode(g.value)} (位置 [${g.start}, ${g.end}])`}`).join('\n')
                 : ''
             }`
         )
@@ -235,7 +259,7 @@ ${
 }
 `
                     : `### 正则匹配
-${regexMatchResult?.errorMessage || '正在处理…'}
+${!activeTesterPattern.trim() ? '在搜索框输入正则，例如 `/\\d+/g`；按 Enter 编辑待测文本。' : regexMatchResult?.errorMessage ? fencedCode(regexMatchResult.errorMessage) : '正在处理…'}
 `
                 }
               />
@@ -271,7 +295,7 @@ ${regexMatchResult?.errorMessage || '正在处理…'}
                 markdown={
                   cronResult.isValid
                     ? `### Cron 自然语言直译
-> **${cronResult.chineseSummary}**
+> ${emphasizeLiteral(cronResult.chineseSummary)}
 
 ${cronResult.dialect}；使用本机时区，不支持 Quartz 编号及 L/W/# 扩展。
 

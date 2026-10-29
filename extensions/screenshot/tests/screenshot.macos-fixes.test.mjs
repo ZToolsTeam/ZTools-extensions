@@ -135,10 +135,10 @@ test('界面：失败的复制、回贴、定位、打开用失败样式提示',
   await tick(10)
   const row = view.item('screenshot-Screenshot 1.png')
   for (const title of [
-    '粘贴到活动窗口 (Paste Image to Active Window)',
-    '复制图片本身 (Copy Image to Clipboard)',
-    '在资源管理器中定位 (Show in Explorer)',
-    '用默认图片查看器打开 (Open with Default App)'
+    '粘贴到活动窗口',
+    '复制图片本身',
+    '在访达中显示',
+    '用默认图片查看器打开'
   ]) {
     await view.run(row, title)
     await tick(10)
@@ -265,7 +265,7 @@ test('批量清理：默认不勾选；只清理当前可见且已勾选的；�
   await tick()
   assert.equal(queue().items.filter((i) => i.props.checked).length, 4)
   await view.search('old-')
-  const batchTitle = (n) => `批量清理已勾选截图 (${n}项)`
+  const batchTitle = (n) => `批量清理已勾选截图（${n} 项）`
   const row = view.item('screenshot-old-1.png')
   assert.ok(view.actions(row).some((a) => a.props.title === batchTitle(2)))
 
@@ -353,7 +353,7 @@ test('元数据与工作台：不再承诺区域截图/标注/悬浮贴图，工
   const wb = view.tree().props.workbenchPanel
   const ids = wb.fields.map((f) => f.id)
   assert.ok(!ids.some((id) => /capture-region|image-format|window-shadow|hash-dedupe/.test(id)))
-  assert.doesNotMatch(wb.previewCard.badge, /无损/)
+  assert.equal(wb.previewCard, undefined)
   assert.doesNotMatch(JSON.stringify(wb), /Pictures\\\\Screenshots/)
   view.unmount()
 })
@@ -362,4 +362,22 @@ test('describeHostError：仅未授权错误追加授权提示', () => {
   assert.match(describeHostError('路径未由当前窗口授权', 'x'), /授权访问截图目录/)
   assert.equal(describeHostError('文件不存在', 'x'), '文件不存在')
   assert.equal(describeHostError(undefined, '兜底'), '兜底')
+})
+
+test('动作标题、筛选下拉与说明不带英文括注，避免底栏截断', async () => {
+  const host = createHost()
+  host.ipc.screenshots_scan = async () => [{ id: 'a', path: '/test/a.png', filename: 'a.png', width: 10, height: 10, size: 1 }]
+  await defaultScreenshotsManager.loadScreenshots(true)
+  const view = await mount(ScreenshotsCommand, host)
+  try {
+    await tick(10)
+    const titles = view.actions(view.items()[0]).map((a) => a.props.title)
+    assert.ok(titles.includes('粘贴到活动窗口'))
+    const dropdown = view.tree().props.searchBarAccessory.children.map((it) => it.props.title)
+    assert.ok(dropdown.includes('全部截图'))
+    for (const title of [...titles, ...dropdown]) assert.doesNotMatch(title, /\([A-Za-z]/, title)
+    for (const field of view.tree().props.workbenchPanel.fields) {
+      if (field.type === 'info') assert.ok(field.value.length <= 12, field.value)
+    }
+  } finally { view.unmount() }
 })

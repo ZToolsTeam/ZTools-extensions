@@ -147,3 +147,27 @@ test('SQL 只接受 SQLite 空白，不将 NBSP 或竖向制表符当分隔符',
   for (const input of ['INSERT\u00a0INTO t(a) VALUES (1)', 'INSERT INTO t(a) VALUES\u00a0(1)', '\u00a0INSERT INTO t(a) VALUES (1)', 'INSERT INTO t(a) VALUES (1)\u00a0', 'INSERT\vINTO t(a) VALUES (1)']) assert.throws(() => grid(input))
   assert.deepEqual(json('INSERT\tINTO t(a) VALUES\f(1);\r\n'), [{ a: 1 }])
 })
+
+test('GFM 短分隔行（|-|、|:-:|）识别为 Markdown，不被误当作单列 CSV', () => {
+  for (const input of ['| a | b |\n|-|-|\n| 1 | 2 |', '| a | b |\n|:-:|--:|\n| 1 | 2 |', 'a | b\n- | -\n1 | 2']) {
+    const parsed = detectAndParse(input)
+    assert.equal(parsed.format, 'markdown', input)
+    assert.deepEqual(parsed.grid.headers, ['a', 'b'])
+    assert.deepEqual(parsed.grid.rows, [['1', '2']])
+  }
+  // 普通 CSV 里含 - 的单元格不受影响
+  assert.equal(detectAndParse('a,b\n-,-\n1,2').format, 'csv')
+  // 分隔行缺少 - 时仍明确报错
+  assert.throws(() => detectAndParse('| a |\n| :: |\n| 1 |', true, 'markdown'), /分隔行/)
+})
+
+test('Markdown 输出中普通小数和时间保持可读，网址与邮箱仍转义防止自动链接，均可无损读回', () => {
+  const source = [{ price: '3.14', time: '12:30', note: '(备注)', url: 'https://x.example/a.b', mail: 'a@b.example' }]
+  const markdown = gridToMarkdown(grid(JSON.stringify(source)))
+  assert.match(markdown, /\| 3\.14 +\|/)
+  assert.match(markdown, /\| 12:30 +\|/)
+  assert.match(markdown, /\| \(备注\) +\|/)
+  assert.doesNotMatch(markdown, /https:\/\/|a@b/)
+  // 文字表格不携带类型：读回时 3.14 按可安全往返的数字推断为数值，其余文本原样
+  assert.deepEqual(json(markdown), [{ ...source[0], price: 3.14 }])
+})

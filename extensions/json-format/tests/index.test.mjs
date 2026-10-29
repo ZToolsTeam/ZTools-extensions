@@ -50,3 +50,35 @@ test('界面：默认输入为空，不显示示例 JSON，也不显示错误', 
   assert.equal(area.props.value, '')
   assert.equal(area.props.error, undefined)
 })
+
+test('[异常] 极深嵌套导致缩进结果超出字符串上限时如实提示，不崩溃也不提供复制', async () => {
+  const { mountPushed } = await import('../../shared/test-harness.mjs')
+  host.pushed.push(JsonFormatCommand)
+  const view = await mountPushed(host)
+  try {
+    const deep = '['.repeat(20000) + ']'.repeat(20000)
+    await view.fill('jsonInput', deep)
+    const field = view.field('jsonInput')
+    assert.match(field.props.error, /嵌套过深或体积过大/)
+    assert.ok(!view.actions(null).some((a) => /复制/.test(a.props.title)))
+    await view.run(null, '格式化并查看详情')
+    assert.equal(host.lastToast().title, '无法生成格式化结果')
+    assert.equal(host.pushed.length, 1)
+  } finally { view.unmount() }
+})
+
+test('详情页复制标题与实际缩进一致（4 格 / Tab）', async () => {
+  const { mountPushed } = await import('../../shared/test-harness.mjs')
+  host.pushed.push(JsonFormatCommand)
+  const view = await mountPushed(host)
+  try {
+    await view.fill('jsonInput', '{"a":[1]}')
+    await view.fill('indentType', 'tab')
+    await view.run(null, '格式化并查看详情')
+    const detail = await mountPushed(host)
+    try {
+      await detail.run(null, '复制格式化 JSON (Tab)')
+      assert.equal(host.clipboard.text, '{\n\t"a": [\n\t\t1\n\t]\n}')
+    } finally { detail.unmount() }
+  } finally { view.unmount() }
+})

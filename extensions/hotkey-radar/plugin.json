@@ -1,9 +1,9 @@
 {
   "id": "hotkey-radar",
   "name": "热键侦测",
-  "version": "1.0.4",
-  "description": "检测全局快捷键注册情况，离线查询系统与常用软件快捷键；Mac 区分 Cmd 与 Ctrl，不推测占用进程",
-  "author": "ZTools Community",
+  "version": "1.0.6",
+  "description": "检测全局快捷键注册情况，离线查询系统与常用软件快捷键；Mac 区分 ⌘ 与 ⌃，不推测占用进程",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -27,7 +27,7 @@
     },
     {
       "code": "hotkey-cheatsheet",
-      "explain": "离线速查 Windows、macOS、VS Code、Excel、Photoshop、浏览器高频快捷键",
+      "explain": "离线速查当前系统（Windows 或 macOS）及 VS Code、Excel、Photoshop、浏览器的默认快捷键",
       "cmds": [
         "快捷键速查",
         "常用快捷键",

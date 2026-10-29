@@ -143,10 +143,10 @@ test('hardware-info: 宿主报告电源读取失败（readError）时标「电�
   })))
   assert.equal(snap.powerReadFailed, true)
   assert.ok(snap.failures.includes('电源状态'))
-  assert.ok(snap.warnings.includes('电源状态：电源状态读取超时'))
+  assert.ok(snap.warnings.includes('电源状态：读取超时'))
   assert.match(systemRowMarkdown(snap), /电源状态读取失败/)
-  assert.match(exportHardwareReport(snap, 'txt'), /失败原因: .*电源状态读取超时/)
-  assert.deepEqual(JSON.parse(exportHardwareReport(snap, 'json')).readWarnings.filter((w) => w.startsWith('电源状态')), ['电源状态：电源状态读取超时'])
+  assert.match(exportHardwareReport(snap, 'txt'), /失败原因: .*电源状态：读取超时/)
+  assert.deepEqual(JSON.parse(exportHardwareReport(snap, 'json')).readWarnings.filter((w) => w.startsWith('电源状态')), ['电源状态：读取超时'])
 })
 
 test('hardware-info: 负数 / 非数字 / 小数电量按「电量未知」处理；调用失败标读取失败，都不伪造 100% 或无电池', async () => {
@@ -200,7 +200,7 @@ test('hardware-info: 显示器行显示宿主真实刷新率与色深（ProMotio
     displays: [{ id: 1, name: '内建视网膜显示器', bounds: { x: 0, y: 0, width: 1800, height: 1169 }, workArea: { x: 0, y: 38, width: 1800, height: 1131 }, scaleFactor: 2, displayFrequency: 120, colorDepth: 30, depthPerComponent: 10 }]
   })
   const [row] = displayEntries(await fetchHardwareTelemetrySnapshot(host))
-  assert.equal(row.subtitle, 'DPI 缩放 200% · 刷新率 120Hz · 色深 30-bit')
+  assert.equal(row.subtitle, '缩放比例 200% · 刷新率 120Hz · 色深 30-bit')
   assert.equal(row.value, '1800×1169 @120Hz')
   assert.match(row.detailMarkdown, /垂直刷新率\*\*: `120 Hz`/)
   assert.match(row.detailMarkdown, /色深\*\*: `30-bit`/)
@@ -216,8 +216,8 @@ test('hardware-info: 宿主缺少 / 返回异常的显示参数时显示「未�
     const host = makeHardwareHost(async () => ({ percent: 80, isCharging: true }))
     host.screen_get_all_displays = async () => [display]
     const [row] = displayEntries(await fetchHardwareTelemetrySnapshot(host))
-    assert.equal(row.subtitle, 'DPI 缩放 未知 · 刷新率 未知 · 色深 未知', display.label)
-    assert.equal(row.tag, 'DPI 未知')
+    assert.equal(row.subtitle, '缩放比例 未知 · 刷新率 未知 · 色深 未知', display.label)
+    assert.equal(row.tag, '缩放未知')
     assert.equal(row.value, '分辨率未知')
     assert.doesNotMatch(row.detailMarkdown + row.subtitle + row.value, /60Hz|60 Hz|24-bit|1920|1080|100%/)
     assert.match(row.detailMarkdown, /逻辑分辨率\*\*: `未知`/)

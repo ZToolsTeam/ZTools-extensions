@@ -17,6 +17,8 @@ import {
   DiskFileEntry,
   DiskGroupStat,
   OFFICIAL_FILE_TYPE_GROUPS,
+  groupDescriptionFor,
+  searchPlaceholderFor,
   FORBIDDEN_REASON,
   FORBIDDEN_TARGET_PATTERN,
   formatBytes,
@@ -28,17 +30,17 @@ import {
   batchDeleteDiskFileItems,
   openDiskItemLocation,
   openDiskFileDefault,
-  isRealElectronHost
+  openDriveRoot,
+  driveRoot,
+  fileManagerName,
+  trashName,
+  isRealElectronHost,
+  type DiskScanFailure
 } from './logic.js'
-
-/** 分区根目录：Windows 盘符补反斜杠（C: → C:\\），macOS 挂载点本身就是路径（/） */
-function driveRoot(drive: string): string {
-  return drive.startsWith('/') ? drive : `${drive}\\`
-}
 
 /**
  * 定位 / 打开：宿主只放行本窗口扫描结果里的路径，失败时必须提示（以前静默失败，用户以为点了没反应）。
- * 分区根目录不在扫描结果里，新宿主下可能被拒，同样如实提示。
+ * 分区根目录走 openDriveRootWithToast（授权来源不同，失败原因也不同）。
  */
 async function openWithToast(kind: 'reveal' | 'open', targetPath: string): Promise<void> {
   const ok = kind === 'reveal' ? await openDiskItemLocation(targetPath) : await openDiskFileDefault(targetPath)
@@ -48,6 +50,24 @@ async function openWithToast(kind: 'reveal' | 'open', targetPath: string): Promi
     title: kind === 'reveal' ? '无法在文件管理器中定位' : '无法打开文件',
     message: `${targetPath}\n可能已被移动或删除，或不在本次扫描结果里（授权可能已过期），请重新扫描后再试`
   })
+}
+
+/** 打开分区根目录：失败时按原因提示（旧版客户端不授权分区根目录 / 分区已推出），不说「可能已被移动或删除」 */
+async function openDriveRootWithToast(drive: string): Promise<void> {
+  const res = await openDriveRoot(drive)
+  if (res.ok) return
+  await showToast({
+    style: Toast.Style.Failure,
+    title: '无法打开此分区',
+    message: `${driveRoot(drive)}\n${res.error || '打开分区失败'}`
+  })
+}
+
+/** 目录名（路径最后一段）；分区根目录本身显示完整路径 */
+function dirDisplayName(dirPath: string): string {
+  const trimmed = dirPath.replace(/[\\/]+$/, '')
+  const name = trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1)
+  return name || dirPath
 }
 
 export default function DiskAnalyzerCommand() {
@@ -87,6 +107,8 @@ export default function DiskAnalyzerCommand() {
   // 宿主目录扫描达到条目上限时，大文件列表只是抽样结果，界面不能标成「全盘」「按体积降序」
   const [scanError, setScanError] = useState('')
   const [sampledScan, setSampledScan] = useState<{ sampled: boolean; scannedEntries: number }>({ sampled: false, scannedEntries: 0 })
+  // 未能扫描的目录（用户拒绝访问、外接卷不可读等）：其余目录照常展示，这些目录在左侧单独列出原因
+  const [failedScans, setFailedScans] = useState<DiskScanFailure[]>([])
   const [totalCapacity, setTotalCapacity] = useState(0)
   const [totalUsed, setTotalUsed] = useState(0)
   const [totalAvailable, setTotalAvailable] = useState(0)
@@ -117,11 +139,20 @@ export default function DiskAnalyzerCommand() {
       setFiles(snap.files)
       setTopDirectories(Array.isArray(snap.topDirectories) ? snap.topDirectories : [])
       setSampledScan({ sampled: snap.sampled === true, scannedEntries: Number(snap.scannedEntries) || 0 })
+      const failed = Array.isArray(snap.failedScans) ? snap.failedScans : []
+      setFailedScans(failed)
       setTotalCapacity(snap.totalCapacityBytes)
       setTotalUsed(snap.totalUsedBytes)
       setTotalAvailable(snap.totalAvailableBytes)
       setSelectedPaths([])
-      if (showIndicator) {
+      if (showIndicator && failed.length > 0) {
+        await progressToast?.hide()
+        showToast({
+          style: Toast.Style.Failure,
+          title: `扫描部分完成：${failed.length} 个目录未能读取`,
+          message: `已归类 ${snap.files.length} 个文件；未能扫描：${failed.map(f => `${f.path}（${f.reason}）`).join('；')}`
+        })
+      } else if (showIndicator) {
         await progressToast?.hide()
         showToast({
           style: Toast.Style.Success,
@@ -259,9 +290,9 @@ export default function DiskAnalyzerCommand() {
     }
 
     const confirmed = await confirmAlert({
-      title: `确认将文件移入回收站？`,
+      title: `确认将文件移入${trashName(entry.path)}？`,
       message: `文件名: ${entry.name}\n所属分类: ${entry.groupName} (${entry.extension})\n实际大小: ${formatBytes(entry.sizeBytes)}\n完整路径: ${entry.path}\n\n文件将被安全移入系统回收站（废纸篓），可随时还原。`,
-      primaryAction: { title: '移入回收站', style: 'destructive' }
+      primaryAction: { title: `移入${trashName(entry.path)}`, style: 'destructive' }
     })
     if (!confirmed) return
 
@@ -277,7 +308,7 @@ export default function DiskAnalyzerCommand() {
 
     showToast({
       style: Toast.Style.Success,
-      title: '已移入回收站并实时重算空间占比',
+      title: `已移入${trashName(entry.path)}并实时重算空间占比`,
       message: `${entry.name} (${formatBytes(entry.sizeBytes)})`
     })
     setFiles(prev => prev.filter(f => f.path !== entry.path))
@@ -305,13 +336,13 @@ export default function DiskAnalyzerCommand() {
     const confirmed = await confirmAlert({
       title: `确认批量清理已勾选的 ${selectedEntries.length} 个文件？`,
       message: `预计释放总空间: ${formatBytes(selectedBytes)}\n\n清理清单预览:\n${previewLines}${moreLine}\n\n所有文件均安全移入系统回收站（废纸篓），原目录与分类占比将立即实时重算。`,
-      primaryAction: { title: `确认移入回收站 (${formatBytes(selectedBytes)})`, style: 'destructive' }
+      primaryAction: { title: `确认移入${trashName(selectedEntries[0]?.path || '')} (${formatBytes(selectedBytes)})`, style: 'destructive' }
     })
     if (!confirmed) return
 
     const progressToast = await showToast({
       style: Toast.Style.Animated,
-      title: `正在批量移入回收站 (${selectedEntries.length} 项)...`,
+      title: `正在批量移入${trashName(selectedEntries[0]?.path || '')} (${selectedEntries.length} 项)...`,
       message: `预计释放 ${formatBytes(selectedBytes)}`
     })
 
@@ -368,10 +399,10 @@ export default function DiskAnalyzerCommand() {
     const bar = '█'.repeat(filledBlocks) + '░'.repeat(20 - filledBlocks)
     const alert =
       d.usagePercent >= 90
-        ? `> [!CAUTION]\n> **磁盘空间告急 (${d.usagePercent}%)**：剩余空间仅 \`${formatBytes(d.availableBytes)}\`，建议立即点击上方盘符切换器聚焦 \`${d.drive}\` 清理冗余安装包与缓存！`
+        ? `> **磁盘空间告急 (${d.usagePercent}%)**：剩余空间仅 \`${formatBytes(d.availableBytes)}\`，建议立即点击上方盘符切换器聚焦 \`${d.drive}\` 清理冗余安装包与缓存！`
         : d.usagePercent >= 75
-        ? `> [!WARNING]\n> **磁盘负载偏高 (${d.usagePercent}%)**：建议检查大体积视频或开发缓存目录。`
-        : `> [!TIP]\n> **分区状态健康 (${d.usagePercent}%)**：空间充裕，读写性能良好。`
+        ? `> **磁盘负载偏高 (${d.usagePercent}%)**：建议检查大体积视频或开发缓存目录。`
+        : `> **分区状态健康 (${d.usagePercent}%)**：空间充裕，读写性能良好。`
 
     const groupLines =
       driveGroups.length > 0
@@ -398,7 +429,7 @@ export default function DiskAnalyzerCommand() {
 
 ---
 
-### 本分区 10 大分类空间采样 (${driveFiles.length} 项 · ${formatBytes(driveFiles.reduce((a, b) => a + b.sizeBytes, 0))})
+### 本分区各分类空间采样 (${driveFiles.length} 项 · ${formatBytes(driveFiles.reduce((a, b) => a + b.sizeBytes, 0))})
 
 ${groupLines}
 
@@ -419,9 +450,9 @@ ${alert}
             .join('\n')
         : '- 暂无文件'
 
-    return `# ${g.name} (Group #${g.groupId})
+    return `# ${g.name}
 
-${g.description}
+${groupDescriptionFor(g.groupId)}
 
 ---
 
@@ -498,7 +529,7 @@ ${extRows}
       id: f.id,
       title: f.name,
       subtitle: f.isProtected
-        ? `${f.parentDir} (系统核心文件，保护中)`
+        ? `${f.parentDir}（受保护位置：系统目录或应用 / 图库包内部，不能清理）`
         : `${f.parentDir} · ${formatDateTime(f.mtime)}`,
       checkable: !f.isProtected,
       checked: isChecked,
@@ -530,14 +561,14 @@ ${extRows}
             ? []
             : [
                 Action({
-                  title: '移入回收站清理',
+                  title: `移入${trashName(f.path)}清理`,
                   icon: Icon.Trash,
                   style: Action.Style.Destructive,
                   onAction: () => handleTrashFile(f)
                 })
               ]),
           Action({
-            title: '在资源管理器定位',
+            title: `在${fileManagerName(f.path)}中定位`,
             icon: Icon.Folder,
             onAction: () => openWithToast('reveal', f.path)
           }),
@@ -590,11 +621,11 @@ ${extRows}
       : selectedDrive !== 'ALL'
       ? `${selectedDrive} 分区下的可清理大文件 (按体积从大到小)`
       : sampledScan.sampled
-      ? `抽样大文件明细（已扫描 ${sampledScan.scannedEntries} 项，非完整结果，直接勾选或按 ↵ 移入回收站）`
-      : `全盘可清理大文件明细 (按体积降序，直接勾选或按 ↵ 移入回收站)`
+      ? `抽样大文件明细（非完整结果，直接勾选或按 ↵ 移入${trashName(files[0]?.path || '')}）`
+      : `全盘可清理大文件明细 (按体积降序，直接勾选或按 ↵ 移入${trashName(files[0]?.path || '')})`
 
   return List({
-    searchBarPlaceholder: '搜索大文件、后缀 (.mp4/.iso/.zip/.dll) 或路径...',
+    searchBarPlaceholder: searchPlaceholderFor(),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
@@ -620,7 +651,7 @@ ${extRows}
       ]
     }),
     filterBar: {
-      summaryText: scanError ? `扫描失败，显示内容可能已过期：${scanError}` : `已挂载卷容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)} · 右侧共 ${finalFilteredFiles.length} 个大文件${sampledScan.sampled ? ` · 抽样结果（已扫描 ${sampledScan.scannedEntries} 项）` : ''}${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
+      summaryText: scanError ? `扫描失败，显示内容可能已过期：${scanError}` : `已挂载卷容量 ${formatBytes(metricCap)} / 已用 ${formatBytes(metricUsed)} (${overallPercent}%) / 剩余 ${formatBytes(metricAvail)}${sampledScan.sampled ? ` · 抽样结果（已扫描 ${sampledScan.scannedEntries} 项）` : ''}${failedScans.length > 0 ? ` · ${failedScans.length} 个目录未能扫描（见左侧列表）` : ''}${selectedEntries.length > 0 ? ` · 已勾选 ${selectedEntries.length} 项 (${formatBytes(selectedBytes)})` : ''}`,
       actions: [
         {
           id: 'act-rescan',
@@ -648,22 +679,27 @@ ${extRows}
       items: rightFileItems
     },
     children: [
+      // 「全部大文件」是查看范围，不是分区：单独成组，不混进分区列表；数量只在右侧表头显示一次
       List.Section({
-        title: `物理挂载分区 (${filteredDrives.length})`,
+        title: '查看范围',
         children: [
           List.Item({
             id: 'drive-ALL',
             title: sampledScan.sampled ? '已扫描到的大文件（抽样）' : '全盘所有大文件',
             subtitle: `已用 ${formatBytes(totalUsed)} / 总计 ${formatBytes(totalCapacity)}`,
             icon: { source: Icon.Globe },
-            accessories: [{ text: `${files.length} 项` }],
             onSelect: () => {
               setSelectedDrive('ALL')
               setSelectedGroupId('ALL')
               setSelectedDirPath('ALL')
               setSelectedExt('ALL')
             }
-          }),
+          })
+        ]
+      }),
+      List.Section({
+        title: `磁盘分区 (${filteredDrives.length})`,
+        children: [
           ...filteredDrives.map(d => {
             const isDanger = d.usagePercent >= 90
             return List.Item({
@@ -704,9 +740,9 @@ ${extRows}
                     }
                   }),
                   Action({
-                    title: '在资源管理器中打开此分区',
+                    title: `在${fileManagerName(d.drive)}中打开此分区`,
                     icon: Icon.Folder,
-                    onAction: () => openWithToast('reveal', driveRoot(d.drive))
+                    onAction: () => openDriveRootWithToast(d.drive)
                   })
                 ]
               })
@@ -714,8 +750,38 @@ ${extRows}
           })
         ]
       }),
+      ...(failedScans.length > 0
+        ? [
+            List.Section({
+              title: `未能扫描的目录 (${failedScans.length})`,
+              children: failedScans.map(failure =>
+                List.Item({
+                  id: `scanfail-${failure.path}`,
+                  title: dirDisplayName(failure.path),
+                  subtitle: failure.reason,
+                  icon: { source: Icon.ExclamationMark },
+                  accessories: [{ text: failure.path }],
+                  actions: ActionPanel({
+                    title: dirDisplayName(failure.path),
+                    children: [
+                      // 重新扫描是全局动作，只放在顶部状态条
+                      Action.CopyToClipboard({
+                        title: '复制目录路径',
+                        content: failure.path
+                      }),
+                      Action.CopyToClipboard({
+                        title: '复制失败原因',
+                        content: `${failure.path}：${failure.reason}`
+                      })
+                    ]
+                  })
+                })
+              )
+            })
+          ]
+        : []),
       List.Section({
-        title: `10 大文件分类 (${scopedGroupStats.filter(g => g.fileCount > 0).length})`,
+        title: `文件分类 (${scopedGroupStats.filter(g => g.fileCount > 0).length})`,
         children: scopedGroupStats
           .filter(g => g.fileCount > 0)
           .map(g => {
@@ -788,7 +854,7 @@ ${extRows}
                         }
                       }),
                       Action({
-                        title: '在资源管理器中打开此目录',
+                        title: `在${fileManagerName(dir.path)}中打开此目录`,
                         icon: Icon.Folder,
                         onAction: () => openWithToast('reveal', dir.path)
                       }),

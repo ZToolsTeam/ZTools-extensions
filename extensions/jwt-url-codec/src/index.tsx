@@ -22,6 +22,7 @@ import {
   parseAndInspectUrl,
   queryParamsToJson,
   fencedBlock,
+  displayError,
 } from './jwt-url-service.js'
 
 export * from './types.js'
@@ -52,26 +53,30 @@ export function JwtUrlCodecCommand() {
 
   const jwtState = useMemo(() => {
     if (mode !== 'jwt') return null
+    if (!rawInput.trim()) return { ok: false as const, empty: true as const, error: '' }
     try {
       const result = decodeJwtToken(rawInput, nowMs)
       return { ok: true as const, result }
     } catch (err) {
       return {
         ok: false as const,
-        error: err instanceof Error ? err.message : String(err),
+        empty: false as const,
+        error: displayError(err instanceof Error ? err.message : String(err)),
       }
     }
   }, [mode, rawInput, nowMs])
 
   const urlState = useMemo(() => {
     if (mode !== 'url') return null
+    if (!rawInput.trim()) return { ok: false as const, empty: true as const, error: '' }
     try {
       const result = parseAndInspectUrl(rawInput)
       return { ok: true as const, result }
     } catch (err) {
       return {
         ok: false as const,
-        error: err instanceof Error ? err.message : String(err),
+        empty: false as const,
+        error: displayError(err instanceof Error ? err.message : String(err)),
       }
     }
   }, [mode, rawInput])
@@ -139,14 +144,32 @@ export function JwtUrlCodecCommand() {
       await showToast({
         style: ToastStyle.Failure,
         title: '验签异常',
-        message: err instanceof Error ? err.message : String(err),
+        message: displayError(err instanceof Error ? err.message : String(err)),
       })
     }
   }
 
+  const emptySection = (
+    <List.Section title="等待输入">
+      <List.Item
+        id="empty"
+        title={mode === 'jwt' ? '在上方粘贴 JWT Token' : '在上方粘贴 URL 或 Query 字符串'}
+        subtitle={mode === 'jwt' ? '支持带 Bearer 前缀；也可从剪贴板读取' : '支持完整 URL、域名路径和 a=1&b=2 形式'}
+        icon={mode === 'jwt' ? Icon.Key : Icon.Globe}
+        actions={
+          <ActionPanel>
+            <Action title="从剪贴板读取" icon={Icon.Clipboard} onAction={handleLoadFromClipboard} />
+          </ActionPanel>
+        }
+      />
+    </List.Section>
+  )
+  const activeState = mode === 'jwt' ? jwtState : urlState
+  const isEmpty = Boolean(activeState && !activeState.ok && activeState.empty)
+
   return (
     <List
-      isShowingDetail={true}
+      isShowingDetail={!isEmpty}
       searchBarPlaceholder="粘贴 JWT Token 或 URL 链接直接解析..."
       searchText={rawInput}
       onSearchTextChange={updateInput}
@@ -166,7 +189,9 @@ export function JwtUrlCodecCommand() {
         </List.Dropdown>
       }
     >
-      {mode === 'jwt' && jwtState && !jwtState.ok && (
+      {isEmpty && emptySection}
+
+      {mode === 'jwt' && jwtState && !jwtState.ok && !jwtState.empty && (
         <List.Section title="JWT 解析异常">
           <List.Item
             id="jwt-error"
@@ -286,7 +311,7 @@ export function JwtUrlCodecCommand() {
         </List.Section>
       )}
 
-      {mode === 'url' && urlState && !urlState.ok && (
+      {mode === 'url' && urlState && !urlState.ok && !urlState.empty && (
         <List.Section title="URL 解析异常">
           <List.Item
             id="url-error"

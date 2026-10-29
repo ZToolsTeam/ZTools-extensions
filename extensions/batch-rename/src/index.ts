@@ -33,12 +33,14 @@ import { hostUpgradeError } from "./host-compat.js";
 
 type SourceDirScope = SourceScope | "custom";
 
+// 访达里文档目录叫「文稿」、视频目录（~/Movies）叫「影片」
+const IS_MAC_UI = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
 const SOURCE_SCOPES: Array<{ id: SourceDirScope; label: string }> = [
-  { id: "downloads", label: "下载目录 (Downloads)" },
-  { id: "desktop", label: "桌面目录 (Desktop)" },
-  { id: "documents", label: "文档目录 (Documents)" },
-  { id: "pictures", label: "图片目录 (Pictures)" },
-  { id: "videos", label: "视频目录 (Videos)" }
+  { id: "downloads", label: "下载目录" },
+  { id: "desktop", label: "桌面目录" },
+  { id: "documents", label: IS_MAC_UI ? "文稿目录" : "文档目录" },
+  { id: "pictures", label: "图片目录" },
+  { id: "videos", label: IS_MAC_UI ? "影片目录" : "视频目录" }
 ];
 
 // 独立窗口带来的值可能来自旧版本或被篡改，逐项校验，不合法就用默认值
@@ -222,11 +224,11 @@ export function BatchRenameCommand() {
   const filterKeyword =
     trimmedQuery.includes("->") || ruleType === "prefix" || ruleType === "suffix"
       ? ""
-      : trimmedQuery.toLowerCase();
+      : trimmedQuery.normalize("NFC").toLowerCase();
 
   const computePreview = (source: DirectoryFilesResult | null): RenamePreviewItem[] => {
     if (!source) return [];
-    const visible = source.files.filter((file) => !filterKeyword || file.name.toLowerCase().includes(filterKeyword));
+    const visible = source.files.filter((file) => !filterKeyword || file.name.normalize("NFC").toLowerCase().includes(filterKeyword));
     return buildRenamePreview(visible, activeRule, source.occupiedNames);
   };
 
@@ -466,11 +468,9 @@ export function BatchRenameCommand() {
       id: `nav-rule-${preset.id}`,
       title: cleanLabel,
       subtitle: preset.desc,
-      icon: Icon.Document,
+      icon: Icon.Pencil,
       onSelect: () => setRuleType(preset.id),
-      accessories: [
-        { tag: { value: isActive ? "当前生效" : "规则预设" } }
-      ],
+      accessories: isActive ? [{ tag: { value: "当前生效" } }] : [],
       actions: ActionPanel({
         children: [
           Action({

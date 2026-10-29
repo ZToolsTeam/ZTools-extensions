@@ -2,7 +2,7 @@
   "id": "archive-manager",
   "name": "解压与压缩",
   "description": "不解压就能查看本机 ZIP 压缩包里的文件，可整包解压或只提取勾选的文件；只支持 ZIP，不提供压缩打包",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

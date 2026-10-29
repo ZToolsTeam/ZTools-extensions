@@ -2,7 +2,7 @@
   "id": "hardware-info",
   "name": "硬件信息",
   "description": "查看电脑 CPU、内存、磁盘容量、显示器与电源状态，支持导出硬件配置报告",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

@@ -19,8 +19,11 @@ const calls = action => host.ipcCalls.filter(([m, p]) => m === 'tls_inspect' && 
 const run = v => v.run(v.item('ssl-probe-trigger'), '查询域名')
 test('打开不联网；输入域名后主动作查询，筛选不重复联网并保留 TXT 引号', async () => {
   const v = await open(); assert.equal(requests.length, 0); assert.equal(calls('inspect').length, 0)
+  assert.equal(v.item('ssl-probe-trigger').props.title, '输入域名后回车诊断')
+  assert.equal(v.tree().props.filterBar.summaryText, '', '初始工具栏摘要留空，回车提示只在空状态条目出现一次')
+  assert.equal((JSON.stringify(v.tree().props.searchBarPlaceholder) + v.tree().props.filterBar.summaryText + v.item('ssl-probe-trigger').props.title).match(/回车/g).length, 1)
   await run(v); assert.equal(host.lastToast().style, 'FAILURE'); assert.equal(calls('inspect').length, 0)
-  await v.search('https://EXAMPLE.com/path'); await run(v)
+  await v.search('https://EXAMPLE.com/path'); assert.equal(v.item('ssl-probe-trigger').props.title, '诊断 https://EXAMPLE.com/path'); await run(v)
   assert.match(v.text(), /查询完成/); assert.match(v.text(), /验证通过/)
   assert.equal(calls('inspect')[0][1].domain, 'example.com'); assert.equal(calls('inspect')[0][1].port, 443)
   assert.equal(v.tree().props.isShowingDetail, true); assert.deepEqual(requests, ['A', 'AAAA', 'CNAME', 'MX', 'TXT'])
@@ -94,4 +97,19 @@ test('DNS 超时与取消会中止网络请求', async () => {
   await assert.rejects(resolveDomainDoh('example.com', ['A'], { fetchImpl: abortable, timeoutMs: 1000 }), /超时/)
   const controller = new AbortController(), pending = resolveDomainDoh('example.com', ['A'], { fetchImpl: abortable, signal: controller.signal })
   controller.abort(); await assert.rejects(pending, /取消/)
+})
+test('失败行回车即重新查询，可复制失败原因；重试成功后失败行消失', async () => {
+  host.ipc.tls_inspect = async p => { if (p.action === 'cancel') return { success: true }; throw new Error('TLS 连接失败：ECONNREFUSED') }
+  const v = await open(); await v.search('example.com'); await run(v)
+  assert.equal(v.actions(v.item('tls-error'))[0].props.title, '重新查询')
+  await v.run(v.item('tls-error'), '复制失败原因'); assert.match(host.clipboard.text, /ECONNREFUSED/)
+  host.ipc.tls_inspect = async p => p.action === 'cancel' ? { success: true } : { success: true, cert: certificate(p.domain) }
+  await v.run(v.item('tls-error'), '重新查询'); await tick()
+  assert.ok(v.item('ssl-certificate')); assert.ok(!v.items().some(i => i.props.id === 'tls-error'))
+})
+
+test('查询完成后改输入：清掉旧结果与摘要，不回填重复的回车提示', async () => {
+  const v = await open(); await v.search('example.com'); await run(v); assert.match(v.tree().props.filterBar.summaryText, /查询完成/)
+  await v.search('example.org'); assert.equal(v.tree().props.filterBar.summaryText, ''); assert.deepEqual(v.items().map(i => i.props.id), ['ssl-probe-trigger'])
+  assert.equal(v.item('ssl-probe-trigger').props.title, '诊断 example.org')
 })

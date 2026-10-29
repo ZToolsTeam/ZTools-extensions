@@ -9,7 +9,39 @@ import {
   computeRealFileSha256
 } from "./native-ipc.js";
 
-declare const Buffer: any;
+/** 宿主返回的单条文件记录（不同通道字段名不一，逐个兼容） */
+interface RawFileEntry {
+  is_dir?: unknown;
+  isDir?: unknown;
+  isDirectory?: unknown;
+  path?: unknown;
+  name?: unknown;
+  mtime?: unknown;
+  mtimeMs?: unknown;
+  size?: unknown;
+  sizeBytes?: unknown;
+  acronym?: unknown;
+  pinyin?: unknown;
+}
+
+/** 插件窗口上可能存在的宿主全局对象（都可能缺失） */
+interface HostGlobals {
+  __ztoolsLauncher?: { searchFiles?: (query: string, limit: number) => Promise<unknown> };
+  ztools?: {
+    system?: { searchFiles?: (query: string, limit: number) => Promise<unknown> };
+    clipboard?: { copyFiles?: (paths: string[]) => Promise<unknown> };
+  };
+}
+
+function hostGlobals(): HostGlobals {
+  return globalThis as unknown as HostGlobals;
+}
+
+/** 与原来「优先取 message、否则转字符串」的结果一致：有 message 用 message，否则整体转字符串 */
+function errorText(err: unknown): string {
+  const message = typeof err === "object" && err !== null ? (err as { message?: unknown }).message : undefined;
+  return message ? String(message) : String(err);
+}
 
 export function formatBytes(bytes: number): string {
   if (bytes <= 0 || !Number.isFinite(bytes)) return "0 B";
@@ -22,9 +54,13 @@ export function formatBytes(bytes: number): string {
 export function truncatePath(fullPath: string, maxLength = 46): string {
   if (!fullPath) return "";
   if (fullPath.length <= maxLength) return fullPath;
-  const parts = fullPath.split(/[\\/]/);
+  // macOS 路径用 /，不能按 Windows 写法拼成 \...\（以前 /Users/a/b/c 会显示成 \...\b\c）
+  const posix = fullPath.startsWith("/");
+  const sep = posix ? "/" : "\\";
+  const parts = fullPath.split(posix ? "/" : /[\\/]/);
   if (parts.length <= 3) return fullPath;
-  return `${parts[0]}\\...\\${parts.slice(-2).join("\\")}`;
+  const head = posix ? (parts[1] === "Users" && parts[2] ? `/Users/${parts[2]}` : `/${parts[1]}`) : parts[0];
+  return `${head}${sep}...${sep}${parts.slice(-2).join(sep)}`;
 }
 
 /**
@@ -39,7 +75,7 @@ export function getFileCategory(fileName: string, isDir: boolean, detailed = fal
     return "document";
   }
   // 2. 图片类
-  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tiff", "psd", "raw"].includes(ext)) {
+  if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif", "tiff", "psd", "raw", "heic", "heif", "avif"].includes(ext)) {
     return "image";
   }
   // 3. 视频类
@@ -51,7 +87,7 @@ export function getFileCategory(fileName: string, isDir: boolean, detailed = fal
     return detailed ? "audio" : "media";
   }
   // 5. 压缩包类
-  if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso", "cab"].includes(ext)) {
+  if (["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "iso", "cab", "dmg", "tgz"].includes(ext)) {
     return "archive";
   }
   // 6. 代码与脚本类
@@ -63,11 +99,12 @@ export function getFileCategory(fileName: string, isDir: boolean, detailed = fal
     return "code";
   }
   // 7. 应用程序与可执行文件
-  if (["exe", "msi", "cmd", "appx", "msix"].includes(ext)) {
+  if (["exe", "msi", "appx", "msix", "pkg", "apk"].includes(ext)) {
     return "app";
   }
 
-  return "document";
+  // 认不出的扩展名（包括没有扩展名的文件）不能算作文档，否则「文档」筛选会混进任意文件
+  return "other";
 }
 
 /** 不在 ZTools 客户端里运行（拿不到宿主通道）时的提示；此时不显示任何示例数据 */
@@ -125,7 +162,8 @@ export function sortAndFilterFiles(
   return sorted;
 }
 
-function mapRawFileToRecord(f: any): FileRecord {
+function mapRawFileToRecord(raw: unknown): FileRecord {
+  const f = raw as RawFileEntry | null | undefined;
   const isDir = Boolean(f?.is_dir || f?.isDir || f?.isDirectory);
   const fullPath = String(f?.path || "");
   const name = String(f?.name || fullPath.split(/[\\/]/).pop() || "");
@@ -142,20 +180,52 @@ function mapRawFileToRecord(f: any): FileRecord {
     mtime,
     category,
     extension: isDir ? undefined : ext,
-    acronym: f?.acronym,
-    pinyin: f?.pinyin
+    acronym: f?.acronym as FileRecord["acronym"],
+    pinyin: f?.pinyin as FileRecord["pinyin"]
   };
+}
+
+/** 宿主 Windows 退回扫描的目录（electron-client scanLocalRecentFiles：用户主目录下的 Downloads / Desktop / Documents） */
+const LOCAL_FALLBACK_DIRS_TEXT = "下载、桌面、文稿";
+
+/**
+ * 按宿主返回的 degraded / source 说明本次搜索的真实范围；搜索覆盖完整时返回空字符串。
+ * - source = "local-fs"：Windows 全盘索引（ztools-indexer）未运行（degraded = true）或索引查询为空，宿主只扫描了下载、桌面、文稿
+ * - source = "macos-fs" / "macos-spotlight" 且 degraded = true：Spotlight（mdfind）失败或超时，结果只含已返回部分与本地目录补充
+ */
+export function describeSearchScope(raw: unknown, query: string): string {
+  const record = raw && typeof raw === "object" && !Array.isArray(raw) ? raw as Record<string, unknown> : undefined;
+  if (!record) return "";
+  const degraded = record.degraded === true;
+  const source = typeof record.source === "string" ? record.source : "";
+  const hasQuery = String(query || "").trim().length > 0;
+  if (source === "local-fs") {
+    if (degraded) return `全盘索引不可用，仅搜索了${LOCAL_FALLBACK_DIRS_TEXT}`;
+    if (hasQuery) return `全盘索引没有返回结果（可能尚未建立），仅搜索了${LOCAL_FALLBACK_DIRS_TEXT}`;
+    return "";
+  }
+  if (!degraded) return "";
+  if (source === "macos-fs" || source === "macos-spotlight") {
+    return `Spotlight 搜索失败或超时，结果可能不完整（仅含已返回部分及应用、${LOCAL_FALLBACK_DIRS_TEXT}中的匹配）`;
+  }
+  return "文件搜索处于降级模式，结果可能不完整";
+}
+
+export interface FileSearchOutcome {
+  readonly files: FileRecord[];
+  /** 搜索范围受限时的真实说明（来自宿主 degraded / source）；完整搜索时为空字符串 */
+  readonly scopeNotice: string;
 }
 
 /**
  * 检索文件：交给客户端的文件搜索接口（Windows 上由原生索引组件 ztools-indexer 提供，macOS 上用 Spotlight）。
- * 拿不到任何宿主通道时抛出 NOT_IN_CLIENT_MESSAGE，不返回示例数据。
+ * 同时透传宿主的降级标记，界面据此提示搜索范围。拿不到任何宿主通道时抛出 NOT_IN_CLIENT_MESSAGE，不返回示例数据。
  */
-export async function searchLocalFiles(
+export async function searchLocalFilesDetailed(
   query: string,
   limit = 50,
-  hostOverride?: any
-): Promise<FileRecord[]> {
+  hostOverride?: unknown
+): Promise<FileSearchOutcome> {
   const trimmed = (query || "").trim();
   const realHost = isRealElectronHost(hostOverride);
 
@@ -171,13 +241,13 @@ export async function searchLocalFiles(
       const data = result.data;
       const record = data && typeof data === "object" ? data as Record<string, unknown> : undefined;
       const files = Array.isArray(data) ? data : Array.isArray(record?.files) ? record.files : Array.isArray(record?.items) ? record.items : null;
-      if (result.ok && files) return files.map(mapRawFileToRecord);
+      if (result.ok && files) return { files: files.map(mapRawFileToRecord), scopeNotice: describeSearchScope(data, trimmed) };
       errors.push(result.error || `${method} 返回无效结果`);
     }
     throw new Error(`文件搜索不可用：${errors.join("；")}`);
   } else {
-    const launcher = (globalThis as any).__ztoolsLauncher;
-    const system = (globalThis as any).ztools?.system;
+    const launcher = hostGlobals().__ztoolsLauncher;
+    const system = hostGlobals().ztools?.system;
     let res: unknown;
     if (launcher?.searchFiles) {
       res = await launcher.searchFiles(trimmed, limit);
@@ -192,8 +262,17 @@ export async function searchLocalFiles(
     const rawFiles = Array.isArray(res) ? res : Array.isArray(listed) ? listed : null;
     // 返回结构不对时如实报错，不能当成「没有匹配的文件」
     if (!rawFiles) throw new Error("文件搜索返回了无效结果");
-    return rawFiles.map(mapRawFileToRecord);
+    return { files: rawFiles.map(mapRawFileToRecord), scopeNotice: describeSearchScope(res, trimmed) };
   }
+}
+
+/** 只要文件列表时使用；需要提示搜索范围的界面用 searchLocalFilesDetailed */
+export async function searchLocalFiles(
+  query: string,
+  limit = 50,
+  hostOverride?: unknown
+): Promise<FileRecord[]> {
+  return (await searchLocalFilesDetailed(query, limit, hostOverride)).files;
 }
 
 // 常见文本/代码后缀集合
@@ -273,9 +352,9 @@ function base64ToBytes(b64: string): Uint8Array {
 async function readHostFileHead(
   filePath: string,
   maxBytes: number,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: true; base64: string; bytes: Uint8Array; totalSize: number } | { ok: false; error: string }> {
-  const res = await callHostTransport<any>(
+  const res = await callHostTransport<{ content?: unknown; totalSize?: unknown } | null>(
     "filesystem_read_file_chunk",
     { path: filePath, offset: 0, length: maxBytes },
     hostOverride
@@ -302,7 +381,7 @@ async function readHostFileHead(
  */
 export async function getFileQuickLook(
   file: FileRecord,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<FileQuickLookResult> {
   const category = getFileCategory(file.name, file.isDir);
   const ext = (file.name.split(".").pop() || "").toLowerCase();
@@ -341,7 +420,7 @@ export async function getFileQuickLook(
           };
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       return {
         path: file.path,
         name: file.name,
@@ -350,7 +429,7 @@ export async function getFileQuickLook(
         mtime: file.mtime,
         category,
         previewType: "error",
-        error: `无法读取文件夹: ${err.message || String(err)}`
+        error: `无法读取文件夹: ${errorText(err)}`
       };
     }
 
@@ -451,12 +530,12 @@ export async function getFileQuickLook(
  * 计算文件 SHA-256 哈希值：由宿主读取文件真实字节计算（filesearch_sha256）。
  * 宿主算不出来时如实报错，不返回编造的值（以前会按路径拼一个看起来像哈希的字符串）。
  */
-export async function calculateFileSha256(filePath: string, hostOverride?: any): Promise<string> {
+export async function calculateFileSha256(filePath: string, hostOverride?: unknown): Promise<string> {
   if (!filePath || typeof filePath !== "string" || !filePath.trim()) {
     throw new Error("文件路径无效或为空");
   }
   // 先直接问宿主 filesearch_sha256 拿到失败原因（未授权 / 文件已删除要如实提示），其余情况再走公共实现（含 Windows DLL 兜底）
-  const direct = await callHostTransport<any>("filesearch_sha256", { path: filePath.trim() }, hostOverride);
+  const direct = await callHostTransport<string | { sha256?: unknown; hash?: unknown }>("filesearch_sha256", { path: filePath.trim() }, hostOverride);
   if (direct.ok && direct.data) {
     const value = typeof direct.data === "string" ? direct.data : String(direct.data?.sha256 || direct.data?.hash || "");
     if (/^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
@@ -508,7 +587,7 @@ function invalidPathResult(filePath: string): FileActionResult | null {
  * 走宿主文件秒搜服务 filesearch_open：宿主返回 { success:false, error } 时如实报失败（文件不存在、系统打不开等），
  * 不能像以前那样只要调用没抛异常就提示「已成功打开」。
  */
-export async function openFile(filePath: string, hostOverride?: any): Promise<FileActionResult> {
+export async function openFile(filePath: string, hostOverride?: unknown): Promise<FileActionResult> {
   const invalid = invalidPathResult(filePath);
   if (invalid) return invalid;
   const res = await callHostTransport("filesearch_open", { path: filePath }, hostOverride);
@@ -521,7 +600,7 @@ export async function openFile(filePath: string, hostOverride?: any): Promise<Fi
 /**
  * 在访达 / 资源管理器中定位选定文件 (Show in Finder)，同样以宿主 filesearch_reveal 的真实结果为准
  */
-export async function revealFile(filePath: string, hostOverride?: any): Promise<FileActionResult> {
+export async function revealFile(filePath: string, hostOverride?: unknown): Promise<FileActionResult> {
   const invalid = invalidPathResult(filePath);
   if (invalid) return invalid;
   const res = await callHostTransport("filesearch_reveal", { path: filePath }, hostOverride);
@@ -535,22 +614,24 @@ export async function revealFile(filePath: string, hostOverride?: any): Promise<
  * 移入回收站 / 废纸篓 (Move to Trash)：以宿主 shell_trash_item 的真实结果为准。
  * 宿主只允许回收本插件搜索到的普通文件（不含文件夹、符号链接与系统目录），文件夹不在这里处理。
  */
-export async function moveToTrash(filePath: string, hostOverride?: any, isDir = false): Promise<FileActionResult> {
+export async function moveToTrash(filePath: string, hostOverride?: unknown, isDir = false): Promise<FileActionResult> {
   const invalid = invalidPathResult(filePath);
   if (invalid) return invalid;
+  const mac = supportsSystemQuickLook();
+  const trash = mac ? "废纸篓" : "回收站";
   if (isDir) {
-    return { success: false, message: "文件夹不能在这里移入废纸篓，请在访达 / 资源管理器中操作", path: filePath, error: "TRASH_DIRECTORY" };
+    return { success: false, message: `文件夹不能在这里移入${trash}，请在${mac ? "访达" : "资源管理器"}中操作`, path: filePath, error: "TRASH_DIRECTORY" };
   }
   const tr = await trashRealItem(filePath, hostOverride);
   if (tr.ok) {
-    return { success: true, message: "已移入废纸篓 / 回收站", path: filePath };
+    return { success: true, message: `已移入${trash}`, path: filePath };
   }
   const reason = describeHostFileError(
     tr.error,
     filePath,
     "只能回收本次搜索到的普通文件，系统目录与链接除外，授权可能已过期，请重新搜索后再试"
   );
-  return { success: false, message: `移入废纸篓失败: ${reason}`, path: filePath, error: "TRASH_FAILED" };
+  return { success: false, message: `移入${trash}失败: ${reason}`, path: filePath, error: "TRASH_FAILED" };
 }
 
 /**
@@ -562,7 +643,7 @@ export async function copyFileToClipboard(filePath: string): Promise<FileActionR
   }
 
   try {
-    const clipboard = (globalThis as any).ztools?.clipboard;
+    const clipboard = hostGlobals().ztools?.clipboard;
     if (clipboard?.copyFiles) {
       await clipboard.copyFiles([filePath]);
       return { success: true, message: `已将文件本身复制到剪贴板`, path: filePath };
@@ -574,8 +655,8 @@ export async function copyFileToClipboard(filePath: string): Promise<FileActionR
       return { success: true, message: `已将文件本身复制到剪贴板`, path: filePath };
     }
     return { success: false, message: res.error || `复制文件失败: ${filePath}`, path: filePath, error: "COPY_FILE_FAILED" };
-  } catch (err: any) {
-    return { success: false, message: `复制文件失败: ${err.message || String(err)}`, path: filePath, error: "COPY_FILE_FAILED" };
+  } catch (err: unknown) {
+    return { success: false, message: `复制文件失败: ${errorText(err)}`, path: filePath, error: "COPY_FILE_FAILED" };
   }
 }
 
@@ -583,7 +664,7 @@ export async function copyFileToClipboard(filePath: string): Promise<FileActionR
  * 调用系统快速预览（仅 macOS：宿主执行 qlmanage -p）。Windows 上宿主没有快速预览，这里直接报不支持，
  * 不调用宿主（宿主在 Windows 上会改为在资源管理器中定位，不能当作预览成功）。
  */
-export async function quickLookFile(filePath: string, hostOverride?: any): Promise<FileActionResult> {
+export async function quickLookFile(filePath: string, hostOverride?: unknown): Promise<FileActionResult> {
   if (!filePath || !filePath.trim()) {
     return { success: false, message: "文件路径无效或为空", path: filePath || "", error: "INVALID_PATH" };
   }

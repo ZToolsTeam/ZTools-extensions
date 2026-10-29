@@ -6,6 +6,7 @@ import {
   Clipboard,
   useState,
   useEffect,
+  useRef,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
@@ -28,12 +29,18 @@ export default function HardwareInfoCommand() {
   const [dropdownFilter, setDropdownFilter] = useState<HardwareDropdownFilter>('all')
   const [snapshot, setSnapshot] = useState<HardwareTelemetrySnapshot | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  // 连续刷新时只采用最后一次请求的结果，避免较慢的旧请求覆盖新数据；卸载后不再更新状态或弹提示
+  const requestSeq = useRef(0)
+  const mounted = useRef(true)
 
   // showIndicator：用户主动刷新时才弹成功提示；读取失败无论首次加载还是刷新都要如实提示
   async function refreshTelemetry(showIndicator = false) {
+    const seq = ++requestSeq.current
+    const isCurrent = () => mounted.current && seq === requestSeq.current
     if (showIndicator) setIsLoading(true)
     try {
       const snap = await fetchHardwareTelemetrySnapshot()
+      if (!isCurrent()) return
       setSnapshot(snap)
       if (snap.failures.length > 0) {
         showToast({
@@ -50,13 +57,14 @@ export default function HardwareInfoCommand() {
         })
       }
     } catch (err) {
+      if (!isCurrent()) return
       showToast({
         style: Toast.Style.Failure,
         title: '硬件信息读取失败',
         message: err instanceof Error ? err.message : String(err)
       })
     } finally {
-      setIsLoading(false)
+      if (isCurrent()) setIsLoading(false)
     }
   }
 
@@ -74,15 +82,22 @@ export default function HardwareInfoCommand() {
   }
 
   useEffect(() => {
+    mounted.current = true
     void refreshTelemetry(false)
+    return () => {
+      mounted.current = false
+    }
   }, [])
 
   async function handleCopyReport(format: 'markdown' | 'json' | 'txt') {
-    if (!snapshot) return
+    if (!snapshot) {
+      showToast({ style: Toast.Style.Failure, title: '硬件信息尚未读取完成', message: '请等读取完成后再复制报告' })
+      return
+    }
     const content = exportHardwareReport(snapshot, format)
     const message = snapshot.failures.length > 0
       ? `报告中「${snapshot.failures.join('、')}」标注为读取失败`
-      : `${snapshot.cpuModel} · ${formatBytes(snapshot.totalMemoryBytes ?? 0)} RAM`
+      : `${snapshot.cpuModel} · 内存 ${formatBytes(snapshot.totalMemoryBytes ?? 0)}`
     await copyText(content, `已导出 ${format.toUpperCase()} 硬件配置报告至剪贴板`, message)
   }
 
@@ -114,12 +129,12 @@ export default function HardwareInfoCommand() {
       value: dropdownFilter,
       onChange: (val: string) => setDropdownFilter(val as HardwareDropdownFilter),
       children: [
-        List.Dropdown.Item({ title: '全部硬件模块 (All Modules)', value: 'all' }),
-        List.Dropdown.Item({ title: '处理器与内存 (CPU & RAM)', value: 'cpu-mem' }),
-        List.Dropdown.Item({ title: '磁盘存储卷 (Storage Volumes)', value: 'storage' }),
-        List.Dropdown.Item({ title: '显示器 (Displays)', value: 'display' }),
-        List.Dropdown.Item({ title: '场景规格估算 (Scenarios)', value: 'benchmark' }),
-        List.Dropdown.Item({ title: '导出硬件报告 (Export Report)', value: 'report' })
+        List.Dropdown.Item({ title: '全部硬件模块', value: 'all' }),
+        List.Dropdown.Item({ title: '处理器与内存', value: 'cpu-mem' }),
+        List.Dropdown.Item({ title: '磁盘存储卷', value: 'storage' }),
+        List.Dropdown.Item({ title: '显示器', value: 'display' }),
+        List.Dropdown.Item({ title: '场景规格估算', value: 'benchmark' }),
+        List.Dropdown.Item({ title: '导出硬件报告', value: 'report' })
       ]
     }),
     filterBar: {
@@ -134,8 +149,8 @@ export default function HardwareInfoCommand() {
         },
         {
           id: 'export-md',
-          label: '复制Markdown报告',
-          title: '复制Markdown报告',
+          label: '复制 Markdown 报告',
+          title: '复制 Markdown 报告',
           style: 'secondary',
           onAction: () => void handleCopyReport('markdown')
         }
@@ -172,7 +187,7 @@ export default function HardwareInfoCommand() {
                   title: '导出 JSON 结构化硬件资产清单',
                   subtitle: '适合企业 IT 资产盘点、自动化运维脚本与 API 对接',
                   icon: Icon.Terminal,
-                  accessories: [{ tag: { value: 'JSON Schema' } }],
+                  accessories: [{ tag: { value: 'JSON' } }],
                   detail: List.Item.Detail({
                     markdown: '```json\n' + exportHardwareReport(snapshot, 'json') + '\n```'
                   }),
@@ -189,10 +204,10 @@ export default function HardwareInfoCommand() {
                 }),
                 List.Item({
                   id: 'report-txt',
-                  title: '导出纯文本 (TXT) 极简配置单',
+                  title: '导出纯文本配置单',
                   subtitle: '适合直接发送至即时通讯窗口快速分享本机配置',
                   icon: Icon.Clipboard,
-                  accessories: [{ tag: { value: 'Plain Text' } }],
+                  accessories: [{ tag: { value: '纯文本' } }],
                   detail: List.Item.Detail({
                     markdown: '```text\n' + exportHardwareReport(snapshot, 'txt') + '\n```'
                   }),
@@ -232,37 +247,30 @@ export default function HardwareInfoCommand() {
                       : Icon.Desktop,
                   accessories: [
                     { tag: { value: item.tag } },
-                    { text: item.value }
+                    ...(item.value ? [{ text: item.value }] : [])
                   ],
                   detail: List.Item.Detail({
                     markdown: item.detailMarkdown
                   }),
                   actions: ActionPanel({
                     title: item.title,
+                    // 只放针对这一项的动作：整机报告与刷新在顶部状态条，不在每一行重复（ui-guidelines 原则 2、3）。
+                    // 不声明 ⌘R 之类的快捷键：macOS 的「显示」菜单占用 ⌘R 重新载入
                     children: [
-                      Action({
-                        title: '复制 Markdown 整机硬件报告',
-                        icon: Icon.Document,
-                        onAction: () => handleCopyReport('markdown')
-                      }),
-                      Action({
-                        title: '复制 JSON 结构化资产清单',
-                        icon: Icon.Terminal,
-                        shortcut: { modifiers: ['ctrl'], key: 'return' },
-                        onAction: () => handleCopyReport('json')
-                      }),
                       Action({
                         title: '复制当前硬件规格摘要',
                         icon: Icon.Clipboard,
-                        shortcut: { modifiers: ['ctrl'], key: 'c' },
                         onAction: () =>
-                          copyText(`${item.title} | ${item.subtitle} | ${item.value}`, '已复制硬件规格', item.title)
+                          copyText(
+                            [item.title, item.subtitle, item.value].filter(Boolean).join(' | '),
+                            '已复制硬件规格',
+                            item.title
+                          )
                       }),
                       Action({
-                        title: '刷新硬件信息',
-                        icon: Icon.ArrowClockwise,
-                        shortcut: { modifiers: ['ctrl'], key: 'r' },
-                        onAction: () => refreshTelemetry(true)
+                        title: '复制本项详细参数',
+                        icon: Icon.Document,
+                        onAction: () => copyText(item.detailMarkdown, '已复制详细参数', item.title)
                       })
                     ]
                   })

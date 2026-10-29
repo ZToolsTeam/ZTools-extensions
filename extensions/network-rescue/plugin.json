@@ -2,7 +2,7 @@
   "id": "network-rescue",
   "name": "网络修复",
   "description": "一键检测断网原因，支持刷新 DNS 缓存、重置网络配置与清除异常代理，快速恢复正常上网",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

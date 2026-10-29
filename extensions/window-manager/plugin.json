@@ -2,7 +2,7 @@
   "id": "window-manager",
   "name": "窗口管理",
   "description": "快速管理桌面活动窗口，支持左右分屏贴靠、一键窗口置顶、透明度调节与尺寸居中",
-  "version": "2.0.7",
+  "version": "2.0.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

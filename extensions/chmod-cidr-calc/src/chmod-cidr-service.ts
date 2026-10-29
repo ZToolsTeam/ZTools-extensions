@@ -81,23 +81,43 @@ function classifyIpScope(ipUint: number): string {
   return '普通单播地址（未命中特殊用途；公网可达性未验证）'
 }
 
+/** 子网掩码转前缀长度：掩码的 1 必须从最高位开始连续，否则不是合法子网掩码 */
+function maskToPrefix(maskUint: number): number {
+  const inverted = (~maskUint) >>> 0
+  if ((inverted & (inverted + 1)) !== 0) {
+    throw new Error('子网掩码的 1 必须从最高位开始连续（如 255.255.255.0），当前掩码不合法。')
+  }
+  let hostBits = 0
+  for (let v = inverted; v !== 0; v >>>= 1) hostBits += v & 1
+  return 32 - hostBits
+}
+
 export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
   const trimmed = String(rawInput || '').trim()
   if (!trimmed) {
-    throw new Error('EMPTY_CIDR_INPUT: 请输入 IPv4 CIDR（如 192.168.1.0/24）')
+    throw new Error('请输入 IPv4 CIDR（如 192.168.1.0/24）')
   }
 
-  const parts = trimmed.split('/')
+  // 也接受「地址 掩码」写法（如 ifconfig / ipconfig 输出里的 192.168.1.5 255.255.255.0）
+  const spaced = trimmed.split(/\s+/)
+  if (spaced.length > 2) throw new Error('请输入「地址/前缀」或「地址 子网掩码」。')
+  if (spaced.length === 2 && spaced[0].includes('/')) throw new Error('CIDR 只能包含一个斜线和一个前缀长度。')
+  const parts = spaced.length === 2 ? spaced : trimmed.split('/')
   if (parts.length > 2) throw new Error('CIDR 只能包含一个斜线和一个前缀长度。')
   const ipStr = parts[0].trim()
   const prefixStr = parts.length > 1 ? parts[1].trim() : '24'
 
-  if (!/^\d{1,2}$/.test(prefixStr)) {
-    throw new Error('CIDR 前缀必须是 0～32 的整数。')
+  let prefixLength: number
+  if (/^\d{1,2}$/.test(prefixStr)) {
+    prefixLength = Number(prefixStr)
+  } else if (/^0x[0-9a-f]{8}$/i.test(prefixStr) || prefixStr.split('.').length === 4) {
+    // 点分子网掩码（255.255.255.0）或 macOS ifconfig 的十六进制掩码（0xffffff00）
+    prefixLength = maskToPrefix(/^0x/i.test(prefixStr) ? parseInt(prefixStr.slice(2), 16) >>> 0 : ipToUint32(prefixStr))
+  } else {
+    throw new Error('CIDR 前缀必须是 0～32 的整数，或点分 / 0x 十六进制子网掩码。')
   }
-  const prefixLength = Number(prefixStr)
   if (prefixLength < 0 || prefixLength > 32) {
-    throw new Error(`CIDR_PREFIX_OUT_OF_RANGE: 掩码前缀必须在 /0 ~ /32 之间 (当前 /${prefixLength})`)
+    throw new Error(`掩码前缀必须在 /0 ~ /32 之间（当前 /${prefixLength}）`)
   }
 
   const ipUint = ipToUint32(ipStr)
@@ -117,12 +137,12 @@ export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
     usableHosts = 1
     firstUsableUint = networkUint
     lastUsableUint = networkUint
-    usageHint = '/32 单机主机路由 (Host Route)，仅包含唯一指定 IP'
+    usageHint = '/32 单机主机路由，仅包含唯一指定 IP'
   } else if (prefixLength === 31) {
     usableHosts = 2
     firstUsableUint = networkUint
     lastUsableUint = broadcastUint
-    usageHint = '/31 点对点链路 (RFC 3021 Point-to-Point)，无独立广播地址浪费'
+    usageHint = '/31 点对点链路（RFC 3021），无独立广播地址'
   } else {
     usableHosts = Math.max(0, totalHosts - 2)
     firstUsableUint = (networkUint + 1) >>> 0
@@ -147,7 +167,7 @@ export function calculateIpv4Cidr(rawInput: string): CidrCalculationResult {
     usableHosts,
     netmaskBinary: uint32ToBinaryDotted(maskUint),
     addressScope: classifyIpScope(ipUint),
-    usageHint: `${usageHint}。主机容量仅为数学计算，未排除特殊用途地址，也不代表公网可达。`,
+    usageHint: `${usageHint}。主机数按位数计算，未排除特殊用途地址，也不代表公网可达。`,
   }
 }
 
@@ -165,9 +185,11 @@ export function convertChmod(rawInput: string): ChmodCalculationResult {
     digits = [Number(ordinary[0]), Number(ordinary[1]), Number(ordinary[2])]
     special = cleaned.length === 4 ? Number(cleaned[0]) : 0
   } else {
-    const symbolic = cleaned.length === 10 && /^[dlcbps-]/.test(cleaned) ? cleaned.slice(1) : cleaned
+    // macOS 的 ls -l 在权限后用 @ 表示扩展属性、+ 表示 ACL，Linux 用 . 表示 SELinux 上下文；这些标记不影响权限位
+    const withoutMarker = cleaned.length === 11 && /^[dlcbps-]/.test(cleaned) && /[@+.]$/.test(cleaned) ? cleaned.slice(0, 10) : cleaned
+    const symbolic = withoutMarker.length === 10 && /^[dlcbps-]/.test(withoutMarker) ? withoutMarker.slice(1) : withoutMarker
     if (!/^[r-][w-][xsS-][r-][w-][xsS-][r-][w-][xtT-]$/.test(symbolic)) throw new Error('权限格式不正确：支持 000～7777 或 rwxr-xr-x；s/S 仅位于属主或组执行位，t/T 仅位于其他用户执行位。')
-    if (cleaned.length === 10) fileType = cleaned[0]!
+    if (withoutMarker.length === 10) fileType = withoutMarker[0]!
     digits = [0, 1, 2].map(index => {
       const triad = symbolic.slice(index * 3, index * 3 + 3)
       if (/[sStT]/.test(triad[2]!)) special |= [4, 2, 1][index]!

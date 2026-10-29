@@ -130,7 +130,7 @@ test('[边界] 只输入空格：不展示待办、回车不改动任何数据',
     assert.deepEqual(shown.map((i) => i.props.id), ['empty-item'])
     assert.equal(shown[0].props.title, '请输入待办内容')
     const { primary } = await pressEnter(view)
-    assert.equal(primary.props.title, '新建待办', '主动作只打开表单，不写数据')
+    assert.equal(primary.props.title, '新建待办事项', '主动作只打开表单，不写数据')
     host.pushed.length = 0
   }
   assert.equal(host.storage.get(TODOS_STORAGE_KEY), before)

@@ -1,9 +1,9 @@
 {
   "id": "lan-scanner",
   "name": "局域网扫描",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "探测局域网设备与常见 TCP 端口，支持 MAC 收藏及 Wake-on-LAN 广播唤醒；每次分段扫描最多 256 个地址",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -23,7 +23,6 @@
   ],
   "permissions": [
     "network",
-    "shell",
     "clipboard"
   ],
   "features": [

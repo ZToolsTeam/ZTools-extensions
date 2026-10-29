@@ -41,8 +41,8 @@ export async function mutateMacTarget(sessionId: string, action: 'trash' | 'rena
   return data.targetPath
 }
 export async function finishMacLocks(action: 'cancel' | 'close') { await invoke({ action }) }
-export async function selectMacTarget(directory: boolean) {
-  const data = await unlockInvoke('window_show_open_dialog', { title: directory ? '选择需要检测的文件夹或磁盘' : '选择需要检测的文件', properties: [directory ? 'openDirectory' : 'openFile'] })
+export async function selectMacTarget(directory: boolean, defaultPath?: string) {
+  const data = await unlockInvoke('window_show_open_dialog', { title: directory ? '选择需要检测的文件夹或磁盘' : '选择需要检测的文件', properties: [directory ? 'openDirectory' : 'openFile'], ...(defaultPath ? { defaultPath } : {}) })
   if (data.canceled === true) return null
   if (data.canceled !== false || !text(data.filePath)) throw new Error('选择目标未完成')
   return data.filePath

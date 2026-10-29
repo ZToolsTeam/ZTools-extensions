@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { gitTestTool } from '../../shared/test-tools.mjs'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -23,11 +24,11 @@ test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 p
       fs.writeFileSync(path.join(dir, 'a'), A ? A + '\n' : '')
       fs.writeFileSync(path.join(dir, 'b'), B ? B + '\n' : '')
       let out = ''
-      try { execFileSync('diff', [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { out = String(e.stdout) }
+      try { execFileSync(gitTestTool('diff'), [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { if (e.status !== 1) throw e; out = String(e.stdout) }
       assert.equal(r.added + r.removed, out.split('\n').filter((l) => /^[<>] /.test(l)).length)
       if (!r.identical) {
         fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b') + '\n')
-        execFileSync('patch', ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
+        execFileSync(gitTestTool('patch'), ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
         assert.equal(fs.readFileSync(path.join(dir, 'o'), 'utf8'), fs.readFileSync(path.join(dir, 'b'), 'utf8'))
       }
     }
