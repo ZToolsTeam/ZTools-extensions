@@ -12,20 +12,42 @@ import { diffText, formatUnifiedDiff, splitLines, MAX_DIFF_LINES, fencedDiffMark
 const host = createHost()
 test.beforeEach(() => host.reset())
 
-test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 patch 正确应用', () => {
+// 以独立的二维动态规划计算最少插入/删除数，不把系统 diff 的启发式输出当作最优答案。
+function minimumEditCount(left, right) {
+  // 保留每行结尾的 LF，末行缺少换行本身也是需要写进补丁的差异。
+  const a = left.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  const b = right.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  const cost = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1))
+  for (let i = 0; i <= a.length; i++) cost[i][0] = i
+  for (let j = 0; j <= b.length; j++) cost[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      cost[i][j] = a[i - 1] === b[j - 1]
+        ? cost[i - 1][j - 1]
+        : Math.min(cost[i - 1][j], cost[i][j - 1]) + 1
+    }
+  }
+  return cost[a.length][b.length]
+}
+
+test('差异最小且可逆：与独立最小编辑数一致，报告能被 patch 正确应用', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-diff-'))
-  const rnd = (n) => Array.from({ length: n }, () => 'abcde'[Math.floor(Math.random() * 5)]).join('\n')
+  let seed = 0x20261103
+  const randomInt = (limit) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return Math.floor(seed / 0x100000000 * limit)
+  }
+  const rnd = (n) => Array.from({ length: n }, () => 'abcde'[randomInt(5)]).join('\n')
   try {
     for (let t = 0; t < 120; t++) {
-      const A = rnd(Math.floor(Math.random() * 30))
-      const B = rnd(Math.floor(Math.random() * 30))
+      const A = rnd(randomInt(30))
+      const B = rnd(randomInt(30))
       const r = diffText(A, B)
+      assert.equal(r.approximate, false)
       assert.equal(r.lines.filter((l) => l.op !== 'remove').map((l) => l.text).join('\n'), splitLines(B).join('\n'))
       fs.writeFileSync(path.join(dir, 'a'), A)
       fs.writeFileSync(path.join(dir, 'b'), B)
-      let out = ''
-      try { execFileSync(gitTestTool('diff'), [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { if (e.status !== 1) throw e; out = String(e.stdout) }
-      assert.equal(r.added + r.removed, out.split('\n').filter((l) => /^[<>] /.test(l)).length)
+      assert.equal(r.added + r.removed, minimumEditCount(A, B), `固定样本 ${t}: ${JSON.stringify({ A, B })}`)
       if (!r.identical) {
         fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b'))
         execFileSync(gitTestTool('patch'), ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
