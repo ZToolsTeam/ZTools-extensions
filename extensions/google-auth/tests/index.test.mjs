@@ -80,3 +80,40 @@ test('[数据损坏] 存储里的坏条目被丢弃，非法密钥报错而不�
   assert.throws(() => parseOTPAuthURL('https://example.com'), /otpauth/)
   assert.throws(() => generateTOTP(''), /不能为空/)
 })
+
+test('空列表的主动作与全局动作不重复：添加账号只出现一次，次动作是从剪贴板导入', async () => {
+  const view = await mount(GoogleAuthCommand)
+  try {
+    await tick()
+    const itemTitles = view.actions(view.item('empty-auth')).map(a => a.props.title)
+    const globalTitles = view.actions(null).map(a => a.props.title)
+    assert.deepEqual(itemTitles, ['添加 2FA 账号', '从剪贴板导入 otpauth 链接'])
+    assert.ok(!view.text().includes('立即添加'))
+    // 宿主按「类型 + 标题」合并列表级动作，标题一致才不会在底栏出现两次
+    for (const title of itemTitles) assert.ok(globalTitles.includes(title), title)
+  } finally { view.unmount() }
+})
+
+test('从剪贴板导入 otpauth 链接：成功写入加密存储；非链接、无效链接不写入并如实提示', async () => {
+  const view = await mount(GoogleAuthCommand)
+  try {
+    await tick()
+    host.clipboard.text = '只是普通文字'
+    await view.run(view.item('empty-auth'), '从剪贴板导入 otpauth 链接')
+    assert.equal(host.lastToast().title, '剪贴板里没有 otpauth:// 链接')
+    assert.equal(ss.read(ACCOUNTS_STORAGE_KEY), undefined)
+
+    host.clipboard.text = 'otpauth://hotp/X:y?secret=JBSWY3DPEHPK3PXP&counter=1'
+    await view.run(view.item('empty-auth'), '从剪贴板导入 otpauth 链接')
+    assert.equal(host.lastToast().title, '无法解析剪贴板里的链接')
+    assert.equal(ss.read(ACCOUNTS_STORAGE_KEY), undefined)
+
+    host.clipboard.text = '  otpauth://totp/GitHub:me%40x.com?secret=JBSWY3DPEHPK3PXP&issuer=GitHub  '
+    await view.run(view.item('empty-auth'), '从剪贴板导入 otpauth 链接')
+    const stored = ss.read(ACCOUNTS_STORAGE_KEY)
+    assert.equal(stored.length, 1)
+    assert.equal(stored[0].issuer, 'GitHub')
+    assert.equal(host.lastToast().title, '已添加账号 me@x.com')
+    assert.ok(view.items().some(i => i.props.title.startsWith('me@x.com')))
+  } finally { view.unmount() }
+})

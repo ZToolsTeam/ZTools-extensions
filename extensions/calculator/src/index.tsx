@@ -41,18 +41,20 @@ const DEFAULT_CALC_EXAMPLES = [
   { expr: "2 ^ 16", desc: "指数幂运算", category: "数学" },
   { expr: "sin(pi / 2)", desc: "三角函数与常数", category: "数学" },
   { expr: "32px to rem", desc: "前端 CSS px 与 rem 极客换算", category: "换算" },
-  { expr: "2.5rem to px", desc: "CSS rem 转像素 (基于 16px)", category: "换算" },
+  { expr: "2.5rem to px", desc: "CSS rem 转像素（基于 16px）", category: "换算" },
   { expr: "10km to miles", desc: "公制与英制度量衡换算", category: "换算" },
   { expr: "5kg to lbs", desc: "重量单位千克转磅", category: "换算" },
   { expr: "100c to f", desc: "摄氏度与华氏度互转", category: "换算" },
   { expr: "1024mb to gb", desc: "计算机存储容量二进制换算", category: "换算" },
   { expr: "0xFF to dec", desc: "十六进制转十进制", category: "进制" },
-  { expr: "255 to hex", desc: "十进制转十六进制 (0xFF)", category: "进制" },
-  { expr: "255 to bin", desc: "十进制转二进制 (0b11111111)", category: "进制" },
+  { expr: "255 to hex", desc: "十进制转十六进制（0xFF）", category: "进制" },
+  { expr: "255 to bin", desc: "十进制转二进制（0b11111111）", category: "进制" },
   { expr: "now + 2 weeks", desc: "未来相对日期与时间推算", category: "日期" },
   { expr: "#3B82F6", desc: "HEX 颜色预览、互转与 WCAG 对比度", category: "色彩" },
   { expr: "rgb(59, 130, 246)", desc: "RGB 格式色彩即时检测", category: "色彩" }
 ];
+
+const HISTORY_TYPE_LABELS: Record<string, string> = { math: "计算", unit: "换算", currency: "汇率", date: "日期", color: "色彩" };
 
 /** 结果区第一行的 id：填入输入框后选中它；没有结果时返回 undefined（交给渲染器默认选第一项） */
 function getResultItemId(result: CalculatorQueryResult): string | undefined {
@@ -79,7 +81,18 @@ const isHistoryItem = (v: unknown): v is CalculatorHistoryItem => {
 // 独立窗口带来的历史里有一项不合法（旧版本形状、篡改）就整份不用，等存储读取结果
 const isHistory = (v: unknown): v is CalculatorHistoryItem[] => Array.isArray(v) && v.every(isHistoryItem);
 
-export default function CalculatorCommand() {
+type CalculatorProps = { unitOnly?: boolean };
+
+/** calc-unit 命令：同一个计算器，只列单位换算示例 */
+export function calcUnit() {
+  return CalculatorCommand({ unitOnly: true });
+}
+
+export default function CalculatorCommand(props?: CalculatorProps) {
+  const unitOnly = props?.unitOnly === true;
+  const examples = DEFAULT_CALC_EXAMPLES
+    .map((eg, idx) => ({ ...eg, idx }))
+    .filter(eg => !unitOnly || eg.category === "换算");
   const { push } = useNavigation();
   // 当前算式与历史随独立窗口带走：新窗口首帧就能显示，不闪空列表
   const [searchText, setSearchText] = usePopoutValue("searchText", () => "", isText);
@@ -132,16 +145,18 @@ export default function CalculatorCommand() {
     }
   };
 
-  const handleCopy = async (text: string, label: string) => {
+  // record：只有复制 / 粘贴「当前输入的计算结果」才记入历史；
+  // 复制历史项、置顶项或示例时不能把输入框里另一条无关算式顺带写进历史
+  const handleCopy = async (text: string, label: string, record = true) => {
     await Clipboard.copy(text);
     await showToast(Toast.Style.Success, `已复制 ${label}`, text);
-    await recordCurrentQuery();
+    if (record) await recordCurrentQuery();
   };
 
-  const handlePaste = async (text: string) => {
+  const handlePaste = async (text: string, record = true) => {
     await Clipboard.paste(text);
-    await showToast(Toast.Style.Success, "已粘贴到前台应用", text);
-    await recordCurrentQuery();
+    await showToast(Toast.Style.Success, "已发送粘贴请求", text);
+    if (record) await recordCurrentQuery();
   };
 
   const handleTogglePin = async (id: string) => {
@@ -173,7 +188,7 @@ export default function CalculatorCommand() {
   return (
     <List
       actions={ActionPanel({}, [Action({ title: "人民币大写…", icon: Icon.Text, onAction: () => push(RmbCommand) }), Action({ title: "汇率换算…", icon: Icon.Globe, onAction: () => push(CurrencyCommand) })])}
-      searchBarPlaceholder="输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"
+      searchBarPlaceholder={unitOnly ? "输入换算，如 10km to miles、5kg to lbs、100c to f、1024mb to gb" : "输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"}
       searchText={searchText}
       onSearchTextChange={handleSearchTextChange}
       selectedItemId={selectedItemId}
@@ -294,7 +309,7 @@ export default function CalculatorCommand() {
                     onAction={() => handleCopy(queryResult.formattedAnswer, "计算结果")}
                   />
                   <Action
-                    title="回车粘贴到前台应用"
+                    title="粘贴到前台应用"
                     icon={Icon.Checkmark}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "v" }}
                     onAction={() => handlePaste(queryResult.formattedAnswer)}
@@ -333,9 +348,9 @@ export default function CalculatorCommand() {
         </List.Section>
       )}
 
-      {/* 3. 已置顶算式 (Pinned) */}
+      {/* 3. 已置顶算式 */}
       {pinnedItems.length > 0 && (
-        <List.Section title="已置顶常用数字与算式 (Pinned)">
+        <List.Section title="已置顶常用数字与算式">
           {pinnedItems.map(item => (
             <List.Item
               key={item.id}
@@ -349,12 +364,12 @@ export default function CalculatorCommand() {
                   <Action
                     title="复制结果"
                     icon={Icon.CopyClipboard}
-                    onAction={() => handleCopy(item.answer, "置顶结果")}
+                    onAction={() => handleCopy(item.answer, "置顶结果", false)}
                   />
                   <Action
                     title="粘贴到前台"
                     icon={Icon.Checkmark}
-                    onAction={() => handlePaste(item.answer)}
+                    onAction={() => handlePaste(item.answer, false)}
                   />
                   <Action
                     title="取消置顶"
@@ -378,9 +393,9 @@ export default function CalculatorCommand() {
         </List.Section>
       )}
 
-      {/* 4. 最近计算历史 (Recent History) */}
+      {/* 4. 最近计算历史 */}
       {recentItems.length > 0 && (
-        <List.Section title="近期计算历史 (Recent History)">
+        <List.Section title="近期计算历史">
           {recentItems.slice(0, 15).map(item => (
             <List.Item
               key={item.id}
@@ -388,18 +403,18 @@ export default function CalculatorCommand() {
               title={`= ${item.answer}`}
               subtitle={item.expression}
               icon={Icon.Clock}
-              accessories={[{ text: item.type.toUpperCase() }]}
+              accessories={[{ text: HISTORY_TYPE_LABELS[item.type] ?? "计算" }]}
               actions={
                 <ActionPanel title="历史项操作">
                   <Action
                     title="复制结果"
                     icon={Icon.CopyClipboard}
-                    onAction={() => handleCopy(item.answer, "历史结果")}
+                    onAction={() => handleCopy(item.answer, "历史结果", false)}
                   />
                   <Action
                     title="粘贴到前台"
                     icon={Icon.Checkmark}
-                    onAction={() => handlePaste(item.answer)}
+                    onAction={() => handlePaste(item.answer, false)}
                   />
                   <Action
                     title="置顶此算式"
@@ -431,15 +446,16 @@ export default function CalculatorCommand() {
       )}
 
       {/* 5. 快速计算、换算与语法示例 */}
-      <List.Section title="极客计算、单位换算与语法示例 (Examples)">
-        {DEFAULT_CALC_EXAMPLES.map((eg, idx) => (
+      <List.Section title={unitOnly ? "单位换算示例" : "计算、单位换算与语法示例"}>
+        {examples.map(({ idx, ...eg }) => (
           <List.Item
             key={idx}
             id={`eg-${idx}`}
             title={eg.expr}
             subtitle={eg.desc}
             icon={Icon.Terminal}
-            accessories={[{ text: eg.category }]}
+            // 单位换算入口里每一行都是“换算”，标签不提供区分信息，只在混合示例里显示分类
+            accessories={unitOnly ? [] : [{ text: eg.category }]}
             actions={
               <ActionPanel title="快速示例">
                 <Action
@@ -450,7 +466,7 @@ export default function CalculatorCommand() {
                 <Action
                   title="复制表达式"
                   icon={Icon.CopyClipboard}
-                  onAction={() => handleCopy(eg.expr, "表达式")}
+                  onAction={() => handleCopy(eg.expr, "表达式", false)}
                 />
               </ActionPanel>
             }

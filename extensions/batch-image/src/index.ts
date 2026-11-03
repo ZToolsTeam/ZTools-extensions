@@ -69,6 +69,7 @@ export function BatchImageCommand() {
   const [presets, setPresets] = useState<ImageWorkshopPreset[]>(IMAGE_WORKSHOP_PRESETS)
   const [isLoading, setIsLoading] = useState(false)
   const [scanTruncated, setScanTruncated] = useState(false)
+  const [scanError, setScanError] = useState('')
 
   const runningRef = useRef(false)
   const scanningRef = useRef(false)
@@ -91,7 +92,10 @@ export function BatchImageCommand() {
       setCheckedIds(ws.files.map((f) => f.id))
       setPresets(ws.presets)
       setScanTruncated(ws.truncated)
-      if (showIndicator) {
+      setScanError(ws.error || '')
+      if (ws.error) {
+        await showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: ws.error })
+      } else if (showIndicator) {
         await progressToast?.hide()
         await showToast({
           style: Toast.Style.Success,
@@ -100,6 +104,7 @@ export function BatchImageCommand() {
         })
       }
     } catch (err) {
+      setScanError(errorText(err))
       await progressToast?.hide()
       await showToast({
         style: Toast.Style.Failure,
@@ -448,7 +453,7 @@ export function BatchImageCommand() {
       )
     }),
     filterBar: FilterBar({
-      summaryText: `已选 ${selectedFiles.length}/${files.length} 张 · 原图 ${selectedSizeText}${resultText}${truncatedText}`,
+      summaryText: `${scanError ? scanError + ' · ' : ''}已选 ${selectedFiles.length}/${files.length} 张 · 原图 ${selectedSizeText}${resultText}${truncatedText}`,
       actions: [
         {
           id: 'paste-clipboard-image',

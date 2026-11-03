@@ -4,9 +4,9 @@ import {
   Action,
   Icon,
   Color,
-  Clipboard,
   useState,
   useEffect,
+  useRef,
   showToast,
   Toast,
   confirmAlert,
@@ -18,7 +18,7 @@ import {
   RealAudioFileItem,
   formatBytes,
   fetchRealAudioWorkspace,
-  invokeNativeCapability,
+  processAudioSelection,
   openAudioFileLocation
 } from './logic.js'
 import { isRealElectronHost } from './native-ipc.js'
@@ -111,11 +111,10 @@ const LOUDNESS_LABELS: Record<string, string> = {
 export function BatchAudioCommand() {
   const [searchText, setSearchText] = useState('')
   const [activeModeId, setActiveModeId] = useState<string>(AUDIO_WORKSHOP_MODES[0].id)
-  const [audioProfile, setAudioProfile] = useState<'studio_48k' | 'cd_44k' | 'podcast_mono' | 'lossless_flac'>('studio_48k')
   const [outputFormat, setOutputFormat] = useState<'mp3_320k' | 'flac_lossless' | 'wav_pcm' | 'aac_256k' | 'm4a_aac' | 'ogg_vorbis'>('mp3_320k')
-  const [loudnessTarget, setLoudnessTarget] = useState<'lufs_16' | 'lufs_14' | 'lufs_23' | 'keep_raw'>('lufs_16')
-  const [sampleRateMode, setSampleRateMode] = useState<'48000' | '44100' | 'source'>('48000')
-  const [stripSilence, setStripSilence] = useState<boolean>(true)
+  const [loudnessTarget, setLoudnessTarget] = useState<'lufs_16' | 'lufs_14' | 'lufs_23' | 'keep_raw'>('keep_raw')
+  const [sampleRateMode, setSampleRateMode] = useState<'48000' | '44100' | 'source'>('source')
+  const [stripSilence, setStripSilence] = useState<boolean>(false)
   const [afftdnDenoise, setAfftdnDenoise] = useState<boolean>(false)
   const isRealHost = isRealElectronHost()
   const initialAudios = isRealHost ? [] : INITIAL_SAMPLE_AUDIOS
@@ -123,6 +122,10 @@ export function BatchAudioCommand() {
   const [checkedIds, setCheckedIds] = useState<string[]>(initialAudios.map(f => f.id))
   const [presets, setPresets] = useState<CapabilityActionItem[]>(AUDIO_WORKSHOP_MODES)
   const [isLoading, setIsLoading] = useState(false)
+  const processing = useRef(false)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [lastResult, setLastResult] = useState('')
+  const [scanError, setScanError] = useState('')
 
   async function refreshWorkspace(showIndicator = false) {
     if (showIndicator) setIsLoading(true)
@@ -137,11 +140,12 @@ export function BatchAudioCommand() {
       setFiles(nextFiles)
       setCheckedIds(nextFiles.map(f => f.id))
       setPresets(ws.presets)
+      setScanError(ws.error || '')
       if (showIndicator) {
         showToast({
-          style: Toast.Style.Success,
-          title: '音频工坊已刷新',
-          message: `队列就绪 ${nextFiles.length} 首本地音频文件 · 12 大声学引擎就绪`
+          style: ws.error ? Toast.Style.Failure : Toast.Style.Success,
+          title: ws.error ? '音频扫描不完整' : '音频工坊已刷新',
+          message: ws.error || `队列就绪 ${nextFiles.length} 首本地音频文件`
         })
       }
     } finally {
@@ -157,73 +161,49 @@ export function BatchAudioCommand() {
   const ratio = FORMAT_RATIO_MAP[outputFormat] ?? 0.24
   const outExt = outputFormat.split('_')[0] || 'mp3'
 
-  async function handleRunBatchChecked() {
-    const selected = files.filter(f => checkedIds.includes(f.id))
-    if (selected.length === 0) {
-      showToast({ style: Toast.Style.Failure, title: '请先勾选待处理的音频文件' })
-      return
-    }
-    const ok = await confirmAlert({
-      title: `确认对 ${selected.length} 首音频执行「${activePreset.title}」？`,
-      message: `声学滤镜管线: ${activePreset.ffmpegFilter || activePreset.method}\n输出格式: .${outExt} · 响度: ${LOUDNESS_LABELS[loudnessTarget]} · 采样率: ${sampleRateMode === 'source' ? '原采样' : sampleRateMode + 'Hz'}`,
-      primaryAction: { title: '开始批量处理', style: 'default' }
-    })
-    if (!ok) return
-
-    let count = 0
-    let lastErr = ''
-    for (const f of selected) {
-      const res = await invokeNativeCapability(activePreset.method, {
-        ...activePreset.params,
-        audioProfile,
-        format: outExt,
-        preset: outputFormat,
-        outputFormat: outExt,
-        loudnessTarget,
-        sampleRateMode,
-        stripSilence,
-        afftdnDenoise,
-        inputPath: f.path
-      })
-      if (res.ok) {
-        count += 1
-      } else {
-        lastErr = res.error || '音频处理调用失败'
-      }
-    }
-    if (count === 0) {
-      showToast({
-        style: Toast.Style.Failure,
-        title: '批量音频处理未执行成功',
-        message: lastErr
-      })
-      return
-    }
-    showToast({
-      style: Toast.Style.Success,
-      title: `已提交 ${count} 首音频批处理任务`,
-      message: activePreset.title
-    })
+  function selectPreset(id: string) {
+    setActiveModeId(id)
+    const selected = AUDIO_WORKSHOP_MODES.find(mode => mode.id === id)
+    if (selected?.params.format === 'flac') setOutputFormat('flac_lossless')
+    if (selected?.params.format === 'mp3') setOutputFormat('mp3_320k')
   }
 
-  async function handleRunPreset(preset: CapabilityActionItem, targetFile?: RealAudioFileItem) {
-    try {
-      const payload = targetFile
-        ? { ...preset.params, format: outExt, preset: outputFormat, inputPath: targetFile.path }
-        : { ...preset.params, format: outExt, preset: outputFormat }
-      const res = await invokeNativeCapability(preset.method, payload)
-      if (!res.ok) {
-        showToast({ style: Toast.Style.Failure, title: '音频处理失败', message: res.error || '原生模块返回错误' })
-        return
-      }
-      showToast({
-        style: Toast.Style.Success,
-        title: '音频批处理指令已下发',
-        message: `${preset.title}${targetFile ? ` (${targetFile.name})` : ''}`
-      })
-    } catch (err: any) {
-      showToast({ style: Toast.Style.Failure, title: '参数拦截', message: err?.message || String(err) })
+  async function runFiles(preset: CapabilityActionItem, selected: RealAudioFileItem[]) {
+    if (processing.current) return
+    if (!selected.length) {
+      await showToast({ style: Toast.Style.Failure, title: '请先勾选待处理的音频文件' })
+      return
     }
+    processing.current = true
+    setIsProcessing(true)
+    try {
+      const accepted = await confirmAlert({
+        title: `对 ${selected.length} 首音频执行「${preset.tag}」？`,
+        message: `输出 ${outExt.toUpperCase()}；新文件保存在源文件旁。合并按队列顺序处理。`,
+        primaryAction: { title: '开始处理', style: 'default' }
+      })
+      if (!accepted) return
+      const result = await processAudioSelection(preset.method, {
+        ...preset.params, format: outExt, bitrate: outExt === 'mp3' ? '320k' : '256k',
+        loudnessTarget, sampleRateMode, stripSilence, afftdnDenoise
+      }, selected)
+      const summary = `完成 ${result.completed} 首，失败 ${result.failed} 首，生成 ${result.outputs.length} 个文件`
+      setLastResult(summary)
+      await showToast({ style: result.failed ? Toast.Style.Failure : Toast.Style.Success,
+        title: result.failed ? '音频处理未全部完成' : '音频处理已完成',
+        message: result.errors.length ? `${summary}；${result.errors[0]}` : summary })
+    } finally {
+      processing.current = false
+      setIsProcessing(false)
+    }
+  }
+
+  async function handleRunBatchChecked() {
+    await runFiles(activePreset, files.filter(file => checkedIds.includes(file.id)))
+  }
+
+  async function handleRunPreset(preset: CapabilityActionItem, targetFile: RealAudioFileItem) {
+    await runFiles(preset, [targetFile])
   }
 
   const selectedFiles = files.filter(f => checkedIds.includes(f.id))
@@ -293,15 +273,7 @@ export function BatchAudioCommand() {
             icon: Icon.Play,
             onAction: () => handleRunPreset(activePreset, f)
           }),
-          Action({
-            title: '复制等效 FFmpeg 声学命令',
-            icon: Icon.Terminal,
-            onAction: async () => {
-              const cmd = `ffmpeg -i "${f.path}" ${activePreset.ffmpegFilter || ''} "${f.path.replace(/(\.[^.]+)$/, `_out.${outExt}`)}"`
-              await Clipboard.copy(cmd)
-              showToast({ style: Toast.Style.Success, title: '已复制 FFmpeg 音频命令' })
-            }
-          })
+
         ]
       })
     })
@@ -311,11 +283,11 @@ export function BatchAudioCommand() {
     searchBarPlaceholder: '搜索本机音频文件、12 大声学处理模式或输出格式 (MP3 / FLAC / -16 LUFS / 静音切除 / 降噪)...',
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    isLoading,
+    isLoading: isLoading || isProcessing,
     searchBarAccessory: List.Dropdown({
       tooltip: '选择 12 大音频处理预设模式',
       value: activeModeId,
-      onChange: val => setActiveModeId(val),
+      onChange: val => selectPreset(val),
       children: AUDIO_WORKSHOP_MODES.map(m =>
         List.Dropdown.Item({
           title: `预设: ${m.tag}`,
@@ -324,7 +296,7 @@ export function BatchAudioCommand() {
       )
     }),
     filterBar: FilterBar({
-      summaryText: `队列已选 ${checkedIds.length}/${files.length} 首音频 (${formatBytes(totalBytes)}) · 预计输出 ~${formatBytes(estimatedOutBytes)} · 响度 ${LOUDNESS_LABELS[loudnessTarget]}`,
+      summaryText: scanError || lastResult || `队列已选 ${checkedIds.length}/${files.length} 首音频 (${formatBytes(totalBytes)}) · 预计输出 ~${formatBytes(estimatedOutBytes)} · 响度 ${LOUDNESS_LABELS[loudnessTarget]}`,
       actions: [
         {
           id: 'rescan-audio',
@@ -337,42 +309,29 @@ export function BatchAudioCommand() {
     }),
     workbenchPanel: {
       title: '音频声学与转码参数工作台',
-      subtitle: stripSilence || afftdnDenoise ? 'EBU R128 + 降噪切静音管线' : 'FFmpeg 高精度声学管线',
+      subtitle: activePreset.tag,
       fields: [
         {
           id: 'wb-output-format',
           label: '输出格式',
           type: 'select',
           value: outputFormat,
-          onChange: val => setOutputFormat(val as any),
+          onChange: val => setOutputFormat(val as typeof outputFormat),
           options: [
             { label: 'MP3 320k (全平台高音质)', value: 'mp3_320k' },
             { label: 'FLAC 无损 (Level 8 归档)', value: 'flac_lossless' },
             { label: 'WAV PCM (未压缩母带)', value: 'wav_pcm' },
             { label: 'AAC 256k (流媒体高效)', value: 'aac_256k' },
-            { label: 'M4A (Apple ALAC/AAC)', value: 'm4a_aac' },
+            { label: 'M4A (Apple AAC)', value: 'm4a_aac' },
             { label: 'OGG Vorbis (游戏音轨)', value: 'ogg_vorbis' }
           ]
         },
         {
-          id: 'wb-audio-profile',
-          label: '音质档位',
-          type: 'select',
-          value: audioProfile,
-          onChange: val => setAudioProfile(val as any),
-          options: [
-            { label: '录音室级 (48kHz / 320kbps)', value: 'studio_48k' },
-            { label: '标准 CD 级 (44.1kHz / 256kbps)', value: 'cd_44k' },
-            { label: '母带无损 (FLAC 24-bit)', value: 'lossless_flac' },
-            { label: '播客语音优化 (单声道 -16 LUFS)', value: 'podcast_mono' }
-          ]
-        },
-        {
           id: 'wb-loudness',
-          label: '响度标准',
+          label: '附加响度处理',
           type: 'select',
           value: loudnessTarget,
-          onChange: val => setLoudnessTarget(val as any),
+          onChange: val => setLoudnessTarget(val as typeof loudnessTarget),
           options: [
             { label: 'EBU R128 -16 LUFS 播客', value: 'lufs_16' },
             { label: '-14 LUFS 流媒体平台', value: 'lufs_14' },
@@ -385,7 +344,7 @@ export function BatchAudioCommand() {
           label: '采样率',
           type: 'select',
           value: sampleRateMode,
-          onChange: val => setSampleRateMode(val as any),
+          onChange: val => setSampleRateMode(val as typeof sampleRateMode),
           options: [
             { label: '48kHz (影视录音室级)', value: '48000' },
             { label: '44.1kHz (CD 标准音乐)', value: '44100' },
@@ -410,7 +369,7 @@ export function BatchAudioCommand() {
           id: 'wb-outdir',
           label: '输出位置',
           type: 'info',
-          value: `源同级目录 (*_ztools.${outExt})`
+          value: `源同级目录 (*_processed-唯一编号.${outExt})`
         }
       ],
       previewCard: {
@@ -468,7 +427,7 @@ export function BatchAudioCommand() {
                   title: '设为当前激活声学模式',
                   icon: Icon.CheckCircle,
                   onAction: () => {
-                    setActiveModeId(p.id)
+                    selectPreset(p.id)
                   }
                 })
               ]

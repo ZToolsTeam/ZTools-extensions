@@ -62,7 +62,7 @@ export default function WechatCleanerCommand() {
       setAllFiles(snap.allFiles)
       setAccountStats(snap.accountStats)
       setProtectedDbBytes(snap.protectedDbBytes)
-      setScanError('')
+      setScanError(snap.error || '')
       if (options.keepSelection) {
         const existing = new Set(snap.allFiles.filter(f => !f.isProtected).map(f => f.path))
         setSelectedFilePaths(prev => prev.filter(p => existing.has(p)))
@@ -74,7 +74,9 @@ export default function WechatCleanerCommand() {
         }).slice(0, WECHAT_FILE_DISPLAY_LIMIT)
         setSelectedFilePaths(pickDefaultCheckedPaths(visible, snap.categories))
       }
-      if (options.showIndicator) {
+      if (snap.error) {
+        showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: snap.error })
+      } else if (options.showIndicator) {
         showToast({
           style: Toast.Style.Success,
           title: '扫描完成',
@@ -297,7 +299,7 @@ export default function WechatCleanerCommand() {
     }),
     filterBar: {
       summaryText: scanError
-        ? `扫描失败：${scanError}`
+        ? `扫描结果不完整：${scanError}`
         : `${selectedAccount === 'ALL' ? '全部账号' : selectedAccount} · 缓存占用 ${formatBytes(totalScannable)} · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)}) · 聊天数据库 ${formatBytes(protectedDbBytes)} 受保护`,
       actions: [
         {

@@ -155,3 +155,38 @@ test('URL列表复制保留重复参数与特殊键，完整URL复制不改变�
     assert.equal(new URL(host.clipboard.text).searchParams.get('lang'), 'C++')
   } finally { view.unmount() }
 })
+
+test('[边界] 空输入显示中性提示而非红色解析错误，且可从剪贴板读取', async () => {
+  const host = createHost(), view = await mount(JwtUrlCodecCommand, host)
+  try {
+    await view.search('')
+    assert.equal(view.item('empty').props.title, '在上方粘贴 JWT Token')
+    assert.equal(view.tree().props.isShowingDetail, false)
+    assert.doesNotMatch(view.text(), /解析失败|EMPTY_JWT_TOKEN/)
+    await view.dropdown('url')
+    assert.equal(view.item('empty').props.title, '在上方粘贴 URL 或 Query 字符串')
+    host.clipboard.text = token()
+    await view.run(view.item('empty'), '从剪贴板读取')
+    await tick(20)
+    assert.ok(view.item('jwt-overview'))
+  } finally { view.unmount() }
+})
+
+test('[异常] 解析错误只向用户显示中文原因，不暴露机器错误码', async () => {
+  const host = createHost(), view = await mount(JwtUrlCodecCommand, host)
+  try {
+    await view.search('a.b')
+    const subtitle = view.item('jwt-error').props.subtitle
+    assert.match(subtitle, /^标准 JWT 必须包含 3 段/)
+    assert.doesNotMatch(view.text(), /INVALID_JWT_STRUCTURE/)
+  } finally { view.unmount() }
+})
+
+test('[边界] 毫秒时间戳的 exp 判为时间声明异常，不误报尚未过期', () => {
+  const ms = Date.UTC(2020, 0, 1)
+  const result = decodeJwtToken(token({ exp: ms }), Date.UTC(2026, 0, 1))
+  assert.equal(result.timeStatus, '时间声明异常')
+  assert.match(result.expiryCountdownText, /exp.*毫秒/)
+  const ok = decodeJwtToken(token({ exp: ms / 1000 }), Date.UTC(2026, 0, 1))
+  assert.equal(ok.timeStatus, '已过期')
+})

@@ -1,9 +1,9 @@
 {
   "id": "sql-helper",
   "name": "SQL格式化转换",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "SQL美化与精简、MyBatis日志参数核对、CREATE TABLE转TypeScript/Go/Java模型；支持多行编辑与剪贴板输入",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

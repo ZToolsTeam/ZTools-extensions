@@ -67,3 +67,38 @@ test('AES 在途输入变化与卸载后不发布旧结果或成功提示', asyn
     assert.equal(host.toasts.length, 0)
   } finally { release(); form.unmount(); Object.defineProperty(globalThis, 'crypto', descriptor) }
 })
+
+test('[异常] URL 解码失败给出中文原因；不成对代理项不静默编码或解码', () => {
+  assert.throws(() => decodeText('%E4%B8', 'url'), /不是合法的 URL 编码/)
+  assert.throws(() => decodeText('100%', 'url'), /不是合法的 URL 编码/)
+  assert.throws(() => decodeText('\\ud83d', 'unicode'), /代理项不成对/)
+  assert.throws(() => decodeText('\\ude00\\ud83d', 'unicode'), /代理项不成对/)
+  assert.equal(decodeText('\\ud83d\\ude00', 'unicode'), '😀')
+  assert.throws(() => encodeText('a\ud83d', 'url'), /代理项/)
+  assert.throws(() => encodeText('a\ud83d', 'hex'), /代理项/)
+  assert.equal(encodeText('\ud83d', 'unicode'), '\\ud83d')
+})
+
+test('[异常] 散列模式输入含不成对代理项时提示错误，不崩溃也不给出替换后文字的散列', async () => {
+  const view = await mount(Command)
+  try {
+    await view.search('abc\ud800')
+    assert.equal(view.item('invalid-text').props.title, '输入包含不成对的 Unicode 代理项')
+    assert.throws(() => view.item('sha256'), /找不到列表项/)
+    await view.run(view.item('invalid-text'), '清空输入')
+    assert.equal(view.tree().props.searchText, '')
+  } finally { view.unmount() }
+})
+
+test('hmac 命令直接打开 HMAC 表单，结果与 Node 标准实现一致', async () => {
+  const { cipherHmac } = await import('../dist/index.js')
+  const { createHmac } = await import('node:crypto')
+  host.pushed.push(cipherHmac)
+  const form = await mountPushed(host)
+  try {
+    assert.equal(form.tree().props.navigationTitle, 'HMAC 计算')
+    await form.fill('text', '消息😀'); await form.fill('key', 'k')
+    await form.run(null, '复制 HMAC')
+    assert.equal(host.clipboard.text, createHmac('sha256', 'k').update('消息😀').digest('hex'))
+  } finally { form.unmount() }
+})

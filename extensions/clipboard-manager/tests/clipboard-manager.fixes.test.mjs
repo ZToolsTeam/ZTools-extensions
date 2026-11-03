@@ -12,11 +12,19 @@ import ClipboardHistoryCommand, {
   fencedBlock,
   getClipboardHistory,
   saveEditedClipboardItem,
-  syncCurrentSystemClipboard
+  syncCurrentSystemClipboard,
+  getLastHostHistoryError
 } from '../dist/index.js'
 
 const KEY = 'ztools:clipboard:history'
 const host = createHost()
+
+/** 临时把 navigator.platform 换成指定平台（Node 的 navigator 可重新定义），用完恢复 */
+async function withPlatform(platform, fn) {
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { platform, userAgent: '' } })
+  try { return await fn() } finally { Object.defineProperty(globalThis, 'navigator', desc) }
+}
 
 /**
  * 模拟宿主剪贴板历史库：
@@ -548,26 +556,30 @@ test('删除单条记录前必须确认（列表与详情页）：取消时不�
   assert.deepEqual(db.calls.delete, ['h-x'])
 })
 
-test('在文件管理器中定位文件：宿主失败时提示失败，不再无条件提示成功', async () => {
+test('在文件管理器中定位文件：宿主失败时提示失败，不再无条件提示成功', () => withPlatform('MacIntel', async () => {
   installHistoryHost([{ id: 'h-f', content: '/tmp/a.txt', format_type: 'files', filePaths: ['/tmp/a.txt'] }])
   const view = await mount(ClipboardHistoryCommand)
   await tick(20)
   const row = view.item('h-f')
-  assert.ok(view.actions(row).some((a) => a.props.title === '在文件管理器中定位文件'))
+  assert.ok(view.actions(row).some((a) => a.props.title === '在访达中显示文件'))
   {
-    host.ipc.shell_show_item_in_folder = async () => { throw new Error('文件不存在') }
-    host.ipc.shell_open_path = async () => { throw new Error('文件不存在') }
-    await view.run(row, '在文件管理器中定位文件')
+    let opened = 0
+    host.ipc.shell_show_item_in_folder = async () => { throw new Error('路径未由当前窗口授权') }
+    host.ipc.shell_open_path = async () => { opened++; return { success: true } }
+    await view.run(row, '在访达中显示文件')
     await tick(10)
     assert.equal(host.lastToast().style, 'FAILURE')
     assert.equal(host.lastToast().title, '定位失败')
+    assert.match(host.lastToast().message, /路径未由当前窗口授权/, '如实显示宿主给的失败原因')
+    assert.equal(opened, 0, '定位失败时不能退回用默认程序打开文件')
     host.ipc.shell_show_item_in_folder = async () => ({ success: true })
-    await view.run(row, '在文件管理器中定位文件')
+    await view.run(row, '在访达中显示文件')
     await tick(10)
     assert.equal(host.lastToast().style, 'SUCCESS')
+    assert.equal(host.lastToast().title, '已在访达中显示')
   }
   assert.equal(view.actions(view.items()[0]).some((a) => /资源管理器/.test(a.props.title)), false)
-})
+}))
 
 test('不在客户端里运行：只显示「需要在 ZTools 客户端中使用」，不显示也不写入示例记录', async () => {
   const mod = await import('../dist/index.js')
@@ -585,4 +597,87 @@ test('不在客户端里运行：只显示「需要在 ZTools 客户端中使用
   } finally {
     globalThis.__ztoolsElectron = saved
   }
+})
+
+test('Windows 上的文件历史用「资源管理器」文案', () => withPlatform('Win32', async () => {
+  installHistoryHost([{ id: 'h-w', content: 'C:\\a.txt', format_type: 'files', filePaths: ['C:\\a.txt'] }])
+  const view = await mount(ClipboardHistoryCommand)
+  await tick(20)
+  assert.ok(view.actions(view.item('h-w')).some((a) => a.props.title === '在资源管理器中显示文件'))
+  assert.equal(view.actions(view.item('h-w'))[0].props.title, '粘贴到前台应用')
+}))
+
+test('[macOS 审查] Mac 上的 Windows 路径文件历史标记本机不可用：不提供粘贴、复制文件与定位，只能复制路径文字', () => withPlatform('MacIntel', async () => {
+  installHistoryHost([
+    { id: 'h-w', content: 'C:\\Users\\a\\b.txt', format_type: 'files', filePaths: ['C:\\Users\\a\\b.txt', '\\\\nas\\share\\c.txt'] },
+    { id: 'h-m', content: '/tmp/a.txt', format_type: 'files', filePaths: ['/tmp/a.txt'] }
+  ])
+  const view = await mount(ClipboardHistoryCommand)
+  await tick(20)
+  const row = view.item('h-w')
+  const titles = view.actions(row).map((a) => a.props.title)
+  assert.equal(titles[0], '复制文件路径', 'Enter 是复制路径文字')
+  assert.ok(!titles.includes('粘贴到前台应用'))
+  assert.ok(!titles.includes('仅复制到剪贴板'))
+  assert.ok(!titles.some((t) => /中显示文件/.test(t)))
+  assert.ok(row.props.accessories.some((a) => a.tag?.value === '本机不可用'))
+  assert.match(row.props.detail.props.markdown, /来自其他系统/)
+  await view.run(row, '复制文件路径')
+  assert.equal(host.clipboard.text, 'C:\\Users\\a\\b.txt\n\\\\nas\\share\\c.txt')
+  assert.ok(!host.ipcCalls.some(([m]) => m === 'clipboard_history_restore'), '不调用宿主恢复')
+  // 本机路径照常可用
+  const local = view.actions(view.item('h-m')).map((a) => a.props.title)
+  assert.equal(local[0], '粘贴到前台应用')
+  assert.ok(local.includes('在访达中显示文件'))
+}))
+
+test('[macOS 审查] 类型与状态用中文，不再出现 TEXT / STANDARD / PINNED / PROTECTED 与英文括注', () => withPlatform('MacIntel', async () => {
+  installHistoryHost([{ id: 'h-t', content: 'hello', is_pinned: 1 }])
+  const view = await mount(ClipboardHistoryCommand)
+  await tick(20)
+  const row = view.item('h-t')
+  assert.ok(row.props.accessories.some((a) => a.text === '文本'))
+  const text = view.text()
+  assert.doesNotMatch(text, /"(TEXT|FILES|STANDARD|PINNED|PROTECTED|SENSITIVE)"/)
+  assert.doesNotMatch(text, /\((All|Pinned|Paste to Active|Paste Sequentially|Pin Item)\)/)
+}))
+
+test('[故障注入] 宿主历史库读取失败：退回插件记录的同时，状态栏如实说明宿主历史没读到', async () => {
+  const db = installHistoryHost([{ id: 'h-a', content: 'HOST-ROW' }])
+  writeStored([localRec('clip-1790000000002', 'LOCAL-ROW')])
+  db.queryFault = new Error('Database is closed')
+  const view = await mount(ClipboardHistoryCommand)
+  await tick(30)
+  const summary = view.tree().props.filterBar.summaryText
+  assert.match(summary, /客户端剪贴板历史读取失败/)
+  assert.match(summary, /Database is closed/)
+  assert.ok(view.items().some((i) => i.props.title === 'LOCAL-ROW'))
+  assert.equal(getLastHostHistoryError(), 'Database is closed')
+  db.queryFault = null
+  await getClipboardHistory()
+  assert.equal(getLastHostHistoryError(), '', '恢复后清掉旧错误')
+})
+
+test('图片记录：没有缩略图时不渲染空图片；不编造 0 x 0 分辨率', () => {
+  const noThumb = getClipboardMarkdown({ id: 'i1', type: 'image', content: '', preview: '图片', copiedAt: 1, pinned: false })
+  assert.doesNotMatch(noThumb, /!\[/)
+  assert.match(noThumb, /没有可用的缩略图/)
+  const withThumb = getClipboardMarkdown({ id: 'i2', type: 'image', content: 'data:image/png;base64,AAAA', preview: '图片', copiedAt: 1, pinned: false })
+  assert.match(withThumb, /!\[图片预览\]\(data:image\/png;base64,AAAA\)/)
+  assert.doesNotMatch(withThumb, /0 x 0|分辨率/)
+})
+
+test('[故障注入] 重置流水粘贴指针：宿主失败时提示失败，成功时才提示已重置', async () => {
+  installHistoryHost([{ id: 'h-r', content: 'R1' }])
+  const view = await mount(ClipboardHistoryCommand)
+  await tick(20)
+  host.ipc.clipboard_history_reset_sequence = async () => { throw new Error('Database is closed') }
+  await view.run(view.item('h-r'), '重置流水粘贴指针')
+  await tick(10)
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.equal(host.lastToast().title, '重置流水粘贴指针失败')
+  host.ipc.clipboard_history_reset_sequence = async () => ({ success: true, sequenceIndex: 0 })
+  await view.run(view.item('h-r'), '重置流水粘贴指针')
+  await tick(10)
+  assert.equal(host.lastToast().style, 'SUCCESS')
 })

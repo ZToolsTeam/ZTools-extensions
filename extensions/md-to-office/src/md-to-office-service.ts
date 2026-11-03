@@ -10,6 +10,28 @@ export function parseSummary(value: unknown): DocSummary {
   if (!object(value) || typeof value.title !== 'string' || !value.title || !Number.isSafeInteger(value.characters) || Number(value.characters) < 1 || !Number.isSafeInteger(value.blocks) || Number(value.blocks) < 1 || !Array.isArray(value.warnings) || value.warnings.some(v => typeof v !== 'string')) throw new Error('文档分析结果无效')
   return value as unknown as DocSummary
 }
+/** 是否含 Markdown 标题（ATX `# 标题` 或 Setext 下划线标题），代码块内的不算 */
+export function hasHeading(markdown: string) {
+  const lines = markdown.replace(/\r\n?/g, '\n').split('\n')
+  let fence = ''
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i], marker = line.match(/^ {0,3}(`{3,}|~{3,})/)?.[1]
+    if (marker) { if (!fence) fence = marker[0]; else if (marker[0] === fence) fence = ''; continue }
+    if (fence) continue
+    if (/^ {0,3}#{1,6}[ \t]+\S/.test(line)) return true
+    if (i > 0 && /^ {0,3}(=+|-+)[ \t]*$/.test(line) && lines[i - 1].trim() && !/^ {0,3}([-*+]|\d+[.)]|>|#)/.test(lines[i - 1])) return true
+  }
+  return false
+}
+/** 文档名：有标题用宿主解析出的首个标题；没有标题时宿主会拿第一行正文，改用来源名称（如“剪贴板内容”） */
+export function documentTitle(markdown: string, hostTitle: string, fallback: string) {
+  return hasHeading(markdown) ? hostTitle : fallback
+}
+/** 默认文件名：替换系统不允许的字符，去掉开头的点（macOS 会变成隐藏文件）和首尾空白 */
+export function docxName(title: string) {
+  const base = title.replace(/[\\/:*?"<>|\u0000-\u001F]/g, '_').replace(/^[\s.]+/, '').trim().slice(0, 90).replace(/[\s.]+$/, '')
+  return (base || 'Markdown 文档') + '.docx'
+}
 export class MarkdownClient {
   private operation: string | undefined
   async call(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -38,10 +60,12 @@ export class MarkdownClient {
   async choose(mode: 'open' | 'save', title = 'Markdown 文档') {
     const result = await this.call(mode === 'open' ? 'window_show_open_dialog' : 'window_show_save_dialog', mode === 'open'
       ? { title: '选择 UTF-8 Markdown 文件', filters: 'Markdown 文本|*.md;*.markdown;*.txt', properties: ['openFile'] }
-      : { title: '另存 Word 新副本', defaultName: title.replace(/[\\/:*?"<>|\u0000-\u001F]/g, '_').slice(0, 90) + '.docx' })
+      : { title: '另存 Word 新副本', defaultName: docxName(title), filters: 'Word 文档|*.docx' })
     if (result.canceled === true) return null
     const file = result.filePath ?? (Array.isArray(result.filePaths) && object(result.filePaths[0]) ? result.filePaths[0].path : undefined)
     if (result.canceled !== false || typeof file !== 'string' || !file) throw new Error('文件选择结果无效')
+    // 宿主只接受 .docx 输出；macOS 保存面板可删掉扩展名，这里先给出明确原因，不让用户看到笼统的参数错误
+    if (mode === 'save' && !/\.docx$/i.test(file)) throw new Error('请以 .docx 扩展名保存 Word 文件')
     return file
   }
   async read(path: string) {

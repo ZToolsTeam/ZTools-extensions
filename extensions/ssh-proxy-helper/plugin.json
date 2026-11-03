@@ -1,9 +1,9 @@
 {
   "id": "ssh-proxy-helper",
   "name": "主机与代理",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "管理 SSH 主机连接、端口转发及 Git、NPM 和新终端的本地代理配置",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],

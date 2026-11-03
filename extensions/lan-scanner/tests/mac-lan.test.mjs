@@ -99,3 +99,13 @@ test('宿主如实返回未知延迟与 ping 提示：ICMP 在线但 latencyMs �
  // 延迟为非数值（宿主编造或损坏）仍拒绝
  host.ipc.lan_network=async()=>({...report(),devices:[{...report().devices[0],latencyMs:'1ms'}]});await assert.rejects(scanMacNetwork(iface,iface.ip,'test'),/回执/)
 })
+test('扫描失败后错误行回车即重新扫描；清单不再申请用不到的 shell 权限',async()=>{
+ host.ipc.lan_network=async p=>{if(p.action==='interfaces')return{success:true,interfaces:[iface]};throw new Error('系统 ping 不可用')}
+ const v=await open();await tick();assert.match(v.text(),/系统 ping 不可用/)
+ assert.equal(v.actions(v.item('error'))[0].props.title,'重新扫描')
+ host.ipc.lan_network=async p=>p.action==='interfaces'?{success:true,interfaces:[iface]}:report()
+ await v.run(v.item('error'),'重新扫描');await tick();await tick()
+ assert.ok(v.items().some(n=>n.props.id==='device-192.0.2.8'))
+ const {readFileSync}=await import('node:fs');const manifest=JSON.parse(readFileSync(new URL('../plugin.json',import.meta.url)))
+ assert.ok(!manifest.permissions.includes('shell'))
+})

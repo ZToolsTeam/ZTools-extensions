@@ -12,7 +12,7 @@ import {
   formatBytes,
   getRealSystemPath,
   invokeDllPluginCapability,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
@@ -526,6 +526,7 @@ export function makeImageItem(id: string, filePath: string, sizeBytes: number | 
 }
 
 export type ImageWorkspaceSnapshot = RealImageFileItem[] & {
+  error?: string
   scannedDirs: string[]
   files: RealImageFileItem[]
   items: RealImageFileItem[]
@@ -537,6 +538,7 @@ export type ImageWorkspaceSnapshot = RealImageFileItem[] & {
 export const SCAN_TOP_N_PER_DIR = 50
 
 export async function fetchRealImageWorkspace(hostOverride?: unknown): Promise<ImageWorkspaceSnapshot> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [picturesDir, downloadsDir, desktopDir] = await Promise.all([
     getRealSystemPath('pictures', hostOverride),
     getRealSystemPath('downloads', hostOverride),
@@ -552,7 +554,7 @@ export async function fetchRealImageWorkspace(hostOverride?: unknown): Promise<I
   let truncated = false
 
   for (const dir of scannedDirs) {
-    const scan = await scanRealDirectoryTree(dir, {
+    const scan = await scanner.scan(dir, {
       maxDepth: 2,
       maxFiles: 220,
       collectTopN: SCAN_TOP_N_PER_DIR,
@@ -579,6 +581,7 @@ export async function fetchRealImageWorkspace(hostOverride?: unknown): Promise<I
     files,
     items: files,
     presets: getCapabilityItems(),
+    error: scanner.error,
     truncated
   })
   return snapshot

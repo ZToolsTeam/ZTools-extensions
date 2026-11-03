@@ -2,7 +2,7 @@
 
 支持全局快捷键检测与离线速查。
 
-Mac：在检测页输入 `⌘+Shift+P` 后按 Enter 检测，⌘+Enter 复制选中组合。搜索框右侧切换速查应用；速查页的 Enter 复制 Mac 默认键位。⌘ 与 Ctrl 分开处理，Option 等同 Alt，加号键写 `Plus`。
+Mac：在检测页输入 `⇧⌘P` 或 `Shift+Cmd+P` 后按 Enter 检测，⌘Enter 复制选中组合。搜索框右侧切换速查应用；速查页的 Enter 复制 Mac 默认键位。检测结果与速查统一用 ⌃⌥⇧⌘ 符号显示；⌘ 与 ⌃ 分开处理，⌥ 即 Option（Alt），加号键写 `Plus`。
 
 Mac 结果含义：
 

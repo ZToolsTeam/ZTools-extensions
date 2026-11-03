@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { gitTestTool } from '../../shared/test-tools.mjs'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -20,14 +21,14 @@ test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 p
       const B = rnd(Math.floor(Math.random() * 30))
       const r = diffText(A, B)
       assert.equal(r.lines.filter((l) => l.op !== 'remove').map((l) => l.text).join('\n'), splitLines(B).join('\n'))
-      fs.writeFileSync(path.join(dir, 'a'), A ? A + '\n' : '')
-      fs.writeFileSync(path.join(dir, 'b'), B ? B + '\n' : '')
+      fs.writeFileSync(path.join(dir, 'a'), A)
+      fs.writeFileSync(path.join(dir, 'b'), B)
       let out = ''
-      try { execFileSync('diff', [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { out = String(e.stdout) }
+      try { execFileSync(gitTestTool('diff'), [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { if (e.status !== 1) throw e; out = String(e.stdout) }
       assert.equal(r.added + r.removed, out.split('\n').filter((l) => /^[<>] /.test(l)).length)
       if (!r.identical) {
-        fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b') + '\n')
-        execFileSync('patch', ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
+        fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b'))
+        execFileSync(gitTestTool('patch'), ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
         assert.equal(fs.readFileSync(path.join(dir, 'o'), 'utf8'), fs.readFileSync(path.join(dir, 'b'), 'utf8'))
       }
     }
@@ -37,7 +38,7 @@ test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 p
 })
 
 test('[边界] 换行符差异、忽略空白、空文本、超大文本', () => {
-  assert.equal(diffText('x\r\ny', 'x\ny').identical, true)
+  assert.equal(diffText('x\r\ny', 'x\ny').identical, false)
   assert.equal(diffText('a  b', 'a b', { ignoreWhitespace: true }).identical, true)
   assert.equal(diffText('', '').identical, true)
   assert.equal(diffText('', 'a').added, 1)
@@ -56,7 +57,7 @@ test('界面：空状态无示例数据；填写两段文本后列出差异并�
   const hunk = view.item('hunk-0')
   assert.match(hunk.props.subtitle, /删除 1 行，新增 1 行/)
   await view.run(hunk, '复制差异报告')
-  assert.equal(host.clipboard.text, '--- 左侧\n+++ 右侧\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c')
+  assert.equal(host.clipboard.text, '--- 左侧\n+++ 右侧\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\\ No newline at end of file\n')
 })
 
 test('[故障注入] 选择的文件不是 UTF-8 文本时提示，不显示乱码对比', async () => {

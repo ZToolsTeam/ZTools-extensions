@@ -76,6 +76,7 @@ export function ArchiveManagerCommand() {
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory)
   const [entries, setEntries] = useState<ArchiveEntryItem[]>([])
   const [inspectError, setInspectError] = useState('')
+  const [scanError, setScanError] = useState('')
   const [checkedEntryIds, setCheckedEntryIds] = useState<string[]>([])
   const [archiveMeta, setArchiveMeta] = useState<ArchiveMeta>(EMPTY_META)
   const [isLoading, setIsLoading] = useState(false)
@@ -133,6 +134,8 @@ export function ArchiveManagerCommand() {
     try {
       const scanned = await fetchRealArchiveCandidates()
       setArchives(scanned)
+      setScanError(scanned.error || '')
+      if (scanned.error) await showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: scanned.error })
       setHasScanned(true)
       const activePath =
         selectedArchivePath && scanned.some((a) => a.path === selectedArchivePath)
@@ -140,18 +143,19 @@ export function ArchiveManagerCommand() {
           : scanned[0]?.path || ''
       setSelectedArchivePath(activePath)
       if (activePath) {
-        await loadArchiveInspection(activePath, showIndicator)
+        await loadArchiveInspection(activePath, showIndicator && !scanned.error)
       } else {
         inspectSeqRef.current++
         setEntries([])
         setCheckedEntryIds([])
         setArchiveMeta(EMPTY_META)
         setInspectError('')
-        if (showIndicator) {
+        if (showIndicator && !scanned.error) {
           await showToast({ style: Toast.Style.Failure, title: '没有找到 ZIP 压缩包', message: '只扫描下载、桌面、文档目录' })
         }
       }
     } catch (err) {
+      setScanError(errorText(err))
       setHasScanned(true)
       await showToast({ style: Toast.Style.Failure, title: '扫描压缩包失败', message: errorText(err) })
     } finally {
@@ -545,7 +549,7 @@ export function ArchiveManagerCommand() {
       )
     }),
     filterBar: FilterBar({
-      summaryText,
+      summaryText: scanError ? `${scanError} · ${summaryText}` : summaryText,
       actions: [
         {
           id: 'verify-archive-btn',

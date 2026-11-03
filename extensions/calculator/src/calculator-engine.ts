@@ -712,19 +712,29 @@ function formatDateValue(d: Date, withTime: boolean): string {
   return withTime ? `${date} ${pad2(d.getHours())}:${pad2(d.getMinutes())}` : date;
 }
 
+/** 按月平移并把日期夹到目标月最后一天：1 月 31 日 + 1 个月 = 2 月 28/29 日，不能顺延到 3 月 */
+function shiftMonths(d: Date, months: number): void {
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
+}
+
 function shiftDate(d: Date, sign: number, count: number, unit: string): void {
   if (unit.startsWith("min")) {
-    d.setMinutes(d.getMinutes() + sign * count);
+    // 小时 / 分钟按实际经过的时间推算：跨夏令时切换时不会多算或少算一小时
+    d.setTime(d.getTime() + sign * count * 60000);
   } else if (unit.startsWith("hour")) {
-    d.setHours(d.getHours() + sign * count);
+    d.setTime(d.getTime() + sign * count * 3600000);
   } else if (unit.startsWith("day")) {
     d.setDate(d.getDate() + sign * count);
   } else if (unit.startsWith("week")) {
     d.setDate(d.getDate() + sign * count * 7);
   } else if (unit.startsWith("month")) {
-    d.setMonth(d.getMonth() + sign * count);
+    shiftMonths(d, sign * count);
   } else if (unit.startsWith("year")) {
-    d.setFullYear(d.getFullYear() + sign * count);
+    shiftMonths(d, sign * count * 12);
   }
 }
 
@@ -780,7 +790,9 @@ export function evaluateDateExpression(input: string): DateCalculationResult | n
   // 2026-02-30、2026-13-01、25:00 这类不存在的日期报错，不能被 Date 自动进位成别的日期，也不能落到算式按减法求值
   if (
     hour > 23 || minute > 59 ||
-    target.getFullYear() !== year || target.getMonth() !== month - 1 || target.getDate() !== day
+    target.getFullYear() !== year || target.getMonth() !== month - 1 || target.getDate() !== day ||
+    // 夏令时跳过的时刻（如纽约 2026-03-08 02:30）本地不存在，Date 会顺延一小时，不能静默改成别的时间
+    target.getHours() !== hour || target.getMinutes() !== minute
   ) {
     return dateError(input, `日期不存在: "${input.trim()}"`);
   }

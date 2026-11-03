@@ -3,8 +3,7 @@ import {
   callHostTransport,
   formatBytes,
   invokeDllPluginCapability,
-  isRealElectronHost,
-  showRealItemInFolder
+  isRealElectronHost
 } from './native-ipc.js'
 
 export { formatBytes } from './native-ipc.js'
@@ -269,7 +268,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
@@ -286,21 +285,29 @@ export async function invokeNativeCapability(
   }
 }
 
-export function normalizeProcessItem(raw: any): ProcessItem {
-  const pid = Number(raw?.pid ?? 0)
-  const name = String(raw?.name || `PID-${pid}`)
-  const pathStr = String(raw?.path || '')
+/** 宿主返回的原始对象按字段读取；null / undefined 视为空对象（与可选链读取结果一致） */
+type RawRecord = Record<string, unknown>
+
+function asRecord(value: unknown): RawRecord {
+  return (value ?? {}) as RawRecord
+}
+
+export function normalizeProcessItem(input: unknown): ProcessItem {
+  const raw = asRecord(input)
+  const pid = Number(raw.pid ?? 0)
+  const name = String(raw.name || `PID-${pid}`)
+  const pathStr = String(raw.path || '')
   const workingSetBytes = Math.max(
     0,
-    Number(raw?.workingSetBytes ?? raw?.memoryBytes ?? raw?.memoryUsage ?? 0)
+    Number(raw.workingSetBytes ?? raw.memoryBytes ?? raw.memoryUsage ?? 0)
   )
   const privateBytes = Math.max(
     0,
-    Number(raw?.privateBytes ?? workingSetBytes)
+    Number(raw.privateBytes ?? workingSetBytes)
   )
   const cpuPercent = Math.max(
     0,
-    Number(raw?.cpuPercent ?? raw?.cpuUsage ?? 0)
+    Number(raw.cpuPercent ?? raw.cpuUsage ?? 0)
   )
   const isWindowsSys =
     pid === 0 ||
@@ -311,13 +318,16 @@ export function normalizeProcessItem(raw: any): ProcessItem {
       name
     )
   const isMacSys = includesName(MACOS_CRITICAL_PROCESS_NAMES, name) || isMacSystemPath(pathStr)
-  const isSys = typeof raw?.isSystem === 'boolean' ? raw.isSystem : isWindowsSys || isMacSys
+  // 宿主给了 isSystem 时以它为准，但 macOS 宿主兜底只按 pid <= 4 标记（launchd 之外的守护进程都是 false），
+  // 所以 macOS 系统目录下的进程仍按路径判为系统进程；Windows 宿主的判定（会话 0、排除记事本等交互工具）不再被插件规则覆盖
+  const hostIsSystem = raw.isSystem
+  const isSys = typeof hostIsSystem === 'boolean' ? hostIsSystem || isMacSys : isWindowsSys || isMacSys
 
   // 宿主没给线程数（macOS 的 process_list 不返回）时保持 undefined，界面不显示，不能用 1 冒充
-  const rawThreads = Number(raw?.threadCount)
+  const rawThreads = Number(raw.threadCount)
   const threadCount = Number.isFinite(rawThreads) && rawThreads > 0 ? Math.round(rawThreads) : undefined
-  const parentPid = Math.max(0, Number(raw?.parentPid ?? 0))
-  const handleCount = Math.max(0, Number(raw?.handleCount ?? 0))
+  const parentPid = Math.max(0, Number(raw.parentPid ?? 0))
+  const handleCount = Math.max(0, Number(raw.handleCount ?? 0))
 
   return {
     pid,
@@ -331,25 +341,25 @@ export function normalizeProcessItem(raw: any): ProcessItem {
     privateBytes,
     cpuPercent,
     isSystem: isSys,
-    description: String(raw?.description || name),
+    description: String(raw.description || name),
     // 宿主没给的发布者、命令行保持为空，不按路径或进程名猜测
-    companyName: String(raw?.companyName || ''),
-    commandLine: String(raw?.commandLine || '')
+    companyName: String(raw.companyName || ''),
+    commandLine: String(raw.commandLine || '')
   }
 }
 
-export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
+export async function fetchProcesses(host?: unknown): Promise<ProcessItem[]> {
   // 1. 优先通过 ProcessMonitorPlugin (GetProcessList) 获取完整字段快照（含真实 CPU%、路径、线程数、PPID、命令行）
   try {
     const res = await invokeNativeCapability('GetProcessList', { includeCommandLine: true }, host)
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
       const rawList = Array.isArray(res.data)
         ? res.data
-        : Array.isArray((res.data as any).processes)
-        ? (res.data as any).processes
+        : Array.isArray((res.data as RawRecord).processes)
+        ? ((res.data as RawRecord).processes as unknown[])
         : []
       if (rawList.length > 0) {
-        return rawList.map((item: any) => normalizeProcessItem(item))
+        return rawList.map((item: unknown) => normalizeProcessItem(item))
       }
     }
   } catch (err) {
@@ -358,7 +368,7 @@ export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
 
   // 2. 兼容通过 Preload Transport 调用 process_list 获取进程列表
   if (host || isRealElectronHost(host)) {
-    const ipcRes = await callHostTransport<Array<any>>('process_list', {}, host)
+    const ipcRes = await callHostTransport<unknown[]>('process_list', {}, host)
     if (ipcRes.ok && Array.isArray(ipcRes.data)) {
       return ipcRes.data.map((p) => normalizeProcessItem(p))
     }
@@ -368,28 +378,28 @@ export async function fetchProcesses(host?: any): Promise<ProcessItem[]> {
   throw new Error(NOT_IN_CLIENT_MESSAGE)
 }
 
-export async function fetchSystemInfo(host?: any): Promise<SystemInfoData> {
+export async function fetchSystemInfo(host?: unknown): Promise<SystemInfoData> {
   // 1. 优先通过 ProcessMonitorPlugin (GetSystemInfo) 获取完整系统负载摘要
   try {
     const res = await invokeNativeCapability('GetSystemInfo', {}, host)
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
-      const d = ('info' in (res.data as any) ? (res.data as any).info : res.data) as any
-      const total = Number(d?.totalMemoryBytes ?? d?.totalMemory ?? 0)
+      const d = asRecord('info' in res.data ? (res.data as RawRecord).info : res.data)
+      const total = Number(d.totalMemoryBytes ?? d.totalMemory ?? 0)
       if (total > 0) {
-        const avail = Number(d?.availableMemoryBytes ?? d?.availableMemory ?? 0)
-        const used = Number(d?.usedMemoryBytes ?? Math.max(0, total - avail))
-        const memPct = Number(d?.memoryUsagePercent ?? Math.round((used / total) * 100))
+        const avail = Number(d.availableMemoryBytes ?? d.availableMemory ?? 0)
+        const used = Number(d.usedMemoryBytes ?? Math.max(0, total - avail))
+        const memPct = Number(d.memoryUsagePercent ?? Math.round((used / total) * 100))
         return {
-          cpuUsagePercent: Number(d?.cpuUsagePercent ?? 0),
-          cpuCoreCount: Number(d?.cpuCoreCount ?? 0),
+          cpuUsagePercent: Number(d.cpuUsagePercent ?? 0),
+          cpuCoreCount: Number(d.cpuCoreCount ?? 0),
           totalMemoryBytes: total,
           usedMemoryBytes: used,
           availableMemoryBytes: avail,
           totalMemory: total,
           availableMemory: avail,
           memoryUsagePercent: memPct,
-          processCount: Number(d?.processCount ?? 0),
-          threadCount: Number(d?.threadCount ?? 0)
+          processCount: Number(d.processCount ?? 0),
+          threadCount: Number(d.threadCount ?? 0)
         }
       }
     }
@@ -435,24 +445,42 @@ export async function fetchSystemInfo(host?: any): Promise<SystemInfoData> {
   throw new Error(NOT_IN_CLIENT_MESSAGE)
 }
 
-export async function fetchProcessDetail(pid: number, host?: any): Promise<ProcessDetailInfo | null> {
+/**
+ * macOS 宿主兜底的进程详情没有真实命令行（ps 只给可执行文件路径），会把路径填进 commandLine；
+ * 与路径完全相同的命令行无法证明是真实启动参数，按“未提供”处理，不能把路径当命令行复制
+ */
+function realCommandLine(value: unknown, pathStr: string): string {
+  const text = String(value || '').trim()
+  return text && text !== pathStr.trim() ? text : ''
+}
+
+/** macOS 宿主兜底把进程名填进产品名称 / 文件描述；与进程名相同的值不是读到的版本信息，留空 */
+function notDerivedFromName(value: unknown, name: string): string {
+  const text = String(value || '').trim()
+  return text && text.toLowerCase() !== name.trim().toLowerCase() ? text : ''
+}
+
+export async function fetchProcessDetail(pid: number, host?: unknown): Promise<ProcessDetailInfo | null> {
   if (!Number.isInteger(pid) || pid <= 0) return null
 
   try {
     const res = await invokeNativeCapability('GetProcessDetail', { pid }, host)
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
-      const raw = ('detail' in (res.data as any) ? (res.data as any).detail : res.data) as any
+      const rawValue: unknown = 'detail' in res.data ? (res.data as RawRecord).detail : res.data
+      const raw = rawValue ? asRecord(rawValue) : null
       if (raw && !raw.error) {
         const mem = Number(raw.memoryBytes ?? raw.peakMemoryBytes ?? 0)
+        const name = String(raw.name || `PID-${pid}`)
+        const pathStr = String(raw.path || '')
         return {
           pid: Number(raw.pid ?? pid),
-          name: String(raw.name || `PID-${pid}`),
-          path: String(raw.path || ''),
-          commandLine: String(raw.commandLine || ''),
+          name,
+          path: pathStr,
+          commandLine: realCommandLine(raw.commandLine, pathStr),
           companyName: String(raw.companyName || ''),
-          fileDescription: String(raw.fileDescription || ''),
+          fileDescription: notDerivedFromName(raw.fileDescription, name),
           fileVersion: String(raw.fileVersion || ''),
-          productName: String(raw.productName || ''),
+          productName: notDerivedFromName(raw.productName, name),
           signerName: String(raw.signerName || ''),
           startTime: String(raw.startTime || ''),
           handleCount: (raw.handleCount == null ? null : Number(raw.handleCount)),
@@ -509,7 +537,7 @@ export async function fetchProcessDetail(pid: number, host?: any): Promise<Proce
   return null
 }
 
-export async function fetchServicesByPID(pid: number, host?: any): Promise<ProcessServiceInfo[]> {
+export async function fetchServicesByPID(pid: number, host?: unknown): Promise<ProcessServiceInfo[]> {
   if (!Number.isInteger(pid) || pid <= 0) return []
 
   try {
@@ -517,18 +545,21 @@ export async function fetchServicesByPID(pid: number, host?: any): Promise<Proce
     if (res.ok && !res.fromFallback && res.data && typeof res.data === 'object') {
       const rawList = Array.isArray(res.data)
         ? res.data
-        : Array.isArray((res.data as any).services)
-        ? (res.data as any).services
+        : Array.isArray((res.data as RawRecord).services)
+        ? ((res.data as RawRecord).services as unknown[])
         : []
-      return rawList.map((s: any) => ({
-        name: String(s?.serviceName || s?.name || ''),
-        serviceName: String(s?.serviceName || s?.name || ''),
-        displayName: String(s?.displayName || s?.serviceName || s?.name || ''),
-        // 宿主没给状态与启动类型时留空，不填「运行中」「自动」
-        status: s?.status ?? '',
-        startType: String(s?.startType || ''),
-        description: String(s?.description || '')
-      }))
+      return rawList.map((item: unknown) => {
+        const s = asRecord(item)
+        return {
+          name: String(s.serviceName || s.name || ''),
+          serviceName: String(s.serviceName || s.name || ''),
+          displayName: String(s.displayName || s.serviceName || s.name || ''),
+          // 宿主没给状态与启动类型时留空，不填「运行中」「自动」
+          status: (s.status ?? '') as string | number,
+          startType: String(s.startType || ''),
+          description: String(s.description || '')
+        }
+      })
     }
   } catch (err) {
     console.warn('[process-monitor] fetchServicesByPID fallback:', err)
@@ -571,6 +602,7 @@ export function describeTerminateError(err: unknown): { code: string; message: s
     case 'PROCESS_IDENTITY_MISMATCH':
       return { code, message: '该 PID 已不是列表里的进程（可能已退出并被复用），为避免误杀未执行，请刷新后重试' }
     case 'PROCESS_TERMINATE_TIMEOUT': {
+      if (details?.reason === 'graceful-rejected') return { code, message: '程序拒绝正常关闭（例如控制台程序或正在等待保存）' }
       const still = Array.isArray(details?.stillRunning) ? (details!.stillRunning as unknown[]).filter((p) => Number.isInteger(p)) : []
       return { code, message: `进程没有在限定时间内退出${still.length ? `（仍在运行：PID ${still.join(', ')}）` : ''}` }
     }
@@ -595,8 +627,8 @@ export function describeTerminateError(err: unknown): { code: string; message: s
 export async function terminateProcess(
   pid: number,
   name: string,
-  modeOrHost?: ProcessTerminateMode | any,
-  maybeHost?: any
+  modeOrHost?: ProcessTerminateMode | unknown,
+  maybeHost?: unknown
 ): Promise<TerminateOutcome> {
   const mode: ProcessTerminateMode =
     modeOrHost === 'force' || modeOrHost === 'tree' || modeOrHost === 'graceful'
@@ -643,7 +675,7 @@ export async function terminateProcess(
 }
 
 /** 旧宿主兼容：Windows DLL TerminateProcessByPID，失败再试 process_kill（只能结束本窗口启动的子进程） */
-async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTerminateMode, host?: any): Promise<TerminateOutcome> {
+async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTerminateMode, host?: unknown): Promise<TerminateOutcome> {
   const upgradeHint = '当前 ZTools 版本不支持结束其他程序的进程，请升级 ZTools'
   try {
     const res = await invokeNativeCapability(
@@ -667,7 +699,7 @@ async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTe
       }
       return { ok: false, mode, error: res.error || '终止进程失败' }
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
     return { ok: false, mode, error: err instanceof Error ? err.message : String(err) }
   }
 
@@ -683,11 +715,12 @@ async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTe
   return { ok: false, mode, error: upgradeHint }
 }
 
-export async function openFileLocation(filePath: string, host?: any): Promise<boolean> {
+export async function openFileLocation(filePath: string, host?: unknown): Promise<boolean> {
   if (!filePath || typeof filePath !== 'string' || !filePath.trim()) return false
   if (host || isRealElectronHost(host)) {
-    const shown = await showRealItemInFolder(filePath, host)
-    if (shown) return true
+    // 只在文件管理器中显示，不回落到 shell_open_path：对可执行文件“打开”就是运行它
+    const shown = await callHostTransport('shell_show_item_in_folder', { fullPath: filePath }, host)
+    if (shown.ok) return true
   }
   try {
     const res = await invokeNativeCapability('OpenFileLocation', { path: filePath }, host)
@@ -769,7 +802,7 @@ export function filterProcesses(
 
 function getFallbackCoreCount(): number {
   try {
-    const n = Number((globalThis as any).navigator?.hardwareConcurrency)
+    const n = Number((globalThis as { navigator?: { hardwareConcurrency?: unknown } }).navigator?.hardwareConcurrency)
     return Number.isFinite(n) && n > 0 ? n : 1
   } catch {
     return 1
@@ -834,22 +867,77 @@ export function describeProcessProfile(
   return fields
 }
 
-export interface ProcessPort { pid: number; localPort: number; protocol: string; localAddress: string; processName: string }
-export async function fetchProcessPorts(host?: unknown): Promise<ProcessPort[]> {
-  const result = await callHostTransport<unknown>('process_list_ports', {}, host)
-  const payload = result.data
-  const rows = Array.isArray(payload) ? payload : payload && typeof payload === 'object' && 'data' in payload ? payload.data : undefined
-  if (!result.ok || !Array.isArray(rows)) throw new Error(result.error || '无法读取端口占用')
-  return rows.flatMap((value: unknown) => {
-    if (!value || typeof value !== 'object') return []
-    const row = value as Record<string, unknown>
-    if (typeof row.pid !== 'number' || !Number.isInteger(row.pid) || row.pid <= 0 || typeof row.localPort !== 'number' || !Number.isInteger(row.localPort) || row.localPort <= 0 || row.localPort > 65535) return []
-    return [{ pid: row.pid, localPort: row.localPort, protocol: String(row.protocol || ''), localAddress: String(row.localAddress || ''), processName: String(row.processName || '') }]
-  })
+export interface ProcessPort { pid: number; localPort: number; protocol: string; localAddress: string; processName: string; state: string }
+
+/** 端口快照：visibility 为 visible-processes 时只列出了当前用户可见进程的套接字（macOS lsof 兜底） */
+export interface ProcessPortSnapshot { rows: ProcessPort[]; partial: boolean }
+
+/** 占用（监听）本地端口的套接字状态：TCP 监听（macOS LISTEN、Windows LISTENING）与 UDP 绑定 */
+const OCCUPYING_STATES = new Set(['LISTEN', 'LISTENING', 'BOUND'])
+
+/** 宿主没给状态（旧宿主）时无法判断，按占用处理，避免漏掉 */
+export function isOccupyingPort(row: Pick<ProcessPort, 'state'>): boolean {
+  const state = String(row?.state || '').toUpperCase()
+  return !state || OCCUPYING_STATES.has(state)
 }
-export function filterProcessesByPort(processes: ProcessItem[], ports: ProcessPort[], query: string): ProcessItem[] {
-  const value = query.trim().replace(/^port:/i, '')
+
+/** 读取宿主原始响应，保留与端口数组同层的 visibility（通用解包只取 data 数组，会丢掉它） */
+async function callPortsTransportRaw(host?: unknown): Promise<unknown> {
+  const h = host as Record<string, unknown> | undefined
+  if (h && typeof h.process_list_ports === 'function') return (h.process_list_ports as (p: unknown) => unknown)({})
+  if (typeof window === 'undefined') throw new Error('无法读取端口占用')
+  const w = window as unknown as { __ztoolsElectron?: { transport?: { methods?: Record<string, unknown> } }; ztools?: { transport?: { methods?: Record<string, unknown> } } }
+  const fn = (w.__ztoolsElectron?.transport?.methods || w.ztools?.transport?.methods)?.process_list_ports
+  if (typeof fn !== 'function') throw new Error('当前 ZTools 版本不支持端口查询，请升级 ZTools')
+  return (fn as (req: unknown) => unknown)({ messageId: `process_list_ports_${Date.now()}`, params: {} })
+}
+
+function transportErrorText(value: unknown): string {
+  if (value && typeof value === 'object') {
+    const e = value as Record<string, unknown>
+    return String(e.message || e.code || '无法读取端口占用')
+  }
+  return String(value || '无法读取端口占用')
+}
+
+export async function fetchProcessPortSnapshot(host?: unknown): Promise<ProcessPortSnapshot> {
+  let layer: unknown = await callPortsTransportRaw(host)
+  let rows: unknown[] | undefined
+  let partial = false
+  // 逐层解包：preload 信封 → 宿主结果 { success, data: [...], source, visibility }；也兼容直接给数组
+  for (let depth = 0; depth < 4 && rows === undefined; depth++) {
+    if (Array.isArray(layer)) { rows = layer; break }
+    if (!layer || typeof layer !== 'object') break
+    const record = layer as Record<string, unknown>
+    if (record.success === false) throw new Error(transportErrorText(record.error))
+    if (record.visibility === 'visible-processes') partial = true
+    if (Array.isArray(record.data)) rows = record.data
+    else layer = record.data
+  }
+  if (!rows) throw new Error('无法读取端口占用')
+  return {
+    partial,
+    rows: rows.flatMap((value: unknown) => {
+      if (!value || typeof value !== 'object') return []
+      const row = value as Record<string, unknown>
+      if (typeof row.pid !== 'number' || !Number.isInteger(row.pid) || row.pid <= 0 || typeof row.localPort !== 'number' || !Number.isInteger(row.localPort) || row.localPort <= 0 || row.localPort > 65535) return []
+      return [{ pid: row.pid, localPort: row.localPort, protocol: String(row.protocol || ''), localAddress: String(row.localAddress || ''), processName: String(row.processName || ''), state: String(row.state || '') }]
+    })
+  }
+}
+
+export async function fetchProcessPorts(host?: unknown): Promise<ProcessPort[]> {
+  return (await fetchProcessPortSnapshot(host)).rows
+}
+
+/** 查询具体端口时匹配该本地端口的全部套接字；未输入端口时只列出监听 / 绑定端口的进程（不含连接外部用的临时端口） */
+export function matchPortRows(ports: ProcessPort[], query: string): ProcessPort[] {
+  const value = query.trim().replace(/^port:/i, '').trim()
   if (value && !/^\d{1,5}$/.test(value)) return []
-  const pids = new Set(ports.filter(p => !value || p.localPort === Number(value)).map(p => p.pid))
-  return processes.filter(p => pids.has(p.pid))
+  return ports.filter((p) => (value ? p.localPort === Number(value) : isOccupyingPort(p)))
+}
+
+export function filterProcessesByPort(processes: ProcessItem[], ports: ProcessPort[], query: string): ProcessItem[] {
+  const pids = new Set(matchPortRows(ports, query).map((p) => p.pid))
+  return processes.filter((p) => pids.has(p.pid))
 }

@@ -245,7 +245,7 @@ export async function mountPushed(host) {
 
 /**
  * 按宿主真实行为模拟目录相关 IPC（读真实磁盘目录），用于验证插件不会把别处文件冒充为目录内容：
- * - system_search_files「dir:<路径>」：与宿主 scanDirectoryForSearch 一致，返回一级子目录 subdirs（含各自全树文件数 file_count）+ 全树文件总数 total_matches + 全树按体积降序的 Top-N 文件（含深层文件）；目录不存在返回空结果
+ * - system_search_files「dir:<路径>」：与宿主 scanDirectoryForSearch 一致，返回一级子目录 subdirs（含各自全树文件数 file_count）+ 全树文件总数 total_matches + 全树按体积降序的 Top-N 文件（含深层文件）；目录不存在抛错
  * - system_search_files 其他关键词：返回 globalHits（模拟 Spotlight / MFT 全盘结果）
  * - filesystem_get_directory_contents：authorized 之外的路径抛 PERMISSION_DENIED；授权路径按宿主真实结构返回 { success, files: [{ name, size, isDirectory, lastModified }] }
  */
@@ -259,7 +259,7 @@ export async function installDirectoryHost(host, { authorized = [], globalHits =
       return { files: globalHits.map((p) => ({ name: path.basename(p), path: p, is_dir: false, size: 4096, mtime: 1 })), total_matches: globalHits.length }
     }
     const root = q.slice(4).trim()
-    if (!fs.existsSync(root)) return { files: [], subdirs: [], total_matches: 0, total_bytes: 0 }
+    if (!fs.existsSync(root)) throw fail('FILE_NOT_FOUND', '目录不存在或无法访问')
     const subdirs = new Map()
     const files = []
     const queue = [[root, null]]

@@ -8,7 +8,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import DiskAnalyzerCommand from '../dist/index.js'
-import { describeHostPathError, deleteDiskFileItem } from '../dist/logic.js'
+import { describeHostPathError, deleteDiskFileItem, driveRoot, fileManagerName, openDriveRoot } from '../dist/logic.js'
 
 const host = createHost()
 const MB = 1024 * 1024
@@ -90,7 +90,7 @@ test.beforeEach(() => {
 test('扫描到的文件：定位、默认程序打开、确认后移入回收站都成功，不出现失败提示', async () => {
   const { calls } = installGrantHost()
   const view = await mountLoaded()
-  await view.run(row(view, 'big-video.mp4'), '在资源管理器定位')
+  await view.run(row(view, 'big-video.mp4'), '在访达中定位')
   await view.run(row(view, 'big-video.mp4'), '使用默认程序打开文件')
   await tick(5)
   assert.deepEqual(calls.revealed, [BIG])
@@ -98,7 +98,7 @@ test('扫描到的文件：定位、默认程序打开、确认后移入回收�
   assert.ok(!host.toasts.some((t) => t.style === 'FAILURE'))
 
   host.setConfirm(true)
-  await view.run(row(view, 'archive.zip'), '移入回收站清理')
+  await view.run(row(view, 'archive.zip'), '移入废纸篓清理')
   await tick(5)
   assert.deepEqual(calls.trash, [ZIP])
   assert.equal(host.lastToast().style, 'SUCCESS')
@@ -112,23 +112,77 @@ test('扫描到的子目录可以在文件管理器中打开（只读授权）',
   const { calls } = installGrantHost()
   const view = await mountLoaded()
   const dirItem = view.item((it) => it.props.subtitle === SUBDIR)
-  await view.run(dirItem, '在资源管理器中打开此目录')
+  await view.run(dirItem, '在访达中打开此目录')
   await tick(5)
   assert.deepEqual(calls.revealed, [SUBDIR])
   assert.ok(!host.toasts.some((t) => t.style === 'FAILURE'))
   view.unmount()
 })
 
-test('异常：分区根目录不在扫描结果里被宿主拒绝时，提示无法定位而不是静默无反应', async () => {
-  installGrantHost()
+test('异常：旧版客户端（1.1.8.6 及更早）不授权分区根目录——提示升级，不说「可能已被移动或删除」', async () => {
+  const { calls } = installGrantHost()
   const view = await mountLoaded()
-  await view.run(view.item('drive-/'), '在资源管理器中打开此分区')
+  await view.run(view.item('drive-/'), '在访达中打开此分区')
   await tick(5)
   const t = host.lastToast()
   assert.equal(t.style, 'FAILURE')
-  assert.equal(t.title, '无法在文件管理器中定位')
-  assert.match(t.message, /^\/\n.*请重新扫描后再试/)
+  assert.equal(t.title, '无法打开此分区')
+  assert.match(t.message, /^\/\nZTools 1\.1\.8\.6 及更早版本不允许插件打开分区根目录，请升级 ZTools/)
+  assert.doesNotMatch(t.message, /移动或删除/)
+  assert.deepEqual(calls.opened, [])
   view.unmount()
+})
+
+test('新版客户端：列出挂载卷时卷根只读授权，「在访达中打开此分区」直接打开；卷被推出后提示重新扫描', async () => {
+  const { grants, existing, calls } = installGrantHost()
+  const EXT = '/Volumes/外置盘'
+  existing.add('/')
+  existing.add(EXT)
+  // 与宿主 grantVolumeRootsForCaller 一致：system_list_volumes 返回的卷根登记为只读结果授权
+  host.ipc.system_list_volumes = async () => {
+    for (const p of ['/', EXT]) grants.set(p, { trash: false })
+    return { volumes: [
+      { path: '/', label: 'Macintosh HD', fileSystem: 'APFS', totalBytes: 500 * 1024 ** 3, usedBytes: 100 * 1024 ** 3, availableBytes: 400 * 1024 ** 3, capacityGroup: 'disk3' },
+      { path: EXT, label: '外置盘', fileSystem: 'ExFAT', totalBytes: 100 * 1024 ** 3, usedBytes: 10 * 1024 ** 3, availableBytes: 90 * 1024 ** 3, capacityGroup: 'disk9' }
+    ], partial: false, errors: [] }
+  }
+  const view = await mountLoaded()
+  await view.run(view.item('drive-/'), '在访达中打开此分区')
+  await view.run(view.item(`drive-${EXT}`), '在访达中打开此分区')
+  await tick(5)
+  assert.deepEqual(calls.opened, ['/', EXT], '分区用打开（shell_open_path），路径不多拼分隔符')
+  assert.deepEqual(calls.revealed, [])
+  assert.ok(!host.toasts.some((t) => t.style === 'FAILURE'))
+
+  // 卷在扫描后被推出：宿主报文件错误
+  existing.delete(EXT)
+  await view.run(view.item(`drive-${EXT}`), '在访达中打开此分区')
+  await tick(5)
+  assert.equal(host.lastToast().title, '无法打开此分区')
+  assert.equal(host.lastToast().message, `${EXT}\n分区可能已被推出或卸载，请重新扫描`)
+  view.unmount()
+})
+
+test('分区路径与文件管理器名称：Windows 裸盘符补分隔符、目录挂载点不重复补；宿主异常原样说明', async () => {
+  assert.equal(driveRoot('C:'), 'C:\\')
+  assert.equal(driveRoot('C:\\mount\\'), 'C:\\mount\\')
+  assert.equal(driveRoot('/'), '/')
+  assert.equal(driveRoot('/Volumes/X'), '/Volumes/X')
+  assert.equal(fileManagerName('C:'), '资源管理器')
+  assert.equal(fileManagerName('D:\\Downloads\\a.iso'), '资源管理器')
+  assert.equal(fileManagerName('\\\\nas\\share\\a.iso'), '资源管理器')
+  assert.equal(fileManagerName('/Users/tester/a.iso'), '访达')
+
+  const opened = []
+  const ok = await openDriveRoot('D:', { shell_open_path: ({ fullPath }) => { opened.push(fullPath); return { success: true } } })
+  assert.deepEqual(ok, { ok: true })
+  assert.deepEqual(opened, ['D:\\'])
+  const missing = await openDriveRoot('D:', {})
+  assert.equal(missing.ok, false)
+  assert.match(missing.error, /METHOD_NOT_AVAILABLE|版本过低/)
+  const weird = await openDriveRoot('D:', { shell_open_path: () => { throw new Error('磁盘未就绪') } })
+  assert.deepEqual(weird, { ok: false, error: '磁盘未就绪' })
+  assert.deepEqual(await openDriveRoot('', {}), { ok: false, error: '分区路径为空' })
 })
 
 test('异常：授权过期后回收被拒——保留条目并说明只能回收本次扫描到的普通文件', async () => {
@@ -136,7 +190,7 @@ test('异常：授权过期后回收被拒——保留条目并说明只能回�
   const view = await mountLoaded()
   grants.clear()
   host.setConfirm(true)
-  await view.run(row(view, 'big-video.mp4'), '移入回收站清理')
+  await view.run(row(view, 'big-video.mp4'), '移入废纸篓清理')
   await tick(5)
   const t = host.lastToast()
   assert.equal(t.style, 'FAILURE')
@@ -146,14 +200,14 @@ test('异常：授权过期后回收被拒——保留条目并说明只能回�
   assert.deepEqual(calls.trash, [])
 
   // 定位同样被拒时也要提示
-  await view.run(row(view, 'big-video.mp4'), '在资源管理器定位')
+  await view.run(row(view, 'big-video.mp4'), '在访达中定位')
   await tick(5)
   assert.equal(host.lastToast().title, '无法在文件管理器中定位')
 
   // 重新扫描后授权恢复
   await view.tree().props.filterBar.actions.find((a) => a.id === 'act-rescan').onAction()
   await tick(30)
-  await view.run(row(view, 'big-video.mp4'), '移入回收站清理')
+  await view.run(row(view, 'big-video.mp4'), '移入废纸篓清理')
   await tick(5)
   assert.deepEqual(calls.trash, [BIG])
   view.unmount()
@@ -167,7 +221,7 @@ test('异常：扫描后文件被删，打开与回收都提示文件可能已�
   await tick(5)
   assert.equal(host.lastToast().title, '无法打开文件')
   host.setConfirm(true)
-  await view.run(row(view, 'big-video.mp4'), '移入回收站清理')
+  await view.run(row(view, 'big-video.mp4'), '移入废纸篓清理')
   await tick(5)
   assert.match(host.lastToast().message, /文件不存在（文件可能已被移动或删除，请重新扫描）/)
   view.unmount()

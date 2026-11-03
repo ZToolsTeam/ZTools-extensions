@@ -10,6 +10,10 @@ export interface MockSingleItem {
   formatType: string
   breakdownMarkdown: string
   algorithmNote: string
+  /** 是否带有可计算的校验位；手机号、姓名等只保证格式 */
+  hasCheckDigit: boolean
+  /** 「复制键值对 JSON」的内容；缺省为 { [fieldKey]: value } */
+  jsonValue?: Record<string, string>
 }
 
 export interface MockUserRecord {

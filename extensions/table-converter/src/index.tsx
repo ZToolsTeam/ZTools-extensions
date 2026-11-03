@@ -13,6 +13,17 @@ export interface TableConverterCommandProps {
   initialSourceFormat?: SourceFormat
 }
 
+const FEATURE_GOALS: Record<string, string> = {
+  'table-to-markdown': '粘贴表格后生成 Markdown 表格',
+  'table-to-json': '粘贴表格后生成 JSON 对象数组',
+  'table-to-sql': '粘贴表格后生成 SQL INSERT'
+}
+
+/** 空状态说明：按入口写明目标，没有专门入口时列出全部输出格式 */
+export function featureGoal(featureCode?: string): string {
+  return (featureCode && FEATURE_GOALS[featureCode]) || '粘贴表格后生成 Markdown、JSON、SQL、HTML 或 CSV'
+}
+
 export function TableConverterCommand(props: TableConverterCommandProps = {}) {
   const [rawText, setRawText] = useState(props.initialRawText ?? '')
   const [headerMode, setHeaderMode] = useState(props.initialHeaderMode ?? 'first-row-header')
@@ -50,7 +61,7 @@ export function TableConverterCommand(props: TableConverterCommandProps = {}) {
   const result = useMemo(() => {
     try {
       const parsed = detectAndParse(rawText, headerMode === 'first-row-header', source)
-      const targets = parsed.format === 'empty' ? [] : buildAllConversionTargets(parsed.grid, sqlTableName)
+      const targets = parsed.format === 'empty' || parsed.format === 'unrecognized' ? [] : buildAllConversionTargets(parsed.grid, sqlTableName)
       return { parsed, targets, error: '' }
     } catch (error) {
       return { parsed: null, targets: [], error: error instanceof Error ? error.message : String(error) }
@@ -60,7 +71,7 @@ export function TableConverterCommand(props: TableConverterCommandProps = {}) {
   const targets = [...result.targets].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred))
     .filter(target => [target.id, target.title, target.subtitle].some(text => text.toLowerCase().includes(searchText.trim().toLowerCase())))
   const grid = result.parsed?.grid
-  const summary = result.error ? '解析失败，原文保留，可编辑后重试。' : result.parsed?.format === 'empty' ? '请读取剪贴板或编辑输入' : `${result.parsed?.format.toUpperCase()} · ${grid?.rows.length ?? 0} 行 × ${grid?.headers.length ?? 0} 列`
+  const summary = result.error ? '解析失败，原文保留，可编辑后重试。' : result.parsed?.format === 'empty' ? '' : result.parsed?.format === 'unrecognized' ? '未识别到表格' : `${result.parsed?.format.toUpperCase()} · ${grid?.rows.length ?? 0} 行 × ${grid?.headers.length ?? 0} 列`
   const editInput = () => {
     generation.current++; setIsReading(false)
     push(<TableInputForm initial={{ text: rawText, source, sqlTableName }} hasHeader={headerMode === 'first-row-header'} onApply={value => {
@@ -68,6 +79,12 @@ export function TableConverterCommand(props: TableConverterCommandProps = {}) {
       generation.current++; setRawText(value.text); setSource(value.source); setSqlTableName(value.sqlTableName); setReadError('')
     }} />)
   }
+
+  const goal = featureGoal(props.featureCode)
+  const inputActions = <ActionPanel>
+    <Action title="读取剪贴板" icon={Icon.Clipboard} onAction={handleReadClipboard} />
+    <Action title="编辑输入" icon={Icon.Pencil} onAction={editInput} />
+  </ActionPanel>
 
   return <List navigationTitle="表格互转" isLoading={isReading} isShowingDetail={true}
     searchText={searchText} onSearchTextChange={setSearchText} searchBarPlaceholder="筛选输出格式（Markdown / JSON / SQL / HTML / CSV）"
@@ -79,8 +96,9 @@ export function TableConverterCommand(props: TableConverterCommandProps = {}) {
       { id: 'read-clipboard', title: '读取剪贴板', onAction: handleReadClipboard },
       { id: 'edit-input', title: '编辑输入', onAction: editInput }
     ] }}>
-    {!isReading && result.error ? <List.Item id="parse-error" title="无法转换当前输入" subtitle="原文已保留，可编辑后重试" detail={<List.Item.Detail markdown={fencedPreview(result.error, 'text')} />} /> : null}
-    {!isReading && !result.error && !targets.length ? <List.Item id="empty-input" title={rawText ? '没有匹配的输出格式' : '等待表格数据'} subtitle="使用顶部的读取剪贴板或编辑输入" /> : null}
+    {!isReading && result.error ? <List.Item id="parse-error" title="无法转换当前输入" subtitle="原文已保留，可编辑后重试" actions={inputActions} detail={<List.Item.Detail markdown={fencedPreview(result.error, 'text')} />} /> : null}
+    {!isReading && result.parsed?.format === 'unrecognized' ? <List.Item id="not-table" title="剪贴板内容不像表格，请粘贴 CSV/TSV/Markdown 表格" subtitle={goal} actions={inputActions} detail={<List.Item.Detail markdown={goal} />} /> : null}
+    {!isReading && !result.error && result.parsed?.format !== 'unrecognized' && !targets.length ? <List.Item id="empty-input" title={rawText ? '没有匹配的输出格式' : '等待表格数据'} subtitle={goal} actions={inputActions} detail={<List.Item.Detail markdown={goal} />} /> : null}
     {!isReading && targets.map(target => <List.Item key={target.id} id={target.id} title={target.title} subtitle={target.subtitle}
       icon={Icon.Document} accessories={[{ tag: target.badge }]}
       detail={<List.Item.Detail markdown={target.error ? fencedPreview(target.error, 'text') : fencedPreview(target.previewText, target.language)}

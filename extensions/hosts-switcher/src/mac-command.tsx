@@ -2,6 +2,10 @@ import React, { Action, ActionPanel, Clipboard, Detail, Form, Icon, List, Toast,
 import { combineHosts, hostsCodeBlock as code, loadProfiles, removeProfile, rules, saveProfile, splitHosts, type Profile } from './mac-model.js'
 import { applyHosts, cancelHosts, flushHostsDns, prepareHosts, readHosts, type HostsPlan, type HostsState } from './mac-service.js'
 const failure = (e: unknown) => e instanceof Error ? e.message : String(e)
+async function copyText(text: string) {
+  try { await Clipboard.copy(text); await showToast(Toast.Style.Success, '已复制当前系统 Hosts') }
+  catch (e) { await showToast(Toast.Style.Failure, '复制失败', failure(e)) }
+}
 export function ProfileForm({ initial, saved }: { initial?: Profile; saved: () => Promise<void> }) {
   const [name, setName] = useState(initial?.name ?? ''), [content, setContent] = useState(initial?.content ?? ''), [busy, setBusy] = useState(false), [error, setError] = useState('')
   const active = useRef(false), alive = useRef(true), { pop } = useNavigation()
@@ -32,8 +36,11 @@ export function ApplyPreview({ plan, finished }: { plan: HostsPlan; finished: ()
     try {
       const result = await applyHosts(plan.planId)
       if (!alive.current) return
-      await finished()
-      await showToast(result.dnsFlushed ? Toast.Style.Success : Toast.Style.Failure, result.dnsFlushed ? 'Hosts 已写入并刷新 DNS' : 'Hosts 已写入，DNS 未刷新', result.dnsError || `备份编号：${result.backupId}`)
+      // 写入已由宿主读回确认；之后重新读取列表失败只影响展示，不能把已写入说成未确认。
+      let reread = ''
+      try { await finished() } catch (e) { reread = failure(e) }
+      const detail = [result.dnsError, reread && `已写入，但重新读取列表失败：${reread}`].filter(Boolean).join('；') || `备份编号：${result.backupId}`
+      await showToast(result.dnsFlushed && !reread ? Toast.Style.Success : Toast.Style.Failure, result.dnsFlushed ? 'Hosts 已写入并刷新 DNS' : 'Hosts 已写入，DNS 未刷新', detail)
       pop()
     } catch (e) { if (alive.current) setError(failure(e)) }
     finally { active.current = false; if (alive.current) setBusy(false) }
@@ -80,10 +87,15 @@ export default function MacHostsCommand({ featureCode = 'hosts-all' }: { feature
   const parsed = snapshot ? splitHosts(snapshot.content) : { base: '', active: [] as Profile[] }
   const all = [...profiles, ...parsed.active.filter(a => !profiles.some(p => p.id === a.id))]
   const matches = all.filter(p => `${p.name}\n${p.content}`.toLowerCase().includes(query.toLowerCase()))
+  // 合并可能因冲突抛错，统一经 work 报告，不能在动作回调里变成未处理的异常。
+  const planActive = (next: () => Profile[]) => {
+    let content: string
+    try { content = combineHosts(parsed.base, next()) } catch (e) { return work(async () => { throw e }) }
+    return plan({ content })
+  }
   const toggle = (profile: Profile) => {
     const selected = parsed.active.find(p => p.id === profile.id), identical = selected?.content === profile.content
-    try { return plan({ content: combineHosts(parsed.base, identical ? parsed.active.filter(p => p.id !== profile.id) : [...parsed.active.filter(p => p.id !== profile.id), profile]) }) }
-    catch (e) { return work(async () => { throw e }) }
+    return planActive(() => identical ? parsed.active.filter(p => p.id !== profile.id) : [...parsed.active.filter(p => p.id !== profile.id), profile])
   }
   const remove = (profile: Profile) => work(async operation => {
     if (parsed.active.some(p => p.id === profile.id)) throw new Error('请先停用系统中的此方案，再删除本地副本')
@@ -97,15 +109,15 @@ export default function MacHostsCommand({ featureCode = 'hosts-all' }: { feature
     filterBar={{ summaryText: error || (snapshot ? `${profiles.length} 个本地方案 · 系统管理区包含 ${parsed.active.length} 个方案` : '正在读取系统 Hosts 和本地方案'), actions: busy ? [{ id: 'cancel', title: '取消', onAction: async () => { ++generation.current; await cancelHosts() } }] : snapshot ? [{ id: 'new', title: '新建方案', onAction: newProfile }, { id: 'refresh', title: '重新读取', onAction: read }] : [] }}>
     {!snapshot ? <List.Item id="read-error" title={error || '正在读取'} actions={<ActionPanel><Action title="重新读取" onAction={read} /></ActionPanel>} /> : <>
       <List.Item id="system" title="当前系统 Hosts" subtitle={snapshot.path} icon={Icon.Document} detail={<List.Item.Detail markdown={code(snapshot.content)} />} actions={<ActionPanel>
-        {featureCode === 'hosts-flush-dns' ? <Action title="刷新系统 DNS" onAction={dns} /> : <Action title="复制当前系统内容" onAction={() => Clipboard.copy(snapshot.content)} />}
+        {featureCode === 'hosts-flush-dns' ? <Action title="刷新系统 DNS" onAction={dns} /> : <Action title="复制当前系统内容" onAction={() => copyText(snapshot.content)} />}
         <Action title="查看恢复备份" onAction={backups} />
-        {featureCode === 'hosts-flush-dns' ? <Action title="复制当前系统内容" onAction={() => Clipboard.copy(snapshot.content)} /> : <Action title="刷新系统 DNS" onAction={dns} />}
+        {featureCode === 'hosts-flush-dns' ? <Action title="复制当前系统内容" onAction={() => copyText(snapshot.content)} /> : <Action title="刷新系统 DNS" onAction={dns} />}
       </ActionPanel>} />
       {matches.map(profile => {
         const enabled = parsed.active.find(p => p.id === profile.id), changed = enabled && enabled.content !== profile.content, local = profiles.find(p => p.id === profile.id)
         return <List.Item key={profile.id} id={profile.id} title={profile.name} subtitle={`${rules(profile.content).length} 条映射`} icon={enabled ? Icon.CheckCircle : Icon.Circle} accessories={[{ text: changed ? '系统使用旧内容' : enabled ? '系统中已写入' : '未启用' }]} detail={<List.Item.Detail markdown={code(profile.content)} />} actions={<ActionPanel>
           <Action title={changed ? '预览并更新系统内容' : enabled ? '预览并停用方案' : '预览并启用方案'} onAction={() => toggle(profile)} />
-          {changed && <Action title="预览并停用当前系统方案" onAction={() => plan({ content: combineHosts(parsed.base, parsed.active.filter(p => p.id !== profile.id)) })} />}
+          {changed && <Action title="预览并停用当前系统方案" onAction={() => planActive(() => parsed.active.filter(p => p.id !== profile.id))} />}
           {local && <Action title="编辑本地方案" onAction={() => { if (!active.current) push(<ProfileForm initial={local} saved={read} />) }} />}
           {local && !enabled && <Action title="删除本地方案" style={Action.Style.Destructive} onAction={() => remove(local)} />}
           {!local && <Action title="保存为本地方案" onAction={() => work(async () => { await saveProfile(profile); await refresh() })} />}

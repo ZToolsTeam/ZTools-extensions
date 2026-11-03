@@ -2,10 +2,21 @@ import React, { List, ActionPanel, Action, Icon, Clipboard, LocalStorage, showTo
 import type { StackItem, StackPopMode } from './types.js'
 import { STACK_STORAGE_KEY, cleanRichTextToPlain, parseStackState, stackItem, subscribeStackClipboard } from './stack-manager.js'
 import type { StackState } from './stack-manager.js'
+import { callHostTransport } from './native-ipc.js'
 export * from './types.js'
 export * from './stack-manager.js'
 
+/**
+ * 剪贴板里是否是文件：在访达 / 资源管理器里复制文件时，系统同时放一份文件名文本，
+ * 若照常“洗成纯文本”会把复制的文件替换成文件名。宿主不支持查询时按没有文件处理。
+ */
+async function clipboardHoldsFiles(): Promise<boolean> {
+  const res = await callHostTransport<{ files?: unknown }>('clipboard_read_files')
+  return res.ok && Array.isArray(res.data?.files) && res.data.files.length > 0
+}
+
 export async function CleanClipboardCommand() {
+  if (await clipboardHoldsFiles()) throw new Error('剪贴板里是复制的文件，不是文本；为避免把文件替换成文件名，未做改动')
   const text = cleanRichTextToPlain(await Clipboard.readText() || '')
   if (!text.length) throw new Error('剪贴板无可用文本')
   await Clipboard.copy(text)
@@ -136,6 +147,7 @@ export function PasteStack({ featureCode = 'paste-stack-queue' }: { featureCode?
     })
   }
   const retry = () => { setReload(value => value + 1) }
+  const toggleListening = () => mutate(value => ({ ...value, isListening: !value.isListening }))
   const clean = async () => { try { await showToast({ style: Toast.Style.Success, title: await CleanClipboardCommand() }) } catch (error) { await fail('清除格式失败', error) } }
   return <List isLoading={loading} searchText={search} onSearchTextChange={setSearch} searchBarPlaceholder="搜索粘贴栈文本..." isShowingDetail={false}
     searchBarAccessory={<List.Dropdown value={mode} onChange={(value: string) => setMode(value as StackPopMode | 'sent')} tooltip="队列与发送记录">
@@ -143,10 +155,17 @@ export function PasteStack({ featureCode = 'paste-stack-queue' }: { featureCode?
     </List.Dropdown>}
     filterBar={{ summaryText: loadError || listenError || `${listening ? '当前页面监听中' : state.isListening ? '正在连接监听' : '监听已暂停'} · 待发送 ${state.items.length} 项 · 已发送 ${state.sent?.length || 0} 项`,
       actions: loadError || listenError ? [{ id: 'retry', title: '重新读取', onAction: retry }] : [
-        { id: 'listen', title: state.isListening ? '暂停监听' : '开启监听', onAction: () => mutate(value => ({ ...value, isListening: !value.isListening })) },
+        // 空状态时底栏主动作已是切换监听，工具栏不再重复；有条目时底栏是单条动作，监听开关只在工具栏
+        ...(!loading && !items.length ? [] : [{ id: 'listen', title: state.isListening ? '暂停监听' : '开启监听', onAction: toggleListening }]),
         { id: 'clear', title: showingSent ? '清空发送记录' : '清空队列', onAction: () => mutate(value => showingSent ? { ...value, sent: [] } : { ...value, items: [] }) }
       ] }}
-    actions={<ActionPanel><Action title="清除剪贴板格式" icon={Icon.Text} onAction={clean} /></ActionPanel>}>
+    actions={loadError || listenError ? undefined : <ActionPanel>
+      <Action title={state.isListening ? '暂停监听' : '开启监听'} icon={state.isListening ? Icon.Pause : Icon.Play} onAction={toggleListening} />
+      <Action title="清除剪贴板格式" icon={Icon.Text} onAction={clean} />
+    </ActionPanel>}>
+    {!loading && !loadError && !items.length ? <List.Item id="empty-state" icon={Icon.Clipboard}
+      title={search.trim() ? '没有匹配的条目' : showingSent ? '暂无已发送记录' : state.isListening ? '复制文字后会自动加入队列' : '监听已暂停，开启后复制的文字会自动加入队列'}
+      subtitle={search.trim() ? '换个关键词试试' : showingSent ? '发送到原输入位置后，可在这里恢复' : ''} /> : null}
     {items.map((item: StackItem, index: number) => <List.Item key={item.id} id={item.id} title={item.textPreview} subtitle={`${item.charCount} 字符`} icon={Icon.Text} accessories={[{ tag: showingSent ? '已发送，可恢复' : `#${index + 1} 待发送` }]}
       actions={<ActionPanel>
         <Action title={showingSent ? "恢复到待发送队列" : "发送到原输入位置"} icon={Icon.ArrowUp} onAction={() => showingSent ? restore(item.id) : pasteItem(item.id)} />

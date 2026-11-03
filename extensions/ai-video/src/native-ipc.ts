@@ -838,7 +838,8 @@ export async function getRealFileSize(
 }
 
 /**
- * 在 Windows Explorer 中定位并高亮文件/目录
+ * 在访达 / 资源管理器中定位并高亮文件或目录。
+ * 定位失败直接返回 false，不能改用“打开”：对可执行文件那等于运行它。
  */
 export async function showRealItemInFolder(
   fullPath: string,
@@ -846,9 +847,7 @@ export async function showRealItemInFolder(
 ): Promise<boolean> {
   if (!fullPath) return false
   const res = await callHostTransport('shell_show_item_in_folder', { fullPath }, hostOverride)
-  if (res.ok) return true
-  const fallback = await callHostTransport('shell_open_path', { fullPath }, hostOverride)
-  return fallback.ok
+  return res.ok
 }
 
 /**

@@ -1,5 +1,6 @@
 import { scanRealDirectoryTree } from './directory-scan.js'
-import { probeRealDiskDrives, uniqueCapacityDrives } from './volume-ipc.js'
+import { probeRealDiskDrives, uniqueCapacityDrives, type RealDiskDriveInfo } from './volume-ipc.js'
+import { hostUpgradeError, isHostMethodMissing } from './host-compat.js'
 /**
  * 磁盘空间分析业务逻辑
  * 读取磁盘分区容量 (system_get_disk_usage)、扫描分区与用户目录，
@@ -7,7 +8,7 @@ import { probeRealDiskDrives, uniqueCapacityDrives } from './volume-ipc.js'
  */
 
 import {
-  formatBytes,
+  formatBytes as formatBinaryBytes,
   getRealFileSize,
   getRealSystemPath,
   invokeDllPluginCapability,
@@ -16,12 +17,36 @@ import {
 
 
   searchRealIndexedFiles,
+  callHostTransport,
   showRealItemInFolder,
   trashRealItem,
   openRealPath
 } from './native-ipc.js'
 
-export { formatBytes, isRealElectronHost } from './native-ipc.js'
+export { isRealElectronHost } from './native-ipc.js'
+
+/**
+ * 容量与文件大小按系统习惯显示：macOS 的访达按 1000 进制（与硬件信息插件、「关于本机」一致），
+ * Windows 资源管理器按 1024 进制。否则同一块盘在 macOS 上会比访达少约 7%（例如 460 GB 对 494 GB）。
+ */
+export function formatBytes(bytes: number, decimals = 1, mac: boolean = isMacPlatform()): string {
+  if (!mac) return formatBinaryBytes(bytes, decimals)
+  const num = Number(bytes)
+  if (!Number.isFinite(num) || num <= 0) return '0 B'
+  if (num < 1000) return `${Math.round(num)} B`
+  const units = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
+  let val = num
+  let idx = 0
+  while (val >= 1000 && idx < units.length - 1) {
+    val /= 1000
+    idx += 1
+  }
+  const safeDecimals = Math.max(0, Math.floor(decimals))
+  return `${val >= 100 ? val.toFixed(0) : val.toFixed(safeDecimals)} ${units[idx]}`
+}
+
+/** 测试注入的宿主替身（与 callHostTransport 的 hostOverride 相同） */
+type HostOverride = Parameters<typeof callHostTransport>[2]
 
 export interface CapabilityActionItem {
   id: string
@@ -197,6 +222,26 @@ export interface DiskGroupStat {
   topExtensions: DiskExtStat[]
 }
 
+export interface DiskScanFailure {
+  /** 未能扫描的目录 */
+  path: string
+  /** 宿主给出的原因（已去掉重复的目录前缀），权限类失败附带该怎么办 */
+  reason: string
+}
+
+/** 把单个目录的扫描异常整理成界面可读的原因：保留宿主原话，权限类失败补一句处理办法 */
+export function describeScanFailure(directory: string, error: unknown): string {
+  let raw = (error instanceof Error ? error.message : String(error ?? '')).trim()
+  if (raw.startsWith(`${directory}: `)) raw = raw.slice(directory.length + 2).trim()
+  if (!raw) raw = '目录扫描失败'
+  const permission = /PERMISSION_DENIED|EACCES|EPERM|not permitted|权限|拒绝访问|未授权/i.test(raw)
+  if (!permission) return raw
+  const hint = directory.startsWith('/')
+    ? '可在「系统设置 › 隐私与安全性 › 文件与文件夹」中允许 ZTools 访问后重新扫描'
+    : '请确认当前账户有权读取该目录后重新扫描'
+  return `${raw}（${hint}）`
+}
+
 export interface DiskAnalysisSnapshot {
   drives: DiskDriveItem[]
   files: DiskFileEntry[]
@@ -215,6 +260,8 @@ export interface DiskAnalysisSnapshot {
   sampled?: boolean
   /** 各目录扫描实际遍历的条目数之和 */
   scannedEntries?: number
+  /** 未能扫描的目录与原因（这些目录的内容不在结果里）；为空表示全部扫描成功 */
+  failedScans: DiskScanFailure[]
   totalCapacityBytes: number
   totalUsedBytes: number
   totalAvailableBytes: number
@@ -226,11 +273,12 @@ const WINDOWS_PROTECTED_PATTERN =
   /^(?:C:\\Windows(?:\\.*)?|C:\\System Volume Information(?:\\.*)?|C:\\Program Files(?:\\.*)?|C:\\Program Files \(x86\)(?:\\.*)?)$/i
 /**
  * macOS：系统卷与系统配置（/System、/bin、/sbin、/etc、/Library、/usr 但不含用户自装的 /usr/local、
- * /var 但不含用户临时目录 /var/folders）、用户 ~/Library（仅 ~/Library/Caches 可清理）、任意 .app 包内部文件
- * （删掉包内文件会直接损坏应用）。APFS 默认不区分大小写，按不区分大小写匹配
+ * /var 但不含用户临时目录 /var/folders）、用户 ~/Library（仅 ~/Library/Caches 可清理）
+ * 以及应用、照片 / iMovie / Final Cut 图库、虚拟机等“包”内部的文件（访达里显示为单个文件，删掉包内文件会直接损坏应用或图库）。
+ * APFS 默认不区分大小写，按不区分大小写匹配
  */
 const MACOS_PROTECTED_PATTERN =
-  /^(?:\/(?:private\/)?(?:System|bin|sbin|etc|Library)(?:\/.*)?|\/usr(?:\/(?!local(?:\/|$)).*)?|\/(?:private\/)?var(?:\/(?!folders(?:\/|$)).*)?|\/Users\/[^/]+\/Library(?:\/(?!Caches(?:\/|$)).*)?|\/.*\.app\/Contents(?:\/.*)?)$/i
+  /^(?:\/(?:private\/)?(?:System|bin|sbin|etc|Library)(?:\/.*)?|\/usr(?:\/(?!local(?:\/|$)).*)?|\/(?:private\/)?var(?:\/(?!folders(?:\/|$)).*)?|\/Users\/[^/]+\/Library(?:\/(?!Caches(?:\/|$)).*)?|\/.*\.(?:app|framework|bundle|plugin|kext|appex|xpc|photoslibrary|photolibrary|musiclibrary|tvlibrary|imovielibrary|fcpbundle|logicx|band|xcarchive|sparsebundle|vmwarevm|pvm|utm)\/.+)$/i
 /** 含 .. 段的路径无法按前缀判断真实位置（如 /usr/local/../bin），一律按受保护处理 */
 const PARENT_SEGMENT_PATTERN = /^(?:.*[\\/])?\.\.(?:[\\/].*)?$/
 export const FORBIDDEN_TARGET_PATTERN = new RegExp(
@@ -374,26 +422,29 @@ export function classifyFileExtension(filePath: string): {
 } {
   const name = filePath.split(/[\\/]/).pop() || filePath
   const dotIdx = name.lastIndexOf('.')
-  const ext = dotIdx > 0 ? name.slice(dotIdx).toLowerCase() : '(无扩展名)'
+  const rawExt = dotIdx > 0 ? name.slice(dotIdx).toLowerCase() : ''
+  // 版本号结尾（如 2.1.301、libfoo.so.1）不是扩展名：否则同一程序的多个版本会各自成为一个「扩展名」，
+  // 与无后缀、以哈希命名的同类文件分到不同统计里。扩展名至少含一个字母、不超过 16 个字符。
+  const ext = /^\.[a-z0-9_+-]{1,15}$/.test(rawExt) && /[a-z]/.test(rawExt) ? rawExt : '(无扩展名)'
 
   let groupId: OfficialFileTypeGroupId = 99
   if (/\.(?:mp4|mkv|mov|avi|flv|webm|wmv|mts|m2ts|m4v|rmvb|mpg|mpeg|3gp)$/i.test(ext)) {
     groupId = 1
   } else if (/\.(?:mp3|flac|wav|aac|ogg|wma|m4a|opus|ape|mid)$/i.test(ext)) {
     groupId = 2
-  } else if (/\.(?:jpg|jpeg|png|gif|bmp|webp|svg|psd|raw|ico|tif|tiff|heic|avif)$/i.test(ext)) {
+  } else if (/\.(?:jpg|jpeg|png|gif|bmp|webp|svg|psd|ico|tif|tiff|heic|avif|dng|cr2|cr3|nef|arw|raf|orf|rw2)$/i.test(ext)) {
     groupId = 3
   } else if (/\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|md|txt|csv|rtf|epub|mobi|odt|wps)$/i.test(ext)) {
     groupId = 4
-  } else if (/\.(?:zip|7z|rar|tar|gz|bz2|xz|iso|wim|cab|dmg|tgz|zst)$/i.test(ext)) {
+  } else if (/\.(?:zip|7z|rar|tar|gz|bz2|xz|iso|wim|cab|dmg|tgz|zst|img|sparseimage|sparsebundle|ipsw)$/i.test(ext)) {
     groupId = 5
-  } else if (/\.(?:exe|msi|msix|appx|apk|bat|cmd|com|scr)$/i.test(ext)) {
+  } else if (/\.(?:exe|msi|msix|appx|apk|ipa|bat|cmd|com|scr|pkg|mpkg)$/i.test(ext)) {
     groupId = 6
   } else if (/\.(?:ts|tsx|js|jsx|mjs|cjs|vue|py|cpp|c|h|hpp|rs|go|java|cs|json|yaml|yml|toml|xml|html|css|scss|less|sql|sh|ps1|wasm|map)$/i.test(ext)) {
     groupId = 7
-  } else if (/\.(?:dll|sys|drv|ocx|pdb|dmp|log|tmp|bak|old|cat|inf|mui|winmd|etl|evtx|pf)$/i.test(ext)) {
+  } else if (/\.(?:dll|sys|drv|ocx|pdb|dmp|log|tmp|bak|old|cat|inf|mui|winmd|etl|evtx|pf|dylib|crash|ips|kext)$/i.test(ext)) {
     groupId = 8
-  } else if (/\.(?:db|sqlite|sqlite3|wal|shm|mdf|ldf|accdb|mdb|frm|ibd|idx|dat|bin|pak|asar|vmdk|vhdx|vhd)$/i.test(ext)) {
+  } else if (/* .raw 在 macOS 上通常是 Docker Desktop 的虚拟磁盘 Docker.raw，不按相机原图归类 */ /\.(?:db|sqlite|sqlite3|wal|shm|mdf|ldf|accdb|mdb|frm|ibd|idx|dat|bin|pak|asar|vmdk|vhdx|vhd|raw|qcow2)$/i.test(ext)) {
     groupId = 9
   }
 
@@ -506,11 +557,44 @@ function extractDrivePrefix(filePath: string): string {
 }
 
 /**
+ * 读取挂载卷；个别卷读不到容量（BitLocker 锁定卷、断开的网络卷、损坏的磁盘映像等）时，
+ * 其余卷照常返回，读不到的卷连同原因放在 errors 里由界面如实列出，不让整次分析失败。
+ * 公共的 probeRealDiskDrives 遇到不完整列表直接报错，这里先去掉不完整标记再交给它校验每一卷的数据。
+ */
+export async function probeDiskVolumesTolerant(hostOverride?: HostOverride): Promise<{ drives: RealDiskDriveInfo[]; errors: string[] }> {
+  const res = await callHostTransport<Record<string, unknown>>('system_list_volumes', {}, hostOverride)
+  if (!res.ok && isHostMethodMissing(res.error)) throw hostUpgradeError('读取磁盘卷列表')
+  if (!res.ok || !res.data || !Array.isArray(res.data.volumes)) throw new Error(res.error || '无法读取挂载卷列表')
+  const errors = res.data.partial
+    ? (Array.isArray(res.data.errors) && res.data.errors.length ? res.data.errors.map(String) : ['部分卷容量读取失败'])
+    : []
+  if (!res.data.volumes.length && errors.length) throw new Error(`没有读取到已挂载卷：${errors.join('；')}`)
+  // 同一份宿主快照交给公共解析（校验每一卷的数据），不重复请求宿主
+  const snapshot = { ...res.data, partial: false, errors: [] }
+  const drives = await probeRealDiskDrives([], { system_list_volumes: () => snapshot } as unknown as HostOverride)
+  return { drives, errors }
+}
+
+/**
+ * 系统临时目录（Windows 为 %TEMP%，macOS 为 /var/folders/.../T）。
+ * 不能用 system_get_path('temp')：宿主把它定义为本插件自己的隔离临时目录（…/ZTools/Cache/…/Temp），
+ * 扫描它找不到系统里的临时大文件。新版宿主的 system_list_common_folders 返回真正的系统临时目录；
+ * 旧宿主没有该方法时不扫描临时目录，而不是扫描插件自己的目录冒充。
+ */
+export async function getSystemTempDir(hostOverride?: HostOverride): Promise<string> {
+  const res = await callHostTransport<{ folders?: unknown }>('system_list_common_folders', {}, hostOverride)
+  if (!res.ok || !Array.isArray(res.data?.folders)) return ''
+  const temp = (res.data.folders as unknown[]).find((item): item is { id: string; path: string; exists: boolean } =>
+    Boolean(item) && typeof item === 'object' && (item as { id?: unknown }).id === 'temp')
+  return temp && temp.exists === true && typeof temp.path === 'string' ? temp.path.trim() : ''
+}
+
+/**
  * 采集本机真实磁盘分区、10 大分类分布与热点大文件全景快照
  */
-export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<DiskAnalysisSnapshot> {
+export async function fetchDiskAnalysisSnapshot(hostOverride?: HostOverride): Promise<DiskAnalysisSnapshot> {
   // 1. 探测真实磁盘分区 (C:/ ~ G:/)
-  const rawDrives = await probeRealDiskDrives([], hostOverride)
+  const { drives: rawDrives, errors: volumeErrors } = await probeDiskVolumesTolerant(hostOverride)
   const drives: DiskDriveItem[] = rawDrives.map(d => ({
     drive: d.drive,
     label: d.label || d.drive,
@@ -528,7 +612,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('desktop', hostOverride),
     getRealSystemPath('videos', hostOverride),
-    getRealSystemPath('temp', hostOverride)
+    getSystemTempDir(hostOverride)
   ])
 
   // macOS 额外扫描用户缓存目录（~/Library/Caches），优先覆盖用户可清理的位置
@@ -569,7 +653,8 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
       groupName: cls.groupName,
       groupColor: cls.groupColor,
       sizeBytes,
-      mtime: mtime || Math.floor(Date.now() / 1000),
+      // 宿主没给修改时间时保持 0（界面显示“未知时间”），不能用当前时间冒充
+      mtime: Number.isFinite(mtime) && mtime > 0 ? mtime : 0,
       isProtected: FORBIDDEN_TARGET_PATTERN.test(cleanPath)
     })
   }
@@ -589,6 +674,12 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
   const seenDirs = new Set<string>()
   let sampled = false
   let scannedEntries = 0
+  // 读不到容量的卷不在分区列表里，也不扫描；连同宿主给的原因列在“未能扫描的目录”中
+  const failedScans: DiskScanFailure[] = volumeErrors.map(error => {
+    const match = error.match(/^(.+?): (.+)$/)
+    return match ? { path: match[1]!, reason: `卷容量读取失败：${match[2]}` } : { path: '挂载卷', reason: error }
+  })
+  const volumeFailureCount = failedScans.length
 
   if (supportsDeepScan) {
     // 宿主支持 dir: 目录扫描时，并发扫描本机挂载分区与系统用户目录（路径来自宿主，不硬编码）
@@ -597,10 +688,20 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
       : []
     const realTargetDirs = Array.from(new Set([...scanDirs, ...driveRoots])).filter(Boolean)
 
-    const dirScans = await Promise.all(
+    // 逐目录降级：某个目录读不到（用户拒绝访问「文稿 / 桌面 / 下载」、外接卷不可读、扫描不完整）不拖垮其它目录，
+    // 失败的目录连同原因如实返回给界面；全部失败才算扫描失败
+    const settled = await Promise.allSettled(
       realTargetDirs.map(d => scanRealDirectoryTree(d, 100, hostOverride))
     )
-    for (const [scanIndex, res] of dirScans.entries()) {
+    for (const [scanIndex, outcome] of settled.entries()) {
+      if (outcome.status === 'rejected') failedScans.push({ path: realTargetDirs[scanIndex]!, reason: describeScanFailure(realTargetDirs[scanIndex]!, outcome.reason) })
+    }
+    if (realTargetDirs.length > 0 && failedScans.length - volumeFailureCount === realTargetDirs.length) {
+      throw new Error(`所有目录都未能扫描：${failedScans.map(f => `${f.path}：${f.reason}`).join('；')}`)
+    }
+    for (const [scanIndex, outcome] of settled.entries()) {
+      if (outcome.status !== 'fulfilled') continue
+      const res = outcome.value
       if (res.truncated) sampled = true
       scannedEntries += Number(res.visitedEntries) || 0
       // 分区根目录扫描被截断时，文件只是最先遍历到的系统文件（如 /usr/bin），不代表大文件，只取其子目录体积
@@ -659,6 +760,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
     groupStats,
     topDirectories,
     ...(sampled ? { sampled: true, scannedEntries } : {}),
+    failedScans,
     totalCapacityBytes,
     totalUsedBytes,
     totalAvailableBytes
@@ -670,7 +772,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: any): Promise<Dis
  */
 export async function deleteDiskFileItem(
   filePath: string,
-  hostOverride?: any
+  hostOverride?: HostOverride
 ): Promise<{ ok: boolean; error?: string }> {
   if (!filePath || typeof filePath !== 'string') {
     return { ok: false, error: '文件路径不能为空' }
@@ -702,7 +804,7 @@ export function describeHostPathError(error: string | undefined): string {
  */
 export async function batchDeleteDiskFileItems(
   filePaths: string[],
-  hostOverride?: any
+  hostOverride?: HostOverride
 ): Promise<{
   succeeded: string[]
   failed: Array<{ path: string; error: string }>
@@ -720,12 +822,76 @@ export async function batchDeleteDiskFileItems(
   return { succeeded, failed }
 }
 
+/** 分区根目录：Windows 裸盘符补反斜杠（C: → C:\\）；目录挂载点（C:\\mount\\）与 macOS 挂载点（/、/Volumes/X）本身就是路径 */
+export function driveRoot(drive: string): string {
+  return /^[A-Za-z]:$/.test(drive) ? `${drive}\\` : drive
+}
+
+/** 当前是否运行在 macOS（按宿主页面的 navigator 判断；拿不到时按 Windows 处理） */
+export function isMacPlatform(): boolean {
+  const nav = (globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator
+  return /Mac/i.test(String(nav?.platform || nav?.userAgent || ''))
+}
+
+/** macOS 上与 Windows 用词或扩展名不同的分类说明 */
+const MAC_GROUP_DESCRIPTIONS: Partial<Record<OfficialFileTypeGroupId, string>> = {
+  6: '安装包与安装程序 (.pkg, .mpkg, .ipa, .apk；.dmg 磁盘镜像归入「压缩包与镜像」)',
+  8: '动态库、内核扩展、崩溃报告、运行日志与临时文件 (.dylib, .kext, .ips, .crash, .log, .tmp)'
+}
+
+/** 按平台给出分类说明：macOS 不出现 .dll / .exe 这类 Windows 示例 */
+export function groupDescriptionFor(groupId: OfficialFileTypeGroupId, mac: boolean = isMacPlatform()): string {
+  const meta = getGroupMetaById(groupId)
+  return (mac && MAC_GROUP_DESCRIPTIONS[groupId]) || meta.description
+}
+
+/** 搜索框占位提示里的后缀示例按平台给 */
+export function searchPlaceholderFor(mac: boolean = isMacPlatform()): string {
+  return mac ? '搜索大文件、后缀 (.mp4/.dmg/.zip) 或路径...' : '搜索大文件、后缀 (.mp4/.iso/.zip/.dll) 或路径...'
+}
+
+/** 回收站名称：Windows 为「回收站」，macOS 为「废纸篓」 */
+export function trashName(samplePath: string): string {
+  return String(samplePath || '').startsWith('/') ? '废纸篓' : '回收站'
+}
+
+/** 系统文件管理器名称：Windows 路径为「资源管理器」，macOS 为「访达」 */
+export function fileManagerName(samplePath: string): string {
+  return /^[A-Za-z]:/.test(String(samplePath || '')) || String(samplePath || '').startsWith('\\\\') ? '资源管理器' : '访达'
+}
+
+/** 最后一个不授权分区根目录的客户端版本（之后的版本在 system_list_volumes 返回卷时只读登记卷根） */
+export const DRIVE_ROOT_LAST_UNSUPPORTED_APP_VERSION = '1.1.8.6'
+
 /**
- * 在资源管理器中定位文件或分区
+ * 在文件管理器中打开分区根目录。
+ * 分区根目录不在任何扫描结果里：新版客户端在列出挂载卷时只读授权卷根（只能打开，不能读写卷内内容）；
+ * 旧版客户端没有这项授权，会以「路径未由当前窗口授权」拒绝——这时提示升级，而不是说分区「可能已被移动或删除」。
+ */
+export async function openDriveRoot(drive: string, hostOverride?: HostOverride): Promise<{ ok: boolean; error?: string }> {
+  const target = driveRoot(String(drive || ''))
+  if (!target) return { ok: false, error: '分区路径为空' }
+  const res = await callHostTransport('shell_open_path', { fullPath: target }, hostOverride)
+  if (res.ok) return { ok: true }
+  const raw = String(res.error || '').trim()
+  if (/PERMISSION_DENIED|未由当前窗口授权|未授权/i.test(raw)) {
+    return { ok: false, error: `ZTools ${DRIVE_ROOT_LAST_UNSUPPORTED_APP_VERSION} 及更早版本不允许插件打开分区根目录，请升级 ZTools；已是更新的版本时请点「重新扫描」后再试（授权 30 分钟后过期）` }
+  }
+  if (/FILE_ERROR|FILE_NOT_FOUND|ENOENT|不存在|文件操作失败/i.test(raw)) {
+    return { ok: false, error: '分区可能已被推出或卸载，请重新扫描' }
+  }
+  if (/METHOD_NOT_FOUND|METHOD_NOT_AVAILABLE|未知方法|未实现/.test(raw)) {
+    return { ok: false, error: '当前 ZTools 版本过低，请升级到最新版本后再试' }
+  }
+  return { ok: false, error: raw || '打开分区失败' }
+}
+
+/**
+ * 在系统文件管理器中定位文件或目录
  */
 export async function openDiskItemLocation(
   targetPath: string,
-  hostOverride?: any
+  hostOverride?: HostOverride
 ): Promise<boolean> {
   if (!targetPath) return false
   return showRealItemInFolder(targetPath, hostOverride)
@@ -736,7 +902,7 @@ export async function openDiskItemLocation(
  */
 export async function openDiskFileDefault(
   targetPath: string,
-  hostOverride?: any
+  hostOverride?: HostOverride
 ): Promise<boolean> {
   if (!targetPath) return false
   return openRealPath(targetPath, hostOverride)

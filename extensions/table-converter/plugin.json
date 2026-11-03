@@ -1,9 +1,9 @@
 {
   "id": "table-converter",
   "name": "表格互转",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "description": "离线转换 Excel 复制文本/TSV/CSV、JSON 数组、Markdown、HTML 文字表格与 SQLite INSERT，保留长数字和 JSON 类型，回车复制",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

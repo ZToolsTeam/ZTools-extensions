@@ -35,8 +35,9 @@ import {
   openFileLocation,
   getResourceFocus,
   filterProcesses,
-  fetchProcessPorts,
+  fetchProcessPortSnapshot,
   filterProcessesByPort,
+  matchPortRows,
   type ProcessPort
 } from './logic.js'
 
@@ -49,6 +50,11 @@ type ProcessViewFilter = 'port' | 'memory' | 'cpu' | 'high-load' | 'system' | 'u
 /**
  * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
  */
+/** 系统文件管理器名称：Windows 路径为资源管理器，其余（macOS）为访达 */
+function fileManagerName(samplePath: string): string {
+  return /^[a-zA-Z]:[\\/]|^\\\\/.test(samplePath) ? '资源管理器' : '访达'
+}
+
 async function copyWithToast(text: string, successTitle: string, successMessage?: string): Promise<void> {
   try {
     await Clipboard.copy(text)
@@ -86,6 +92,8 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
   const [loadError, setLoadError] = useState(inRealHost ? '' : NOT_IN_CLIENT_MESSAGE)
   const [portsError, setPortsError] = useState('')
   const [ports, setPorts] = useState<ProcessPort[]>([])
+  // macOS 宿主改用 lsof 兜底时只能看到当前用户进程的端口，系统服务占用的端口查不到，需要如实提示
+  const [portsPartial, setPortsPartial] = useState(false)
   const [isLoading, setIsLoading] = useState(inRealHost)
   const [details, setDetails] = useState<Record<number, ProcessDetailInfo>>({})
   const [services, setServices] = useState<Record<number, ProcessServiceInfo[]>>({})
@@ -230,10 +238,10 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
       const request = ++sequence
       inFlight = true
       try {
-        const rows = await fetchProcessPorts()
-        if (active && request === sequence) { setPorts(rows); setPortsError('') }
+        const snapshot = await fetchProcessPortSnapshot()
+        if (active && request === sequence) { setPorts(snapshot.rows); setPortsPartial(snapshot.partial); setPortsError('') }
       } catch (error) {
-        if (active && request === sequence) { setPorts([]); setPortsError(error instanceof Error ? error.message : String(error)) }
+        if (active && request === sequence) { setPorts([]); setPortsPartial(false); setPortsError(error instanceof Error ? error.message : String(error)) }
       } finally {
         if (request === sequence) inFlight = false
       }
@@ -361,7 +369,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
       showToast({
         style: Toast.Style.Failure,
         title: '无法定位路径',
-        message: '该进程由内核直接托管或路径受权限保护'
+        message: '系统没有提供该进程的可执行文件路径（内核进程、受权限保护或改写了进程名的程序）'
       })
       return
     }
@@ -369,7 +377,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (ok) {
       showToast({
         style: Toast.Style.Success,
-        title: '已在文件管理器中定位',
+        title: `已在${fileManagerName(targetPath)}中定位`,
         message: targetPath
       })
     } else {
@@ -394,6 +402,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
       : 'memory'
 
   const portMode = viewFilter === 'port' || /^port:/i.test(searchText)
+  const portRows = portMode ? matchPortRows(ports, searchText) : []
   const baseFiltered = portMode ? filterProcessesByPort(processes, ports, searchText) : filterProcesses(processes, searchText, tab, sortBy)
   const filtered =
     viewFilter === 'high-load'
@@ -426,17 +435,17 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
       onChange: (val: string) => setViewFilter(val as ProcessViewFilter),
       children: [
         List.Dropdown.Item({ title: '本地端口占用', value: 'port' }),
-        List.Dropdown.Item({ title: '全部进程 · 按内存排序 (Memory)', value: 'memory' }),
-        List.Dropdown.Item({ title: '全部进程 · 按 CPU 排序 (CPU)', value: 'cpu' }),
-        List.Dropdown.Item({ title: '仅高负载进程 (High Load)', value: 'high-load' }),
-        List.Dropdown.Item({ title: '系统关键服务 (System Services)', value: 'system' }),
-        List.Dropdown.Item({ title: '用户应用程序 (User Apps)', value: 'user' }),
-        List.Dropdown.Item({ title: '按进程名称排序 (Name A-Z)', value: 'name' }),
-        List.Dropdown.Item({ title: '按进程 PID 升序 (PID)', value: 'pid' })
+        List.Dropdown.Item({ title: '全部进程 · 按内存排序', value: 'memory' }),
+        List.Dropdown.Item({ title: '全部进程 · 按 CPU 排序', value: 'cpu' }),
+        List.Dropdown.Item({ title: '仅高负载进程', value: 'high-load' }),
+        List.Dropdown.Item({ title: '系统关键服务', value: 'system' }),
+        List.Dropdown.Item({ title: '用户应用程序', value: 'user' }),
+        List.Dropdown.Item({ title: '按进程名称排序', value: 'name' }),
+        List.Dropdown.Item({ title: '按 PID 升序', value: 'pid' })
       ]
     }),
     filterBar: {
-      summaryText: loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? `数据不可用或已过期：${loadError}` : portMode ? (portsError ? `端口读取失败：${portsError}` : `本地端口匹配 ${filtered.length} 个进程`) : `CPU 负载 ${totalCpuPercent}% · 物理内存已用 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%) · 活动进程 ${filtered.length} 个`,
+      summaryText: loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? `数据不可用或已过期：${loadError}` : portMode ? (portsError ? `端口读取失败：${portsError}` : `本地端口匹配 ${filtered.length} 个进程${portsPartial ? '（只能看到当前用户进程的端口，系统服务占用的端口可能查不到）' : ''}`) : `CPU 负载 ${totalCpuPercent}% · 物理内存已用 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%) · 活动进程 ${filtered.length} 个`,
       actions: [
         {
           id: 'refresh-list',
@@ -470,7 +479,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
           ]
         : []),
       List.Section({
-        title: `活动进程列表 (${filtered.length})`,
+        title: `${portMode ? '端口占用进程' : '活动进程列表'}（${filtered.length}）`,
         children: filtered.map((proc) => {
           const isCrit = getTerminationRisk(proc.pid, proc.name) === 'forbidden'
           const memVal = proc.workingSetBytes ?? proc.memoryBytes ?? 0
@@ -481,10 +490,10 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
 
           return List.Item({
             id: String(proc.pid),
-            title: `${proc.name} [PID: ${proc.pid}]`,
+            title: proc.name,
             subtitle: [
               `PID: ${proc.pid}`,
-              ...(portMode ? [`端口 ${[...new Set(ports.filter(p => p.pid === proc.pid).map(p => p.localPort))].join(", ")}`] : []),
+              ...(portMode ? [`端口 ${[...new Set(portRows.filter(p => p.pid === proc.pid).map(p => p.localPort))].join(", ")}`] : []),
               ...(proc.threadCount ? [`线程 ${proc.threadCount}`] : []),
               ...(svcHint ? [svcHint] : []),
               proc.path || proc.commandLine || '路径未提供'

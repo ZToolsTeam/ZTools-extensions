@@ -24,7 +24,7 @@ npm ci --ignore-scripts
 ## 3. 创建插件
 
 ```bash
-npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么" --author "你的名字"
+npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么" --author "你的GitHub用户名"
 ```
 
 脚手架会生成 `extensions/my-tool/`：
@@ -48,7 +48,7 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
   "name": "我的工具",
   "version": "1.0.0",
   "description": "一句话说明插件做什么",
-  "author": "你的名字",
+  "author": "你的GitHub用户名",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "mode": "view",
@@ -66,13 +66,15 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
 | 选项 | 说明 |
 | --- | --- |
 | `--platform cross` / `windows` / `macos` | 生成哪些平台的 `targets`，默认 `cross`（两个平台都写）。按你实际能测试的平台选 |
-| `--author <名字>` | 作者，默认 `ZTools Developer` |
+| `--author <名字>` | 推荐填写 GitHub 用户名，也可填写实际团队名称；默认 `ZTools Developer` 是占位值，投稿前必须替换 |
 | `--force` | 目录已存在时覆盖 |
 | `--help` | 查看全部用法 |
 
 插件 ID 以小写字母开头，只用小写字母、数字和短横线，长度 2–64，例如 `quick-notes`。ID 一旦发布就不要再改，它也是目录名。
 
 不带参数运行 `npm run create-plugin` 会逐项询问。
+
+社区插件直接署名作者本人或实际团队，不加 `ZTools Community` 前后缀；官方插件统一署名 `ZTools Team`。参与已有插件时保留原署名，贡献记录在 PR 和 Git 历史中。完整约定见[作者署名](publishing.md#作者署名)。
 
 ## 4. 看懂示例代码
 
@@ -233,7 +235,7 @@ Windows（把路径换成 ZTools 的安装目录；免安装版就是解压目�
 | 复制的是真实文件 | 符号链接（`ln -s`、快捷方式）会被忽略，要复制文件 |
 | `targets` 包含当前系统 | 清单里没声明当前平台的插件不会显示 |
 | `author` 不要写官方名称 | 作者写成 `ZTools`、`ZTools Team`、`official` 等官方名称、但又不是官方发布的插件会被隐藏 |
-| ID 不是客户端内置插件 | 随客户端内置的插件（目前是 `json-format`、`timestamp`、`calculator`、`qr-code`、`base64image`、`file-compare`、`crypto-tool`、`google-auth`、`color-picker`、`memo`、`todo`、`batch-image`、`archive-manager`、`invoice-assistant`、`translator`、`downloads-manager`）总是加载客户端自带的那份，复制到 `Plugins/` 不生效。修改这些插件时，可以在复制出来的 `plugin.json` 里临时改一个新 ID（目录名同步改），作者改成你自己的名字再试用；提交时不要带上这些临时改动 |
+| ID 不是客户端内置插件 | 开源版与官方版默认提供同一批基础工具，名单及选择标准见客户端的[默认内置插件](https://github.com/ZToolsTeam/ZTools/blob/main/docs/architecture.md#默认内置插件)。这些插件总是加载客户端自带的副本，复制到 `Plugins/` 不生效。修改它们时，可以在复制出来的 `plugin.json` 里临时改一个新 ID（目录名同步改），作者改成你自己的名字再试用；提交时不要带上这些临时改动。其余官方插件和社区插件均可按上面的方式本地试用 |
 | ID 没有和客户端内置功能重名 | 客户端内置功能占用了一些 ID（名单见 [`packages/ztools-plugins-spec/reserved-ids.json`](../packages/ztools-plugins-spec/reserved-ids.json)），社区插件用了这些 ID 会被隐藏。清单校验会直接拒绝它们，换一个 ID 即可 |
 | 看错误信息 | 启动命令再加 `--remote-debugging-port=9222`，用 Chrome 打开 `chrome://inspect` 连接后，在控制台查看插件加载和运行时的报错 |
 

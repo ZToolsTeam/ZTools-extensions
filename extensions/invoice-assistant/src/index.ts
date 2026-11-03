@@ -218,9 +218,11 @@ export function InvoiceAssistantCommand() {
       setInvoices(nextInvoices)
       setCheckedIds(defaultCheckedInvoiceIds(nextInvoices))
       setParseErrors(res.parseErrors)
-      setLoadError('')
+      setLoadError(res.error || '')
       const incompleteCount = nextInvoices.filter((i) => !isInvoiceComplete(i)).length
-      if (res.parseErrors.length > 0) {
+      if (res.error) {
+        await showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: res.error })
+      } else if (res.parseErrors.length > 0) {
         await showToast({
           style: Toast.Style.Failure,
           title: `${res.parseErrors.length} 个文件读取或识别失败`,

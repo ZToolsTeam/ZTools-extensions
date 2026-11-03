@@ -33,17 +33,18 @@ export interface NetworkRescueItem {
   command: string
   category: RescueCategory
   categoryLabel: string
-  status: 'healthy' | 'warning' | 'error' | 'repaired'
+  status: 'healthy' | 'warning' | 'error' | 'repaired' | 'unknown'
   statusText: string
-  healthScore: number
   requiresAdmin: boolean
 }
 
 export interface NetworkDiagnosticSnapshot {
   items: NetworkRescueItem[]
-  overallHealthScore: number
+  ok: boolean
+  error?: string
+  unknownCount: number
   warningCount: number
-  latencyMs: number
+  latencyMs: number | null
   proxyInterceptDetected: boolean
 }
 
@@ -66,9 +67,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'ipconfig /flushdns',
     category: 'dns_proxy',
     categoryLabel: 'DNS与代理',
-    status: 'healthy',
-    statusText: '缓存正常',
-    healthScore: 95,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: false
   },
   {
@@ -78,9 +78,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'reg add "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings" /v ProxyEnable /t REG_DWORD /d 0 /f',
     category: 'dns_proxy',
     categoryLabel: 'DNS与代理',
-    status: 'warning',
-    statusText: '检测到残留代理端口 127.0.0.1:7890',
-    healthScore: 45,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: false
   },
   {
@@ -90,9 +89,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'netsh winsock reset && netsh int ip reset',
     category: 'stack_reset',
     categoryLabel: '协议栈重置',
-    status: 'healthy',
-    statusText: 'Winsock 2.2 正常',
-    healthScore: 98,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: true
   },
   {
@@ -102,9 +100,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'type C:\\Windows\\System32\\drivers\\etc\\hosts',
     category: 'dns_proxy',
     categoryLabel: 'DNS与代理',
-    status: 'warning',
-    statusText: '发现 3 条非标域名映射',
-    healthScore: 68,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: true
   },
   {
@@ -114,9 +111,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'ipconfig /release && ipconfig /renew',
     category: 'connectivity',
     categoryLabel: '连通性修复',
-    status: 'healthy',
-    statusText: 'DHCP 租约有效',
-    healthScore: 96,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: false
   },
   {
@@ -126,9 +122,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'ping -n 2 223.5.5.5',
     category: 'connectivity',
     categoryLabel: '连通性修复',
-    status: 'healthy',
-    statusText: '延迟 14 ms · 0% 丢包',
-    healthScore: 99,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: false
   },
   {
@@ -138,9 +133,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'netsh advfirewall reset',
     category: 'stack_reset',
     categoryLabel: '协议栈重置',
-    status: 'healthy',
-    statusText: '防火墙策略标准',
-    healthScore: 94,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: true
   },
   {
@@ -150,9 +144,8 @@ export const NETWORK_RESCUE_ITEMS: NetworkRescueItem[] = [
     command: 'net start nlasvc',
     category: 'stack_reset',
     categoryLabel: '协议栈重置',
-    status: 'healthy',
-    statusText: 'NLA 服务运行中',
-    healthScore: 97,
+    status: 'unknown',
+    statusText: '尚未检测',
     requiresAdmin: true
   }
 ]
@@ -221,73 +214,35 @@ interface RemoteDiagnosticPayload {
 }
 
 export async function runNetworkDiagnostics(hostOverride?: unknown): Promise<NetworkDiagnosticSnapshot> {
-  const realHost = isRealElectronHost(hostOverride) || Boolean(hostOverride)
-  const items: NetworkRescueItem[] = NETWORK_RESCUE_ITEMS.map((item) => {
-    if (isRealElectronHost(hostOverride)) {
-      // 在真实宿主环境下，清除预设假告警，等待真实探测结果填充
-      return {
-        ...item,
-        status: 'healthy',
-        statusText: item.id === 'clear-proxy' ? '未检测到异常系统代理' : item.id === 'check-hosts' ? 'Hosts 映射正常' : item.statusText,
-        healthScore: item.status === 'warning' ? 95 : item.healthScore
-      }
-    }
-    return { ...item }
+  const items: NetworkRescueItem[] = NETWORK_RESCUE_ITEMS.map(item => ({ ...item }))
+  const failure = (error: string): NetworkDiagnosticSnapshot => ({
+    ok: false, error, items, unknownCount: items.length, warningCount: 0, latencyMs: null, proxyInterceptDetected: false
   })
-
-  let latencyMs = isRealElectronHost(hostOverride) ? 0 : 14
-
-  if (realHost) {
-    const pluginRes = await invokePluginService<RemoteDiagnosticPayload>(DLL_PLUGIN_NAME, 'diagnose', {}, hostOverride)
-    const diagData = pluginRes.ok && pluginRes.data
-      ? pluginRes.data
-      : (await callHostTransport<RemoteDiagnosticPayload>('network_run_diagnostics', {}, hostOverride)).data
-
-    if (diagData) {
-      if (typeof diagData.latencyMs === 'number' && diagData.latencyMs >= 0) {
-        latencyMs = diagData.latencyMs
-      }
-      const remoteList = Array.isArray(diagData.items)
-        ? diagData.items
-        : Array.isArray(diagData.checks)
-        ? diagData.checks
-        : []
-      for (const remoteItem of remoteList) {
-        const rawId = String(remoteItem.id || remoteItem.checkId || '')
-        const mappedId = HOST_CHECK_ID_MAP[rawId] || rawId
-        const target = items.find((i) => i.id === rawId || i.id === mappedId)
-        if (target) {
-          target.status =
-            remoteItem.status === 'error'
-              ? 'error'
-              : remoteItem.status === 'warning'
-              ? 'warning'
-              : remoteItem.status === 'repaired'
-              ? 'repaired'
-              : 'healthy'
-          target.statusText = String(remoteItem.statusText || remoteItem.detail || target.statusText)
-          target.healthScore = Number(
-            remoteItem.healthScore ??
-              (target.status === 'error' ? 20 : target.status === 'warning' ? 50 : 98)
-          )
-        }
-      }
-    }
+  if (!hostOverride && !isRealElectronHost()) return failure('需要在 ZTools 客户端中诊断网络')
+  const pluginRes = await invokePluginService<RemoteDiagnosticPayload>(DLL_PLUGIN_NAME, 'diagnose', {}, hostOverride)
+  const fallback = pluginRes.ok ? undefined : await callHostTransport<RemoteDiagnosticPayload>('network_run_diagnostics', {}, hostOverride)
+  const data = pluginRes.ok ? pluginRes.data : fallback?.ok ? fallback.data : undefined
+  if (!data) return failure(pluginRes.error || fallback?.error || '客户端未返回诊断结果')
+  const remote = Array.isArray(data.items) ? data.items : Array.isArray(data.checks) ? data.checks : undefined
+  if (!remote) return failure('客户端返回的诊断数据格式无效')
+  let matched = 0
+  for (const item of remote) {
+    if (!item || typeof item !== 'object') continue
+    const rawId = String(item.id || item.checkId || '')
+    const target = items.find(current => current.id === (HOST_CHECK_ID_MAP[rawId] || rawId))
+    if (!target) continue
+    matched += 1
+    target.status = item.status === 'healthy' || item.status === 'warning' || item.status === 'error'
+      ? item.status : 'unknown'
+    target.statusText = String(item.statusText || item.detail || (target.status === 'unknown' ? '未检测到有效状态' : '客户端未提供详情'))
   }
-
-  const warningCount = items.filter((i) => i.status === 'warning' || i.status === 'error').length
-  const overallHealthScore = Math.round(
-    items.reduce((acc, cur) => acc + cur.healthScore, 0) / Math.max(1, items.length)
-  )
-
+  if (!matched) return failure('客户端未返回可识别的检查项')
   return {
-    items,
-    overallHealthScore,
-    warningCount,
-    latencyMs,
-    proxyInterceptDetected: items.some(
-      (i) => i.id === 'clear-proxy' && (i.status === 'warning' || i.status === 'error')
-    )
+    ok: true, items,
+    unknownCount: items.filter(item => item.status === 'unknown').length,
+    warningCount: items.filter(item => item.status === 'warning' || item.status === 'error').length,
+    latencyMs: typeof data.latencyMs === 'number' && Number.isFinite(data.latencyMs) && data.latencyMs >= 0 ? data.latencyMs : null,
+    proxyInterceptDetected: items.some(item => item.id === 'clear-proxy' && (item.status === 'warning' || item.status === 'error'))
   }
 }
 
@@ -333,36 +288,20 @@ export async function executeNetworkRepair(
       }
     }
 
-    const shellRes = await callHostTransport(
-      'shell_exec',
-      { command: target.command },
-      hostOverride
-    )
-    if (shellRes.ok) {
-      return {
-        ok: true,
-        itemId: target.id,
-        command: target.command,
-        message: `已执行修复: ${target.title}`
-      }
-    }
-
     return {
       ok: false,
       itemId: target.id,
       command: target.command,
-      message:
-        pluginRes.error ||
-        shellRes.error ||
-        (target.requiresAdmin ? `修复失败 [${target.title}]：需要管理员权限` : `修复命令执行失败: ${target.command}`)
+      message: pluginRes.error || '客户端没有确认网络修复已执行'
     }
+
   }
 
   return {
-    ok: true,
+    ok: false,
     itemId: target.id,
     command: target.command,
-    message: `已完成修复: ${target.title}`
+    message: '需要在 ZTools 客户端中执行网络修复'
   }
 }
 
@@ -402,7 +341,7 @@ export async function batchExecuteNetworkRepairs(
     failedCount,
     summary: allFailed
       ? `网络修复失败（共 ${failedCount} 项未通过，请检查管理员权限）`
-      : `已自动修复 ${repairedCount} 项网络异常配置`
+      : `已执行 ${repairedCount} 项，失败 ${failedCount} 项；请以重新诊断结果为准`
   }
 }
 

@@ -34,7 +34,7 @@ export const DEFAULT_QUICKLINKS: Quicklink[] = [
   },
   {
     id: 'ql-3',
-    title: '哔哩哔哩 (Bilibili) 搜索',
+    title: '哔哩哔哩搜索',
     link: 'https://search.bilibili.com/all?keyword={query}',
     urlPattern: 'https://search.bilibili.com/all?keyword={query}',
     keyword: 'bili',
@@ -43,6 +43,36 @@ export const DEFAULT_QUICKLINKS: Quicklink[] = [
     isGroup: false,
     description: 'B 站硬核科技视频与教程直达',
     icon: 'play',
+    openCount: 0,
+    createdAt: 1700000000000,
+    updatedAt: 1700000000000
+  },
+  {
+    id: 'ql-6',
+    title: '谷歌搜索',
+    link: 'https://www.google.com/search?q={query}',
+    urlPattern: 'https://www.google.com/search?q={query}',
+    keyword: 'gg',
+    alias: 'gg',
+    category: 'search',
+    isGroup: false,
+    description: '在谷歌搜索网页',
+    icon: 'globe',
+    openCount: 0,
+    createdAt: 1700000000000,
+    updatedAt: 1700000000000
+  },
+  {
+    id: 'ql-7',
+    title: '小红书搜索',
+    link: 'https://www.xiaohongshu.com/search_result?keyword={query}',
+    urlPattern: 'https://www.xiaohongshu.com/search_result?keyword={query}',
+    keyword: 'xhs',
+    alias: 'xhs',
+    category: 'search',
+    isGroup: false,
+    description: '在小红书搜索笔记与经验分享',
+    icon: 'globe',
     openCount: 0,
     createdAt: 1700000000000,
     updatedAt: 1700000000000
@@ -64,19 +94,19 @@ export const DEFAULT_QUICKLINKS: Quicklink[] = [
   },
   {
     id: 'ql-5',
-    title: '晨会研发看板与流水线网址组',
-    link: 'https://github.com/ZToolsTeam/ZTools',
-    urlPattern: 'https://github.com/ZToolsTeam/ZTools',
-    keyword: 'morning',
-    alias: 'morning',
+    title: '开发者常用文档网址组',
+    link: 'https://developer.mozilla.org/zh-CN/',
+    urlPattern: 'https://developer.mozilla.org/zh-CN/',
+    keyword: 'docs',
+    alias: 'docs',
     category: 'group',
     isGroup: true,
     urls: [
-      'https://github.com/ZToolsTeam/ZTools/pulls',
-      'https://github.com/ZToolsTeam/ZTools/actions',
-      'https://cdn.ztools.cn/plugins-v2/catalog.json'
+      'https://developer.mozilla.org/zh-CN/',
+      'https://stackoverflow.com/',
+      'https://github.com/trending'
     ],
-    description: '一键并发打开 PR 列表、CI 构建流水线与插件目录大盘 (共 3 个网页)',
+    description: '示例：一键打开 MDN 文档、Stack Overflow 与 GitHub 趋势（共 3 个网页），可改成自己的网址',
     icon: 'window',
     openCount: 0,
     createdAt: 1700000000000,
@@ -85,6 +115,19 @@ export const DEFAULT_QUICKLINKS: Quicklink[] = [
 ]
 
 const STORAGE_KEY = 'ztools:quicklinks:data'
+
+/** {query} / {argument} / {arg}，可带 name="…" default="…" 等属性 */
+const PLACEHOLDER_SOURCE = String.raw`\{(query|argument|arg)(?:\s+[^}]*)?\}`
+
+export function hasQueryPlaceholder(url: string): boolean {
+  return new RegExp(PLACEHOLDER_SOURCE, 'i').test(String(url ?? ''))
+}
+
+/** 按网址重新推断类型：网址组为 group，带占位符为 search，否则 direct */
+export function inferQuicklinkCategory(item: Pick<Quicklink, 'isGroup' | 'link' | 'urlPattern'>): QuicklinkCategory {
+  if (item.isGroup) return 'group'
+  return hasQueryPlaceholder(item.urlPattern || item.link) ? 'search' : 'direct'
+}
 
 export function validateQuicklinkUrlPattern(rawUrl: string): {
   valid: boolean
@@ -107,17 +150,60 @@ export function validateQuicklinkUrlPattern(rawUrl: string): {
       error: 'DANGEROUS_PROTOCOL: 严禁使用 javascript: 等危险脚本伪协议'
     }
   }
+  let normalizedUrl = ''
   if (/^https?:\/\//i.test(trimmed)) {
-    return { valid: true, normalizedUrl: trimmed }
+    normalizedUrl = trimmed
+  } else if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(trimmed)) {
+    normalizedUrl = `https://${trimmed}`
+  } else {
+    return {
+      valid: false,
+      normalizedUrl: '',
+      error: 'INVALID_URL: 请输入合法的 http(s):// 网址或域名'
+    }
   }
-  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(trimmed)) {
-    return { valid: true, normalizedUrl: `https://${trimmed}` }
+  // 与客户端打开网址的校验一致：必须能解析出主机名，且不能带账号密码，否则保存后也打不开
+  let parsed: URL
+  try {
+    parsed = new URL(normalizedUrl.replace(new RegExp(PLACEHOLDER_SOURCE, 'gi'), 'q'))
+  } catch {
+    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址格式无效' }
   }
-  return {
-    valid: false,
-    normalizedUrl: '',
-    error: 'INVALID_URL: 请输入合法的 http(s):// 网址或域名'
+  if (!parsed.hostname) {
+    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址缺少域名' }
   }
+  if (parsed.username || parsed.password) {
+    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址不能包含账号或密码' }
+  }
+  return { valid: true, normalizedUrl }
+}
+
+/** 别名用于"别名 + 空格 + 关键词"匹配：不能含空格，也不能与其他条目重复（否则后一个永远匹配不到） */
+export function validateQuicklinkAlias(
+  rawAlias: string,
+  links: Quicklink[],
+  selfId?: string
+): { valid: boolean; alias?: string; error?: string } {
+  const alias = String(rawAlias ?? '').trim()
+  if (!alias) return { valid: true }
+  if (/\s/.test(alias)) return { valid: false, error: '别名不能包含空格' }
+  const lower = alias.toLowerCase()
+  const clash = links.find((item) => item.id !== selfId && (item.alias || item.keyword || '').toLowerCase() === lower)
+  if (clash) return { valid: false, error: `别名「${alias}」已被「${clash.title}」使用` }
+  return { valid: true, alias }
+}
+
+/** 网址组：每行一个网址，全部合法才通过 */
+export function parseGroupUrls(text: string): { valid: boolean; urls: string[]; error?: string } {
+  const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length === 0) return { valid: false, urls: [], error: '网址组至少需要一个网址' }
+  const urls: string[] = []
+  for (const [index, line] of lines.entries()) {
+    const check = validateQuicklinkUrlPattern(line)
+    if (!check.valid) return { valid: false, urls: [], error: `第 ${index + 1} 行：${check.error}` }
+    urls.push(check.normalizedUrl)
+  }
+  return { valid: true, urls }
 }
 
 /**
@@ -131,7 +217,7 @@ export function buildTargetUrl(pattern: string, queryText?: string): string {
     throw new Error(check.error)
   }
   const normalized = check.normalizedUrl
-  const hasPlaceholder = /\{(query|argument|arg)(?:\s+[^}]*)?\}/i.test(normalized)
+  const hasPlaceholder = hasQueryPlaceholder(normalized)
   const cleanQuery = String(queryText ?? '').trim()
 
   if (!hasPlaceholder) {
@@ -154,52 +240,44 @@ export function buildTargetUrl(pattern: string, queryText?: string): string {
   }
 }
 
+/** 通过宿主打开网址；宿主拒绝或不支持时抛错，不能当作已打开 */
+async function openExternalUrl(targetUrl: string): Promise<void> {
+  const g = globalThis as Record<string, unknown>
+  const win = (typeof window !== 'undefined' ? window : g) as Record<string, unknown>
+  const ztools = (win.ztools || g.ztools) as { shell?: { openExternal?: (u: string) => Promise<boolean | void> } } | undefined
+  const electron = win.__ztoolsElectron as
+    | { transport?: { methods?: Record<string, (request: Record<string, unknown>) => Promise<{ success?: boolean; error?: { message?: string } } | undefined>> } }
+    | undefined
+  if (typeof ztools?.shell?.openExternal === 'function') {
+    if ((await ztools.shell.openExternal(targetUrl)) === false) throw new Error(`系统未能打开：${targetUrl}`)
+    return
+  }
+  const method = electron?.transport?.methods?.shell_open_external
+  if (typeof method === 'function') {
+    const reply = await method({ params: { url: targetUrl } })
+    if (reply?.success !== true) throw new Error(reply?.error?.message || `系统未能打开：${targetUrl}`)
+    return
+  }
+  throw new Error('当前客户端不支持打开网址，请升级客户端')
+}
+
 export async function launchQuicklink(
   item: QuicklinkItem | Quicklink,
   queryText?: string,
   opener?: (url: string) => Promise<void> | void
 ): Promise<string[]> {
-  const openFn =
-    opener ??
-    (async (targetUrl: string) => {
-      const g = globalThis as Record<string, unknown>
-      const win = (typeof window !== 'undefined' ? window : g) as Record<string, unknown>
-      const ztools = (win.ztools || g.ztools) as
-        | {
-            shell?: { openExternal?: (u: string) => Promise<void> }
-            invoke?: (m: string, p?: Record<string, unknown>) => Promise<unknown>
-          }
-        | undefined
-      const electron = win.__ztoolsElectron as
-        | {
-            transport?: {
-              invoke?: (m: string, p?: Record<string, unknown>) => Promise<unknown>
-              methods?: Record<string, (p?: Record<string, unknown>) => Promise<unknown>>
-            }
-          }
-        | undefined
-      if (typeof ztools?.shell?.openExternal === 'function') {
-        await ztools.shell.openExternal(targetUrl)
-        return
-      }
-      if (typeof electron?.transport?.methods?.shell_open_external === 'function') {
-        await electron.transport.methods.shell_open_external({ url: targetUrl })
-        return
-      }
-      if (typeof electron?.transport?.invoke === 'function') {
-        await electron.transport.invoke('shell_open_external', { url: targetUrl })
-        return
-      }
-      if (typeof ztools?.invoke === 'function') {
-        await ztools.invoke('shell_open_external', { url: targetUrl })
-      }
-    })
+  const openFn = opener ?? openExternalUrl
 
   if (item.isGroup && Array.isArray(item.urls) && item.urls.length > 0) {
     const launched: string[] = []
     for (const rawUrl of item.urls) {
       const target = buildTargetUrl(rawUrl, queryText)
-      await openFn(target)
+      try {
+        await openFn(target)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        throw new Error(launched.length ? `已打开 ${launched.length} 个，第 ${launched.length + 1} 个打开失败：${reason}` : reason)
+      }
       launched.push(target)
     }
     return launched
@@ -269,10 +347,7 @@ export function filterQuicklinks(
 ): { matches: Quicklink[]; directMatch?: { quicklink: Quicklink; queryArg: string } } {
   const byCategory = quicklinks.filter((ql) => {
     if (categoryFilter === 'all') return true
-    const cat: QuicklinkCategory =
-      ql.category ||
-      (ql.isGroup ? 'group' : /\{(query|argument|arg)\}/i.test(ql.link) ? 'search' : 'direct')
-    return cat === categoryFilter
+    return (ql.category || inferQuicklinkCategory(ql)) === categoryFilter
   })
 
   if (!searchQuery || !searchQuery.trim()) {

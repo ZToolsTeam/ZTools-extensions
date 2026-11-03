@@ -13,7 +13,7 @@ import {
   invokeDllPluginCapability,
   isRealElectronHost,
   listRealDirectoryContents,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem,
   openRealPath
@@ -21,23 +21,9 @@ import {
 
 export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
-export interface CapabilityActionItem {
-  id: string
-  title: string
-  subtitle: string
-  tag: string
-  method: string
-  params: Record<string, unknown>
-}
+import type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
+export type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
 
-export interface NativeInvocationResult {
-  ok: boolean
-  pluginName: string
-  method: string
-  data?: unknown
-  error?: string
-  fromFallback?: boolean
-}
 
 export type WechatOwnerId = 107 | 108 | 109 | 110 | 111 | 112 | 113 | 114 | 115 | 999
 
@@ -91,6 +77,7 @@ export interface WechatScanSnapshot {
   allFiles: WechatScannedFileEntry[]
   totalScannableBytes: number
   protectedDbBytes: number
+  error?: string
 }
 
 export interface WechatCleanupResult {
@@ -466,6 +453,7 @@ export function classifyWechatFilePath(
  * 探测并深度扫描本机真实微信存储路径、微信号账号、9 大专项分类与聊天数据库保护区
  */
 export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unknown>): Promise<WechatScanSnapshot> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [documentsDir, appDataDir, homeDir] = await Promise.all([
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -593,7 +581,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
     ]
 
     const seenSubdirTotals = new Set<string>()
-    const scanResults = await Promise.all(deepTargets.map(t => scanRealDirectoryTree(t.dir, 150, hostOverride)))
+    const scanResults = await Promise.all(deepTargets.map(t => scanner.scan(t.dir, 150)))
 
     // 先从 xwechat_files / WeChat Files 子目录提取本机微信号账号目录 (如 geek_user_xxxx)
     for (let i = 0; i < Math.min(2, deepTargets.length); i++) {
@@ -619,7 +607,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
       if (target.dir.toLowerCase().endsWith('\\radium')) {
         for (const sub of res.subdirs) {
           if (sub.name.toLowerCase() === 'users') {
-            const usersScan = await scanRealDirectoryTree(sub.path, 40, hostOverride)
+            const usersScan = await scanner.scan(sub.path, 40)
             for (const u of usersScan.subdirs) {
               if (/^[0-9a-f]{16,64}$/i.test(u.name)) {
                 const hash = u.name.toLowerCase()
@@ -779,7 +767,8 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
     categories,
     allFiles,
     totalScannableBytes,
-    protectedDbBytes
+    protectedDbBytes,
+    error: scanner.error
   }
 }
 

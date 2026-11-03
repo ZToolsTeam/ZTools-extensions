@@ -13,6 +13,8 @@ export interface DiffLine {
   leftNo?: number;
   /** 在右侧（新文）中的行号，从 1 开始；删除行为 undefined */
   rightNo?: number;
+  /** 原文中的这一行没有结尾换行，生成补丁时必须保留。 */
+  noNewline?: boolean;
 }
 
 export interface DiffHunk {
@@ -57,9 +59,9 @@ export const MAX_DIFF_COST = 10_000_000;
 /** 近似对比的最大递归层数，防止病态输入导致栈溢出 */
 const MAX_ANCHOR_DEPTH = 64;
 
-export function splitLines(text: string): string[] {
+export function splitLines(text: string, preserveLineEndings = false): string[] {
   if (!text) return [];
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const lines = (preserveLineEndings ? text : text.replace(/\r\n?/g, "\n")).split("\n");
   // 末尾换行不算作额外的一行
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
   return lines;
@@ -202,10 +204,11 @@ function lcsMatch(a: string[], b: string[], maxCost: number): { matchA: Int32Arr
   };
 
   const compare = (aLo: number, aHi: number, bLo: number, bHi: number): void => {
-    if (cost > maxCost) { anchor(aLo, aHi, bLo, bHi, 0); return; }
     while (aLo < aHi && bLo < bHi && A[aLo] === B[bLo]) { match(aLo, bLo); aLo++; bLo++; }
     while (aLo < aHi && bLo < bHi && A[aHi - 1] === B[bHi - 1]) { aHi--; bHi--; match(aHi, bHi); }
     if (aLo === aHi || bLo === bHi) return;
+    // 之前的中间蛇搜索成功但已用完预算：剩余子段只能近似对比，必须如实标记（不能只在搜索失败时标记）
+    if (cost > maxCost) { approximate = true; anchor(aLo, aHi, bLo, bHi, 0); return; }
     const split = bisect(aLo, aHi, bLo, bHi);
     if (!split) { approximate = true; anchor(aLo, aHi, bLo, bHi, 0); return; }
     const [x, y] = split;
@@ -219,13 +222,17 @@ function lcsMatch(a: string[], b: string[], maxCost: number): { matchA: Int32Arr
 }
 
 export function diffText(left: string, right: string, options: DiffOptions = {}): DiffResult {
-  const a = splitLines(left);
-  const b = splitLines(right);
+  // 补丁按 LF 分行，行内的 CR 是原始内容，必须保留以匹配 Windows 文件。
+  const a = splitLines(left, true);
+  const b = splitLines(right, true);
   if (a.length > MAX_DIFF_LINES || b.length > MAX_DIFF_LINES) {
     throw new Error(`文本超过 ${MAX_DIFF_LINES} 行，暂不支持对比`);
   }
-  const na = a.map((l) => normalize(l, options));
-  const nb = b.map((l) => normalize(l, options));
+  const leftUnterminated = a.length > 0 && !left.endsWith("\n");
+  const rightUnterminated = b.length > 0 && !right.endsWith("\n");
+  // 行结束状态参与匹配，避免把“same”与“same\n”当成同一行。
+  const na = a.map((l, i) => normalize(l, options) + (leftUnterminated && i === a.length - 1 ? "" : "\n"));
+  const nb = b.map((l, i) => normalize(l, options) + (rightUnterminated && i === b.length - 1 ? "" : "\n"));
   const { matchA, approximate } = lcsMatch(na, nb, options.maxCost ?? MAX_DIFF_COST);
 
   const lines: DiffLine[] = [];
@@ -238,6 +245,10 @@ export function diffText(left: string, right: string, options: DiffOptions = {})
     if (i < a.length && target < 0) { lines.push({ op: "remove", text: a[i], leftNo: i + 1 }); removed++; continue; }
     while (j < target) { lines.push({ op: "add", text: b[j], rightNo: j + 1 }); j++; added++; }
     if (i < a.length) { lines.push({ op: "equal", text: b[j], leftNo: i + 1, rightNo: j + 1 }); j++; }
+  }
+  for (const line of lines) {
+    if ((line.op === "remove" && leftUnterminated && line.leftNo === a.length) ||
+        (line.op !== "remove" && rightUnterminated && line.rightNo === b.length)) line.noNewline = true;
   }
 
   const context = options.context ?? 3;
@@ -280,7 +291,8 @@ function hunkHeader(h: DiffHunk): string {
 }
 
 export function formatHunk(h: DiffHunk): string {
-  const body = h.lines.map((l) => (l.op === "add" ? "+" : l.op === "remove" ? "-" : " ") + l.text).join("\n");
+  const body = h.lines.map((l) => (l.op === "add" ? "+" : l.op === "remove" ? "-" : " ") + l.text +
+    (l.noNewline ? "\n\\ No newline at end of file" : "")).join("\n");
   return `${hunkHeader(h)}\n${body}`;
 }
 
@@ -295,10 +307,20 @@ export function fencedDiffMarkdown(text: string): string {
   return `${fence}diff\n${text}\n${fence}`;
 }
 
+/** 右侧预览单处差异最多显示的行数：整篇改写时一处差异可达数万行，全部渲染会拖慢界面；完整内容用复制动作取得 */
+export const MAX_PREVIEW_LINES = 500;
+
+export function hunkPreviewMarkdown(h: DiffHunk): string {
+  if (h.lines.length <= MAX_PREVIEW_LINES) return fencedDiffMarkdown(formatHunk(h));
+  const shown = { ...h, lines: h.lines.slice(0, MAX_PREVIEW_LINES) };
+  const body = formatHunk(shown).split("\n").slice(1).join("\n");
+  return `${fencedDiffMarkdown(`${hunkHeader(h)}\n${body}`)}\n\n这一处共 ${h.lines.length} 行，预览只显示前 ${MAX_PREVIEW_LINES} 行；完整内容请复制这一处差异或差异报告。`;
+}
+
 /** 统一格式（unified diff）报告，可直接粘贴到代码评审或 git apply */
 export function formatUnifiedDiff(result: DiffResult, leftName = "左侧", rightName = "右侧"): string {
   if (result.identical) return "";
-  return [`--- ${leftName}`, `+++ ${rightName}`, ...result.hunks.map(formatHunk)].join("\n");
+  return [`--- ${leftName}`, `+++ ${rightName}`, ...result.hunks.map(formatHunk), ""].join("\n");
 }
 
 export function describeHunk(h: DiffHunk): string {

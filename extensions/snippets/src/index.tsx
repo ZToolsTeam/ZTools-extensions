@@ -8,6 +8,7 @@ import React, {
   LocalStorage,
   showToast,
   Toast,
+  confirmAlert,
   useNavigation,
   useState,
   useEffect,
@@ -80,7 +81,6 @@ export function SnippetEditForm({ initialData, onSave }: SnippetEditFormProps) {
       actions={
         <ActionPanel>
           <Action.SubmitForm title="保存短语" icon={Icon.CheckCircle} onSubmit={handleSubmit} />
-          <Action title="取消返回" onAction={pop} />
         </ActionPanel>
       }
     >
@@ -105,21 +105,21 @@ export function SnippetEditForm({ initialData, onSave }: SnippetEditFormProps) {
       </Form.Dropdown>
       <Form.TextField
         id="keyword"
-        title="触发缩写（可选）"
+        title="搜索缩写（可选）"
         value={keyword}
         onChange={setKeyword}
-        placeholder="如：!shuihao、!addr"
+        placeholder="如：sh、addr，只用于在列表里搜索，不会在其他应用里自动展开"
       />
       <Form.TextArea
         id="content"
         title="短语模板内容"
         value={content}
         onChange={setContent}
-        placeholder="支持宏变量：{date}、{time}、{clipboard}、{cursor}..."
+        placeholder="支持宏变量：{date}、{time}、{datetime}、{clipboard}"
       />
       <Form.Description
         title="宏变量提示"
-        text="{date}=年月日  {time}=时分秒  {clipboard}=当前剪贴板  {cursor}=移除占位标记（暂不移动光标）"
+        text="{date}=年月日  {time}=时分秒  {datetime}=日期与时间  {clipboard}=当前剪贴板"
       />
     </Form>
   )
@@ -203,6 +203,14 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
   }, [persistSnippets])
 
   const handleDeleteSnippet = useCallback(async (expected: SnippetItem) => {
+    // 短语是用户自己写的内容，删除后无法恢复：先确认，取消或确认框打不开都不删
+    const confirmed = await confirmAlert({
+      title: '删除这条快捷短语？',
+      message: `「${expected.title}」删除后无法恢复。`,
+      primaryAction: { title: '删除', style: 'destructive' },
+      dismissAction: { title: '取消' }
+    })
+    if (!confirmed) return
     await persistSnippets((items) => {
       assertSnippetUnchanged(items, expected)
       return items.filter(item => item.id !== expected.id)
@@ -278,7 +286,7 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
         </List.Dropdown>
       }
       filterBar={{
-        summaryText: `共 ${filteredSnippets.length} 条快捷短语 · 支持 {date} / {clipboard} / {cursor} 动态宏变量`,
+        summaryText: `共 ${filteredSnippets.length} 条快捷短语 · 支持 {date} / {time} / {clipboard} 宏变量`,
         actions: [
           {
             id: 'new-snippet',
@@ -288,6 +296,19 @@ export function Snippets({ featureCode = 'snippets-all', initialSnippets }: Snip
         ]
       }}
     >
+      {filteredSnippets.length === 0 ? (
+        <List.Item
+          id="empty-state"
+          icon={Icon.Plus}
+          title={snippets.length === 0 ? '还没有短语，按回车新建' : '没有匹配的短语'}
+          subtitle={snippets.length === 0 ? '把常用的地址、开票信息或话术存成短语，之后一键粘贴' : '换个关键词或分类，也可以按回车新建短语'}
+          actions={
+            <ActionPanel>
+              <Action title="新建短语" icon={Icon.Plus} onAction={() => push(<SnippetEditForm onSave={handleSaveSnippet} />)} />
+            </ActionPanel>
+          }
+        />
+      ) : null}
       {filteredSnippets.map((item: SnippetItem) => (
         <List.Item
           key={item.id}

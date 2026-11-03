@@ -120,3 +120,8 @@ test('等待宿主回执的时限：列表与熄屏 30 秒，调节按显示器�
   host.ipc.monitor_control = async () => { throw Object.assign(new Error('请求超时'), { code: 'REQUEST_TIMEOUT' }) }
   await assert.rejects(setDisplays(snap, ids.slice(0, 2), 'brightness', 80), /请求超时/)
 })
+test('清单只声明用到的 screen 与 system 权限，列表命令说明不宣称列表内能熄屏', () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url)))
+  assert.deepEqual(manifest.permissions, ['screen', 'system'])
+  assert.doesNotMatch(manifest.features.find(f => f.code === 'monitor-brightness').explain, /一键熄屏/)
+})

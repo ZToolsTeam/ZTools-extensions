@@ -15,7 +15,7 @@ import {
   invokeDllPluginCapability,
   isRealElectronHost,
   listRealDirectoryContents,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem,
   openRealPath
@@ -23,23 +23,9 @@ import {
 
 export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
-export interface CapabilityActionItem {
-  id: string
-  title: string
-  subtitle: string
-  tag: string
-  method: string
-  params: Record<string, unknown>
-}
+import type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
+export type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
 
-export interface NativeInvocationResult {
-  ok: boolean
-  pluginName: string
-  method: string
-  data?: unknown
-  error?: string
-  fromFallback?: boolean
-}
 
 /**
  * 与 Windows 原生插件一致的官方清理分组 ID (201~213) + 999 聊天核心数据库保护区
@@ -98,6 +84,7 @@ export interface QQScanSnapshot {
   allFiles: QQScannedFileEntry[]
   totalScannableBytes: number
   protectedDbBytes: number
+  error?: string
 }
 
 export interface QQCleanupResult {
@@ -592,6 +579,7 @@ export function classifyQQFilePath(fullPath: string): {
  * 探测并深度扫描本机真实 QQ / NTQQ / TIM 存储路径、登录 QQ 号 (UIN)、12 大官方清理分组与核心聊天数据库保护区
  */
 export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown>): Promise<QQScanSnapshot> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [documentsDir, appDataDir, homeDir] = await Promise.all([
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -694,7 +682,7 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     ]
 
     const seenSubdirTotals = new Set<string>()
-    const scanResults = await Promise.all(deepTargets.map(t => scanRealDirectoryTree(t.dir, 140, hostOverride)))
+    const scanResults = await Promise.all(deepTargets.map(t => scanner.scan(t.dir, 140)))
 
     // 从 Tencent Files 与 Tencent\Users 一级子目录提取全部本机登录 QQ 号 (UIN)
     for (let i = 0; i < deepTargets.length; i++) {
@@ -875,7 +863,8 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     categories,
     allFiles,
     totalScannableBytes,
-    protectedDbBytes
+    protectedDbBytes,
+    error: scanner.error
   }
 }
 

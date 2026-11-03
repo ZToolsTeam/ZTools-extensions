@@ -40,6 +40,24 @@ test('世界时钟子命令可搜索城市、换算指定时刻并复制；错�
       await form.fill('time', '2026-03-08T00:00:00Z'); await form.run(null, '换算时间')
     } finally { form.unmount() }
     await view.run(view.item('America/New_York'), '复制当地时间')
-    assert.equal(host.clipboard.text, '2026-03-07 19:00:00 UTC−05:00 (America/New_York)')
+    assert.equal(host.clipboard.text, '2026-03-07 19:00:00 UTC-05:00 (America/New_York)', '复制出去的偏移用 ASCII 减号，其它程序才能解析')
+  } finally { view.unmount() }
+})
+
+test('世界时钟参考时区下拉只列常用城市中文名；搜索到的其它时区可设为参考并出现在下拉里', async () => {
+  const view = await mount(tzWorld, host)
+  try {
+    const options = () => view.tree().props.searchBarAccessory.children.map(item => item.props)
+    assert.ok(options().length <= 25, `下拉有 ${options().length} 项`)
+    assert.ok(options().every(option => !/^[A-Z][a-z]+\//.test(option.title)), '下拉标题应为中文城市名')
+    await view.search('Europe/Lisbon')
+    const lisbon = view.item('Europe/Lisbon')
+    await view.run(lisbon, '设为时差参考')
+    assert.equal(view.tree().props.searchBarAccessory.props.value, 'Europe/Lisbon')
+    assert.ok(options().some(option => option.value === 'Europe/Lisbon'))
+    assert.ok(!view.actions(view.item('Europe/Lisbon')).some(action => action.props.title === '设为时差参考'))
+    view.tree().props.searchBarAccessory.props.onChange('Asia/Tokyo')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(view.tree().props.searchBarAccessory.props.value, 'Asia/Tokyo')
   } finally { view.unmount() }
 })

@@ -58,3 +58,60 @@ test('单项快捷入口和普通入口可用，重新打开不再重复固定�
   try { assert.notEqual(second.items()[0].props.subtitle, original) }
   finally { second.unmount() }
 })
+
+test('[异常] 批量条数无效时如实提示已按 10 条生成，有效条数不提示', async () => {
+  createHost()
+  const view = await mount(commands['mock-batch-json'])
+  try {
+    for (const input of ['abc', '0', '501', '1.5', '-3', '1e2']) {
+      await view.search(input)
+      const item = view.item('batch-users-json')
+      assert.match(item.props.subtitle, /已按默认 10 条生成/, input)
+      assert.equal(item.props.accessories[0].tag.value, '条数无效')
+      assert.match(item.props.title, /10 条/)
+    }
+    await view.search('500')
+    assert.doesNotMatch(view.item('batch-users-json').props.subtitle, /条数须为/)
+    await view.search('')
+    assert.doesNotMatch(view.item('batch-users-json').props.subtitle, /条数须为/)
+  } finally { view.unmount() }
+})
+
+test('单项：无校验位的数据不宣称算法合规，声明不否认与真实信息重合；姓名企业 JSON 分字段', async () => {
+  const host = createHost()
+  const view = await mount(() => MockDataCommand({ initialTab: 'single', initialSeed: 42 }))
+  try {
+    const status = id => JSON.stringify(view.item(id), (k, v) => (typeof v === 'function' ? undefined : v))
+      .match(/"title":"校验状态","text":"([^"]+)"/)?.[1]
+    assert.equal(status('mock-id-card'), '校验位按标准算法计算')
+    assert.equal(status('mock-mobile-phone'), '无校验位，仅保证格式')
+    assert.equal(status('mock-person-company'), '无校验位，仅保证格式')
+    assert.doesNotMatch(view.text(), /不对应任何真实|100%/)
+    assert.match(view.item('mock-mobile-phone').props.detail.props.markdown, /可能与真实号码/)
+    await view.run(view.item('mock-person-company'), '复制键值对 JSON')
+    const json = JSON.parse(host.clipboard.text)
+    assert.deepEqual(Object.keys(json), ['name', 'companyName'])
+    assert.ok(!json.companyName.includes(json.name))
+  } finally { view.unmount() }
+})
+
+test('批量邮箱使用 RFC 2606 保留域名，不会投递到真实域名', () => {
+  for (const row of generateMockBatchUsers(20, 7)) assert.match(row.email, /@example\.com$/)
+})
+
+test('界面文案统一使用全角括号，不出现半角括号', async () => {
+  createHost()
+  const view = await mount(commands['mock-batch-json'])
+  try {
+    await view.search('3')
+    const batch = view.item('batch-users-json')
+    assert.equal(batch.props.title, '批量模拟用户列表 JSON（3 条完整记录）')
+    assert.match(batch.props.detail.props.markdown, /预览（3 条）/)
+    await view.dropdown('single')
+    for (const item of view.items()) {
+      assert.doesNotMatch(item.props.title, /[()]/, item.props.title)
+      const md = item.props.detail?.props?.markdown ?? ''
+      assert.doesNotMatch(md.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, ''), /[()]/, md)
+    }
+  } finally { view.unmount() }
+})

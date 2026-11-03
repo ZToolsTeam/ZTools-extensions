@@ -71,11 +71,12 @@ test('everything-file-search: 深层大文件挤掉直接子文件时标注 part
   assert.equal(ql.partial, true)
 })
 
-test('everything-file-search: 文件夹不存在 / 未授权时显示空目录，不拿全盘搜索结果填充', async () => {
+test('everything-file-search: 文件夹不存在 / 未授权时显示读取失败，不拿全盘搜索结果填充', async () => {
   const host = await setup()
   const ql = await getFileQuickLook(folder(path.join(root, 'no-such-folder')))
-  assert.equal(ql.previewType, 'directory')
-  assert.deepEqual(ql.dirEntries, [])
+  assert.equal(ql.previewType, 'error')
+  assert.match(ql.error, /未授权|PERMISSION/)
+  assert.equal(ql.dirEntries, undefined)
   const keyword = host.ipcCalls.filter(([m, p]) => m === 'system_search_files' && !String(p?.query).startsWith('dir:'))
   assert.equal(keyword.length, 0)
   const res = await listDirectChildren(path.join(root, 'no-such-folder'))
@@ -99,4 +100,36 @@ test('everything-file-search: 空路径与尾部分隔符边界', async () => {
   assert.deepEqual(empty, { entries: [], partial: false, error: 'EMPTY_DIRECTORY_PATH' })
   const trailing = await listDirectChildren(artifacts + path.sep)
   assert.equal(trailing.entries.length, 2)
+})
+
+test('everything-file-search: 已授权且真实为空的目录正常显示空目录', async () => {
+  const emptyDir = path.join(root, 'empty-directory')
+  fs.mkdirSync(emptyDir, { recursive: true })
+  await setup({ authorized: [root] })
+  const preview = await getFileQuickLook(folder(emptyDir))
+  assert.equal(preview.previewType, 'directory')
+  assert.deepEqual(preview.dirEntries, [])
+  assert.equal(preview.partial, false)
+  assert.equal(preview.error, undefined)
+})
+
+test('everything-file-search: 权限错误、删除和无效回执都不能显示成空目录', async () => {
+  for (const reply of [new Error('EACCES: 没有权限'), new Error('ENOENT: 目录已删除'), { invalid: [] }, { success: false, files: [] }]) {
+    const host = await setup()
+    host.ipc.system_search_files = () => { throw new Error('索引不可用') }
+    host.ipc.filesystem_get_directory_contents = () => { if (reply instanceof Error) throw reply; return reply }
+    const preview = await getFileQuickLook(folder('/tmp/unreadable'))
+    assert.equal(preview.previewType, 'error')
+    assert.equal(preview.dirEntries, undefined)
+    if (reply instanceof Error) assert.ok(preview.error.includes(reply.message))
+  }
+})
+
+test('everything-file-search: 截断扫描只包含深层文件时保留不完整状态', async () => {
+  const host = await setup()
+  host.ipc.system_search_files = () => ({ files: [{ path: '/tmp/partial/deep/file.txt', name: 'file.txt', size: 10 }], total_matches: 10 })
+  const preview = await getFileQuickLook(folder('/tmp/partial'))
+  assert.equal(preview.previewType, 'directory')
+  assert.deepEqual(preview.dirEntries, [])
+  assert.equal(preview.partial, true)
 })

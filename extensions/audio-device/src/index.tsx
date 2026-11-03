@@ -1,5 +1,5 @@
 import React, { Action, ActionPanel, Clipboard, Detail, Form, Icon, List, Toast, showToast, useEffect, useMemo, useNavigation, useRef, useState } from '@ztools/declarative-ui'
-import { AudioDeviceManager } from './audio-service.js'
+import { AudioDeviceManager, transportLabel } from './audio-service.js'
 import type { AudioDevice, IOType } from './types.js'
 export * from './types.js'
 export * from './audio-service.js'
@@ -35,7 +35,7 @@ export function AudioDeviceDetailView({ device }: { device: AudioDevice }) {
     `- 类型：${device.type === 'output' ? '输出' : '输入'}`,
     `- 软件音量控制：${device.canSetVolume ? '支持' : '不支持'}`,
     `- 软件静音：${device.canMute ? '支持' : '不支持'}`,
-    ...(device.transportType ? [`- 连接方式：${device.transportType}`] : []),
+    ...(transportLabel(device.transportType) ? [`- 连接方式：${transportLabel(device.transportType)}`] : []),
     ...(device.sampleRate ? [`- 采样率：${device.sampleRate} Hz`] : []),
     ...(device.channels ? [`- 声道：${device.channels}`] : [])
   ].join('\n')
@@ -99,10 +99,10 @@ export function AudioDeviceCommand(props?: { featureCode?: string; hostOverride?
       <List.Dropdown.Item value="all" title="全部设备" /><List.Dropdown.Item value="output" title="输出设备" /><List.Dropdown.Item value="input" title="输入设备" /><List.Dropdown.Item value="favourites" title="常用设备" />
     </List.Dropdown>}
   >
-    {error ? <List.Item id="error" title="无法读取音频设备" subtitle={error} icon={Icon.ExclamationMark} /> : devices.length === 0 ? <List.Item id="empty" title={loading ? '正在读取…' : '没有符合条件的音频设备'} icon={Icon.SpeakerOff} /> : devices.map(device => <List.Item key={device.id} id={device.id} title={device.name} subtitle={`${device.type === 'input' ? '输入' : '输出'} · ${volumeText(device)}`} icon={device.type === 'input' ? Icon.Microphone : device.isMuted ? Icon.SpeakerOff : Icon.SpeakerHigh}
+    {error ? <List.Item id="error" title="无法读取音频设备" subtitle={error} icon={Icon.ExclamationMark} /> : devices.length === 0 ? <List.Item id="empty" title={loading ? '正在读取…' : '没有符合条件的音频设备'} icon={Icon.SpeakerOff} /> : devices.map(device => <List.Item key={device.id} id={device.id} title={device.name} subtitle={[device.type === 'input' ? '输入' : '输出', transportLabel(device.transportType), volumeText(device)].filter(Boolean).join(' · ')} icon={device.type === 'input' ? Icon.Microphone : device.isMuted ? Icon.SpeakerOff : Icon.SpeakerHigh}
       accessories={[...(device.isDefault ? [{ text: '当前默认' }] : []), ...(device.isFavourite ? [{ icon: Icon.Star }] : [])]}
       actions={<ActionPanel>
-        {device.canSetDefault && <Action title={`设为默认${device.type === 'output' ? '输出' : '输入'}`} icon={Icon.Checkmark} onAction={() => run(() => manager.setDefaultDevice(device.id), '已切换默认设备')} />}
+        {device.canSetDefault && !device.isDefault && <Action title={`设为默认${device.type === 'output' ? '输出' : '输入'}`} icon={Icon.Checkmark} onAction={() => run(() => manager.setDefaultDevice(device.id), '已切换默认设备')} />}
         {device.canMute && <Action title={device.isMuted ? '取消静音' : '静音设备'} icon={Icon.SpeakerOff} onAction={() => run(() => manager.toggleDeviceMute(device.id), '已更新静音状态')} />}
         {device.canSetVolume && <Action title="设置音量…" icon={Icon.SpeakerHigh} onAction={() => push(<AudioVolumeForm device={device} manager={manager} onSaved={refresh} />)} />}
         {device.canSetVolume && <Action title="音量增加 10%" icon={Icon.Plus} onAction={() => run(() => manager.stepDeviceVolume(device.id, 10), '已更新设备音量')} />}

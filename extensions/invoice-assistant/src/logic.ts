@@ -11,7 +11,7 @@
 import {
   getRealSystemPath,
   invokeDllPluginCapability,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
@@ -645,6 +645,7 @@ export async function fetchRealInvoicesWorkspace(
   hostOverride?: unknown,
   now: Date = new Date()
 ): Promise<InvoiceWorkspaceResult> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [downloadsDir, desktopDir, documentsDir] = await Promise.all([
     getRealSystemPath('downloads', hostOverride),
     getRealSystemPath('desktop', hostOverride),
@@ -667,7 +668,7 @@ export async function fetchRealInvoicesWorkspace(
   const seen = new Set<string>()
 
   for (const dir of dirs) {
-    const scan = await scanRealDirectoryTree(dir, {
+    const scan = await scanner.scan(dir, {
       maxDepth: 2,
       maxFiles: SCAN_FILES_PER_DIR,
       collectTopN: 45,
@@ -688,7 +689,7 @@ export async function fetchRealInvoicesWorkspace(
   }
 
   if (candidatePaths.length === 0) {
-    return { ok: true, invoices: [], scannedFilesCount: 0, parseErrors: [], scannedDirs: dirs }
+    return { ok: !scanner.error, invoices: [], scannedFilesCount: 0, parseErrors: [], scannedDirs: dirs, error: scanner.error }
   }
 
   const res = await invokeNativeCapability(
@@ -732,6 +733,7 @@ export async function fetchRealInvoicesWorkspace(
     invoices: detectInvoiceAnomalies(parsed, expectedBuyer),
     scannedFilesCount: candidatePaths.length,
     parseErrors,
+    error: scanner.error,
     scannedDirs: dirs
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "@ztools/plugin-shutdown-timer",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "Windows 按预设倒计时关机，立即锁屏或睡眠",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

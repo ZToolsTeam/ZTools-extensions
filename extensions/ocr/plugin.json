@@ -1,30 +1,71 @@
 {
   "id": "ocr",
-  "name": "图片识字",
-  "description": "用 Windows 系统文字识别在本机识别图片和屏幕截图中的简体中文、英文、日文、韩文文字，结果可复制到剪贴板或导出为文本文件",
-  "version": "2.0.6",
+  "name": "文字识别",
+  "description": "框选屏幕、剪贴板或图片里的文字，用系统自带的文字识别（OCR）在本机识别简体中文、英文、日文、韩文，结果直接复制",
+  "version": "3.0.2",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
+  "alias": "ocr",
   "category": [
-    "办公效率",
-    "AI工具"
+    "办公效率"
   ],
   "permissions": [
-    "fs",
     "clipboard",
     "screen",
     "dialog",
-    "shell"
+    "notification"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
+  "features": [
+    {
+      "code": "ocr-region",
+      "explain": "框选屏幕上的区域，识别其中的文字并复制",
+      "mode": "no-view",
+      "cmds": [
+        "截图识别文字",
+        "截图识字",
+        "框选识字",
+        "屏幕识字",
+        "截图 OCR"
+      ]
+    },
+    {
+      "code": "ocr-clipboard",
+      "explain": "识别剪贴板里的图片文字并复制",
+      "mode": "no-view",
+      "cmds": [
+        "识别剪贴板图片",
+        "剪贴板识字",
+        "剪贴板 OCR"
+      ]
+    },
+    {
+      "code": "ocr-workbench",
+      "explain": "添加图片批量识别，查看和复制识别结果",
+      "cmds": [
+        "文字识别",
+        "图片识字",
+        "图片转文字",
+        "提取图片文字",
+        "OCR"
+      ]
+    }
+  ],
   "targets": [
     {
       "id": "windows-electron-any",
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.9"
 }

@@ -71,3 +71,12 @@ test('同步剪贴板失败时向调用方报错；本地流水粘贴在顶部�
   const second = pasteSequenceManager.pasteNext(updated)
   assert.equal(second.item?.id, 'b')
 })
+
+test('像路径的文本仍是文本，只有宿主标记为 files 的记录才是文件', async () => {
+  const { detectClipboardContentType } = await import('../dist/clipboard-storage.js')
+  for (const text of ['C:\\Users\\someone\\Downloads\\a.zip', '/Users/someone/Desktop/a.txt', '\\\\server\\share\\x']) {
+    assert.equal(detectClipboardContentType(text), 'text', text)
+    assert.equal(detectClipboardContentType(text, 'text'), 'text', text)
+  }
+  assert.equal(detectClipboardContentType('/Users/someone/a.txt', 'files'), 'files')
+})

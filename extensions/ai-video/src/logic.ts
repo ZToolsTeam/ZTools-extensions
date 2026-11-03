@@ -32,10 +32,23 @@ export interface AiVideoFileItem {
   parentDir: string
   extension: string
   sizeBytes: number
-  sourceFps: number
+  sourceFps: number | null
   sourceResolution: string
   outputSizeBytes?: number
   outputPath?: string
+}
+
+interface AiVideoHostOutput {
+  ok?: boolean
+  error?: string
+  outputPath?: string
+  path?: string
+  filePath?: string
+  outputBytes?: number
+  sizeBytes?: number
+  outputSizeBytes?: number
+  size?: number
+  results?: AiVideoHostOutput[]
 }
 
 export interface AiVideoBatchConfig {
@@ -196,7 +209,7 @@ export type AiVideoQueueSnapshot = AiVideoFileItem[] & {
   models: AiVideoModelPreset[]
 }
 
-export async function fetchAiVideoQueue(hostOverride?: any): Promise<AiVideoQueueSnapshot> {
+export async function fetchAiVideoQueue(hostOverride?: unknown): Promise<AiVideoQueueSnapshot> {
   const strictReal = isStrictRealHost(hostOverride)
   const [videosDir, downloadsDir, desktopDir] = await Promise.all([
     getRealSystemPath('videos', hostOverride),
@@ -227,11 +240,11 @@ export async function fetchAiVideoQueue(hostOverride?: any): Promise<AiVideoQueu
         id: `ai-vid-${discovered.length}-${f.path}`,
         name: f.name,
         path: f.path,
-        parentDir: dir,
+        parentDir: f.path.replace(/[^\\/]+$/, ''),
         extension: ext,
         sizeBytes: f.sizeBytes,
-        sourceFps: 30,
-        sourceResolution: '1920×1080'
+        sourceFps: null,
+        sourceResolution: '分辨率未读取'
       })
     }
   }
@@ -258,7 +271,7 @@ export const fetchAiVideoWorkspace = fetchAiVideoQueue
 export async function executeAiVideoBatch(
   files: AiVideoFileItem[],
   config: AiVideoBatchConfig,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<AiVideoBatchResult> {
   if (!Array.isArray(files) || files.length === 0) {
     return {
@@ -317,7 +330,7 @@ export async function executeAiVideoBatch(
       `_${config.targetFps}_${config.targetResolution}.mp4`
     )
 
-    const pluginRes = await invokePluginService<any>(
+    const pluginRes = await invokePluginService<AiVideoHostOutput>(
       'AiVideoPlugin',
       'enhanceVideo',
       {
@@ -384,7 +397,7 @@ export async function executeAiVideoBatch(
     }
   }
 
-  const ipcRes = await callHostTransport<any>(
+  const ipcRes = await callHostTransport<AiVideoHostOutput>(
     'ai_video_enhance_batch',
     {
       files: files.map(f => f.path),
@@ -486,7 +499,7 @@ export async function executeAiVideoBatch(
 
 export const runAiVideoBatch = executeAiVideoBatch
 
-export async function openAiVideoLocation(fullPath: string, hostOverride?: any): Promise<boolean> {
+export async function openAiVideoLocation(fullPath: string, hostOverride?: unknown): Promise<boolean> {
   if (!fullPath) return false
   return showRealItemInFolder(fullPath, hostOverride)
 }

@@ -78,8 +78,8 @@ export interface NativeInvocationResult {
 
 export const DLL_PLUGIN_NAME = 'BatchRenamePlugin'
 export const FORBIDDEN_TARGET_PATTERN =
-  /(?:^|[\\/])(?:Windows|System32|SysWOW64|Program Files|Program Files \(x86\)|\.\.)(?:$|[\\/])|^\/(?:System|Library|usr|bin|sbin)(?:\/|$)|^\/Users\/[^/]+\/Library(?:\/|$)/i
-export const FORBIDDEN_REASON = '严禁对系统核心目录（Windows 系统目录、macOS /System、/Library、/usr、~/Library）执行批量重命名或包含路径穿越字符'
+  /(?:^|[\\/])\.\.(?:$|[\\/])|^(?:\\\\[?.]\\)?[A-Za-z]:[\\/](?:Windows|Program Files|Program Files \(x86\)|ProgramData)(?:$|[\\/])|^\/(?:System|Library|usr|bin|sbin)(?:\/|$)|^\/Users\/[^/]+\/Library(?:\/|$)/i
+export const FORBIDDEN_REASON = '严禁对系统核心目录（Windows 盘符下的 Windows、Program Files、ProgramData，macOS /System、/Library、/usr、~/Library）执行批量重命名或包含路径穿越字符'
 
 export const RENAME_RULE_PRESETS: Array<{ id: RenameRuleType; label: string; desc: string }> = [
   { id: 'number', label: '阿拉伯序号 (_01, _02)', desc: '按补零数字序列自动追加后缀' },
@@ -91,7 +91,7 @@ export const RENAME_RULE_PRESETS: Array<{ id: RenameRuleType; label: string; des
   { id: 'trim_head3', label: '裁剪前3字符 (前N位删除)', desc: '移除文件名前 3 位冗余编号字符' },
   { id: 'clean_brackets', label: '清洗括号与冗余符号', desc: '清除 () [] 【】 及其内部广告/副本标记' },
   { id: 'snake_case', label: '下划线规范化 (snake_case)', desc: '将空格与连字符统一替换为下划线' },
-  { id: 'case', label: '全小写规范 (lowercase)', desc: '文件名与扩展名统一转为全小写' }
+  { id: 'case', label: '全小写规范', desc: '文件名与扩展名统一转为全小写' }
 ]
 
 const PRESET_ITEMS: CapabilityActionItem[] = [
@@ -227,7 +227,15 @@ export function applyRenameRule(fileName: string, rule: RenameRule, index: numbe
   switch (rule.type) {
     case 'replace': {
       if (rule.find) {
-        newBaseName = newBaseName.split(rule.find).join(rule.replace || '')
+        // macOS 上从压缩包、旧 HFS+ 磁盘来的文件名常是分解形式（NFD，如日文浊音、带声调字母），
+        // 用户输入的是组合形式（NFC）；原样匹配不到时按 NFC 再匹配一次，避免“明明有这个词却不替换”
+        const find = rule.find, replacement = rule.replace || ''
+        if (newBaseName.includes(find)) {
+          newBaseName = newBaseName.split(find).join(replacement)
+        } else {
+          const nfcBase = newBaseName.normalize('NFC'), nfcFind = find.normalize('NFC')
+          if (nfcBase.includes(nfcFind)) newBaseName = nfcBase.split(nfcFind).join(replacement)
+        }
       }
       break
     }
@@ -416,15 +424,24 @@ interface RawDirEntry {
   lastModifiedMs: number
 }
 
+/** 宿主返回的原始对象，按字段读取 */
+type HostRecord = Record<string, unknown>
+
+/** 等同于 `data?.[key]`：宿主数据为 null / undefined 时返回 undefined */
+function hostField(data: unknown, key: string): unknown {
+  return data == null ? undefined : (data as HostRecord)[key]
+}
+
 /** 解析宿主 filesystem_get_directory_contents 的真实返回 { success, files: [{ name, size, isDirectory, lastModified }] } */
-function parseDirectoryContents(dirPath: string, data: any): RawDirEntry[] | null {
-  const rawList: unknown[] | null = Array.isArray(data) ? data : Array.isArray(data?.files) ? data.files : null
+function parseDirectoryContents(dirPath: string, data: unknown): RawDirEntry[] | null {
+  const listedFiles = hostField(data, 'files')
+  const rawList: unknown[] | null = Array.isArray(data) ? data : Array.isArray(listedFiles) ? listedFiles : null
   if (!rawList) return null
   const out: RawDirEntry[] = []
   const seen = new Set<string>()
   for (const item of rawList) {
     if (!item || typeof item !== 'object') continue
-    const raw = item as any
+    const raw = item as HostRecord
     const name = typeof raw.name === 'string' ? raw.name : ''
     // 只接受纯文件名：拒绝空名、. / ..、带路径分隔符（越界）的条目
     if (!name.trim() || name === '.' || name === '..' || /[\\/]/.test(name)) continue
@@ -472,7 +489,7 @@ function toFileEntries(dirPath: string, raw: RawDirEntry[]): { files: RealFileEn
  * 2. 未授权时退回宿主 dir: 扫描（只保留直接子项），作为只读预览，执行改名前必须先授权；
  * 3. 目录不存在 / 为空 / 读取失败时如实返回空列表与错误，绝不用别处文件冒充。
  */
-export async function fetchDirectoryFiles(dirPath: string, hostOverride?: any): Promise<DirectoryFilesResult> {
+export async function fetchDirectoryFiles(dirPath: string, hostOverride?: unknown): Promise<DirectoryFilesResult> {
   const directory = (dirPath || '').trim()
   const empty = (error: string, authorized = false): DirectoryFilesResult => ({
     directory,
@@ -491,13 +508,14 @@ export async function fetchDirectoryFiles(dirPath: string, hostOverride?: any): 
   let authorized = false
   let partial = false
   let hostOutdated = false
-  const listing = await callHostTransport<any>('filesystem_get_directory_contents', { path: directory }, hostOverride)
+  const listing = await callHostTransport<unknown>('filesystem_get_directory_contents', { path: directory }, hostOverride)
   if (listing.ok) {
     const parsed = parseDirectoryContents(directory, listing.data)
     if (!parsed) return empty('INVALID_DIRECTORY_PAYLOAD', true)
     raw = parsed
-    authorized = listing.data?.writeAuthorized === true
-    hostOutdated = typeof listing.data?.writeAuthorized !== 'boolean'
+    const writeAuthorized = hostField(listing.data, 'writeAuthorized')
+    authorized = writeAuthorized === true
+    hostOutdated = typeof writeAuthorized !== 'boolean'
   } else if (isPermissionError(listing.error)) {
     const scan = await listDirectChildren(directory, hostOverride)
     raw = scan.entries.map(e => ({
@@ -533,7 +551,7 @@ export async function fetchDirectoryFiles(dirPath: string, hostOverride?: any): 
  */
 export async function fetchRealBatchRenameFiles(
   sourceScope: SourceScope = 'downloads',
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<DirectoryFilesResult> {
   const dirPath = await getRealSystemPath(sourceScope, hostOverride)
   if (!dirPath) {
@@ -548,16 +566,25 @@ export async function fetchRealBatchRenameFiles(
 export async function requestFolderAccess(
   defaultPath: string,
   title: string,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ folderPath?: string; canceled: boolean; error?: string }> {
   const params: Record<string, unknown> = { title }
   if (defaultPath) params.defaultPath = defaultPath
-  const res = await callHostTransport<any>('window_show_select_folder_dialog', params, hostOverride)
+  const res = await callHostTransport<unknown>('window_show_select_folder_dialog', params, hostOverride)
   if (!res.ok) return { canceled: false, error: res.error || '无法打开选择文件夹对话框' }
   const data = res.data
+  const pickedFolder = hostField(data, 'folderPath')
+  const pickedPaths = hostField(data, 'filePaths')
+  // 宿主约定 filePaths 为字符串数组；这里只声明类型，不改变取值
   const folderPath =
-    typeof data === 'string' ? data : typeof data?.folderPath === 'string' ? data.folderPath : Array.isArray(data?.filePaths) ? data.filePaths[0] : ''
-  if (data?.canceled || !folderPath) return { canceled: true }
+    typeof data === 'string'
+      ? data
+      : typeof pickedFolder === 'string'
+        ? pickedFolder
+        : Array.isArray(pickedPaths)
+          ? (pickedPaths[0] as string)
+          : ''
+  if (hostField(data, 'canceled') || !folderPath) return { canceled: true }
   return { folderPath, canceled: false }
 }
 
@@ -583,9 +610,16 @@ export function conflictReasonText(reason?: RenameConflictReason): string {
   }
 }
 
-function isInvalidFileName(name: string): boolean {
-  return !name.trim() || name === '.' || name === '..' || /[\\/:\0]/.test(name) || name.length > 255
+const WINDOWS_RESERVED_NAME = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i
+
+/** 新文件名是否非法；Windows 另外禁止 <>"|?* 与控制字符、结尾的点或空格以及 CON、NUL 等保留名 */
+function isInvalidFileName(name: string, windows = false): boolean {
+  if (!name.trim() || name === '.' || name === '..' || /[\\/:\0]/.test(name) || name.length > 255) return true
+  return windows && ((/[<>"|?*]/.test(name) || [...name].some(ch => ch.charCodeAt(0) < 32)) || /[. ]$/.test(name) || WINDOWS_RESERVED_NAME.test(name))
 }
+
+/** 同名比较键：APFS 与 NTFS 默认不区分大小写，APFS 还不区分 Unicode 组合 / 分解形式 */
+const nameKey = (name: string) => name.normalize('NFC').toLowerCase()
 
 /**
  * 生成改名预览并检测冲突（与列表顺序无关，冲突总是标在「会改名」的那一方，大小写不敏感以适配 APFS / NTFS）：
@@ -597,7 +631,7 @@ function isInvalidFileName(name: string): boolean {
 export function buildRenamePreview(files: RealFileEntry[], rule: RenameRule, occupiedNames: string[] = []): RenamePreviewItem[] {
   const occupied = new Map<string, number>()
   const addOccupied = (name: string) => {
-    const k = name.toLowerCase()
+    const k = nameKey(name)
     occupied.set(k, (occupied.get(k) || 0) + 1)
   }
   const occupiedSet = new Set(occupiedNames)
@@ -612,15 +646,15 @@ export function buildRenamePreview(files: RealFileEntry[], rule: RenameRule, occ
   const newNameCount = new Map<string, number>()
   for (const item of items) {
     if (!item.changed) continue
-    const k = item.newName.toLowerCase()
+    const k = nameKey(item.newName)
     newNameCount.set(k, (newNameCount.get(k) || 0) + 1)
   }
 
   for (const item of items) {
     if (!item.changed) continue
-    const k = item.newName.toLowerCase()
-    const selfHolds = k === item.name.toLowerCase() ? 1 : 0
-    if (isInvalidFileName(item.newName)) {
+    const k = nameKey(item.newName)
+    const selfHolds = k === nameKey(item.name) ? 1 : 0
+    if (isInvalidFileName(item.newName, isWindowsPath(item.fullPath || item.parentDir))) {
       item.conflict = true
       item.conflictReason = 'invalid-name'
     } else if ((occupied.get(k) || 0) - selfHolds > 0) {
@@ -668,7 +702,7 @@ async function safeMove(sourcePath: string, destPath: string, hostOverride?: unk
 export async function executeRealFileRename(
   sourcePath: string,
   newFileName: string,
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; destinationPath?: string; error?: string }> {
   if (!sourcePath || !newFileName) {
     return { ok: false, error: '源路径或新文件名不能为空' }
@@ -676,8 +710,8 @@ export async function executeRealFileRename(
   if (FORBIDDEN_TARGET_PATTERN.test(sourcePath) || FORBIDDEN_TARGET_PATTERN.test(newFileName)) {
     return { ok: false, error: FORBIDDEN_REASON }
   }
-  if (isInvalidFileName(newFileName)) {
-    return { ok: false, error: '新文件名非法（不能为空或包含路径分隔符）' }
+  if (isInvalidFileName(newFileName, isWindowsPath(sourcePath))) {
+    return { ok: false, error: '新文件名非法（不能为空、包含路径分隔符或系统不允许的字符）' }
   }
   const { dir, sep } = parentDirOfPath(sourcePath)
   const destinationPath = `${dir}${dir.endsWith(sep) ? '' : sep}${newFileName}`
@@ -693,7 +727,7 @@ export async function executeRealFileRename(
  */
 export async function undoBatchRenameHistory(
   history: RenameUndoEntry[],
-  hostOverride?: any
+  hostOverride?: unknown
 ): Promise<{ ok: boolean; restoredCount: number; failed: Array<{ entry: RenameUndoEntry; error: string }> }> {
   let restoredCount = 0
   const failed: Array<{ entry: RenameUndoEntry; error: string }> = []
@@ -708,7 +742,7 @@ export async function undoBatchRenameHistory(
 /**
  * 在系统文件管理器中选中文件（不回退为打开文件本身）
  */
-export async function openRenameFileLocation(fullPath: string, hostOverride?: any): Promise<{ ok: boolean; error?: string }> {
+export async function openRenameFileLocation(fullPath: string, hostOverride?: unknown): Promise<{ ok: boolean; error?: string }> {
   if (!fullPath) return { ok: false, error: '路径为空' }
   const res = await callHostTransport('shell_show_item_in_folder', { fullPath }, hostOverride)
   return { ok: res.ok, error: res.ok ? undefined : res.error || '定位失败' }

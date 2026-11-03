@@ -1,7 +1,7 @@
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
 export type InferredColumnType = 'number' | 'boolean' | 'string' | 'null' | 'json' | 'mixed'
-export type DetectedSourceFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'html' | 'sql' | 'empty'
-export type SourceFormat = Exclude<DetectedSourceFormat, 'empty'> | 'auto'
+export type DetectedSourceFormat = 'tsv' | 'csv' | 'json' | 'markdown' | 'html' | 'sql' | 'empty' | 'unrecognized'
+export type SourceFormat = Exclude<DetectedSourceFormat, 'empty' | 'unrecognized'> | 'auto'
 
 export interface TableGrid {
   headers: string[]

@@ -65,3 +65,44 @@ test('Wi-Fi快捷入口只打开一次表单，文字入口保持普通页面', 
   try { assert.equal(host.pushed.length, 0); assert.ok(text.item('hint')) }
   finally { text.unmount() }
 })
+
+test('[边界] Wi-Fi 密码长度不合规：错误显示在密码框下，不保存', async () => {
+  host.reset()
+  let saved
+  host.pushed.push(() => WifiQrForm({ onCreated: async item => { saved = item; return true } }))
+  const form = await mountPushed(host)
+  try {
+    await form.fill('ssid', 'Home'); await form.fill('password', 'short'); await form.run(null, '生成并保存')
+    assert.equal(saved, undefined)
+    assert.match(form.field('password').props.error, /8–63/)
+    assert.equal(form.field('ssid').props.error, undefined)
+    await form.fill('password', 'long-enough'); await form.run(null, '生成并保存')
+    assert.equal(saved.content, buildWifiPayload('Home', 'long-enough', 'WPA'))
+  } finally { form.unmount() }
+})
+
+test('首屏无历史时不显示空白详情栏，引导副标题与回车主动作一致；输入后才显示预览', async () => {
+  host.reset()
+  host.clipboard.text = 'https://example.com/from-clipboard'
+  const view = await mount(commands['qr-text'])
+  try {
+    assert.equal(view.tree().props.isShowingDetail, false)
+    const hint = view.item('hint')
+    assert.equal(hint.props.detail, undefined)
+    assert.match(hint.props.subtitle, /剪贴板/)
+    assert.equal(view.actions(hint)[0].props.title, '用剪贴板内容生成')
+    await view.run(hint, '用剪贴板内容生成')
+    assert.equal(view.tree().props.isShowingDetail, true)
+    assert.ok(view.item('live').props.detail)
+  } finally { view.unmount() }
+})
+
+test('Wi-Fi 表单的隐藏网络复选框有标题，且不再提供与 Esc 重复的返回动作', async () => {
+  host.reset()
+  host.pushed.push(() => WifiQrForm({ onCreated: async () => true }))
+  const form = await mountPushed(host)
+  try {
+    assert.equal(form.field('hidden').props.title, '隐藏网络')
+    assert.deepEqual(form.actions(null).map(a => a.props.title), ['生成并保存'])
+  } finally { form.unmount() }
+})

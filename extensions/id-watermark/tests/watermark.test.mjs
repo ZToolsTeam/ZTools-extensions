@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import Command, { BusinessForm, commands, inspectImageHeader, renderWatermarkOnImage, pickImage, readClipboardImage, resolveTemplate } from '../dist/index.js'
+import Command, { BusinessForm, commands, inspectImageHeader, renderWatermarkOnImage, pickImage, outputImage, readClipboardImage, resolveTemplate } from '../dist/index.js'
 
 test('初始无假图片；三号布局只有选图和读取剪贴板两个全局动作', async () => {
   const host = createHost(), view = await mount(Command, host)
@@ -69,4 +69,31 @@ test('用途使用可编辑Form；空值拒绝，填写后保存回传，不使�
     field().props.onChange(' '); await tick(); await form.run(null, '保存用途'); assert.equal(saved, undefined); assert.match(field().props.error, /1～80/)
     field().props.onChange('测试单位 $& {date}'); await tick(); await form.run(null, '保存用途'); assert.equal(saved, '测试单位 $& {date}')
   } finally { form.unmount() }
+})
+
+test('另存为选中原图（含大小写或分隔符不同的同一路径）在写入前拒绝，不发起写入', async () => {
+  const host = createHost(), view = await mount(Command, host)
+  try {
+    const image = { fileName: '原图.png', width: 1, height: 1, rawBytes: new Uint8Array(), path: '/Users/test/图片/café.png' }
+    for (const chosen of ['/Users/test/图片/café.png', '/USERS/TEST/图片/CAFÉ.PNG', '/Users/test/图片/café.png'.normalize('NFD')]) {
+      host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: chosen })
+      await assert.rejects(outputImage(image, { text: '测试', opacityPercent: 30, rotateDegree: -30, gapPx: 120, colorMode: 'dark' }, false, new AbortController().signal), /原图不会被覆盖/)
+    }
+    assert.equal(host.ipcCalls.some(([method]) => method === 'filesystem_write_file'), false)
+  } finally { view.unmount() }
+})
+test('未选图时 Enter 主动作：工作台为“选择原图…”，剪贴板入口为“读取剪贴板图片”；取消不出现图片', async () => {
+  const host = createHost(), view = await mount(Command, host)
+  try {
+    assert.deepEqual(view.actions(null).map(a => a.props.title), ['选择原图…', '读取剪贴板图片'])
+    host.ipc.window_show_open_dialog = async () => ({ canceled: true })
+    await view.run(null, '选择原图…')
+    assert.ok(host.ipcCalls.some(([m]) => m === 'window_show_open_dialog')); assert.equal(view.items().length, 0); assert.equal(host.toasts.length, 0)
+    host.ipc.window_show_open_dialog = async () => { throw new Error('选择器不可用') }
+    await view.run(null, '选择原图…'); assert.match(view.text(), /选择器不可用/); assert.equal(view.items().length, 0)
+  } finally { view.unmount() }
+  const host2 = createHost(); host2.ipc.clipboard_read_image = async () => ({ success: true, useTempFile: false, image: '' })
+  const fast = await mount(commands['id-watermark-clipboard-fast'], host2)
+  try { await tick(); assert.deepEqual(fast.actions(null).map(a => a.props.title), ['读取剪贴板图片', '选择原图…']) }
+  finally { fast.unmount() }
 })

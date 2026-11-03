@@ -104,13 +104,17 @@ export function WifiQrForm({ onCreated }: { onCreated: (item: QrItem) => Promise
   const [security, setSecurity] = useState<"WPA" | "WEP" | "nopass">("WPA");
   const [hidden, setHidden] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [passwordError, setPasswordError] = useState<string | undefined>(undefined);
 
   const submit = async () => {
     let payload: string;
     try {
       payload = buildWifiPayload(ssid, password, security, hidden);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      // 密码相关的错误显示在密码框下，名称相关的显示在名称框下
+      if (/密码/.test(message)) setPasswordError(message);
+      else setError(message);
       return;
     }
     if (await onCreated(newItem(payload, "M", `Wi-Fi：${ssid}`))) pop();
@@ -120,22 +124,21 @@ export function WifiQrForm({ onCreated }: { onCreated: (item: QrItem) => Promise
     {
       navigationTitle: "Wi-Fi 二维码",
       actions: ActionPanel({ title: "Wi-Fi" }, [
-        Action.SubmitForm({ title: "生成并保存", icon: Icon.Check, onSubmit: submit }),
-        Action({ title: "返回", icon: Icon.ArrowLeft, onAction: () => pop() })
+        Action.SubmitForm({ title: "生成并保存", icon: Icon.Check, onSubmit: submit })
       ])
     },
     [
       Form.TextField({ id: "ssid", title: "Wi-Fi 名称", placeholder: "区分大小写", value: ssid, error, onChange: (v: string) => { setSsid(v); setError(undefined); } }),
-      Form.PasswordField({ id: "password", title: "密码", placeholder: "无密码网络可留空", value: password, onChange: (v: string) => { setPassword(v); setError(undefined); } }),
+      Form.PasswordField({ id: "password", title: "密码", placeholder: "无密码网络可留空", value: password, error: passwordError, onChange: (v: string) => { setPassword(v); setPasswordError(undefined); } }),
       Form.Dropdown(
-        { id: "security", title: "加密方式", value: security, onChange: (v: string) => setSecurity(v === "WEP" || v === "nopass" ? v : "WPA") },
+        { id: "security", title: "加密方式", value: security, onChange: (v: string) => { setSecurity(v === "WEP" || v === "nopass" ? v : "WPA"); setPasswordError(undefined); } },
         [
           Form.Dropdown.Item({ title: "WPA / WPA2 / WPA3", value: "WPA" }),
           Form.Dropdown.Item({ title: "WEP", value: "WEP" }),
           Form.Dropdown.Item({ title: "无密码", value: "nopass" })
         ]
       ),
-      Form.Checkbox({ id: "hidden", label: "隐藏网络（不广播名称）", value: hidden, onChange: (v: boolean) => setHidden(v) })
+      Form.Checkbox({ id: "hidden", title: "隐藏网络", label: "该网络不广播名称", value: hidden, onChange: (v: boolean) => setHidden(v) })
     ]
   );
 }
@@ -264,8 +267,9 @@ export default function QrCodeCommand({ initialWifi = false }: { initialWifi?: b
   } else {
     sections.push(
       List.Section({ title: "开始" }, [
-        List.Item({ id: "hint", title: "在上方输入网址或文字，实时生成二维码", subtitle: "回车复制图片，可直接粘贴到微信、文档", icon: Icon.QrCode, detail: List.Item.Detail({ markdown: "" }), actions: ActionPanel({ title: "开始" }, globalActions) }),
-        List.Item({ id: "wifi", title: "生成 Wi-Fi 二维码", subtitle: "手机扫码直接连网", icon: Icon.Shield, detail: List.Item.Detail({ markdown: "" }), actions: ActionPanel({ title: "开始" }, [globalActions[1], globalActions[0]]) })
+        // 引导条目不带详情：首屏没有可预览的二维码，避免右侧留出半屏空白
+        List.Item({ id: "hint", title: "在上方输入网址或文字，实时生成二维码", subtitle: "回车用剪贴板里的文字生成", icon: Icon.QrCode, actions: ActionPanel({ title: "开始" }, globalActions) }),
+        List.Item({ id: "wifi", title: "生成 Wi-Fi 二维码", subtitle: "手机扫码直接连网", icon: Icon.Shield, actions: ActionPanel({ title: "开始" }, [globalActions[1], globalActions[0]]) })
       ])
     );
   }
@@ -303,7 +307,8 @@ export default function QrCodeCommand({ initialWifi = false }: { initialWifi?: b
   return List(
     {
       navigationTitle: "二维码生成",
-      isShowingDetail: true,
+      // 只有在有二维码可预览（当前输入或历史）时才显示右侧详情栏
+      isShowingDetail: Boolean(text) || matches.length > 0,
       searchBarPlaceholder: "输入网址或文字，实时生成二维码…",
       searchText,
       onSearchTextChange: (v: string) => setSearchText(v),

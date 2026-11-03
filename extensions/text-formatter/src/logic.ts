@@ -44,8 +44,10 @@ const LOWER_TITLE_WORDS = new Set([
 export function toTitleCase(text: string): string {
   return (text || "")
     .toLowerCase()
-    .replace(/[A-Za-z][A-Za-z'’-]*/g, (word, offset) => {
-      if (offset > 0 && LOWER_TITLE_WORDS.has(word)) return word;
+    .replace(/[A-Za-z][A-Za-z'’-]*/g, (word, offset: number, all: string) => {
+      // 每行第一个单词总是大写（多行标题列表里行首的 the / a 也要大写）
+      const lineStart = all.lastIndexOf("\n", offset - 1) + 1;
+      if (all.slice(lineStart, offset).trim() && LOWER_TITLE_WORDS.has(word)) return word;
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     });
 }
@@ -55,28 +57,39 @@ export function toSentenceCase(text: string): string {
   return lowered.replace(/(^\s*[a-z]|[.!?]\s+[a-z])/g, (match) => match.toUpperCase());
 }
 
-export function toCamelCase(text: string): string {
-  const words = (text || "")
-    .replace(/[^a-zA-Z0-9]+/g, " ")
-    .trim()
-    .split(/\s+/)
+/**
+ * 命名风格转换的分词：按驼峰边界（userName、HTTPServer、v2Beta）与非 ASCII 字母数字字符切分。
+ * 命名风格只对 ASCII 标识符有意义，中文、标点、Emoji 作为分隔符丢弃。
+ */
+function identifierWords(line: string): string[] {
+  return line
+    .replace(/([a-z\d])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
     .filter(Boolean);
-  if (!words.length) return "";
-  return words[0].toLowerCase() + words.slice(1).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join("");
+}
+
+/** 逐行转换命名风格：每行是一个标识符，空行保留，行数不变；全部行都没有可用单词时返回空串 */
+function convertIdentifierLines(text: string, join: (words: string[]) => string): string {
+  const lines = normalizeLineEndings(text || "").split("\n").map((line) => {
+    const words = identifierWords(line);
+    return words.length ? join(words) : "";
+  });
+  return lines.some(Boolean) ? lines.join("\n") : "";
+}
+
+const capitalize = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+
+export function toCamelCase(text: string): string {
+  return convertIdentifierLines(text, (words) => words[0].toLowerCase() + words.slice(1).map(capitalize).join(""));
 }
 
 export function toSnakeCase(text: string): string {
-  return (text || "")
-    .replace(/([a-z\d])([A-Z])/g, "$1_$2")
-    .replace(/[-\s]+/g, "_")
-    .toLowerCase();
+  return convertIdentifierLines(text, (words) => words.map((w) => w.toLowerCase()).join("_"));
 }
 
 export function toKebabCase(text: string): string {
-  return (text || "")
-    .replace(/([a-z\d])([A-Z])/g, "$1-$2")
-    .replace(/[_\s]+/g, "-")
-    .toLowerCase();
+  return convertIdentifierLines(text, (words) => words.map((w) => w.toLowerCase()).join("-"));
 }
 
 /**

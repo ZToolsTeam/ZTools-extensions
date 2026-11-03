@@ -13,6 +13,9 @@ import path from 'node:path'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import * as mod from '../dist/index.js'
 import { getFileQuickLook, openFile, revealFile, quickLookFile } from '../dist/search-service.js'
+const IS_MAC_RUNTIME = /^mac/i.test(String(globalThis.navigator?.platform || ''))
+const REVEAL_TITLE = IS_MAC_RUNTIME ? '在访达中定位' : '在资源管理器中定位'
+const TRASH_TITLE = IS_MAC_RUNTIME ? '移入废纸篓' : '移入回收站'
 
 const Command = mod.default
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'efs-fixes-'))
@@ -106,11 +109,11 @@ test('-1 在 Finder 中定位：以 filesearch_reveal 的真实结果为准（�
   const host = setupHost()
   host.ipc.filesearch_reveal = async ({ path: p }) => ({ success: false, path: p, error: '文件或目录不存在' })
   const view = await mountList(host)
-  await view.run(view.item(codeTs), '在 Finder / 资源管理器中定位 (Show in Finder)')
+  await view.run(view.item(codeTs), REVEAL_TITLE)
   assert.equal(host.lastToast().style, 'FAILURE')
   assert.match(host.lastToast().title, /文件或目录不存在/)
   host.ipc.filesearch_reveal = async ({ path: p }) => ({ success: true, path: p })
-  await view.run(view.item(codeTs), '在 Finder / 资源管理器中定位 (Show in Finder)')
+  await view.run(view.item(codeTs), REVEAL_TITLE)
   assert.equal(host.lastToast().style, 'SUCCESS')
   assert.equal(host.ipcCalls.some(([m]) => m === 'shell_show_item_in_folder'), false)
   view.unmount()
@@ -296,7 +299,7 @@ test('-9 / -16 第 2 个动作就是标着 ⌘↵ 的「在 Finder 中定位」�
   const view = await mountList(host)
   const acts = view.actions(view.item(notesTxt))
   assert.equal(acts[0].props.title, '打开文件')
-  assert.equal(acts[1].props.title, '在 Finder / 资源管理器中定位 (Show in Finder)')
+  assert.equal(acts[1].props.title, REVEAL_TITLE)
   assert.deepEqual(acts[1].props.shortcut, { modifiers: ['ctrl'], key: 'enter' })
   const enterBound = acts.filter((a) => a.props.shortcut?.key === 'enter')
   assert.equal(enterBound.length, 1, '⌘↵ 只能标在第 2 个动作上')
@@ -339,7 +342,7 @@ test('-10 移入废纸篓必须确认：取消时不调用宿主；确认后才�
   }
   const view = await mountList(host)
   host.setConfirm(false)
-  await view.run(view.item(trashMe), '移入回收站 (Move to Trash)')
+  await view.run(view.item(trashMe), TRASH_TITLE)
   assert.equal(host.confirms.length, 1)
   assert.match(host.confirms[0].title, /trash-me\.txt/)
   assert.equal(host.confirms[0].primaryAction.style, 'destructive')
@@ -350,7 +353,7 @@ test('-10 移入废纸篓必须确认：取消时不调用宿主；确认后才�
     throw Object.assign(new Error('路径未由当前窗口授权'), { code: 'PERMISSION_DENIED' })
   }
   host.setConfirm(true)
-  await view.run(view.item(trashMe), '移入回收站 (Move to Trash)')
+  await view.run(view.item(trashMe), TRASH_TITLE)
   assert.equal(host.lastToast().style, 'FAILURE')
   assert.match(host.lastToast().title, /未由当前窗口授权/)
   assert.ok(view.items().some((i) => i.props.id === trashMe))
@@ -359,7 +362,7 @@ test('-10 移入废纸篓必须确认：取消时不调用宿主；确认后才�
     trashed.push(fullPath)
     return { success: true }
   }
-  await view.run(view.item(trashMe), '移入回收站 (Move to Trash)')
+  await view.run(view.item(trashMe), TRASH_TITLE)
   assert.deepEqual(trashed, [trashMe])
   assert.equal(host.lastToast().style, 'SUCCESS')
   assert.equal(view.items().some((i) => i.props.id === trashMe), false)
@@ -512,4 +515,24 @@ test('宿主没有返回修改时间时显示「未知」，不用当前时间�
   await tick(10)
   assert.match(detail.text(), /"title":"修改时间","text":"未知"/)
   detail.unmount()
+})
+
+test('下拉筛选与动作分组标题不带英文括注', async () => {
+  const host = setupHost()
+  const view = await mountList(host)
+  try {
+    const titles = []
+    const walk = (node) => {
+      if (!node || typeof node !== 'object') return
+      if (Array.isArray(node)) return node.forEach(walk)
+      if (node.props && typeof node.props.title === 'string') titles.push(node.props.title)
+      walk(node.children)
+      if (node.props) walk(node.props.actions)
+    }
+    walk(view.tree().props.searchBarAccessory)
+    walk(view.item(notesTxt).props.actions)
+    assert.ok(titles.includes('全部文件与文件夹'), titles.join('|'))
+    assert.ok(titles.includes('快捷复制'), titles.join('|'))
+    for (const title of titles) assert.doesNotMatch(title, /[(（](All|Documents|Images|Videos|Audio|Archives|Code|Folders|Clipboard|Operations)[)）]/, title)
+  } finally { view.unmount() }
 })

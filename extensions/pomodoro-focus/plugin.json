@@ -1,9 +1,9 @@
 {
   "id": "pomodoro-focus",
   "name": "番茄倒数",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "25 分钟番茄专注与短长休息，离页继续计时、重启恢复状态；本地保存重要日程倒数日并发送系统通知",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [

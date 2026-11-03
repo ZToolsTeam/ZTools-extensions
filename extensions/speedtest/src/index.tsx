@@ -9,7 +9,7 @@ export default function SpeedtestCommand(props: { featureCode?: string } = {}) {
     void speedtestInvoke('system_get_platform', {}).then(r => {
       if (typeof r.platform !== 'string' || !['macos', 'windows'].includes(r.platform)) throw new Error('当前系统不支持网络测速')
       if (alive) setPlatform(r.platform)
-    }).catch(e => { if (alive) setError(String(e)) })
+    }).catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)) })
     return () => { alive = false }
   }, [attempt])
   if (platform === 'macos') return MacCommand({ diagnostic: props.featureCode === 'speedtest-ping-check' })

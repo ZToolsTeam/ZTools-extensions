@@ -1,6 +1,6 @@
 export type RegexCronMode = 'dict' | 'tester' | 'cron'
 
-export type RegexCategory = 'identity' | 'business' | 'traffic' | 'network' | 'format'
+export type RegexCategory = 'identity' | 'business' | 'finance' | 'traffic' | 'network' | 'format'
 
 export interface RegexPresetItem {
   id: string

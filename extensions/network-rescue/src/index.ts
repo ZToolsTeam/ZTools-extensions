@@ -26,8 +26,7 @@ export function NetworkRescueCommand() {
   const [searchText, setSearchText] = useState('')
   const [filterMode, setFilterMode] = useState<RescueFilterMode>('all')
   const [items, setItems] = useState<NetworkRescueItem[]>(NETWORK_RESCUE_ITEMS)
-  const [healthScore, setHealthScore] = useState(86)
-  const [latencyMs, setLatencyMs] = useState(14)
+  const [diagnosticError, setDiagnosticError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
   async function refreshDiagnostics(showNotice = false) {
@@ -35,13 +34,12 @@ export function NetworkRescueCommand() {
     try {
       const snap = await runNetworkDiagnostics()
       setItems(snap.items)
-      setHealthScore(snap.overallHealthScore)
-      setLatencyMs(snap.latencyMs)
+      setDiagnosticError(snap.error || '')
       if (showNotice) {
         showToast({
-          style: Toast.Style.Success,
-          title: '全网连通性诊断已完成',
-          message: `网络健康评分 ${snap.overallHealthScore} 分 · 待处理告警 ${snap.warningCount} 项`
+          style: snap.ok ? Toast.Style.Success : Toast.Style.Failure,
+          title: snap.ok ? '网络诊断已完成' : '网络诊断失败',
+          message: snap.error || `告警 ${snap.warningCount} 项 · 未检测 ${snap.unknownCount} 项`
         })
       }
     } finally {
@@ -56,14 +54,7 @@ export function NetworkRescueCommand() {
   async function handleRepairItem(item: NetworkRescueItem) {
     const res = await executeNetworkRepair(item.id)
     if (res.ok) {
-      setItems((prev) =>
-        prev.map((cur) =>
-          cur.id === item.id
-            ? { ...cur, status: 'repaired', statusText: '已执行修复', healthScore: 100 }
-            : cur
-        )
-      )
-      setHealthScore((prev) => Math.min(100, prev + 6))
+      await refreshDiagnostics(false)
       showToast({
         style: Toast.Style.Success,
         title: res.message,
@@ -82,18 +73,11 @@ export function NetworkRescueCommand() {
     const warningIds = items.filter((i) => i.status === 'warning' || i.status === 'error').map((i) => i.id)
     const res = await batchExecuteNetworkRepairs(warningIds)
     if (res.ok && res.repairedCount > 0) {
-      setItems((prev) =>
-        prev.map((cur) =>
-          cur.status === 'warning' || cur.status === 'error'
-            ? { ...cur, status: 'repaired', statusText: '已自动修复', healthScore: 100 }
-            : cur
-        )
-      )
-      setHealthScore(99)
+      await refreshDiagnostics(false)
       showToast({
         style: Toast.Style.Success,
         title: res.summary,
-        message: '已清理残留代理与异常域名劫持'
+        message: '已重新诊断，请查看各项实际状态'
       })
     } else {
       showToast({
@@ -105,6 +89,7 @@ export function NetworkRescueCommand() {
   }
 
   const filtered = filterNetworkRescueItems(items, searchText, filterMode)
+  const unknownCount = items.filter(item => item.status === 'unknown').length
   const warningCount = items.filter((i) => i.status === 'warning' || i.status === 'error').length
 
   return List({
@@ -125,7 +110,7 @@ export function NetworkRescueCommand() {
       ]
     }),
     filterBar: {
-      summaryText: `网络综合健康度 ${healthScore} 分 · 已巡检 ${items.length} 项 · 异常告警 ${warningCount} 项 · 外网 DNS 延迟 ${latencyMs} ms`,
+      summaryText: diagnosticError || `已有结果 ${items.length - unknownCount} 项 · 告警 ${warningCount} 项 · 未检测 ${unknownCount} 项`,
       actions: [
         {
           id: 'rediagnose',
@@ -134,17 +119,7 @@ export function NetworkRescueCommand() {
           style: 'secondary',
           onAction: () => void refreshDiagnostics(true)
         },
-        ...(warningCount > 0
-          ? [
-              {
-                id: 'repair-warnings',
-                label: `一键修复异常 (${warningCount})`,
-                title: `一键修复异常 (${warningCount})`,
-                style: 'secondary' as const,
-                onAction: () => void handleRepairAllWarnings()
-              }
-            ]
-          : [])
+
       ]
     },
     children: [
@@ -158,10 +133,9 @@ export function NetworkRescueCommand() {
             subtitle: `${item.subtitle}`,
             icon: isWarning ? Icon.ExclamationMark : Icon.Shield,
             accessories: [
-              { progress: { value: item.healthScore } },
               {
                 tag: {
-                  value: isWarning ? '异常告警' : item.status === 'repaired' ? '已修复' : item.categoryLabel,
+                  value: isWarning ? '异常告警' : item.status === 'unknown' ? '未检测' : '检查通过',
                   ...(isWarning ? { color: Color.Red } : {})
                 }
               },

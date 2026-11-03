@@ -9,11 +9,12 @@ type DynamicBridge = ReturnType<typeof JSON.parse>;
  */
 
 import {
+  callHostTransport,
   formatBytes,
   getRealSystemPath,
   invokeHostCapability,
   isRealElectronHost,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   type NativeInvocationResult
 } from "./native-ipc.js";
@@ -148,21 +149,23 @@ function errorText(err: unknown): string {
 }
 
 export async function fetchShredCandidates(hostBridge?: DynamicBridge): Promise<ShredderSnapshot> {
+  const scanner = createDirectoryScanner(hostBridge);
   if (!hasClientHost(hostBridge)) {
     return createEmptyShredderSnapshot(NOT_IN_CLIENT_MESSAGE);
   }
   try {
-    const [temp, home] = await Promise.all([
-      getRealSystemPath("temp", hostBridge),
+    const [folders, home] = await Promise.all([
+      callHostTransport<{ folders?: Array<{ id: string; path: string; exists: boolean }> }>("system_list_common_folders", {}, hostBridge),
       getRealSystemPath("home", hostBridge)
     ]);
-    if (!temp) {
+    const temp = folders.data?.folders?.find(folder => folder.id === "temp" && folder.exists)?.path;
+    if (!folders.ok || !temp) {
       return createEmptyShredderSnapshot("无法获取临时文件夹路径，没有扫描任何文件");
     }
     const crashDumpDir = home ? `${home.replace(/[\\/]+$/, "")}\\AppData\\Local\\CrashDumps` : "";
     const [tempScan, dumpScan] = await Promise.all([
-      scanRealDirectoryTree(temp, { maxFiles: MAX_CANDIDATES }, hostBridge),
-      crashDumpDir ? scanRealDirectoryTree(crashDumpDir, { maxFiles: 15 }, hostBridge) : Promise.resolve(null)
+      scanner.scan(temp, { maxFiles: MAX_CANDIDATES }),
+      crashDumpDir ? scanner.scan(crashDumpDir, { maxFiles: 15 }) : Promise.resolve(null)
     ]);
 
     const seen = new Set<string>();
@@ -190,6 +193,7 @@ export async function fetchShredCandidates(hostBridge?: DynamicBridge): Promise<
     return {
       candidates,
       totalShreddableBytes: candidates.reduce((acc, item) => acc + item.sizeBytes, 0),
+      error: scanner.error,
       updatedAt: new Date().toLocaleTimeString()
     };
   } catch (err) {

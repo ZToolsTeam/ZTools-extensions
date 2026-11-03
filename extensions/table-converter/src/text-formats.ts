@@ -105,14 +105,19 @@ export function parseMarkdownTable(text: string): string[][] {
   const lines = text.trim().split(/\r?\n/)
   if (lines.length < 2) throw new Error('Markdown 表格缺少表头分隔行。')
   const separator = markdownCells(lines[1]!)
-  if (!separator.every(cell => /^:?-{3,}:?$/.test(cell))) throw new Error('Markdown 表格第二行必须是 --- 分隔行。')
+  if (!separator.every(cell => /^:?-+:?$/.test(cell))) throw new Error('Markdown 表格第二行必须是 --- 分隔行。')
   const rows = lines.filter((_, i) => i !== 1).map(line => markdownCells(line).map(cell => decodeEntities(cell.replace(/<br\s*\/?\s*>/gi, '\n'))))
   if (separator.length !== rows[0]!.length) throw new Error('Markdown 表头和分隔行列数不一致。')
   return rows
 }
 
+/** 可能被 GFM 扩展自动识别为链接 / 邮箱的写法（http://、www.、a@b.c、mailto: 等） */
+const AUTOLINK_LIKE = /[a-z][a-z\d+.-]*:|www\.|@/i
+
 export function markdownCell(text: string): string {
-  return escapeHtml(text).replace(/[\\|`*_~\[\]():.@]/g, char => `&#${char.codePointAt(0)};`)
+  // 格式语法字符总是转义；. : @ ( ) 只在单元格像网址或邮箱时转义，3.14、12:30 这类普通数据保持可读
+  const pattern = AUTOLINK_LIKE.test(text) ? /[\\|`*_~\[\]():.@]/g : /[\\|`*_~\[\]]/g
+  return escapeHtml(text).replace(pattern, char => `&#${char.codePointAt(0)};`)
     .replace(/\r/g, '&#13;').replace(/\n/g, '<br>')
     .replace(/^\s+|\s+$/g, spaces => Array.from(spaces, char => `&#${char.codePointAt(0)};`).join(''))
 }
