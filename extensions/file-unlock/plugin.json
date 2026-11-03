@@ -2,7 +2,7 @@
   "id": "file-unlock",
   "name": "文件解锁",
   "description": "检测文件、文件夹和外接磁盘的真实进程占用，确认后结束进程，支持不覆盖改名，或移入回收站 / 废纸篓以便恢复",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

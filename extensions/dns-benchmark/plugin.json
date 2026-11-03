@@ -1,7 +1,7 @@
 {
   "id": "dns-benchmark",
   "name": "DNS测速",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "测试公共 DNS 地址的响应情况，切换当前网络 DNS；Mac 支持真实域名解析、配置备份与恢复",
   "author": "ZTools Team",
   "entry": "dist/index.js",

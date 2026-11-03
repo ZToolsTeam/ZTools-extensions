@@ -2,7 +2,7 @@
   "id": "system-backup",
   "name": "系统备份",
   "description": "将 Hosts、SSH、Git、终端与编辑器配置打包为本地快照，并解压到新目录取回文件",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",

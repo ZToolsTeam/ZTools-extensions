@@ -929,6 +929,42 @@ export type PluginInvocationResult = Pick<
   DllCapabilityResponse<unknown>, 'ok' | 'pluginName' | 'method' | 'error' | 'fromFallback'
 > & { data?: unknown }
 
+/** 多个原生能力插件共用的参数边界校验；保护目标由各插件按自身业务提供。 */
+export function validateNativeCapabilityPayload(
+  method: string,
+  params: unknown,
+  forbiddenPattern: RegExp,
+  forbiddenReason: string
+): { valid: boolean; error?: string } {
+  if (typeof method !== 'string' || method.trim().length === 0) {
+    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+  }
+  if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
+    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+  }
+  if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
+    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+  }
+
+  const record = params as Record<string, unknown>
+  for (const [key, val] of Object.entries(record)) {
+    if (typeof val === 'string') {
+      if (val.length > 4096) {
+        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+      }
+      if (forbiddenPattern.test(val)) {
+        return { valid: false, error: `SECURITY_INTERCEPTED: ${forbiddenReason}` }
+      }
+    } else if (typeof val === 'number') {
+      if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
+        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+      }
+    }
+  }
+
+  return { valid: true }
+}
+
 export async function invokeDllPluginCapability<T = DynamicBridge>(
   pluginName: string,
   method: string,

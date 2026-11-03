@@ -1,7 +1,7 @@
 {
   "id": "docker-manager",
   "name": "容器管控",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "查看本机 Docker 容器、端口和资源采样，支持启停、日志与确认后清理停止容器；需已安装并启动 Docker 环境",
   "author": "ZTools Team",
   "entry": "dist/index.js",

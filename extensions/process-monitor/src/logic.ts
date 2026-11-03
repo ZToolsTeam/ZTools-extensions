@@ -3,6 +3,7 @@ import {
   callHostTransport,
   formatBytes,
   invokeDllPluginCapability,
+  validateNativeCapabilityPayload,
   isRealElectronHost
 } from './native-ipc.js'
 
@@ -236,33 +237,7 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 }
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
-  if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
-  }
-  if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
-  }
-  if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
-  }
-
-  const record = params as Record<string, unknown>
-  for (const [key, val] of Object.entries(record)) {
-    if (typeof val === 'string') {
-      if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
-      }
-      if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
-      }
-    } else if (typeof val === 'number') {
-      if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
-      }
-    }
-  }
-
-  return { valid: true }
+  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, FORBIDDEN_REASON)
 }
 
 export async function invokeNativeCapability(
@@ -274,15 +249,9 @@ export async function invokeNativeCapability(
   if (!check.valid) {
     throw new Error(check.error || '参数校验失败')
   }
-  const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
-  return {
-    ok: res.ok,
-    pluginName: DLL_PLUGIN_NAME,
-    method: method.trim(),
-    data: res.data ?? undefined,
-    error: res.error,
-    fromFallback: res.fromFallback
-  }
+  const result = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
+  // 沿用公共接口的调用回执，仅保留本插件既有的空数据语义。
+  return { ...result, data: result.data ?? undefined }
 }
 
 /** 宿主返回的原始对象按字段读取；null / undefined 视为空对象（与可选链读取结果一致） */

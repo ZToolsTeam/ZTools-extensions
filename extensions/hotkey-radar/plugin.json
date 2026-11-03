@@ -1,7 +1,7 @@
 {
   "id": "hotkey-radar",
   "name": "热键侦测",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "检测全局快捷键注册情况，离线查询系统与常用软件快捷键；Mac 区分 ⌘ 与 ⌃，不推测占用进程",
   "author": "ZTools Team",
   "entry": "dist/index.js",
