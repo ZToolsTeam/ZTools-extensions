@@ -16,7 +16,7 @@ async function open(command = Command) { const v = await mount(command, host); v
 const calls = action => host.ipcCalls.filter(([method, params]) => method === 'startup_manager' && params.action === action)
 test('真实 SDK 布局一显示运行和自启状态；Enter 走新宿主，次动作复制路径', async () => {
   const view = await open(); assert.equal(view.tree().props.isShowingDetail, false); assert.equal(calls('scan').length, 1)
-  assert.match(view.text(), /允许自启/); assert.match(view.text(), /运行中/)
+  assert.match(view.text(), /允许自启/); assert.match(view.text(), /运行中 · PID 123/)
   const row = view.item('a'.repeat(64)); assert.equal(view.actions(row)[0].props.title, '禁止后续自启')
   assert.ok(!view.actions(row).some(action => action.props.title.includes('失效配置')))
   await view.run(row, '禁止后续自启'); assert.equal(calls('set-enabled').length, 1); assert.equal(calls('scan').length, 2)
@@ -62,4 +62,35 @@ test('失效配置清理先确认；正常项不显示清理；恢复使用原�
   await view.run(row, '移除失效配置（可恢复）'); assert.equal(calls('remove').length, 1); assert.match(host.confirms.at(-1).message, /不会结束/)
   await view.dropdown('backups'); await view.run(view.item(backup.id), '恢复启动配置')
   assert.equal(calls('restore')[0][1].id, backup.id); assert.match(host.lastToast().title, /恢复/)
+})
+test('写入失败如实提示并重新读取列表，不清空为空白；读取警告带复制与重扫动作', async () => {
+  const view = await open()
+  host.ipc.startup_manager = async p => {
+    if (p.action === 'set-enabled') throw new Error('自启修改未确认：User canceled')
+    if (p.action === 'scan') return { ...report(), warnings: ['/Library/LaunchDaemons：读取失败 EACCES'] }
+    return { success: true, cancelled: true }
+  }
+  await view.run(view.item('a'.repeat(64)), '禁止后续自启'); await tick()
+  assert.equal(host.toasts.filter(t => t.style === 'success').length, 0)
+  assert.match(host.lastToast().title, /未确认/); assert.match(host.lastToast().message, /User canceled/)
+  assert.equal(calls('scan').length, 1 + 1, '失败后应重新扫描')
+  assert.ok(view.item('a'.repeat(64)), '列表应保留重新读取的结果')
+  assert.match(view.tree().props.filterBar.summaryText, /User canceled/)
+  const warning = view.item('warning-0'); assert.ok(warning)
+  await view.run(warning, '复制错误信息'); assert.match(host.clipboard.text, /EACCES/)
+})
+test('写入失败后重扫也失败时显示两段错误，不显示旧列表', async () => {
+  const view = await open()
+  host.ipc.startup_manager = async p => { if (p.action === 'set-enabled') throw new Error('系统拒绝'); if (p.action === 'scan') throw new Error('launchctl 超时'); return { success: true } }
+  await view.run(view.item('a'.repeat(64)), '禁止后续自启'); await tick()
+  assert.throws(() => view.item('a'.repeat(64)), /找不到列表项/)
+  assert.match(view.text(), /系统拒绝；重新扫描也失败：launchctl 超时/)
+  const empty = view.item('empty'); assert.ok(view.actions(empty).some(a => a.props.title === '重新扫描'))
+})
+test('打开系统设置失败只提示错误，保留列表；摘要说明 App 登录项位置', async () => {
+  const view = await open()
+  assert.match(view.tree().props.filterBar.summaryText, /登录项与扩展/)
+  host.ipc.startup_manager = async p => p.action === 'settings' ? { success: true, accepted: false } : report()
+  await view.tree().props.filterBar.actions.find(a => a.id === 'settings').onAction(); await tick()
+  assert.match(view.text(), /系统设置未确认打开/); assert.ok(view.item('a'.repeat(64)))
 })

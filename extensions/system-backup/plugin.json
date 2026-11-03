@@ -1,8 +1,8 @@
 {
   "id": "system-backup",
   "name": "系统备份",
-  "description": "一键打包备份 Hosts、环境变量、SSH 密钥、终端与开发配置，换机或重装系统后秒级还原",
-  "version": "2.0.6",
+  "description": "将 Hosts、SSH、Git、终端与编辑器配置打包为本地快照，并解压到新目录取回文件",
+  "version": "2.0.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -22,5 +22,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.9"
 }

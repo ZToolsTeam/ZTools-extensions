@@ -1,8 +1,8 @@
 {
   "id": "window-manager",
   "name": "窗口管理",
-  "description": "快速管理桌面活动窗口，支持左右分屏贴靠、一键窗口置顶、透明度调节与尺寸居中",
-  "version": "2.0.7",
+  "description": "管理活动窗口的半屏、四角、三分屏、居中与跨显示器移动",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -13,11 +13,9 @@
   "keywords": [
     "窗口管理",
     "窗口分屏",
-    "窗口置顶",
-    "窗口切换",
     "左右分屏",
-    "透明度",
-    "always on top",
+    "窗口居中",
+    "多显示器",
     "window"
   ],
   "features": [
@@ -33,22 +31,12 @@
       ]
     },
     {
-      "code": "win-topmost",
-      "explain": "窗口一键置顶与透明度调节",
+      "code": "win-display",
+      "explain": "将活动窗口移动到上一或下一显示器",
       "cmds": [
-        "窗口置顶",
-        "置顶窗口",
-        "always on top",
-        "窗口透明度"
-      ]
-    },
-    {
-      "code": "win-switch",
-      "explain": "活动桌面窗口快速检索与切换",
-      "cmds": [
-        "窗口切换",
-        "切换窗口",
-        "活动窗口"
+        "移动窗口",
+        "下一显示器",
+        "上一显示器"
       ]
     }
   ],
@@ -65,5 +53,6 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "minAppVersion": "1.1.8.9"
 }

@@ -8,22 +8,33 @@ export function MacDnsCommand({ featureCode = 'dns-benchmark-run' }: { featureCo
   const [results, setResults] = useState<ProbeResult[]>([]), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [query, setQuery] = useState(''), [selection, setSelection] = useState(featureCode === 'dns-reset-dhcp' ? 'automatic' : featureCode === 'dns-flush-cache' ? 'flush' : endpoints[0]?.server || '')
   const alive = useRef(true), job = useRef<{ id: string; cancelled: boolean } | null>(null)
+  // 程序自动选中的地址；选中项仍是它时说明用户没手动选过，测速完成后跟随排序选中最快的成功地址
+  const autoSelection = useRef(selection)
   const current = services.find(v => v.name === selected)
   const work = async (run: (active: { id: string; cancelled: boolean }) => Promise<void>) => {
-    if (job.current) return
+    if (job.current) { await showToast(Toast.Style.Failure, '上一项 DNS 操作尚未完成', '请等待完成或先取消'); return }
     const active = { id: operationId(), cancelled: false }; job.current = active; setBusy(true); setError('')
     try { await run(active) }
     catch (failure) { if (alive.current) { const message = failure instanceof Error ? failure.message : String(failure); setError(message); await showToast(Toast.Style.Failure, 'DNS 操作未完成', message) } }
     finally { if (job.current === active) job.current = null; if (alive.current) setBusy(false) }
   }
-  const refresh = () => work(async active => {
-    setResults([])
+  // 只有测速命令打开时自动测速；刷新缓存、恢复自动 DNS 只读取网络配置，不额外发解析请求
+  const refresh = (probe = true) => work(async active => {
+    if (probe) setResults([])
     const networks = await listServices(active.id)
     if (!alive.current || active.cancelled) return
     setServices(networks); setSelected(previous => networks.some(v => v.name === previous) ? previous : networks[0]?.name || '')
     if (!networks.length) { setError('未找到已连接的网络服务'); return }
+    if (!probe) return
     const probes = await probeServers(active.id, endpoints.map(v => v.server))
-    if (alive.current && !active.cancelled) setResults(probes)
+    if (!alive.current || active.cancelled) return
+    setResults(probes)
+    const fastest = probes.filter(v => v.milliseconds !== null).sort((a, b) => (a.milliseconds as number) - (b.milliseconds as number))[0]
+    if (fastest) setSelection(previous => {
+      if (previous && previous !== autoSelection.current) return previous
+      autoSelection.current = fastest.server
+      return fastest.server
+    })
   })
   const cancel = async () => {
     const active = job.current
@@ -32,7 +43,7 @@ export function MacDnsCommand({ featureCode = 'dns-benchmark-run' }: { featureCo
     try { await cancelDns(active.id) }
     catch (failure) { if (alive.current) setError(`取消未确认：${failure instanceof Error ? failure.message : String(failure)}`) }
   }
-  useEffect(() => { alive.current = true; void refresh(); return () => {
+  useEffect(() => { alive.current = true; void refresh(featureCode === 'dns-benchmark-run'); return () => {
     alive.current = false
     const active = job.current
     if (active) { active.cancelled = true; void cancelDns(active.id).catch(failure => console.warn('DNS 取消结果未确认', failure)) }
@@ -50,23 +61,36 @@ export function MacDnsCommand({ featureCode = 'dns-benchmark-run' }: { featureCo
   const sorted = useMemo(() => endpoints.map(v => ({ ...v, probe: results.find(p => p.server === v.server) }))
     .sort((a, b) => (a.probe?.milliseconds ?? Infinity) - (b.probe?.milliseconds ?? Infinity))
     .filter(v => !query || `${v.name} ${v.server}`.toLowerCase().includes(query.toLowerCase())), [results, query])
+  const isAutomatic = Boolean(current) && current!.servers.length === 0
+  // 从“恢复自动 DNS”入口打开但本来就是自动获取：那一行只是状态说明、没有动作，默认选中改到可操作的“刷新 DNS 缓存”，
+  // 否则 Enter 没有反应。只调整程序自动选的项，用户手动选过就不动
+  useEffect(() => {
+    if (isAutomatic && selection === 'automatic' && autoSelection.current === 'automatic') {
+      autoSelection.current = 'flush'
+      setSelection('flush')
+    }
+  }, [isAutomatic, selection])
   return <List navigationTitle="DNS 测速与切换" isShowingDetail={false} isLoading={busy} searchText={query} onSearchTextChange={setQuery}
     selectedItemId={selection} onSelectionChange={id => setSelection(id || '')} searchBarPlaceholder="搜索 DNS 名称或地址；回车应用所选地址"
     searchBarAccessory={<List.Dropdown value={selected} onChange={setSelected} tooltip="选择网络服务">
       {services.map(v => <List.Dropdown.Item key={v.name} value={v.name} title={v.name} />)}
     </List.Dropdown>}
     filterBar={{ summaryText: error || (busy ? '正在处理；系统授权等待可以取消' : `${current?.name || '未连接'} · 当前 DNS：${current?.servers.join('、') || '自动获取'} · 单次解析 example.com`),
-      actions: [{ id: busy ? 'cancel' : 'refresh', title: busy ? '取消' : '重新测速', icon: Icon.ArrowClockwise, onAction: busy ? cancel : refresh }] }}>
+      actions: [{ id: busy ? 'cancel' : 'refresh', title: busy ? '取消' : results.length ? '重新测速' : '开始测速', icon: Icon.ArrowClockwise, onAction: busy ? cancel : () => refresh(true) }] }}>
     <List.Section title="公共 DNS · 每个地址独立测速">
       {sorted.map(v => <List.Item key={v.server} id={v.server} title={v.name} subtitle={v.server} icon={Icon.Globe}
-        accessories={[{ text: v.probe ? v.probe.milliseconds === null ? '解析失败' : `${v.probe.milliseconds} ms` : '尚未测试' }, ...(current?.servers.includes(v.server) ? [{ text: '当前使用' }] : [])]}
+        accessories={[v.probe?.milliseconds === null ? { text: '解析失败', tooltip: v.probe.error || '未返回原因' } : { text: v.probe ? `${v.probe.milliseconds} ms` : '尚未测试' }, ...(current?.servers.includes(v.server) ? [{ text: '当前使用' }] : [])]}
         actions={<ActionPanel><Action title="应用此 DNS 地址" onAction={() => change('apply', v.server)} /><Action.CopyToClipboard title="复制地址" content={v.server} /></ActionPanel>} />)}
     </List.Section>
     {!query && <List.Section title="网络配置">
-      <List.Item id="automatic" title="恢复自动 DNS" subtitle="清除手动 DNS 地址，保留修改前的备份" icon={Icon.RotateAntiClockwise}
-        actions={<ActionPanel><Action title="恢复自动 DNS" onAction={() => change('reset')} /></ActionPanel>} />
-      <List.Item id="restore" title="恢复最近备份" subtitle={current?.backup ? `${current.backup.servers.join('、') || '自动获取'} · ${new Date(current.backup.createdAt).toLocaleString()}` : '此网络尚无备份'} icon={Icon.Clock}
-        actions={<ActionPanel><Action title="恢复备份" onAction={() => change('restore')} /></ActionPanel>} />
+      {isAutomatic
+        ? <List.Item id="automatic" title="当前已是自动获取" subtitle="DNS 由路由器或网络自动分配，无需恢复" icon={Icon.RotateAntiClockwise} />
+        : <List.Item id="automatic" title="恢复自动 DNS" subtitle="清除手动 DNS 地址，保留修改前的备份" icon={Icon.RotateAntiClockwise}
+          actions={<ActionPanel><Action title="恢复自动 DNS" onAction={() => change('reset')} /></ActionPanel>} />}
+      {current?.backup
+        ? <List.Item id="restore" title="恢复最近备份" subtitle={`${current.backup.servers.join('、') || '自动获取'} · ${new Date(current.backup.createdAt).toLocaleString()}`} icon={Icon.Clock}
+          actions={<ActionPanel><Action title="恢复备份" onAction={() => change('restore')} /></ActionPanel>} />
+        : <List.Item id="restore" title="恢复最近备份" subtitle="此网络尚无备份，修改 DNS 后会自动保存一份" icon={Icon.Clock} />}
       <List.Item id="flush" title="刷新 DNS 缓存" subtitle="系统将请求管理员授权；取消授权不会显示成功" icon={Icon.ArrowClockwise}
         actions={<ActionPanel><Action title="刷新 DNS 缓存" onAction={() => work(async active => { await flushDns(active.id); if (alive.current) await showToast(Toast.Style.Success, '系统 DNS 缓存已刷新') })} /></ActionPanel>} />
     </List.Section>}

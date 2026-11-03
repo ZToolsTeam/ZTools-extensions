@@ -70,8 +70,8 @@ export const REGEX_PRESETS: RegexPresetItem[] = [
   {
     id: 'bank-card-number',
     title: '银行卡号（16~19位借记卡/信用卡）',
-    category: 'business',
-    categoryLabel: '政务与企业',
+    category: 'finance',
+    categoryLabel: '金融与支付',
     tags: ['银行卡', '银联', '结算账户'],
     pattern: '^[1-9]\\d{15,18}$',
     description: '匹配16至19位非0开头的银行卡卡号，工程实践中建议配合 Luhn 模10校验位算法二次核验。',
@@ -165,7 +165,7 @@ function parseCronField(
   allowQuestion = false,
   spring = false
 ): ParsedFieldSpec {
-  const weekday = fieldName === '周 (Day of Week)'
+  const weekday = fieldName === '星期'
   const token = aliasMap ? replaceNamedTokens(rawToken.trim(), aliasMap) : rawToken.trim()
   if (token === '*' || (allowQuestion && token === '?')) {
     const all = new Set<number>()
@@ -226,14 +226,48 @@ function formatRelativeDiff(targetMs: number, baseMs: number): string {
 }
 
 function explainSlotMeaning(name: string, raw: string): string {
-  if (raw === '*' || raw === '?') return `每个${name.split(' ')[0]}均触发`
-  if (raw.startsWith('*/')) return `每隔 ${raw.slice(2)} ${name.split(' ')[0]}触发`
-  return `限定在 ${raw} ${name.split(' ')[0]}`
+  if (raw === '*' || raw === '?') return `每个${name}均触发`
+  if (raw.startsWith('*/')) return `每隔 ${raw.slice(2)} ${name}触发`
+  return `限定为 ${raw}`
+}
+
+type TokenKind = 'any' | 'step' | 'number' | 'other'
+function tokenKind(token: string): TokenKind {
+  if (token === '*' || token === '?') return 'any'
+  if (/^\*\/\d+$/.test(token)) return 'step'
+  if (/^\d+$/.test(token)) return 'number'
+  return 'other'
+}
+
+/**
+ * 把时、分、秒字段翻译成自然语句：常见的 *、*\/N、固定值合成“每 15 分钟”“每小时第 30 分”“09:00”等说法；
+ * 五位表达式没有秒字段，不提秒。列表、范围等复杂写法原样保留，不能把 0,30 抹成 00 分。
+ */
+function describeCronTime(secToken: string, minToken: string, hourToken: string, hasSeconds: boolean): { clock: boolean; text: string } {
+  const sec = tokenKind(secToken), min = tokenKind(minToken), hour = tokenKind(hourToken)
+  const step = (token: string) => Number(token.slice(2))
+  if (hour === 'number' && min === 'number' && (!hasSeconds || sec === 'number')) {
+    const hm = `${pad2(Number(hourToken))}:${pad2(Number(minToken))}`
+    return { clock: true, text: hasSeconds ? `${hm}:${pad2(Number(secToken))}` : hm }
+  }
+  const secondText = !hasSeconds || secToken === '0' ? '' : sec === 'any' ? '每秒' : sec === 'step' ? `每 ${step(secToken)} 秒` : `第 ${secToken} 秒`
+  const recurringSecond = sec === 'any' || sec === 'step'
+  if (hasSeconds && recurringSecond && min === 'any' && hour === 'any') return { clock: false, text: secondText }
+  const minuteText = min === 'any' ? '每分钟' : min === 'step' ? `每 ${step(minToken)} 分钟` : `第 ${minToken} 分`
+  const hourText = hour === 'step' ? `每 ${step(hourToken)} 小时` : hour === 'any' ? '' : `${hourToken} 点`
+  let text: string
+  if (min === 'any' || min === 'step') {
+    text = hour === 'any' ? minuteText : hour === 'step' ? `${hourText}（从 0 点起）的那一小时内${minuteText}` : `${hourText}内${minuteText}`
+  } else {
+    text = hour === 'any' ? `每小时${minuteText}` : `${hourText}的${minuteText}`
+  }
+  if (secondText) text += `的${secondText}`
+  return { clock: false, text }
 }
 
 function buildChineseCronSummary(
   secToken: string, minToken: string, hourToken: string,
-  domToken: string, monToken: string, dowToken: string, daysUseAnd: boolean
+  domToken: string, monToken: string, dowToken: string, daysUseAnd: boolean, hasSeconds: boolean
 ): string {
   const unrestricted = (value: string) => value === '*' || value === '?'
   const days: string[] = []
@@ -243,11 +277,9 @@ function buildChineseCronSummary(
     ...(!unrestricted(monToken) ? [`月份 ${monToken}`] : []),
     days.length ? `（${days.join(daysUseAnd ? ' 且 ' : ' 或 ')}）` : '每天'
   ].join(' ')
-  // 仅把纯数字时分秒合成时刻，不能把 0,30 或 * 转成虚假的 00 分。
-  const time = [hourToken, minToken, secToken].every(value => /^\d+$/.test(value))
-    ? `${pad2(Number(hourToken))}:${pad2(Number(minToken))}:${pad2(Number(secToken))}`
-    : `小时 ${hourToken}；分钟 ${minToken}；秒 ${secToken}`
-  return `${calendar} ${time} 执行`
+  const time = describeCronTime(secToken, minToken, hourToken, hasSeconds)
+  if (time.clock) return `${calendar} ${time.text} 执行`
+  return calendar === '每天' ? `${time.text}执行` : `${calendar}，${time.text}执行`
 }
 
 /**
@@ -294,12 +326,12 @@ export function parseAndExplainCron(
     if (trimmed.length > 1000) throw new Error('表达式超过 1000 字符限制')
     if (!Number.isFinite(baseDate.getTime())) throw new Error('起算时间无效')
     if (!Number.isInteger(count) || count < 1 || count > 50) throw new Error('推算次数须为 1~50 的整数')
-    const secSpec = parseCronField(secToken, 0, 59, '秒 (Second)', undefined, false, isSixField)
-    const minSpec = parseCronField(minToken, 0, 59, '分 (Minute)', undefined, false, isSixField)
-    const hourSpec = parseCronField(hourToken, 0, 23, '时 (Hour)', undefined, false, isSixField)
-    const domSpec = parseCronField(domToken, 1, 31, '日 (Day of Month)', undefined, isSixField, isSixField)
-    const monSpec = parseCronField(monToken, 1, 12, '月 (Month)', MONTH_MAP, false, isSixField)
-    const dowSpec = parseCronField(dowToken, isSixField ? 1 : 0, 7, '周 (Day of Week)', isSixField ? { ...WEEKDAY_MAP, SUN: 7 } : WEEKDAY_MAP, isSixField, isSixField)
+    const secSpec = parseCronField(secToken, 0, 59, '秒', undefined, false, isSixField)
+    const minSpec = parseCronField(minToken, 0, 59, '分钟', undefined, false, isSixField)
+    const hourSpec = parseCronField(hourToken, 0, 23, '小时', undefined, false, isSixField)
+    const domSpec = parseCronField(domToken, 1, 31, '日期', undefined, isSixField, isSixField)
+    const monSpec = parseCronField(monToken, 1, 12, '月份', MONTH_MAP, false, isSixField)
+    const dowSpec = parseCronField(dowToken, isSixField ? 1 : 0, 7, '星期', isSixField ? { ...WEEKDAY_MAP, SUN: 7 } : WEEKDAY_MAP, isSixField, isSixField)
     // Linux 的两个受限日期字段用 OR；含通配符时用 AND。Spring 六位始终逐字段匹配。
     const daysUseAnd = isSixField || domSpec.wildcard || dowSpec.wildcard
 
@@ -406,19 +438,19 @@ export function parseAndExplainCron(
 
     const slots = [
       ...(isSixField
-        ? [{ name: '秒 (Second)', value: secToken, meaning: explainSlotMeaning('秒 (Second)', secToken) }]
+        ? [{ name: '秒', value: secToken, meaning: explainSlotMeaning('秒', secToken) }]
         : []),
-      { name: '分 (Minute)', value: minToken, meaning: explainSlotMeaning('分 (Minute)', minToken) },
-      { name: '时 (Hour)', value: hourToken, meaning: explainSlotMeaning('时 (Hour)', hourToken) },
-      { name: '日 (Day)', value: domToken, meaning: explainSlotMeaning('日 (Day)', domToken) },
-      { name: '月 (Month)', value: monToken, meaning: explainSlotMeaning('月 (Month)', monToken) },
-      { name: '周 (Weekday)', value: dowToken, meaning: explainSlotMeaning('周 (Weekday)', dowToken) }
+      { name: '分钟', value: minToken, meaning: explainSlotMeaning('分钟', minToken) },
+      { name: '小时', value: hourToken, meaning: explainSlotMeaning('小时', hourToken) },
+      { name: '日期', value: domToken, meaning: explainSlotMeaning('日期', domToken) },
+      { name: '月份', value: monToken, meaning: explainSlotMeaning('月份', monToken) },
+      { name: '星期', value: dowToken, meaning: explainSlotMeaning('星期', dowToken) }
     ]
 
     return {
       isValid: true,
       expression: trimmed,
-      chineseSummary: buildChineseCronSummary(secToken, minToken, hourToken, domToken, monToken, dowToken, daysUseAnd),
+      chineseSummary: buildChineseCronSummary(secToken, minToken, hourToken, domToken, monToken, dowToken, daysUseAnd, isSixField),
       timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       calculatedAt: formatDateTime(baseDate),
       dialect: isSixField ? 'Spring 六位基础语法（日与周同时匹配）' : 'Linux 五位语法（受限的日与周任一匹配）',

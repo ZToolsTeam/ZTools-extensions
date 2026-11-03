@@ -37,6 +37,7 @@ function createRealHostStub(handlers = {}) {
 
 test('shredder: 真实宿主下移除虚构机密文件并在粉碎失败时返回真实错误', async () => {
   const host = createRealHostStub({
+    system_list_common_folders: () => ({ folders: [{ id: 'temp', path: 'C:\\Users\\RealUser\\AppData\\Local\\Temp', exists: true }] }),
     system_get_path: () => 'C:\\Users\\RealUser\\AppData\\Local\\Temp',
     system_search_files: (payload) => {
       if (String(payload.query).includes('Temp')) {

@@ -1,4 +1,9 @@
 import test from 'node:test'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import JsonFormatCommand, { JsonDetailView } from '../dist/index.js'
@@ -25,7 +30,7 @@ async function typeInput(view, text) {
   await tick()
 }
 const actionTitles = (view) => view.actions().map((a) => a.props.title)
-const COPY_TITLES = ['复制 2 格格式化结果', '复制 4 格格式化结果', '复制压缩单行 (Minify)', '复制 TypeScript Interface', '复制 Rust Struct', '复制 Go Struct']
+const COPY_TITLES = ['复制 2 格格式化结果', '复制 4 格格式化结果', '复制压缩单行结果', '复制 TypeScript Interface', '复制 Rust Struct', '复制 Go Struct']
 
 /** 让剪贴板读取抛错（模拟宿主 IPC 失败），返回恢复函数 */
 function breakClipboardRead(err) {
@@ -71,27 +76,28 @@ function splitMarkdown(md, mode) {
   return { blocks, headings }
 }
 
-let ts = null
-try {
-  const mod = await import('typescript')
-  const api = mod.default ?? mod
-  // TypeScript 7（原生版）没有 JS 编译器 API，这时只做标识符正则检查
-  ts = typeof api.createCompilerHost === 'function' ? api : null
-} catch {
-  ts = null
-}
-/** 用 TypeScript 编译器检查生成的声明（noLib，忽略缺少全局类型的 2318） */
+const require = createRequire(import.meta.url)
+const compilerPackage = require.resolve('typescript/package.json')
+const compiler = path.resolve(path.dirname(compilerPackage), JSON.parse(fs.readFileSync(compilerPackage, 'utf8')).bin.tsc)
+/** TypeScript 5 与 7 都提供 CLI；编译器缺失或无法启动必须失败。 */
 function tsErrors(code) {
-  const file = 'gen.ts'
-  const options = { noLib: true, noEmit: true, strict: true }
-  const compilerHost = ts.createCompilerHost(options)
-  compilerHost.getSourceFile = (f, lang) => (f === file ? ts.createSourceFile(f, code, lang) : undefined)
-  compilerHost.fileExists = (f) => f === file
-  compilerHost.readFile = (f) => (f === file ? code : undefined)
-  const program = ts.createProgram([file], options, compilerHost)
-  return [...program.getSyntacticDiagnostics(), ...program.getSemanticDiagnostics()]
-    .filter((d) => d.code !== 2318)
-    .map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-json-types-'))
+  try {
+    const file = path.join(dir, 'generated.ts')
+    fs.writeFileSync(file, code)
+    const result = spawnSync(process.execPath, [compiler, '--ignoreConfig', '--strict', '--noEmit', '--pretty', 'false', file], { encoding: 'utf8', timeout: 30000, windowsHide: true })
+    if (result.error) throw result.error
+    const output = (result.stdout + result.stderr).trim()
+    // --ignoreConfig 仅新版编译器需要；显式文件名在旧版即忽略项目配置。
+    if (output.includes("Unknown compiler option '--ignoreConfig'")) {
+      const legacy = spawnSync(process.execPath, [compiler, '--strict', '--noEmit', '--pretty', 'false', file], { encoding: 'utf8', timeout: 30000, windowsHide: true })
+      if (legacy.error) throw legacy.error
+      assert.equal(legacy.signal, null)
+      return legacy.status === 0 ? [] : [(legacy.stdout + legacy.stderr).trim() || '编译器异常退出']
+    }
+    assert.equal(result.signal, null)
+    return result.status === 0 ? [] : [output || '编译器异常退出']
+  } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 }
 
 const RUST_IDENT = /^(r#)?[A-Za-z_][A-Za-z0-9_]*$/
@@ -256,7 +262,6 @@ test('TypeScript：连字符 / 中文键生成合法接口名，编译无错误'
   assert.match(code, /"user-info": UserInfo;/)
   assert.match(code, /items: ItemItem\[\];/)
   for (const m of code.matchAll(/export (?:interface|type) (\S+)/g)) assert.match(m[1], /^[A-Za-z_$][\w$]*$/)
-  if (!ts) return t.skip('没有可用的 TypeScript 编译器 API，跳过编译检查')
   assert.deepEqual(tsErrors(code), [])
 })
 
@@ -326,10 +331,8 @@ test('不同对象下同名键结构不同时生成不同类型，结构相同�
   const clash = jsonToTsInterface('{"rootObject":{"q":1}}')
   assert.match(clash, /export interface RootObject \{\n {2}rootObject: RootObject2;\n\}/)
   assert.match(clash, /export interface RootObject2 \{\n {2}q: number;\n\}/)
-  if (ts) {
-    assert.deepEqual(tsErrors(tsCode), [])
-    assert.deepEqual(tsErrors(clash), [])
-  }
+  assert.deepEqual(tsErrors(tsCode), [])
+  assert.deepEqual(tsErrors(clash), [])
 })
 
 /* ---------------- json-format-8：长整数与小数 ---------------- */
@@ -387,7 +390,7 @@ test('输入为空或非法时不提供复制动作；合法时复制内容正�
   for (const COPY of COPY_TITLES) assert.ok(!actionTitles(view).includes(COPY), `空输入不应有「${COPY}」`)
 
   await typeInput(view, '{"a":1,')
-  assert.deepEqual(actionTitles(view), ['格式化并查看详情', '从剪贴板粘贴并校验', '切换为 4 格缩进'])
+  assert.deepEqual(actionTitles(view), ['格式化并查看详情', '从剪贴板粘贴并校验'])
 
   // 非法时提交：失败提示，不进入详情
   await view.run(undefined, '格式化并查看详情')
@@ -476,7 +479,8 @@ test('[破坏性] 输入为空时可粘贴非法 JSON 以便修改；剪贴板�
 test('详情页提交走表单当前值，缩进切换后格式化结果随之变化', async () => {
   const view = await mount(JsonFormatCommand)
   await typeInput(view, '{"a":[1]}')
-  await view.run(undefined, '切换为 4 格缩进')
+  view.tree().children.find((c) => c.type === 'Form.Dropdown').props.onChange('4')
+  await tick()
   await view.run(undefined, '格式化并查看详情')
   const detail = await mountPushed(host)
   const json = splitMarkdown(detail.tree().props.markdown, 'commonmark').blocks[0].body
@@ -501,4 +505,38 @@ test('JSONPath 索引按显示宽度对齐（中文键占两格）', async () =>
     return [...line.slice(0, idx)].reduce((w, ch) => w + (/[一-鿿]/.test(ch) ? 2 : 1), 0)
   }
   assert.equal(new Set(block.map(col)).size, 1, block.join('\n'))
+})
+
+/* ---------------- 两个命令的入口区分 ---------------- */
+
+test('json-codegen 命令主动作是“生成类型代码”，直接进入只含类型代码的视图；格式化命令不变', async () => {
+  const { commands } = await import('../dist/index.js')
+  const codegen = await mount(commands['json-codegen'])
+  try {
+    assert.equal(actionTitles(codegen)[0], '生成类型代码')
+    assert.ok(!codegen.tree().children.some((c) => c.type === 'Form.Dropdown'), '生成类型代码不需要缩进下拉')
+    // 非法输入：失败提示，不进入代码视图
+    await typeInput(codegen, '{"a":')
+    const pushedBefore = host.pushed.length
+    await codegen.run(undefined, '生成类型代码')
+    assert.equal(host.lastToast().title, 'JSON 语法错误')
+    assert.equal(host.pushed.length, pushedBefore)
+    await typeInput(codegen, '{"userId":1,"name":"张三"}')
+    assert.deepEqual(actionTitles(codegen).slice(0, 2), ['生成类型代码', '复制 TypeScript Interface'])
+    assert.ok(!actionTitles(codegen).some((t) => /格式化结果|压缩单行/.test(t)))
+    await codegen.run(undefined, '生成类型代码')
+    const view = await mountPushed(host)
+    const md = view.tree().props.markdown
+    assert.match(md, /## TypeScript/)
+    assert.match(md, /## Go/)
+    assert.match(md, /## Rust/)
+    assert.doesNotMatch(md, /格式化 JSON/)
+    assert.equal(view.actions()[0].props.title, '复制 TypeScript Interface')
+  } finally { codegen.unmount() }
+
+  const beautify = await mount(commands['json-beautify'])
+  try {
+    assert.equal(actionTitles(beautify)[0], '格式化并查看详情')
+    assert.ok(!actionTitles(beautify).some((t) => t.startsWith('切换为')), '缩进只由下拉切换，不再有重复动作')
+  } finally { beautify.unmount() }
 })

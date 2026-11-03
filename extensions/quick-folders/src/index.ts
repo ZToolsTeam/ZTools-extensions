@@ -15,7 +15,7 @@ import {
   type FolderItem,
   type HostFolderPaths
 } from './logic.js'
-import { callHostTransport, getRealSystemPath, openRealPath } from './native-ipc.js'
+import { callHostTransport, getRealSystemPath } from './native-ipc.js'
 
 /**
  * 读取常用目录：优先用宿主的 system_list_common_folders（按平台生成、标明是否存在，并把存在的目录授权给本窗口打开）；
@@ -57,23 +57,27 @@ export default function QuickFoldersCommand() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 从宿主读取当前用户的真实目录，不再写死 C:\Users\Default
+    let alive = true
+    // 从宿主读取当前用户的真实目录，不再写死 C:\Users\Default；读取失败时如实显示宿主给出的原因
     loadFolders()
-      .catch(() => [] as FolderItem[])
-      .then((list) => {
+      .then(
+        (list) => ({ list, error: list.length === 0 ? '没有读到当前用户的常用目录' : '' }),
+        (err: unknown) => ({ list: [] as FolderItem[], error: err instanceof Error ? err.message : String(err) })
+      )
+      .then(({ list, error }) => {
+        if (!alive) return
         setFolders(list)
         setLoading(false)
-        if (list.length === 0) {
-          showToast({ style: Toast.Style.Failure, title: '读取系统目录失败', message: '没有读到当前用户的常用目录' })
-        }
+        if (error) void showToast({ style: Toast.Style.Failure, title: '读取系统目录失败', message: error })
       })
+    return () => { alive = false }
   }, [])
 
   async function openFolder(folder: FolderItem) {
-    const ok = await openRealPath(folder.path)
-    showToast(ok
+    const res = await callHostTransport('shell_open_path', { fullPath: folder.path })
+    await showToast(res.ok
       ? { style: Toast.Style.Success, title: '已打开目录', message: folder.path }
-      : { style: Toast.Style.Failure, title: '打开目录失败', message: folder.path })
+      : { style: Toast.Style.Failure, title: '打开目录失败', message: res.error ? `${folder.path}：${res.error}` : folder.path })
   }
 
   const query = searchText.trim().toLowerCase()
@@ -82,7 +86,8 @@ export default function QuickFoldersCommand() {
     return (
       f.name.toLowerCase().includes(query) ||
       f.path.toLowerCase().includes(query) ||
-      f.description.toLowerCase().includes(query)
+      f.description.toLowerCase().includes(query) ||
+      (f.keywords || []).some(k => k.toLowerCase().includes(query))
     )
   })
 
@@ -96,6 +101,7 @@ export default function QuickFoldersCommand() {
       title: f.name,
       subtitle: f.path,
       icon: Icon.Folder,
+      keywords: f.keywords,
       accessories: [
         {
           text: f.description
@@ -122,7 +128,7 @@ export default function QuickFoldersCommand() {
 
   return List({
     isLoading: loading,
-    searchBarPlaceholder: '搜索常用目录 (如 桌面, Downloads, Library, Temp)...',
+    searchBarPlaceholder: '搜索常用目录，如 桌面、下载、资源库、临时',
     onSearchTextChange: setSearchText,
     children: [
       personal.length > 0 &&

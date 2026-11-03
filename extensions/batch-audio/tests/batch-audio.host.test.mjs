@@ -100,7 +100,7 @@ test("P31/P32/P33 batch-video & batch-audio & pdf: 对接 dllplugin_call，真�
       }
     },
     async () => {
-    const aFail = await batchAudio.invokeNativeCapability('BatchLoudnorm', { targetI: -16 })
+    const aFail = await batchAudio.invokeNativeCapability('BatchLoudnorm', { targetI: -16, inputPath: 'D:\\Media\\song.flac' })
     assert.equal(aFail.ok, false)
     assert.equal(aFail.data?.simulated, undefined)
 }

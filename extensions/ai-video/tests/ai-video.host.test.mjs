@@ -52,7 +52,7 @@ test('ai-video: 真实宿主扫描、AiVideoPlugin.enhanceVideo 真实文件校�
         if (query === 'dir:D:\\RealClips') {
           return {
             files: [
-              { name: 'clip.mp4', path: 'D:\\RealClips\\clip.mp4', is_dir: false, size: 8000000, mtime: 1700000000 }
+              { name: 'clip.mp4', path: 'D:\\RealClips\\nested\\clip.mp4', is_dir: false, size: 8000000, mtime: 1700000000 }
             ]
           }
         }
@@ -71,6 +71,9 @@ test('ai-video: 真实宿主扫描、AiVideoPlugin.enhanceVideo 真实文件校�
     async () => {
       const queue = await aiVideo.fetchAiVideoQueue()
       assert.equal(queue.files.length, 1, '真实宿主下严禁拼接 INITIAL_AI_VIDEO_FILES')
+      assert.equal(queue.files[0].sourceFps, null)
+      assert.equal(queue.files[0].sourceResolution, '分辨率未读取')
+      assert.equal(queue.files[0].parentDir, 'D:\\RealClips\\nested\\')
 
       const res = await aiVideo.executeAiVideoBatch(queue.files, {
         modelId: 'rife-v4-6',
@@ -118,3 +121,16 @@ test('ai-video: 真实宿主扫描、AiVideoPlugin.enhanceVideo 真实文件校�
     }
   )
 })
+
+
+test('视频父目录保留 Windows 和 POSIX 根目录分隔符', async () => {
+  for (const root of ['D:\\', '/']) {
+    await withRealElectronWindow({
+      system_get_path: ({ name }) => name === 'videos' ? root : '',
+      system_search_files: () => ({ files: [{ name: 'clip.avi', path: root + 'clip.avi', size: 100, is_dir: false }] })
+    }, async () => {
+      const queue = await aiVideo.fetchAiVideoQueue();
+      assert.equal(queue.files[0].parentDir, root);
+    });
+  }
+});

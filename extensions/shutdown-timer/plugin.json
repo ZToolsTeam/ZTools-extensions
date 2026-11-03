@@ -2,8 +2,8 @@
   "id": "shutdown-timer",
   "name": "定时关机",
   "description": "按预设倒计时（10、30、60、120 分钟）自动关机，或立即锁屏、睡眠，设定关机前会先确认；插件不能取消已设定的关机，可复制取消命令自行运行",
-  "version": "1.0.6",
-  "author": "ZTools Community",
+  "version": "1.0.7",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

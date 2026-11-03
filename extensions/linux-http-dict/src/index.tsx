@@ -8,6 +8,7 @@ import React, {
   useState
 } from '@ztools/declarative-ui'
 import {
+  portCheckCommands,
   searchCommonPorts,
   searchHttpStatus,
   searchLinuxCommands
@@ -78,9 +79,7 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
               accessories={[{ tag: item.groupLabel }]}
               detail={
                 <List.Item.Detail
-                  markdown={`### \`${item.name}\` — ${item.description}
-
-#### 生产高频场景实例
+                  markdown={`#### 生产高频场景实例
 ${item.examples
   .map(
     (ex) => `##### ${ex.title}
@@ -98,7 +97,6 @@ ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
 `}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="所属分类" text={item.groupLabel} />
                       <List.Item.Detail.Metadata.Label title="高频评级" text={item.stars} />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
@@ -145,13 +143,10 @@ ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
               ]}
               detail={
                 <List.Item.Detail
-                  markdown={`### HTTP ${item.code} — ${item.phrase}
-> **标准语义**：${item.meaning}
-
-#### 线上核心诱因 (Root Causes)
+                  markdown={`#### 常见原因
 ${item.causes.map((c) => `- ${c}`).join('\n')}
 
-#### 生产排障自查清单 (Troubleshooting)
+#### 排障自查清单
 ${item.troubleshooting.map((t, i) => `${i + 1}. **${t.step}**：${t.action}`).join('\n')}
 
 #### 架构设计提示
@@ -160,10 +155,6 @@ ${item.architectureNotes}
                   metadata={
                     <List.Item.Detail.Metadata>
                       <List.Item.Detail.Metadata.Label title="标准依据" text={item.rfc} />
-                      <List.Item.Detail.Metadata.Label
-                        title="状态分级"
-                        text={`${Math.floor(item.code / 100)}xx`}
-                      />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
                         title="安全重试建议"
@@ -182,7 +173,6 @@ ${item.architectureNotes}
                   <Action.CopyToClipboard
                     title="仅复制状态码数字"
                     content={String(item.code)}
-                    shortcut={{ modifiers: ['cmd'], key: 'c' }}
                   />
                 </ActionPanel>
               }
@@ -203,37 +193,39 @@ ${item.architectureNotes}
               accessories={[{ tag: `${item.protocol} · ${item.category}` }]}
               detail={
                 <List.Item.Detail
-                  markdown={`### 端口 \`${item.port}\` (${item.protocol}) — ${item.service}
-
-#### 服务说明
-${item.description}
-
-#### 防火墙与安全组加固建议
+                  markdown={`#### 防火墙与安全组加固建议
 > ${item.securityNotice}
 
-#### 快速排查命令
+#### 查看端口占用
+Linux：
 \`\`\`bash
-# 检查本机是否正在监听 ${item.port} 端口
-ss -tulpn | grep :${item.port}
+${portCheckCommands(item).linux}
+\`\`\`
+macOS：
+\`\`\`bash
+${portCheckCommands(item).macos}
+\`\`\`
+Windows：
+\`\`\`bat
+${portCheckCommands(item).windows}
 \`\`\`
 `}
-                  metadata={
-                    <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="默认端口号" text={String(item.port)} />
-                      <List.Item.Detail.Metadata.Label title="传输层协议" text={item.protocol} />
-                      <List.Item.Detail.Metadata.Separator />
-                      <List.Item.Detail.Metadata.Label title="服务类别" text={item.category} />
-                    </List.Item.Detail.Metadata>
-                  }
                 />
               }
               actions={
                 <ActionPanel>
                   <Action.CopyToClipboard title="复制端口号" content={String(item.port)} />
                   <Action.CopyToClipboard
-                    title="复制端口监听排查命令"
-                    content={`ss -tulpn | grep :${item.port}`}
-                    shortcut={{ modifiers: ['cmd'], key: 'c' }}
+                    title="复制 Linux 端口排查命令"
+                    content={portCheckCommands(item).linux}
+                  />
+                  <Action.CopyToClipboard
+                    title="复制 macOS 端口排查命令"
+                    content={portCheckCommands(item).macos}
+                  />
+                  <Action.CopyToClipboard
+                    title="复制 Windows 端口排查命令"
+                    content={portCheckCommands(item).windows}
                   />
                 </ActionPanel>
               }

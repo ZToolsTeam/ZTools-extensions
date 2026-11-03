@@ -10,7 +10,7 @@ import {
   formatBytes,
   getRealSystemPath,
   invokeDllPluginCapability,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
@@ -186,7 +186,8 @@ export async function invokeNativeCapability(
 
 const ARCHIVE_EXT_REGEX = /\.(?:zip)$/i
 
-export async function fetchRealArchiveCandidates(hostOverride?: unknown): Promise<ArchiveCandidateItem[]> {
+export async function fetchRealArchiveCandidates(hostOverride?: unknown): Promise<ArchiveCandidateItem[] & { error?: string }> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [downloadsDir, desktopDir, documentsDir] = await Promise.all([
     getRealSystemPath('downloads', hostOverride),
     getRealSystemPath('desktop', hostOverride),
@@ -198,7 +199,7 @@ export async function fetchRealArchiveCandidates(hostOverride?: unknown): Promis
   const seen = new Set<string>()
 
   for (const dir of scannedDirs) {
-    const scan = await scanRealDirectoryTree(dir, {
+    const scan = await scanner.scan(dir, {
       maxDepth: 2,
       maxFiles: 200,
       collectTopN: 40,
@@ -225,7 +226,7 @@ export async function fetchRealArchiveCandidates(hostOverride?: unknown): Promis
   }
 
   candidates.sort((a, b) => b.mtime - a.mtime || b.sizeBytes - a.sizeBytes)
-  return candidates
+  return Object.assign(candidates, { error: scanner.error })
 }
 
 export async function inspectArchiveEntries(

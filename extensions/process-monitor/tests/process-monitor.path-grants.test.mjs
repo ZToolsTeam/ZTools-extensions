@@ -46,7 +46,7 @@ function installGrantHost() {
   return { grants, missing, calls }
 }
 
-const itemByName = (view, name) => view.item((it) => it.props.title.startsWith(`${name} [`))
+const itemByName = (view, name) => view.item((it) => it.props.title === name)
 
 async function mountLoaded() {
   const view = await mount(ProcessMonitorCommand)
@@ -70,7 +70,7 @@ test('定位文件目录：用进程列表里的原始路径（已授权），�
   await tick(10)
   assert.deepEqual(calls.revealed, [APP])
   assert.deepEqual(calls.opened, [], '定位成功时不能退回去“打开”可执行文件')
-  assert.equal(host.lastToast().title, '已在文件管理器中定位')
+  assert.equal(host.lastToast().title, '已在访达中定位')
   assert.equal(host.lastToast().message, APP)
   view.unmount()
   assert.equal(rejections.length, 0)
@@ -94,6 +94,19 @@ test('异常：授权过期后定位被拒，提示刷新列表后再试，不�
   await view.run(itemByName(view, 'Sample Tool'), '定位文件目录')
   await tick(10)
   assert.deepEqual(calls.revealed, [APP])
+  view.unmount()
+})
+
+test('异常：显示失败时绝不退回 shell_open_path（对可执行文件“打开”等于运行它）', async () => {
+  const { calls } = installGrantHost()
+  host.ipc.shell_show_item_in_folder = async () => { throw Object.assign(new Error('访达拒绝'), { code: 'SHELL_ERROR' }) }
+  const view = await mountLoaded()
+  await view.run(itemByName(view, 'Sample Tool'), '定位文件目录')
+  await tick(10)
+  assert.equal(host.ipcCalls.some(([m]) => m === 'shell_open_path'), false)
+  assert.deepEqual(calls.opened, [])
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.equal(host.lastToast().title, '打开路径失败')
   view.unmount()
 })
 

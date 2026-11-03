@@ -8,7 +8,7 @@
 - 输入关键词后开始搜索，最多显示 50 条；关键词为空时列出“下载”“桌面”“文档”文件夹第一层里最近修改的项目。顶部下拉框可按类型筛选（文档、图片、视频、音频、压缩包、代码、文件夹）或切换排序（名称、大小、修改时间）。
 - Enter：打开文件或文件夹；⌘/Ctrl+Enter：在访达（Windows 为资源管理器）中定位；⌘/Ctrl+K：打开动作面板。
 - ⌘/Ctrl+Shift+P 在插件里预览文本、代码、图片内容和文件夹子项；macOS 上还可以按 ⌘Y 用系统快速预览，Windows 上没有这个动作。
-- ⌘/Ctrl+Shift+C 复制完整路径；⌘/Ctrl+Shift+N 复制文件名；⌘/Ctrl+Shift+V 复制文件本身；⌘/Ctrl+Shift+H 计算并复制 SHA-256；⌘/Ctrl+Shift+Backspace 移入回收站（需确认，只对文件，不支持文件夹）。
+- ⌘/Ctrl+Shift+C 复制完整路径；⌘/Ctrl+Shift+N 复制文件名；⌘/Ctrl+Shift+V 复制文件本身；⌘/Ctrl+Shift+H 计算并复制 SHA-256；⌘/Ctrl+Shift+Backspace 移入回收站（macOS 为废纸篓；需确认，只对文件，不支持文件夹）。
 - macOS 上使用系统的 Spotlight 索引；Windows 上使用客户端的文件索引组件，组件没有运行、索引为空或调用失败时，只在“下载”“桌面”“文档”文件夹的第一层里查找。
 - 不需要安装第三方软件 Everything。
 

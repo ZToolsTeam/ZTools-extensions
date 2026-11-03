@@ -24,6 +24,8 @@ export type WifiSecurityFilter = 'all' | 'wpa3' | 'wpa2' | 'open' | 'enterprise'
 export interface WifiProfileInfo {
   id: string
   ssid: string
+  /** 查询 Windows 密码所需的配置名称；旧宿主未提供时沿用 ssid。 */
+  profileName?: string
   password: string
   authType: WifiSecurityType
   cipher?: string

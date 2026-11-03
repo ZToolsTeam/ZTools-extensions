@@ -1,10 +1,10 @@
 {
   "id": "password-vault",
   "name": "密码保险箱",
-  "version": "1.1.4",
+  "version": "1.1.6",
   "minAppVersion": "1.1.8.5",
   "description": "在本机用主密码加密保存账号密码、API Key、服务器密码与软件激活码（AES-256-GCM），复制密码 30 秒后自动清除剪贴板",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -33,7 +33,7 @@
     },
     {
       "code": "vault-generator",
-      "explain": "生成 20 位随机密码并复制，解锁后新建凭据时预先填入随机密码",
+      "explain": "无需解锁，生成 16–32 位随机密码并复制（30 秒后自动清除），可选存入保险箱",
       "cmds": [
         "随机密码",
         "生成密码",

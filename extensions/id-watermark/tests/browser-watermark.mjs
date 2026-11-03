@@ -45,7 +45,7 @@ export async function runWatermarkBrowserTests(host) {
     try {
       let data
       if (method === 'window_show_open_dialog') data = chooseCanceled ? { canceled: true } : { canceled: false, filePath: host.inputPath }
-      else if (method === 'window_show_save_dialog') data = saveMode === 'cancel' ? { canceled: true } : { canceled: false, filePath: saveMode === 'original' ? host.inputPath : host.outputPath }
+      else if (method === 'window_show_save_dialog') data = saveMode === 'cancel' ? { canceled: true } : { canceled: false, filePath: saveMode === 'original' ? host.inputPath : saveMode === 'original-case' ? host.inputPath.toUpperCase() : host.outputPath }
       else if (method === 'clipboard_copy_image') { if (copyFails) throw new Error('剪贴板写入失败'); clipboardBytes = Uint8Array.from(atob(params.image), c => c.charCodeAt(0)); data = { success: true } }
       else if (method === 'clipboard_read_image') data = { success: true, useTempFile: false, image: btoa(String.fromCharCode(...pngBytes)) }
       else data = await host.fileCall(method, params)
@@ -54,9 +54,10 @@ export async function runWatermarkBrowserTests(host) {
   } }) } }
   const chosen = await pickImage(signal); assert(chosen.width === 640 && chosen.height === 480 && chosen.path === host.inputPath, '选图未使用真实尺寸')
   const saved = await outputImage(chosen, options, false, signal); assert(saved.includes('已保存新副本'), '保存未完成')
-  await host.verify(); assert(calls.find(([m]) => m === 'filesystem_write_file')[1].overwrite === false, '没有禁用覆盖')
-  await reject(() => outputImage(chosen, options, false, signal), /存在|覆盖/)
+  await host.verify(); assert(calls.find(([m]) => m === 'filesystem_write_file')[1].overwrite === true, '另存为对话框已确认替换时应按替换写入')
+  assert((await outputImage(chosen, options, false, signal)).includes('已保存新副本'), '在对话框确认替换已有文件后仍保存失败')
   saveMode = 'original'; await reject(() => outputImage(chosen, options, false, signal), /原图/)
+  saveMode = 'original-case'; await reject(() => outputImage(chosen, options, false, signal), /原图/)
   saveMode = 'cancel'; const count = calls.filter(([m]) => m === 'filesystem_write_file').length
   assert(await outputImage(chosen, options, false, signal) === null, '取消未返回'); assert(calls.filter(([m]) => m === 'filesystem_write_file').length === count, '取消仍写入')
   await outputImage(chosen, options, true, signal)
@@ -64,7 +65,7 @@ export async function runWatermarkBrowserTests(host) {
   assert((await readClipboardImage(signal)).height === 480, '剪贴板读取失败')
   chooseCanceled = true; assert(await pickImage(signal) === null, '取消选图失败')
   copyFails = true; await reject(() => outputImage(chosen, options, true, signal), /剪贴板写入失败/); copyFails = false
-  checks.push({ check: '真实文件服务选图/原子另存/输出解码；原图不变、已存在目标不覆盖、取消不写；复制图片而非SVG文本', passed: true })
+  checks.push({ check: '真实文件服务选图/原子另存/输出解码；原图不变、确认替换的已有目标可再次保存、大小写不同的原图路径仍拒绝、取消不写；复制图片而非SVG文本', passed: true })
   const templates = getPresetWatermarkTemplates('测试单位', '2026.10.26')
   assert(templates[0].resolvedText.includes('测试单位'), '模板用途未更新')
   chooseCanceled = false

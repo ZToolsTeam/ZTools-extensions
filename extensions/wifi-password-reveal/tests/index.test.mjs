@@ -74,6 +74,45 @@ test('宿主返回无效列表时拒绝冒充空列表', async () => {
   assert.equal(view.items()[0].props.id, 'load-error')
 })
 
+test('Windows 配置名与 SSID 分离：密码使用配置标识，二维码和复制名称使用真实网络', async () => {
+  host.ipc.wifi_get_profiles = async () => [{ ssid: 'Office WiFi', profileName: 'Office Profile', security: 'WPA2-Personal' }]
+  host.ipc.wifi_get_password = async params => { assert.deepEqual(params, { ssid: 'Office Profile' }); return { password: 'test1234' } }
+  const view = await open()
+  const item = view.items()[0]
+  assert.equal(item.props.title, 'Office WiFi')
+  assert.equal(item.props.subtitle, '配置：Office Profile')
+  await view.run(item, '复制网络名称')
+  assert.equal(host.clipboard.text, 'Office WiFi')
+  await view.run(item, '查看密码与二维码')
+  const detail = await child()
+  assert.match(detail.text(), /WIFI:T:WPA;S:Office WiFi;P:test1234;;/)
+  assert.doesNotMatch(detail.text(), /S:Office Profile;/)
+})
+
+test('同一 SSID 的多个 Windows 配置保持独立列表身份及密码缓存', async () => {
+  host.ipc.wifi_get_profiles = async () => ['first-profile', 'second-profile'].map(profileName => ({ ssid: 'Shared WiFi', profileName, security: 'WPA2-Personal' }))
+  host.ipc.wifi_get_password = async ({ ssid }) => ({ password: `${ssid}-password` })
+  const view = await open(), items = view.items()
+  assert.equal(items.length, 2)
+  assert.notEqual(items[0].props.id, items[1].props.id)
+  await view.run(items[0], '复制 Wi-Fi 密码')
+  assert.equal(host.clipboard.text, 'first-profile-password')
+  await view.run(view.items()[1], '复制 Wi-Fi 密码')
+  assert.equal(host.clipboard.text, 'second-profile-password')
+  assert.deepEqual(host.ipcCalls.filter(([method]) => method === 'wifi_get_password').map(([, params]) => params.ssid), ['first-profile', 'second-profile'])
+})
+
+test('Windows 未知加密类型表单也使用配置标识读取密码', async () => {
+  host.ipc.wifi_get_profiles = async () => [{ ssid: 'Real Network', profileName: 'saved-profile' }]
+  const view = await open()
+  await view.run(view.items()[0], '生成连网二维码')
+  const form = await child()
+  await form.fill('security', 'WPA2-Personal')
+  await form.run(null, '生成连网二维码')
+  assert.deepEqual(host.ipcCalls.find(([method]) => method === 'wifi_get_password')[1], { ssid: 'saved-profile' })
+  assert.match((await child()).text(), /S:Real Network;/)
+})
+
 test('连续按 Enter 仅发起一次密码读取', async () => {
   const pending = deferred()
   host.ipc.wifi_get_password = () => pending.promise
@@ -216,7 +255,8 @@ test('[Windows 宿主数据] 只显示宿主真实给出的认证方式；WPA �
   assert.deepEqual(accessories.home, ['当前连接', 'WPA2-Personal'])
   assert.deepEqual(accessories.legacy, ['WPA-Personal'])
   assert.deepEqual(accessories.corp, ['WPA-Enterprise'])
-  assert.deepEqual(accessories['unknown-net'], [])
+  assert.deepEqual(accessories['unknown-net'], ['加密方式未知'])
+  assert.match(view.tree().props.filterBar.summaryText, /其中 1 个未提供加密方式/)
   const corp = view.items().find(item => item.props.title === 'corp')
   assert.ok(!view.actions(corp).some(action => action.props.title === '复制 Wi-Fi 密码'))
   assert.equal(passwordCalls(), 0)
@@ -249,4 +289,35 @@ test('插件不再导出示例网络', async () => {
 test('plugin.json 只声明实际用到的权限：读取密码需要 system，复制需要 clipboard，不联网也不执行命令', () => {
   const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
   assert.deepEqual([...manifest.permissions].sort(), ['clipboard', 'system'])
+})
+
+test('系统未提供连接状态（新版 macOS）时不显示“当前连接”筛选，也不把未知当成未连接', async () => {
+  host.ipc.wifi_get_profiles = async () => [{ ssid: 'home' }, { ssid: 'office' }]
+  const view = await open()
+  assert.equal(view.items().length, 2)
+  assert.doesNotMatch(view.text(), /当前连接/)
+  const dropdown = view.tree().props.searchBarAccessory
+  const values = JSON.stringify(dropdown.props.children ?? dropdown)
+  assert.doesNotMatch(values, /connected/)
+  const [home] = await fetchSavedWifiProfiles({ hostOverride: { wifi_get_profiles: async () => [{ ssid: 'home' }, { ssid: 'x', current: false }] } })
+  assert.equal(home.isConnected, undefined)
+  assert.equal(passwordCalls(), 0)
+})
+test('系统给出连接状态时保留“当前连接”筛选，未连接的网络被筛掉', async () => {
+  host.ipc.wifi_get_profiles = async () => [{ ssid: 'home', current: true }, { ssid: 'office', current: false }]
+  const view = await open()
+  await view.dropdown('connected')
+  assert.deepEqual(view.items().map(item => item.props.title), ['home'])
+})
+
+test('[macOS] 全部网络都没有加密方式时只在状态条说明一次，不逐行重复，也不提供无依据的开放/企业筛选', async () => {
+  host.ipc.wifi_get_profiles = async () => Array.from({ length: 20 }, (_, index) => ({ ssid: `net-${index}` }))
+  const view = await open()
+  assert.equal(view.items().length, 20)
+  assert.match(view.tree().props.filterBar.summaryText, /^已保存 20 个网络 · 系统未提供加密方式，生成二维码时需手动选择$/)
+  for (const item of view.items()) assert.deepEqual(item.props.accessories, [])
+  const options = view.tree().props.searchBarAccessory.children.filter(Boolean).map(child => child.props.value)
+  assert.ok(!options.includes('open') && !options.includes('enterprise'))
+  const first = view.items()[0]
+  assert.ok(view.actions(first).some(action => action.props.title === '生成连网二维码'))
 })

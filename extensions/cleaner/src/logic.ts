@@ -11,7 +11,7 @@ import {
   getRealEnvPaths,
   getRealSystemPath,
   invokeDllPluginCapability,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   trashRealItem
 } from './native-ipc.js'
 
@@ -174,7 +174,8 @@ export async function invokeNativeCapability(
 async function scanRealCleanRuleTree(
   dirPaths: string[],
   filterExt?: RegExp,
-  hostOverride?: DynamicBridge
+  hostOverride?: DynamicBridge,
+  scanner = createDirectoryScanner(hostOverride)
 ): Promise<{ fileCount: number; totalSizeBytes: number; sampleFiles: CleanSampleFile[] }> {
   let fileCount = 0
   let totalSizeBytes = 0
@@ -182,7 +183,7 @@ async function scanRealCleanRuleTree(
 
   for (const dir of dirPaths) {
     if (!dir) continue
-    const res = await scanRealDirectoryTree(dir, {
+    const res = await scanner.scan(dir, {
       maxFiles: 200,
       collectTopN: 20,
       filterExt,
@@ -236,18 +237,23 @@ export async function fetchSystemDiskInfo(hostOverride?: DynamicBridge): Promise
 export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Promise<{
   groups: CleanGroupItem[]
   summary: CleanSummaryData
+  error?: string
 }> {
+  const scanner = createDirectoryScanner(hostOverride)
   const homeDir = await getRealSystemPath('home', hostOverride)
   if (!homeDir) {
     throw new Error('无法读取当前用户目录，未执行扫描')
   }
-  const [diskInfo, env, realTemp, realDownloads] = await Promise.all([
+  const [diskInfo, env, commonFolders, realDownloads] = await Promise.all([
     fetchSystemDiskInfo(hostOverride),
     getRealEnvPaths(hostOverride),
-    getRealSystemPath('temp', hostOverride),
+    callHostTransport<{ folders?: Array<{ id: string; path: string; exists: boolean }> }>('system_list_common_folders', {}, hostOverride),
     getRealSystemPath('downloads', hostOverride)
   ])
-  const tempDir = realTemp || env.temp
+  const tempDir = commonFolders.data?.folders?.find(folder => folder.id === 'temp' && folder.exists)?.path
+  if (!commonFolders.ok || !tempDir) {
+    throw new Error(commonFolders.error || '无法获取用户临时文件夹路径，未执行扫描')
+  }
   const downloadsDir = realDownloads || env.downloads
   const localAppData = env.localAppData || `${homeDir}\\AppData\\Local`
   const roamingAppData = env.appData || `${homeDir}\\AppData\\Roaming`
@@ -406,7 +412,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
 
   const scannedResults = await Promise.all(
     ruleDefs.map(async def => {
-      const scanned = await scanRealCleanRuleTree(def.dirs, def.filterExt, hostOverride)
+      const scanned = await scanRealCleanRuleTree(def.dirs, def.filterExt, hostOverride, scanner)
       if (scanned.totalSizeBytes <= 0 && scanned.fileCount <= 0 && def.classId > 4) return null
       const group: CleanGroupItem = {
         id: def.id,
@@ -429,7 +435,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
     })
   )
   const groups = scannedResults.filter((g): g is CleanGroupItem => g !== null)
-  return { groups, summary: computeCleanSummary(groups, diskInfo) }
+  return { groups, summary: computeCleanSummary(groups, diskInfo), error: scanner.error }
 }
 
 /**

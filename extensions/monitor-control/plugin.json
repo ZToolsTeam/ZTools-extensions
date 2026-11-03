@@ -1,9 +1,9 @@
 {
   "id": "monitor-control",
   "name": "屏幕亮度与控制",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "读取显示器真实硬件状态，调节受支持的亮度与对比度；支持多屏统一亮度与系统熄屏命令",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -12,15 +12,14 @@
   ],
   "permissions": [
     "screen",
-    "system",
-    "shell"
+    "system"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
   "features": [
     {
       "code": "monitor-brightness",
-      "explain": "调节内置与外接显示器硬件亮度、对比度与一键熄屏",
+      "explain": "调节内置与外接显示器硬件亮度与对比度；熄屏请使用“熄屏”命令",
       "cmds": [
         "亮度",
         "显示器",

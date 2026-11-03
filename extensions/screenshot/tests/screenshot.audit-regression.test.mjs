@@ -32,3 +32,50 @@ test('截图列表界面显示扫描失败的真实原因',async()=>{
   assert.doesNotMatch(summary,/screenshots_search/)
  }finally{view.unmount()}
 })
+
+test('部分目录失败保留真实截图，缓存保留原因，成功重扫清除原因', async () => {
+  const host = createHost(), manager = new ScreenshotsManager()
+  const failure = { path: '/Users/example/Desktop', code: 'PERMISSION_DENIED', message: '没有访问桌面的权限' }
+  const screenshot = { path: '/tmp/Screenshot.png', filename: 'Screenshot.png', width: 10, height: 20 }
+  host.ipc.screenshots_scan = () => ({ screenshots: [screenshot], failedDirs: [failure] })
+  const items = await manager.loadScreenshots(true)
+  assert.equal(items.length, 1)
+  assert.deepEqual(manager.getScanFailures(), [{ path: failure.path, message: failure.message }])
+  const detached = manager.getScanFailures(); detached[0].message = '不能改坏缓存'
+  assert.equal((await manager.loadScreenshots()).length, 1)
+  assert.equal(manager.getScanFailures()[0].message, failure.message)
+  host.ipc.screenshots_scan = () => ({ screenshots: [], failedDirs: [] })
+  assert.deepEqual(await manager.loadScreenshots(true), [])
+  assert.deepEqual(manager.getScanFailures(), [])
+})
+
+test('部分扫描失败的界面展示不可勾选原因，刷新成功后恢复真正空状态', async () => {
+  const { defaultScreenshotsManager } = await import('../dist/screenshots-service.js')
+  const host = createHost()
+  host.ipc.screenshots_scan = () => ({ screenshots: [], failedDirs: [{ path: '/Users/example/Desktop', message: 'EACCES: 请允许访问桌面' }] })
+  await defaultScreenshotsManager.loadScreenshots(true)
+  const view = await mount(ScreenshotsCommand, host)
+  try {
+    await tick(20)
+    assert.match(view.tree().props.filterBar.summaryText, /1 个目录未能读取，列表不完整/)
+    const row = view.tree().props.subList.items.find(item => item.props.id === 'scan-failure-0')
+    assert.match(row.props.title, /Desktop/); assert.match(row.props.subtitle, /EACCES/)
+    assert.equal(row.props.checkable, false)
+    host.ipc.screenshots_scan = () => ({ screenshots: [], failedDirs: [] })
+    await view.run(null, '重新扫描截图目录'); await tick(20)
+    assert.doesNotMatch(view.tree().props.filterBar.summaryText, /未能读取|不完整/)
+    assert.deepEqual(view.tree().props.subList.items, [])
+    assert.match(view.tree().props.subList.emptyText, /暂无匹配/)
+  } finally { view.unmount() }
+})
+
+test('畸形失败目录字段不能伪装完整扫描，失败后保留原有效结果', async () => {
+  const host = createHost(), manager = new ScreenshotsManager()
+  host.ipc.screenshots_scan = () => ({ screenshots: [], failedDirs: [{ path: '/tmp/denied', message: 'EACCES' }] })
+  await manager.loadScreenshots(true)
+  for (const failedDirs of [null, {}, [null], [{ path: '/tmp' }], [{ path: '', message: 'EACCES' }]]) {
+    host.ipc.screenshots_scan = () => ({ screenshots: [], failedDirs })
+    await assert.rejects(manager.loadScreenshots(true), /目录错误信息无效/)
+    assert.deepEqual(manager.getScanFailures(), [{ path: '/tmp/denied', message: 'EACCES' }])
+  }
+})

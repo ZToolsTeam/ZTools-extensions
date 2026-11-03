@@ -184,7 +184,7 @@ export async function probeGlobalHotkeys(
       isSystemReserved ? 'reserved' : rawStatus === 'occupied' || rawStatus === 'free' ? rawStatus : 'unsupported'
     const isOccupied = probeStatus === 'reserved' || probeStatus === 'occupied'
     const suspectApp = isOccupied
-      ? String(hostEntry?.suspectApp || preset.typicalCulprit || '后台进程')
+      ? String(hostEntry?.suspectApp || (isSystemReserved ? 'Windows 系统保留' : '系统未提供占用程序'))
       : null
     const suspectProcess =
       isOccupied && typeof hostEntry?.suspectProcess === 'string'

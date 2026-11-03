@@ -56,8 +56,10 @@ export function JsonDetailView({
   rustStruct,
   goStruct,
   stats,
-  jsonPaths
+  jsonPaths,
+  indentLabel = "2 格"
 }: {
+  indentLabel?: string;
   formatted: string;
   tsInterface: string;
   rustStruct?: string;
@@ -105,7 +107,7 @@ export function JsonDetailView({
       actions={
         <ActionPanel title="操作面板">
           <Action.CopyToClipboard
-            title="复制格式化 JSON (2 格)"
+            title={`复制格式化 JSON (${indentLabel})`}
             content={formatted}
             icon={Icon.CopyClipboard}
           />
@@ -142,7 +144,39 @@ export function JsonDetailView({
   );
 }
 
+/**
+ * json-codegen 命令的结果页：只放类型代码，不再重复格式化 JSON
+ */
+export function JsonCodegenView({ tsInterface, rustStruct, goStruct }: { tsInterface: string; rustStruct: string; goStruct: string }) {
+  const markdown = [
+    "## TypeScript",
+    fencedCode(tsInterface, "typescript"),
+    "## Go",
+    fencedCode(goStruct, "go"),
+    "## Rust（serde）",
+    fencedCode(rustStruct, "rust")
+  ].join("\n\n");
+  return (
+    <Detail
+      markdown={markdown}
+      navigationTitle="生成的类型代码"
+      actions={
+        <ActionPanel>
+          <Action.CopyToClipboard title="复制 TypeScript Interface" content={tsInterface} icon={Icon.Code} />
+          <Action.CopyToClipboard title="复制 Go Struct" content={goStruct} icon={Icon.Globe} />
+          <Action.CopyToClipboard title="复制 Rust Struct" content={rustStruct} icon={Icon.Terminal} />
+        </ActionPanel>
+      }
+    />
+  );
+}
+
 type IndentStyle = 2 | 4 | "tab";
+
+function describeOutputError(err: unknown): string {
+  if (err instanceof RangeError) return "JSON 嵌套过深或体积过大，缩进后的结果超出可处理范围，请拆分后再处理";
+  return err instanceof Error ? err.message : String(err);
+}
 
 const isText = (v: unknown): v is string => typeof v === "string";
 const isIndentStyle = (v: unknown): v is IndentStyle => v === 2 || v === 4 || v === "tab";
@@ -150,7 +184,9 @@ const isIndentStyle = (v: unknown): v is IndentStyle => v === 2 || v === 4 || v 
 /**
  * JSON 格式化与校验主命令组件
  */
-export default function JsonFormatCommand() {
+export default function JsonFormatCommand(props: { featureCode?: string } = {}) {
+  // json-codegen 命令：主动作直接生成类型代码并进入代码视图；其余入口是格式化
+  const codegen = props?.featureCode === "json-codegen";
   // 输入与缩进风格随「独立窗口」一起带走；带来的值不合法（如旧版本存下的形状）时用默认值
   const [jsonText, setJsonText] = usePopoutValue("jsonText", () => "", isText);
   const [indent, setIndent] = usePopoutValue<IndentStyle>("indent", () => 2, isIndentStyle);
@@ -159,22 +195,28 @@ export default function JsonFormatCommand() {
   // 只在输入变化时重新校验与推导，避免切换缩进等重渲染时重复解析大段 JSON
   const derived = useMemo(() => {
     const validation = validateJson(jsonText);
-    if (!validation.valid) return { validation, outputs: null };
-    return {
-      validation,
-      outputs: {
-        indent2: formatJson(jsonText, 2),
-        indent4: formatJson(jsonText, 4),
-        minified: minifyJson(jsonText),
-        ts: jsonToTsInterface(jsonText),
-        rust: jsonToRustStruct(jsonText),
-        go: jsonToGoStruct(jsonText)
-      }
-    };
+    if (!validation.valid) return { validation, outputs: null, outputError: undefined };
+    try {
+      return {
+        validation,
+        outputError: undefined,
+        outputs: {
+          indent2: formatJson(jsonText, 2),
+          indent4: formatJson(jsonText, 4),
+          minified: minifyJson(jsonText),
+          ts: jsonToTsInterface(jsonText),
+          rust: jsonToRustStruct(jsonText),
+          go: jsonToGoStruct(jsonText)
+        }
+      };
+    } catch (err: unknown) {
+      // 极深嵌套时缩进后的文本可能超过字符串上限（RangeError），如实提示而不是让整个页面崩溃
+      return { validation, outputs: null, outputError: describeOutputError(err) };
+    }
   }, [jsonText]);
-  const { validation, outputs } = derived;
+  const { validation, outputs, outputError } = derived;
 
-  const handleSubmit = async (values: Record<string, any>) => {
+  const handleSubmit = async (values: Record<string, unknown>) => {
     const text = typeof values.jsonInput === "string" ? values.jsonInput : jsonText;
     const res = validateJson(text);
     if (!res.valid) {
@@ -182,12 +224,22 @@ export default function JsonFormatCommand() {
       return;
     }
 
-    const fmt = formatJson(text, indent);
-    const ts = jsonToTsInterface(text);
-    const rust = jsonToRustStruct(text);
-    const go = jsonToGoStruct(text);
-    const paths = extractJsonPaths(text);
+    let fmt: string, ts: string, rust: string, go: string, paths: JsonPathItem[];
+    try {
+      fmt = formatJson(text, indent);
+      ts = jsonToTsInterface(text);
+      rust = jsonToRustStruct(text);
+      go = jsonToGoStruct(text);
+      paths = extractJsonPaths(text);
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "无法生成格式化结果", describeOutputError(err));
+      return;
+    }
 
+    if (codegen) {
+      push(() => <JsonCodegenView tsInterface={ts} rustStruct={rust} goStruct={go} />);
+      return;
+    }
     await showToast(Toast.Style.Success, "格式化与类型推导完成");
     push(() => (
       <JsonDetailView
@@ -197,6 +249,7 @@ export default function JsonFormatCommand() {
         goStruct={go}
         stats={res.stats}
         jsonPaths={paths}
+        indentLabel={indent === "tab" ? "Tab" : `${indent} 格`}
       />
     ));
   };
@@ -205,8 +258,8 @@ export default function JsonFormatCommand() {
     let text = "";
     try {
       text = await Clipboard.readText();
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "读取剪贴板失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "读取剪贴板失败", err instanceof Error ? err.message : String(err));
       return;
     }
     if (!text || !text.trim()) {
@@ -229,37 +282,45 @@ export default function JsonFormatCommand() {
 
   return (
     <Form
-      navigationTitle="JSON 格式化与类型转换"
+      navigationTitle={codegen ? "JSON 生成类型代码" : "JSON 格式化与类型转换"}
       actions={
         <ActionPanel title="快捷动作">
           <Action.SubmitForm
-            title="格式化并查看详情"
-            icon={Icon.Eye}
+            title={codegen ? "生成类型代码" : "格式化并查看详情"}
+            icon={codegen ? Icon.Code : Icon.Eye}
             onSubmit={handleSubmit}
           />
+          {/* 生成类型代码命令：次动作直接复制最常用的 TypeScript，其余格式化类复制不再列出 */}
+          {codegen && outputs && (
+            <Action.CopyToClipboard
+              title="复制 TypeScript Interface"
+              content={outputs.ts}
+              icon={Icon.Code}
+            />
+          )}
           {/* 复制类动作只在 JSON 合法时出现：非法或为空时没有可复制的结果，不能假装复制成功 */}
-          {outputs && (
+          {!codegen && outputs && (
             <Action.CopyToClipboard
               title="复制 2 格格式化结果"
               content={outputs.indent2}
               icon={Icon.CopyClipboard}
             />
           )}
-          {outputs && (
+          {!codegen && outputs && (
             <Action.CopyToClipboard
               title="复制 4 格格式化结果"
               content={outputs.indent4}
               icon={Icon.CopyClipboard}
             />
           )}
-          {outputs && (
+          {!codegen && outputs && (
             <Action.CopyToClipboard
-              title="复制压缩单行 (Minify)"
+              title="复制压缩单行结果"
               content={outputs.minified}
               icon={Icon.Minus}
             />
           )}
-          {outputs && (
+          {!codegen && outputs && (
             <Action.CopyToClipboard
               title="复制 TypeScript Interface"
               content={outputs.ts}
@@ -285,29 +346,26 @@ export default function JsonFormatCommand() {
             icon={Icon.Clipboard}
             onAction={handleLoadClipboard}
           />
-          <Action
-            title={indent === 2 ? "切换为 4 格缩进" : "切换为 2 格缩进"}
-            icon={Icon.Repeat}
-            onAction={() => setIndent(indent === 2 ? 4 : 2)}
-          />
         </ActionPanel>
       }
     >
       <Form.TextArea
         id="jsonInput"
         title="JSON 输入"
-        placeholder="在此粘贴或输入待校验/格式化的 JSON 内容..."
+        placeholder={codegen ? "粘贴 JSON 示例数据，按回车生成 TypeScript / Go / Rust 类型" : "在此粘贴或输入待校验/格式化的 JSON 内容..."}
         value={jsonText}
         onChange={(val) => setJsonText(val)}
         error={
-          validation.valid || !jsonText.trim()
+          outputError
+            ? outputError
+            : validation.valid || !jsonText.trim()
             ? undefined
             : validation.errorInfo
             ? `[第 ${validation.errorInfo.line} 行, 列 ${validation.errorInfo.column}] ${validation.errorInfo.message}`
             : validation.error
         }
       />
-      <Form.Dropdown
+      {!codegen && <Form.Dropdown
         id="indentType"
         title="缩进风格"
         value={String(indent)}
@@ -316,7 +374,12 @@ export default function JsonFormatCommand() {
         <Form.Dropdown.Item title="2 空格缩进" value="2" />
         <Form.Dropdown.Item title="4 空格缩进" value="4" />
         <Form.Dropdown.Item title="Tab 制表符缩进" value="tab" />
-      </Form.Dropdown>
+      </Form.Dropdown>}
     </Form>
   );
 }
+
+export const commands = {
+  "json-beautify": () => JsonFormatCommand(),
+  "json-codegen": () => JsonFormatCommand({ featureCode: "json-codegen" })
+};

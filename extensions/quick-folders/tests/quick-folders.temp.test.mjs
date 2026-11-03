@@ -59,7 +59,7 @@ test('异常：宿主拒绝打开临时文件夹时提示失败，不能显示�
   await tick(10)
   await view.run(view.item('temp'), '打开目录')
   assert.equal(host.lastToast().title, '打开目录失败')
-  assert.equal(host.lastToast().message, '/tmp')
+  assert.equal(host.lastToast().message, '/tmp：路径未由当前窗口授权')
   view.unmount()
 })
 

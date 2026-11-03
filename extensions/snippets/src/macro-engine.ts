@@ -53,31 +53,17 @@ export function resolveMacroTemplate(
   const datetimeVal = options?.fixedDatetime ?? `${dateVal} ${timeVal}`
   const safeClip = String(clipboardText || '').slice(0, MAX_CLIPBOARD_EMBED_LEN)
 
-  // Replace known macros except {cursor} first; leave unknown {xyz} or unclosed {date intact
-  const expanded = raw
-    .replace(/\{date\}/g, dateVal)
-    .replace(/\{time\}/g, timeVal)
-    .replace(/\{datetime\}/g, datetimeVal)
-    .replace(/\{clipboard\}/g, safeClip)
-
-  const cursorToken = '{cursor}'
-  const cursorIdx = expanded.indexOf(cursorToken)
-  if (cursorIdx === -1) {
-    return {
-      text: expanded,
-      cursorOffsetFromEnd: 0
-    }
+  // 只扫描原模板；插入值是字面文本，不能再次解释其中的宏或 $ 替换语法。
+  const values: Record<string, string> = { date: dateVal, time: timeVal, datetime: datetimeVal, clipboard: safeClip }
+  let text = '', offset = 0, cursorIndex: number | undefined
+  for (const match of raw.matchAll(/\{(date|time|datetime|clipboard|cursor)\}/g)) {
+    text += raw.slice(offset, match.index)
+    if (match[1] === 'cursor') cursorIndex ??= text.length
+    else text += values[match[1]]
+    offset = match.index + match[0].length
   }
-
-  const textWithoutCursor =
-    expanded.slice(0, cursorIdx) +
-    expanded.slice(cursorIdx + cursorToken.length).replace(/\{cursor\}/g, '')
-  const cursorOffsetFromEnd = textWithoutCursor.length - cursorIdx
-
-  return {
-    text: textWithoutCursor,
-    cursorOffsetFromEnd
-  }
+  text += raw.slice(offset)
+  return { text, cursorOffsetFromEnd: cursorIndex === undefined ? 0 : text.length - cursorIndex }
 }
 
 export function validateSnippetInput(input: SnippetFormInput): {
@@ -116,8 +102,9 @@ export class SnippetStoreRepository {
       throw new Error(check.error)
     }
 
-    const content = input.content.trim()
-    const previewText = content.replace(/\s+/g, ' ').slice(0, 72)
+    // 内容按用户输入原样保存：代码片段首行缩进、结尾换行都是内容的一部分，只用 trim 判断是否为空
+    const content = input.content
+    const previewText = content.trim().replace(/\s+/g, ' ').slice(0, 72)
     const category = input.category || 'general'
     const existingIdx = input.id ? this.#items.findIndex((s) => s.id === input.id) : -1
 

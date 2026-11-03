@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import HardwareInfoCommand from '../dist/index.js'
-import { evaluateHardwareScenarios, fetchHardwareTelemetrySnapshot, exportHardwareReport } from '../dist/logic.js'
+import { evaluateHardwareScenarios, fetchHardwareTelemetrySnapshot, exportHardwareReport, CPU_SAMPLE_INTERVAL_MS } from '../dist/logic.js'
 
 const GB = 1024 ** 3
 function installHost(host, cpu = 20, memory = 60) {
@@ -36,7 +36,7 @@ test('未知磁盘不补128GB，零剩余空间仍作为真实值处理', () => 
   assert.match(evaluateHardwareScenarios(8, 16 * GB, 0)[1].bottleneckHint, /空间偏紧/)
 })
 
-test('负载余量显示真实边界，满负载不能再给健康高分', async () => {
+test('空闲余量显示真实边界，满负载不能再给健康高分', async () => {
   const host = createHost()
   for (const [cpu, memory, expected] of [[0, 0, 100], [100, 100, 0], [20, 60, 40], [90, 10, 10]]) {
     installHost(host, cpu, memory)
@@ -77,6 +77,7 @@ test('列表详情和复制报告都标明估算，不承诺游戏帧率、大�
   const host = createHost(); installHost(host)
   const view = await mount(HardwareInfoCommand, host)
   try {
+    await new Promise((r) => setTimeout(r, CPU_SAMPLE_INTERVAL_MS + 80))
     await tick(20)
     await view.dropdown('benchmark')
     assert.equal(view.items().length, 4)
@@ -92,7 +93,58 @@ test('列表详情和复制报告都标明估算，不承诺游戏帧率、大�
     assert.match(host.clipboard.text, /未运行性能测试/)
     assert.doesNotMatch(host.clipboard.text, /实测兼容性|健康度|性能评测报告/)
     const snap = await fetchHardwareTelemetrySnapshot()
-    assert.match(exportHardwareReport(snap, 'txt'), /负载余量/)
+    assert.match(exportHardwareReport(snap, 'txt'), /空闲余量/)
     assert.doesNotMatch(exportHardwareReport(snap, 'txt'), /健康度|综合健康评分/)
+  } finally { view.unmount() }
+})
+
+test('状态条不再紧挨 CPU 负载显示“余量”，下拉与按钮不带英文括注，CPU 详情不用 [!TIP] 写法', async () => {
+  const host = createHost()
+  installHost(host, 29, 63)
+  const view = await mount(HardwareInfoCommand, host)
+  try {
+    for (let i = 0; i < 20 && view.tree().props.isLoading; i++) await tick()
+    await new Promise(r => setTimeout(r, CPU_SAMPLE_INTERVAL_MS + 50)); await tick()
+    const tree = view.tree()
+    assert.match(tree.props.filterBar.summaryText, /^CPU 8 线程/)
+    assert.doesNotMatch(tree.props.filterBar.summaryText, /余量/)
+    const titles = tree.props.searchBarAccessory.children.map(c => c.props.title)
+    assert.ok(titles.includes('全部硬件模块'))
+    assert.ok(titles.every(t => !/[A-Za-z]{3,}\)/.test(t)), titles.join(','))
+    assert.ok(tree.props.filterBar.actions.some(a => a.title === '复制 Markdown 报告'))
+    const md = view.item('hw-cpu-spec').props.detail.props.markdown
+    assert.doesNotMatch(md, /\[!TIP\]/)
+    assert.match(md, /^# 中央处理器\n/)
+  } finally { view.unmount() }
+  // 报告里仍给出空闲余量，读取失败时不计算
+  const snap = await fetchHardwareTelemetrySnapshot()
+  assert.match(exportHardwareReport(snap, 'markdown'), /空闲余量/)
+})
+
+test('场景估算只给档位不给分数，档位与阈值一致，场景名不带英文括注', async () => {
+  // 12 线程 + 16 GB：旧版“3A 游戏”是“规格参考一般”而分数却低于“4K 剪辑”，互相矛盾
+  for (const [cores, ram] of [[8, 16], [12, 16], [16, 32], [4, 8]]) {
+    const list = evaluateHardwareScenarios(cores, ram * GB, 100 * GB)
+    assert.equal(list.length, 4)
+    for (const sc of list) {
+      assert.equal('score' in sc, false, sc.id)
+      assert.doesNotMatch(sc.scenario, /[(（][A-Za-z /]+[)）]/, sc.scenario)
+    }
+  }
+  const host = createHost(); installHost(host)
+  const view = await mount(HardwareInfoCommand, host)
+  try {
+    await new Promise((r) => setTimeout(r, CPU_SAMPLE_INTERVAL_MS + 80))
+    await tick(20)
+    await view.dropdown('benchmark')
+    for (const item of view.items()) {
+      const text = JSON.stringify(item.props.accessories) + item.props.detail.props.markdown
+      assert.doesNotMatch(text, /\d+\s*分|\/ 100/, item.props.title)
+    }
+    const snap = await fetchHardwareTelemetrySnapshot()
+    for (const format of ['markdown', 'txt']) {
+      const report = exportHardwareReport(snap, format)
+      assert.doesNotMatch(report, /估算 \d+分|\((CPU|RAM|OS)\)|Ollama/, format)
+    }
   } finally { view.unmount() }
 })

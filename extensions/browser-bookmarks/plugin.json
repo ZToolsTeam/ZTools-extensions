@@ -1,9 +1,9 @@
 {
   "id": "browser-bookmarks",
   "name": "网页书签",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "只读聚合本机浏览器的多个配置，支持中文、拼音、网址与文件夹检索，打开或复制书签；无法读取的来源会明确提示",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
@@ -50,7 +50,7 @@
     },
     {
       "code": "bookmarks-domestic",
-      "explain": "筛选检索 360安全浏览器、360极速浏览器与QQ浏览器书签",
+      "explain": "筛选检索 QQ 浏览器与 360 极速浏览器书签（Windows 上另含 360 安全浏览器）",
       "cmds": [
         "360书签",
         "QQ浏览器书签",

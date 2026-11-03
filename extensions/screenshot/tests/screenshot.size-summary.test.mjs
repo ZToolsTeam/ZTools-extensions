@@ -28,11 +28,14 @@ test('筛选后的数量、容量和置顶数属于同一结果集，全库概�
   t.after(() => view.unmount())
   await view.search('keep.png')
   const props = view.tree().props
-  assert.match(props.filterBar.summaryText, /共 1 张 \(128 B\) · 已置顶 0 张/)
-  assert.match(props.subList.subtitle, /1 张截图.*总计 128 B/)
-  assert.deepEqual(props.workbenchPanel.previewCard.metrics.slice(0, 3).map(item => item.value), ['2 张', '1 张', '4.13 KB'])
+  assert.match(props.filterBar.summaryText, /共 1 张（128 B） · 已置顶 0 张/)
+  // 统计只在状态条出现一次：右栏表头只显示勾选数，左栏不再重复四格统计
+  assert.equal(props.subList.subtitle, '已选 0 项')
+  assert.equal(props.workbenchPanel.previewCard, undefined)
+  const row = view.items()[0]
+  assert.doesNotMatch(row.props.subtitle, /10×10|10 × 10|10x10/)
   await view.search('不存在的截图')
-  assert.match(view.tree().props.filterBar.summaryText, /共 0 张 \(0 B\) · 已置顶 0 张/)
+  assert.match(view.tree().props.filterBar.summaryText, /共 0 张（0 B） · 已置顶 0 张/)
 })
 
 test('截取后从真实落盘文件读取字节数，重新扫描仍计入总量', async (t) => {
@@ -80,5 +83,5 @@ test('未知与非法大小不会冒充0字节或污染容量，真实空文件�
   assert.deepEqual(list.map(item => item.formattedSize), ['未知大小', '未知大小', '未知大小', '未知大小', '0 B'])
   const view = await mount(ScreenshotsCommand, host)
   t.after(() => view.unmount())
-  assert.match(view.tree().props.subList.subtitle, /0 B.*4 张大小未知/)
+  assert.match(view.tree().props.filterBar.summaryText, /0 B.*4 张大小未知/)
 })

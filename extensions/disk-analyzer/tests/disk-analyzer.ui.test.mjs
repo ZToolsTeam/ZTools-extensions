@@ -145,8 +145,8 @@ test('macOS 系统保护：/usr /bin /sbin /System /Library /private/etc /privat
     assert.equal(row.props.checkable, false, `${p} 不可勾选`)
     assert.equal(row.props.accessories[1].tag.value, '系统保护')
     const titles = actionTitles(view, row)
-    assert.equal(titles[0], '在资源管理器定位', `${p} 主动作退为定位`)
-    assert.ok(!titles.includes('移入回收站清理') && !titles.includes('勾选加入批量清理队列'), `${p} 没有清理/勾选动作`)
+    assert.equal(titles[0], '在访达中定位', `${p} 主动作退为定位`)
+    assert.ok(!titles.includes('移入废纸篓清理') && !titles.includes('勾选加入批量清理队列'), `${p} 没有清理/勾选动作`)
     // 旧闭包或异常事件强行勾选：被拒绝
     row.props.onCheckChange(true)
     await tick()
@@ -157,7 +157,7 @@ test('macOS 系统保护：/usr /bin /sbin /System /Library /private/etc /privat
   for (const p of CLEANABLE_SYSTEM_SIBLINGS) {
     const row = findRow(view, p)
     assert.equal(row.props.checkable, true, `${p} 可勾选`)
-    assert.equal(actionTitles(view, row)[0], '移入回收站清理')
+    assert.equal(actionTitles(view, row)[0], '移入废纸篓清理')
   }
 
   // 表头全选：只勾可清理文件
@@ -208,7 +208,7 @@ test('右侧列表完整渲染全部匹配项（不再截断到 60 行），表�
   const total = 150 + SYSTEM_FILES.length + CLEANABLE_SYSTEM_SIBLINGS.length
   assert.equal(subRows(view).length, total, '全部条目都可浏览')
   assert.match(subList(view).subtitle, new RegExp(`^${total} 项`))
-  assert.match(view.tree().props.filterBar.summaryText, new RegExp(`右侧共 ${total} 个大文件`))
+  assert.ok(!new RegExp(`(^|\\D)${total} (个|项)`).test(view.tree().props.filterBar.summaryText), '数量只在右侧表头出现一次，摘要不重复')
 
   subList(view).onCheckChange(true)
   await tick()

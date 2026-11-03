@@ -38,3 +38,74 @@ test('从不同字典切换时清除上个字典的搜索词，默认入口仍�
     assert.ok(view.items().length > 1)
   } finally { view.unmount() }
 })
+
+test('端口排查命令按系统区分（macOS 没有 ss），动作不再占用系统复制快捷键 ⌘/Ctrl+C', async () => {
+  const host = createHost()
+  const view = await mount(commands['port-dict'])
+  try {
+    await view.search('6379')
+    const item = view.item('6379')
+    const titles = view.actions(item).map(a => a.props.title)
+    assert.deepEqual(titles.slice(0, 2), ['复制端口号', '复制 Linux 端口排查命令'])
+    await view.run(item, '复制 macOS 端口排查命令')
+    assert.equal(host.clipboard.text, 'sudo lsof -nP -iTCP:6379 -sTCP:LISTEN')
+    await view.run(item, '复制 Windows 端口排查命令')
+    assert.equal(host.clipboard.text, 'netstat -ano | findstr :6379')
+    await view.search('53')
+    await view.run(view.item('53'), '复制 macOS 端口排查命令')
+    assert.equal(host.clipboard.text, 'sudo lsof -nP -i :53', 'TCP/UDP 端口不能只查 TCP 监听')
+    for (const feature of ['port-dict', 'http-status']) {
+      const v = await mount(commands[feature])
+      try {
+        for (const node of v.items()) for (const action of v.actions(node)) {
+          const sc = action.props.shortcut
+          assert.ok(!(sc && sc.key === 'c' && sc.modifiers.length === 1), `${action.props.title} 不能用 ⌘/Ctrl+C`)
+        }
+      } finally { v.unmount() }
+    }
+  } finally { view.unmount() }
+})
+
+test('详情栏不重复列表已显示的标题、副标题与标签（界面红线 6）', async () => {
+  const { commands } = await import('../dist/index.js')
+  const { mount: mountView } = await import('../../shared/test-harness.mjs')
+  const strip = (s) => String(s ?? '').replace(/`/g, '')
+  for (const code of ['linux-commands', 'http-status', 'port-dict']) {
+    const view = await mountView(commands[code])
+    try {
+      const items = view.items()
+      assert.ok(items.length > 0, code)
+      for (const item of items) {
+        const detail = item.props.detail.props
+        const md = strip(detail.markdown)
+        // Linux 命令名本来就会出现在示例命令里，只检查详情不再以标题行开头
+        assert.ok(!/^###\s/.test(md), `${code}/${item.props.id} 详情以重复的标题行开头`)
+        if (code !== 'linux-commands') assert.ok(!md.includes(strip(item.props.title)), `${code}/${item.props.id} 详情重复标题`)
+        if (item.props.subtitle) assert.ok(!md.includes(strip(item.props.subtitle)), `${code}/${item.props.id} 详情重复副标题`)
+        const meta = (detail.metadata?.children || []).filter((c) => c.props?.text).map((c) => c.props.text)
+        for (const acc of item.props.accessories || []) {
+          const tag = typeof acc.tag === 'object' ? acc.tag.value : acc.tag
+          assert.ok(!meta.includes(tag), `${code}/${item.props.id} 属性栏重复标签 ${tag}`)
+        }
+        assert.ok(!/\((Root Causes|Troubleshooting)\)/.test(md))
+      }
+      if (code === 'port-dict') assert.ok(items.every((i) => /lsof|netstat|ss /.test(i.props.detail.props.markdown)), '端口排查命令仍在详情里')
+    } finally { view.unmount() }
+  }
+})
+
+test('tar 第三条示例缩短后仍可按 node_modules 搜到，详情与复制内容一致', async () => {
+  const { LINUX_COMMANDS_DICT, searchLinuxCommands } = await import('../dist/dict-service.js')
+  const tar = LINUX_COMMANDS_DICT.find((c) => c.id === 'cmd-tar')
+  const third = tar.examples[2]
+  assert.equal(third.cmd, 'tar --exclude=node_modules -zcvf backup.tar.gz ./project')
+  assert.ok(third.cmd.length <= 60 && third.title.length <= 20)
+  assert.ok(searchLinuxCommands('node_modules').some((c) => c.id === 'cmd-tar'))
+  const host = createHost()
+  const view = await mount(commands['linux-commands'])
+  try {
+    await view.search('tar')
+    assert.match(view.item('cmd-tar').props.detail.props.markdown, /tar --exclude=node_modules -zcvf backup\.tar\.gz \.\/project/)
+  } finally { view.unmount() }
+  assert.ok(host)
+})

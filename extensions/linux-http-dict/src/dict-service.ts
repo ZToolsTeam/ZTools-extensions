@@ -30,8 +30,8 @@ export const LINUX_COMMANDS_DICT: LinuxCommandItem[] = [
         cmd: 'tar -zxvf archive.tar.gz -C /opt/app'
       },
       {
-        title: '将目录打包压缩为 .tar.gz 并排除 node_modules',
-        cmd: 'tar --exclude="node_modules" -zcvf project-backup.tar.gz ./project'
+        title: '打包目录并排除 node_modules',
+        cmd: 'tar --exclude=node_modules -zcvf backup.tar.gz ./project'
       }
     ]
   },
@@ -299,7 +299,7 @@ export const HTTP_STATUS_DICT: HttpStatusItem[] = [
     isRetryable: true,
     causes: ['请求头 If-None-Match 与服务端 ETag 一致', 'If-Modified-Since 未过期'],
     troubleshooting: [
-      { step: '强制刷新验证', action: '若前端静态资源未更新，按 Ctrl+Shift+R 发送 Cache-Control: no-cache 绕过协商缓存' }
+      { step: '强制刷新验证', action: '若前端静态资源未更新，按 Ctrl+Shift+R（macOS 为 ⌘⇧R）发送 Cache-Control: no-cache 绕过协商缓存' }
     ],
     architectureNotes: '显著节省 CDN 与网关下行带宽，响应体必须为空。'
   },
@@ -598,4 +598,14 @@ export function searchCommonPorts(query: string): PortItem[] {
       item.category.toLowerCase().includes(q) ||
       item.description.toLowerCase().includes(q)
   )
+}
+
+/** 各系统查看本机端口占用的命令：Linux 用 ss，macOS 没有 ss、改用 lsof，Windows 用 netstat。 */
+export function portCheckCommands(item: PortItem): { linux: string; macos: string; windows: string } {
+  const port = item.port
+  return {
+    linux: `ss -tulpn | grep :${port}`,
+    macos: item.protocol === 'TCP' ? `sudo lsof -nP -iTCP:${port} -sTCP:LISTEN` : `sudo lsof -nP -i :${port}`,
+    windows: `netstat -ano | findstr :${port}`
+  }
 }

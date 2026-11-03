@@ -2,7 +2,7 @@
 // （process_list 只给 pid/name/path/cpuUsage/memoryUsage；dllplugin_call 在 macOS 上不受支持）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getDeclarativeBridge } from '@ztools/declarative-ui'
+import { getDeclarativeBridge, ZToolsHostError } from '@ztools/declarative-ui'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import ProcessMonitorCommand, {
   getTerminationRisk,
@@ -10,6 +10,7 @@ import ProcessMonitorCommand, {
   describeProcessProfile,
   normalizeProcessItem,
   terminateProcess,
+  describeTerminateError,
   FORBIDDEN_REASON
 } from '../dist/index.js'
 
@@ -53,7 +54,7 @@ function installMacHost({ cpuTotal = 31, cores = 8, list = MAC_PROCESSES } = {})
 }
 
 const summary = (view) => view.tree().props.filterBar.summaryText
-const itemByName = (view, name) => view.item((it) => it.props.title.startsWith(`${name} [`))
+const itemByName = (view, name) => view.item((it) => it.props.title === name)
 const tagOf = (item) => item.props.accessories.find((a) => a.tag)?.tag.value
 const ipcMethods = () => host.ipcCalls.map(([m]) => m)
 
@@ -148,7 +149,12 @@ test('pm-5 Windows 分类规则保持不变，宿主显式给 isSystem 时以宿
   assert.equal(normalizeProcessItem({ pid: 1044, name: 'svchost.exe', path: 'C:\\Windows\\System32\\svchost.exe' }).commandLine, '')
   assert.equal(normalizeProcessItem({ pid: 2000, name: 'chrome.exe', path: 'C:\\Program Files\\chrome.exe' }).isSystem, false)
   assert.equal(normalizeProcessItem({ pid: 25, name: 'logd', path: '/usr/libexec/logd' }).companyName, '')
-  assert.equal(normalizeProcessItem({ pid: 25, name: 'logd', path: '/usr/libexec/logd', isSystem: false }).isSystem, false)
+  // macOS 宿主兜底只按 pid <= 4 给 isSystem，false 不能盖掉系统目录 / 关键守护进程的判定
+  assert.equal(normalizeProcessItem({ pid: 25, name: 'logd', path: '/usr/libexec/logd', isSystem: false }).isSystem, true)
+  assert.equal(normalizeProcessItem({ pid: 5003, name: 'Google Chrome', path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', isSystem: false }).isSystem, false)
+  // Windows 宿主把 System32 下的记事本等交互工具判为用户应用，插件不再按路径改回系统
+  assert.equal(normalizeProcessItem({ pid: 4100, name: 'notepad.exe', path: 'C:\\Windows\\System32\\notepad.exe', isSystem: false }).isSystem, false)
+  assert.equal(normalizeProcessItem({ pid: 900, name: 'svchost.exe', path: 'C:\\Windows\\System32\\svchost.exe', isSystem: true }).isSystem, true)
   // 只是名字像系统路径前缀的用户目录不算系统
   assert.equal(normalizeProcessItem({ pid: 3000, name: 'tool', path: '/Users/me/System/tool' }).isSystem, false)
   assert.equal(normalizeProcessItem({ pid: 3001, name: 'kernel_task', path: '' }).isSystem, true)
@@ -281,4 +287,146 @@ test('pm-8 绕过界面直接调用 terminateProcess 也会拦截（大小写不
   assert.equal(getTerminationRisk(1200, 'finder'), 'high-risk')
   assert.equal(getTerminationRisk(5003, 'Google Chrome'), 'normal')
   assert.equal(getTerminationRisk(5003, ''), 'normal')
+})
+
+// ---------- 真实 macOS 宿主链路：dllplugin_call 落到宿主进程服务兜底 ----------
+
+/** 按 process-service.ts 在 darwin 上的兜底返回：isSystem 只按 pid <= 4，详情把路径填进命令行、进程名填进产品名称 */
+function installMacDllFallbackHost(list = MAC_PROCESSES) {
+  host.reset()
+  host.ipc.dllplugin_call = async ({ func, params }) => {
+    if (func === 'GetProcessList') {
+      return { success: true, data: { processes: list.map((p) => ({
+        pid: p.pid, name: p.name, path: p.path, cpuPercent: p.cpuUsage, workingSetBytes: p.memoryUsage,
+        privateBytes: null, threadCount: null, parentPid: 1, isSystem: p.pid <= 4, description: p.name, companyName: ''
+      })) } }
+    }
+    if (func === 'GetSystemInfo') {
+      return { success: true, data: { cpuUsagePercent: 12, totalMemoryBytes: 16e9, usedMemoryBytes: 9e9, availableMemoryBytes: 7e9, memoryUsagePercent: 56, processCount: list.length, threadCount: 0 } }
+    }
+    if (func === 'GetProcessDetail') {
+      const p = list.find((x) => x.pid === params.pid)
+      if (!p) return { success: true, data: { error: 'PROCESS_NOT_FOUND: 进程已退出或不可见' } }
+      return { success: true, data: { pid: p.pid, name: p.name, path: p.path, commandLine: p.path, companyName: '', fileDescription: p.name, fileVersion: '', productName: p.name, signerName: '', startTime: '', handleCount: null, peakMemoryBytes: null, memoryBytes: p.memoryUsage, privateBytes: null, threadCount: null, parentPid: 1 } }
+    }
+    if (func === 'GetServicesByPID') return { success: true, data: { services: [] } }
+    return { success: false, data: { error: `UNSUPPORTED_PROCESS_MONITOR_METHOD: ${func}` } }
+  }
+}
+
+test('macOS 真实链路：宿主 isSystem=false 时系统目录下的守护进程仍归入「系统关键服务」', async () => {
+  installMacDllFallbackHost()
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  assert.equal(tagOf(itemByName(view, 'sshd')), '系统服务')
+  assert.equal(tagOf(itemByName(view, 'Calculator')), '用户应用')
+  await view.tree().props.searchBarAccessory.props.onChange('system')
+  await tick(5)
+  const names = view.items().map((it) => it.props.title.replace(/ \[PID.*$/, ''))
+  assert.ok(names.includes('sshd') && names.includes('logd') && names.includes('Finder'), names.join(','))
+  assert.ok(!names.includes('Google Chrome') && !names.includes('Calculator'))
+  view.unmount()
+})
+
+test('macOS 真实链路：详情把路径当命令行、进程名当产品名称时不复制、不展示，如实提示读取不到', async () => {
+  installMacDllFallbackHost()
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  await view.run(itemByName(view, 'Google Chrome'), '查看数字签名与托管服务')
+  await tick(10)
+  assert.equal(host.pushed.length, 0, '只有进程名与路径时不能进详情页冒充签名信息')
+  assert.equal(host.lastToast().title, '未读取到签名与托管服务信息')
+  await view.run(itemByName(view, 'Google Chrome'), '复制启动命令行 (CommandLine)')
+  await tick(5)
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.equal(host.lastToast().title, '没有读取到启动命令行')
+  assert.equal(host.clipboard.length ?? 0, 0)
+  view.unmount()
+})
+
+// ---------- 端口占用 ----------
+
+const PORT_PROCS = [
+  { pid: 300, name: 'postgres', path: '/opt/homebrew/bin/postgres', cpuUsage: 0, memoryUsage: 30e6 },
+  { pid: 400, name: 'Google Chrome', path: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', cpuUsage: 1, memoryUsage: 300e6 },
+  { pid: 500, name: 'mDNSResponder', path: '/usr/sbin/mDNSResponder', cpuUsage: 0, memoryUsage: 5e6 }
+]
+
+test('端口占用：未输入端口时只列出监听 / 绑定端口的进程，不把浏览器连接外部的临时端口算作占用', async () => {
+  installMacHost({ list: PORT_PROCS })
+  host.ipc.process_list_ports = async () => ({ success: true, source: 'darwin-netstat', visibility: 'all-sockets', data: [
+    { pid: 300, localPort: 5432, protocol: 'TCP', localAddress: '127.0.0.1', state: 'LISTEN', processName: 'postgres' },
+    { pid: 300, localPort: 5432, protocol: 'TCP', localAddress: '127.0.0.1', state: 'ESTABLISHED', processName: 'postgres' },
+    { pid: 400, localPort: 61135, protocol: 'TCP', localAddress: '10.0.0.2', state: 'ESTABLISHED', processName: 'Google Chrome' },
+    { pid: 500, localPort: 5353, protocol: 'UDP', localAddress: '*', state: 'BOUND', processName: 'mDNSResponder' }
+  ] })
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  await view.tree().props.searchBarAccessory.props.onChange('port')
+  await tick(10)
+  const ids = view.items().map((it) => it.props.id).sort()
+  assert.deepEqual(ids, ['300', '500'])
+  assert.match(view.text(), /端口占用进程（2）/)
+  assert.doesNotMatch(view.text(), /活动进程列表/)
+  assert.match(view.item((it) => it.props.id === '300').props.subtitle, /端口 5432 ·/)
+  assert.doesNotMatch(summary(view), /只能看到当前用户/)
+  // 查询具体端口时匹配该端口的全部套接字（含临时端口）
+  await view.search('61135')
+  await tick(10)
+  assert.deepEqual(view.items().map((it) => it.props.id), ['400'])
+  view.unmount()
+})
+
+test('端口占用：宿主改用 lsof 兜底（visible-processes）时状态条提示可能查不到系统服务的端口', async () => {
+  installMacHost({ list: PORT_PROCS })
+  host.ipc.process_list_ports = async () => ({ success: true, source: 'darwin-lsof', visibility: 'visible-processes', data: [
+    { pid: 300, localPort: 5432, protocol: 'TCP', localAddress: '127.0.0.1', state: 'LISTEN', processName: 'postgres' }
+  ] })
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  await view.tree().props.searchBarAccessory.props.onChange('port')
+  await tick(10)
+  assert.match(summary(view), /本地端口匹配 1 个进程（只能看到当前用户进程的端口/)
+  view.unmount()
+})
+
+test('[故障注入] 端口查询失败 / 宿主不支持：状态条如实显示失败原因，不显示旧数据', async () => {
+  installMacHost({ list: PORT_PROCS })
+  host.ipc.process_list_ports = async () => { throw Object.assign(new Error('端口列表无效或未完整返回'), { code: 'PROCESS_ERROR' }) }
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  await view.tree().props.searchBarAccessory.props.onChange('port')
+  await tick(10)
+  assert.equal(summary(view), '端口读取失败：端口列表无效或未完整返回')
+  assert.equal(view.items().length, 0)
+  view.unmount()
+  installMacHost({ list: PORT_PROCS })
+  const view2 = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  await view2.tree().props.searchBarAccessory.props.onChange('port')
+  await tick(10)
+  assert.match(summary(view2), /^端口读取失败：/)
+  view2.unmount()
+})
+
+test('Windows 平缓关闭被程序拒绝（graceful-rejected）时说明是拒绝关闭，而不是超时；普通超时仍列出未退出的 PID', () => {
+  const rejected = describeTerminateError(new ZToolsHostError('PROCESS_TERMINATE_TIMEOUT', '进程拒绝正常关闭', { reason: 'graceful-rejected', stillRunning: [42] }))
+  assert.equal(rejected.code, 'PROCESS_TERMINATE_TIMEOUT')
+  assert.match(rejected.message, /拒绝正常关闭/)
+  const timeout = describeTerminateError(new ZToolsHostError('PROCESS_TERMINATE_TIMEOUT', '超时', { stillRunning: [42, 'x'] }))
+  assert.equal(timeout.message, '进程没有在限定时间内退出（仍在运行：PID 42）')
+})
+
+test('标题只放进程名，PID 只在副标题出现一次；排序下拉不带英文括注', async () => {
+  installMacHost()
+  const view = await mount(ProcessMonitorCommand, host)
+  await tick(10)
+  const claude = view.item('5004')
+  assert.equal(claude.props.title, 'claude')
+  assert.equal(claude.props.subtitle.match(/PID/g).length, 1)
+  assert.match(view.text(), /活动进程列表（11）/)
+  const options = view.tree().props.searchBarAccessory.children.map((it) => it.props.title)
+  for (const title of options) assert.doesNotMatch(title, /[A-Za-z]{2,}\)|\(/, title)
+  assert.ok(options.includes('全部进程 · 按内存排序'))
+  view.unmount()
 })

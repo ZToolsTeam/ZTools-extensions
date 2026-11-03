@@ -209,3 +209,13 @@ export function applyMemoMutation(latest: unknown[] | undefined, mutation: MemoM
       return base
   }
 }
+
+/**
+ * 列表行右侧的日期：没有记录时间（旧数据为 0）时不显示；不是今年的带上年份，避免跨年后分不清
+ */
+export function formatListDate(timestamp: number, now: number = Date.now()): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
+  const date = new Date(timestamp)
+  const sameYear = date.getFullYear() === new Date(now).getFullYear()
+  return date.toLocaleDateString([], sameYear ? { month: '2-digit', day: '2-digit' } : { year: 'numeric', month: '2-digit', day: '2-digit' })
+}

@@ -4,11 +4,12 @@
  * 真实扫描本机 Music / Downloads / Desktop 目录下的音频与媒体文件，对接 BatchAudioPlugin 与 FFmpeg 声学滤镜链
  */
 
+import { getHostTransport } from '@ztools/declarative-ui'
 import {
   formatBytes,
   getRealSystemPath,
   invokeDllPluginCapability,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder
 } from './native-ipc.js'
 
@@ -43,7 +44,7 @@ export interface RealAudioFileItem {
 }
 
 export const DLL_PLUGIN_NAME = 'BatchAudioPlugin'
-export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./', 'i')
+export const FORBIDDEN_TARGET_PATTERN = /(?:^|[\\/])Windows[\\/]System32(?:[\\/]|$)|(?:^|[\\/])\.\.(?:[\\/]|$)/i
 export const FORBIDDEN_REASON = '音频批处理输出路径不可指向系统受保护目录或包含路径穿越'
 
 /**
@@ -53,7 +54,7 @@ export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = [
   {
     id: 'audio-convert-mp3',
     title: '01. 批量格式转码为 MP3 (320kbps CBR)',
-    subtitle: '全平台高音质兼容模式，完整保留 ID3v2 专辑封面与元数据标签',
+    subtitle: '使用 MP3 320kbps 编码，保留源音频文本元数据',
     tag: 'MP3 320k',
     method: 'BatchConvertFormat',
     params: { format: 'mp3', bitrate: '320k', sampleRate: 44100 },
@@ -62,7 +63,7 @@ export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = [
   {
     id: 'audio-convert-flac',
     title: '02. 批量转码为无损 FLAC (Level 8)',
-    subtitle: '母带级无损音频归档压缩，采样率与位深 100% 原样保持',
+    subtitle: 'FLAC 无损编码，采样率按左侧选项设置',
     tag: '无损 FLAC',
     method: 'BatchConvertFormat',
     params: { format: 'flac', compressionLevel: 8 },
@@ -133,7 +134,7 @@ export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = [
   },
   {
     id: 'audio-denoise',
-    title: '10. AI 频谱背景降噪 (afftdn 空调/电流底噪消除)',
+    title: '10. 频谱背景降噪 (afftdn 空调/电流底噪消除)',
     subtitle: '基于 FFT 频谱滤波消除环境白噪音与麦克风底噪',
     tag: '频谱降噪',
     method: 'BatchDenoise',
@@ -182,44 +183,59 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
   })
 }
 
+const AUDIO_METHODS = new Set(AUDIO_WORKSHOP_MODES.map(item => item.method))
+
+function isAudioPath(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && value.length <= 4096 &&
+    !value.includes('\0') && /^(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\[^\\]+|\/)/.test(value) &&
+    !/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(value)
+}
+
+/** 这里只接受音频处理契约；数值滤镜范围由实际执行它的宿主统一校验。 */
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
-  if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
-  }
-  if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
-  }
-  if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
-  }
-
+  const reject = (error: string) => ({ valid: false, error })
+  if (!AUDIO_METHODS.has(method)) return reject('INVALID_METHOD: 不支持的音频处理模式')
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return reject('INVALID_PARAMS: 音频参数必须为对象')
   const record = params as Record<string, unknown>
-  for (const [key, val] of Object.entries(record)) {
-    if (typeof val === 'string') {
-      if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
-      }
-      if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
-      }
-    } else if (typeof val === 'number') {
-      if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
-      }
-    }
+  const inputs = record.files === undefined ? [record.inputPath] : record.files
+  if (!Array.isArray(inputs) || !inputs.length) return reject('INVALID_FILES: 请选择至少一首音频')
+  for (const input of inputs) {
+    if (!isAudioPath(input)) return reject('INVALID_FILES: 每个音频输入都必须是有效的绝对文件路径')
   }
-
+  if (method === 'BatchMergeAudio' && inputs.length < 2) return reject('INVALID_FILES: 合并需要至少两首音频')
+  for (const key of ['outputDir', 'outputPath']) {
+    if (record[key] === undefined) continue
+    if (!isAudioPath(record[key])) return reject(`INVALID_OUTPUT: ${key} 必须为有效的绝对路径`)
+    if (FORBIDDEN_TARGET_PATTERN.test(record[key])) return reject(`SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}`)
+  }
+  if (record.outputPath !== undefined && inputs.length > 1 && method !== 'BatchMergeAudio') {
+    return reject('INVALID_OUTPUT: 多个独立任务不能共用一个输出文件')
+  }
   return { valid: true }
 }
 
 export async function invokeNativeCapability(
   method: string,
   params: Record<string, unknown>,
-  hostBridge?: any
+  hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
     throw new Error(check.error || '参数校验失败')
+  }
+  const transport = hostBridge ? null : getHostTransport()
+  if (transport) {
+    try {
+      const raw = await transport.call<Record<string, unknown>>('dllplugin_call', {
+        plugin: DLL_PLUGIN_NAME, func: method, params
+      }, { timeoutMs: 300_000 })
+      const data = raw?.data && typeof raw.data === 'object' ? raw.data as Record<string, unknown> : raw
+      const ok = data?.ok === true && data.success !== false
+      return { ok, pluginName: DLL_PLUGIN_NAME, method, data, fromFallback: false,
+        ...(ok ? {} : { error: String(data?.error || '客户端未确认音频处理成功') }) }
+    } catch (err) {
+      return { ok: false, pluginName: DLL_PLUGIN_NAME, method, error: err instanceof Error ? err.message : String(err) }
+    }
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -232,6 +248,41 @@ export async function invokeNativeCapability(
   }
 }
 
+export interface AudioBatchResult {
+  completed: number
+  failed: number
+  outputs: string[]
+  errors: string[]
+}
+
+/** 合并一次提交全部输入；独立任务逐个记录回执，部分失败不冒充全部完成。 */
+export async function processAudioSelection(
+  method: string, params: Record<string, unknown>, files: RealAudioFileItem[], hostOverride?: unknown
+): Promise<AudioBatchResult> {
+  const result: AudioBatchResult = { completed: 0, failed: 0, outputs: [], errors: [] }
+  const merge = method === 'BatchMergeAudio'
+  if (!files.length || (merge && files.length < 2)) {
+    return { ...result, failed: files.length || 1, errors: ['合并需要至少两首音频，其他处理需要至少一首音频'] }
+  }
+  const groups = merge ? [files] : files.map(file => [file])
+  for (const group of groups) {
+    try {
+      const res = await invokeNativeCapability(method, { ...params, files: group.map(file => file.path) }, hostOverride)
+      const data = res.data as { results?: Array<{ outputPath?: unknown; sizeBytes?: unknown }>; errors?: unknown[] } | undefined
+      const output = data?.results?.[0]
+      if (!res.ok || data?.errors?.length || !output || typeof output.outputPath !== 'string' || !output.outputPath.trim() || !(Number(output.sizeBytes) > 0)) {
+        throw new Error(res.error || '客户端没有返回有效的音频输出文件')
+      }
+      result.completed += group.length
+      result.outputs.push(output.outputPath)
+    } catch (err) {
+      result.failed += group.length
+      result.errors.push(`${group.map(file => file.name).join('、')}：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+  return result
+}
+
 const AUDIO_EXT_REGEX = /\.(?:mp3|flac|wav|aac|m4a|ogg|wma|opus|aiff)$/i
 
 export type AudioWorkspaceSnapshot = RealAudioFileItem[] & {
@@ -239,13 +290,14 @@ export type AudioWorkspaceSnapshot = RealAudioFileItem[] & {
   files: RealAudioFileItem[]
   items: RealAudioFileItem[]
   presets: CapabilityActionItem[]
+  error?: string
 }
 
 /**
  * 扫描本机 Music / Downloads / Desktop 目录下的真实音频文件
  * 严禁回退扫描非音频文件充当音频，严禁在真实宿主下拼接 INITIAL_SAMPLE_AUDIOS
  */
-export async function fetchRealAudioWorkspace(hostOverride?: any): Promise<AudioWorkspaceSnapshot> {
+export async function fetchRealAudioWorkspace(hostOverride?: unknown): Promise<AudioWorkspaceSnapshot> {
   const [musicDir, downloadsDir, desktopDir] = await Promise.all([
     getRealSystemPath('music', hostOverride),
     getRealSystemPath('downloads', hostOverride),
@@ -254,10 +306,11 @@ export async function fetchRealAudioWorkspace(hostOverride?: any): Promise<Audio
 
   const scannedDirs = [musicDir, downloadsDir, desktopDir].filter(Boolean)
   const files: RealAudioFileItem[] = []
+  const scanner = createDirectoryScanner(hostOverride)
   const seenPaths = new Set<string>()
 
   for (const dir of scannedDirs) {
-    const audioScan = await scanRealDirectoryTree(dir, {
+    const audioScan = await scanner.scan(dir, {
       maxDepth: 2,
       maxFiles: 250,
       collectTopN: 40,
@@ -290,13 +343,14 @@ export async function fetchRealAudioWorkspace(hostOverride?: any): Promise<Audio
     scannedDirs,
     files,
     items: files,
-    presets
+    presets,
+    error: scanner.error || (scannedDirs.length ? undefined : '无法获取音频目录的位置')
   })
 }
 
 export const scanLocalAudioQueue = fetchRealAudioWorkspace
 
-export async function openAudioFileLocation(fullPath: string, hostOverride?: any): Promise<boolean> {
+export async function openAudioFileLocation(fullPath: string, hostOverride?: unknown): Promise<boolean> {
   if (!fullPath) return false
   return showRealItemInFolder(fullPath, hostOverride)
 }

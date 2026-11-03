@@ -22,6 +22,21 @@ import type { FileDiagnosticResult } from './types.js'
 export * from './types.js'
 export * from './inspector-service.js'
 
+/** 三个命令：工作台、CSV 转 UTF-8-BOM、修正扩展名；后两个命令把对应操作放到主动作 */
+export type FileInspectorMode = 'file-inspector-workbench' | 'file-fix-csv-bom' | 'file-fix-extension'
+
+const isMacPlatform = () => {
+  try {
+    const nav = (globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator
+    return /Mac/i.test(nav?.platform || nav?.userAgent || '')
+  } catch {
+    return false
+  }
+}
+
+/** 换行符默认值跟随当前系统：macOS 用 LF，Windows 用 CRLF */
+export const defaultLineEnding = (): 'CRLF' | 'LF' => (isMacPlatform() ? 'LF' : 'CRLF')
+
 export interface FileInspectorCommandProps {
   featureCode?: string
   initialDiagnostic?: FileDiagnosticResult | null
@@ -37,7 +52,10 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
   const [previewEncoding, setPreviewEncoding] = useState<string>(
     'auto'
   )
-  const [lineEndingTarget, setLineEndingTarget] = useState<'CRLF' | 'LF'>('CRLF')
+  const mode: FileInspectorMode = props.featureCode === 'file-fix-csv-bom' || props.featureCode === 'file-fix-extension'
+    ? props.featureCode
+    : 'file-inspector-workbench'
+  const [lineEndingTarget, setLineEndingTarget] = useState<'CRLF' | 'LF'>(defaultLineEnding)
   const [searchText, setSearchText] = useState<string>('')
   const [isLoading, setIsLoading] = useState<boolean>(false)
 
@@ -112,6 +130,24 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
     await showToast({ style: Toast.Style.Success, title: `已把扩展名改为 .${fileInfo.realExtension}` })
   })
 
+  const pickAction = <Action key="pick" title={fileInfo ? '选择其他文件…' : '选择文件…'} icon={Icon.Folder} onAction={handlePickFile} />
+  const bomAction = fileInfo?.isText
+    ? <Action key="bom" title="另存为 UTF-8-BOM" icon={Icon.CheckCircle} onAction={handleConvertToUtf8Bom} />
+    : null
+  const extAction = fileInfo?.extensionMismatch
+    ? <Action key="ext" title={`修正扩展名为 .${fileInfo.realExtension}`} icon={Icon.Pencil} onAction={handleFixExtension} />
+    : null
+  // 按命令决定主动作：转码命令把“另存为 UTF-8-BOM”放第一位，扩展名命令把“修正扩展名”放第一位；还没有可执行的操作时主动作是选择文件
+  const preferred = mode === 'file-fix-extension' ? [extAction, bomAction] : [bomAction, extAction]
+  const globalActions = [...preferred, pickAction].filter(Boolean)
+  const primaryRow = preferred.find(Boolean)
+  const primaryRowTitle = primaryRow ? String(primaryRow.props.title) : ''
+  const idleHint = mode === 'file-fix-csv-bom'
+    ? '选择 CSV 或文本文件，另存为 UTF-8-BOM，Excel 打开不再乱码'
+    : mode === 'file-fix-extension'
+      ? '选择文件，按文件头识别真实格式并修正扩展名'
+      : '选择文件后按文件头识别真实格式，并检查文本编码和换行符'
+
   return (
     <List
       navigationTitle="文件透视与转码"
@@ -119,15 +155,16 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
       isShowingDetail={false}
       searchText={searchText}
       onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索文本前 100 行解码预览内容..."
+      searchBarPlaceholder="搜索文本前 100 行预览内容"
+      actions={<ActionPanel>{globalActions}</ActionPanel>}
       filterBar={{
         summaryText: fileInfo
           ? `真实类型: ${fileInfo.realMimeType}（${fileInfo.extensionMismatch ? `扩展名不符，应为 .${fileInfo.realExtension}` : '扩展名一致'}）· 编码: ${fileInfo.detectedEncoding}（${fileInfo.detectionBasis}）· 换行符: ${fileInfo.lineEnding}`
-          : '选择文件后按文件头识别真实格式，并检查文本编码和换行符',
+          : idleHint,
         actions: [
           {
             id: 'pick-file',
-            title: '选择本地文件',
+            title: '选择文件',
             onAction: () => {
               void handlePickFile()
             }
@@ -135,7 +172,7 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
         ]
       }}
       workbenchPanel={{
-        title: fileInfo ? fileInfo.fileName : '请选择需要透视与转码的文件',
+        title: fileInfo ? fileInfo.fileName : '未选择文件',
         subtitle: fileInfo ? fileInfo.filePath : '识别 PNG、JPEG、WebP、AVIF、GIF、PDF、ZIP 文件头；文本可另存为 UTF-8-BOM',
         fields: [
           {
@@ -144,10 +181,10 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
             type: 'select',
             value: previewEncoding,
             options: [
-              { label: '自动探测 (UTF-8 / GBK)', value: 'auto' },
-              { label: 'UTF-8 (标准无 BOM)', value: 'UTF-8' },
-              { label: 'GBK / GB18030 (国标中文)', value: 'GBK' },
-              { label: 'Big5 (繁体中文)', value: 'Big5' },
+              { label: '自动探测（UTF-8 / GBK）', value: 'auto' },
+              { label: 'UTF-8（无 BOM）', value: 'UTF-8' },
+              { label: 'GBK / GB18030（简体中文）', value: 'GBK' },
+              { label: 'Big5（繁体中文）', value: 'Big5' },
               { label: 'UTF-16LE', value: 'UTF-16LE' }
             ],
             onChange: (val: unknown) => setPreviewEncoding(String(val))
@@ -158,14 +195,14 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
             type: 'select',
             value: lineEndingTarget,
             options: [
-              { label: 'Windows 标准 (CRLF)', value: 'CRLF' },
-              { label: 'Unix / macOS 标准 (LF)', value: 'LF' }
+              { label: 'CRLF（Windows）', value: 'CRLF' },
+              { label: 'LF（macOS / Linux）', value: 'LF' }
             ],
             onChange: (val: unknown) => setLineEndingTarget(val as 'CRLF' | 'LF')
           },
           {
             id: 'magicHex',
-            label: '文件头魔数 (Magic Bytes)',
+            label: '文件头字节',
             type: 'info',
             value: fileInfo?.hexHeaderPreview || '等待读取'
           },
@@ -190,8 +227,10 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
         }
       }}
       subList={{
-        title: `文本前 100 行安全解码预览 (${filteredLines.length} 行)`,
-        subtitle: fileInfo?.isText ? '按 Enter 另存为 UTF-8-BOM，或复制单行文本' : '根据文件头识别格式，不对二进制文件进行文本转码',
+        title: `文本前 100 行预览（${filteredLines.length} 行）`,
+        subtitle: primaryRowTitle
+          ? `按 Enter ${primaryRowTitle}，或复制单行文本`
+          : fileInfo && !fileInfo.isText ? '根据文件头识别格式，不对二进制文件进行文本转码' : undefined,
         emptyText: fileInfo?.fileSize === 0 ? '空文件，没有可预览或转码的内容' : fileInfo ? '没有匹配的预览行' : '请先选择需要透视或转码的本地文件',
         items: filteredLines.map((line) => (
           <List.Item
@@ -206,16 +245,7 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
             ]}
             actions={
               <ActionPanel>
-                {fileInfo?.isText && <Action
-                  title="另存为 UTF-8-BOM"
-                  icon={Icon.CheckCircle}
-                  onAction={handleConvertToUtf8Bom}
-                />}
-                {fileInfo?.extensionMismatch && <Action
-                  title={`修正扩展名为 .${fileInfo?.realExtension || 'txt'}`}
-                  icon={Icon.Pencil}
-                  onAction={handleFixExtension}
-                />}
+                {preferred.filter(Boolean)}
                 <Action.CopyToClipboard title="复制该行文本" content={line.text} />
               </ActionPanel>
             }
@@ -227,3 +257,9 @@ export function FileInspectorCommand(props: FileInspectorCommandProps = {}) {
 }
 
 export default FileInspectorCommand
+
+export const commands = {
+  'file-inspector-workbench': () => FileInspectorCommand({ featureCode: 'file-inspector-workbench' }),
+  'file-fix-csv-bom': () => FileInspectorCommand({ featureCode: 'file-fix-csv-bom' }),
+  'file-fix-extension': () => FileInspectorCommand({ featureCode: 'file-fix-extension' })
+}

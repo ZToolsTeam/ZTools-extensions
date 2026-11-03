@@ -4,6 +4,12 @@ import { optimizeSvgSource } from './svg-service.js'
 export * from './types.js'
 export * from './svg-service.js'
 
+/** 快捷键文案按平台区分：macOS 只写 ⌘，Windows 写 Ctrl */
+export function modEnterLabel(): string {
+  const nav = typeof navigator === 'undefined' ? undefined : navigator
+  return /Mac/i.test(nav?.platform || nav?.userAgent || '') ? '⌘Enter' : 'Ctrl+Enter'
+}
+
 export function SvgSourceForm({ initial, save }: { initial: string; save: (source: string) => void }) {
   const [source, setSource] = useState(initial), { pop } = useNavigation()
   const submit = async () => {
@@ -12,8 +18,13 @@ export function SvgSourceForm({ initial, save }: { initial: string; save: (sourc
   }
   return <Form navigationTitle="编辑 SVG 源码" actions={<ActionPanel><Action.SubmitForm title="校验并生成" onSubmit={submit} /></ActionPanel>}>
     <Form.TextArea id="source" title="SVG 源码" value={source} onChange={setSource} />
-    <Form.Description text="保留多行文字和空白；最多 256 KiB。⌘/Ctrl+Enter 校验并生成，Esc 取消修改。" />
+    <Form.Description text={`保留多行文字和空白；最多 256 KiB。${modEnterLabel()} 校验并生成，Esc 取消修改。`} />
   </Form>
+}
+
+/** 清理后 SVG 的真实渲染预览：以图片方式显示（不执行脚本、不插入界面 DOM），看清理是否改变了外观 */
+function previewImage(base64DataUri: string): string {
+  return `![清理后的 SVG 预览](${base64DataUri})\n\n`
 }
 
 function codeBlock(source: string, language: string): string {
@@ -74,7 +85,7 @@ export function SvgIconStudioCommand() {
           title={svgState.status === 'error' ? 'SVG 无法处理' : '载入 SVG 源码开始'}
           subtitle={svgState.status === 'error' ? svgState.error : '仅在本地处理静态 SVG，支持最多 256 KiB'}
           icon={svgState.status === 'error' ? Icon.ExclamationMark : Icon.Code}
-          detail={<List.Item.Detail markdown={svgState.status === 'error' ? codeBlock(svgState.error, 'text') : '按 Enter 从剪贴板载入完整 SVG；按 ⌘/Ctrl+Enter 打开多行源码编辑器。\n\n保留文字、空白与坐标精度；移除的内容会列出提示。复杂样式或无效 XML 会停止处理。'} />}
+          detail={<List.Item.Detail markdown={svgState.status === 'error' ? codeBlock(svgState.error, 'text') : `按 Enter 从剪贴板载入完整 SVG；按 ${modEnterLabel()} 打开多行源码编辑器。\n\n保留文字、空白与坐标精度；移除的内容会列出提示。复杂样式或无效 XML 会停止处理。`} />}
           actions={<ActionPanel>
             <Action title="从剪贴板载入 SVG" icon={Icon.Clipboard} onAction={() => void handleLoadClipboard()} />
             <Action title="编辑源码" icon={Icon.Code} onAction={editSource} shortcut={{ modifiers: ['cmd'], key: 'enter' }} />
@@ -88,7 +99,7 @@ export function SvgIconStudioCommand() {
           title={item.title}
           subtitle={item.subtitle}
           icon={Icon.Code}
-          detail={<List.Item.Detail markdown={`${result!.warnings.length ? `清理提示（可能改变外观）：\n\n${codeBlock(result!.warnings.join('\n'), 'text')}\n\n` : ''}${codeBlock(item.content, item.language)}`} />}
+          detail={<List.Item.Detail markdown={`${previewImage(result!.base64DataUri)}${result!.warnings.length ? `清理提示（可能改变外观）：\n\n${codeBlock(result!.warnings.join('\n'), 'text')}\n\n` : ''}${codeBlock(item.content, item.language)}`} />}
           actions={<ActionPanel>
             <Action.CopyToClipboard title={`复制${item.title}`} content={item.content} />
             {item.id === 'uri' && <Action.CopyToClipboard title="复制 Base64 Data URI" content={result!.base64DataUri} shortcut={{ modifiers: ['cmd'], key: 'enter' }} />}

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHost, mount } from '../../shared/test-harness.mjs'
+import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import SqlitePluginCommand from '../dist/index.js'
 
 const APPDATA = 'C:\\Users\\Tester\\AppData\\Roaming'
@@ -114,4 +114,44 @@ test('sqlite-plugin UI: 读取数据库失败时显示原因，不显示示例�
   assert.match(view.tree().props.filterBar.summaryText, /file is not a database/)
   assert.match(view.tree().props.subList.emptyText, /file is not a database/)
   view.unmount()
+})
+
+
+test('打开数据库：原生对话框取消或失败不改当前库，选中扫描范围外文件后读取并加入列表', async () => {
+  const host = createHost(), calls = installHost(host)
+  const view = await mount(SqlitePluginCommand)
+  try {
+    const open = () => view.tree().props.filterBar.actions.find(action => action.id === 'open-database').onAction()
+    const initial = calls.length
+    host.ipc.window_show_open_dialog = async () => ({ canceled: true })
+    await open(); await tick()
+    assert.equal(calls.length, initial)
+    host.ipc.window_show_open_dialog = async () => { throw new Error('对话框不可用') }
+    await open(); await tick()
+    assert.equal(host.lastToast().style, 'FAILURE')
+    assert.equal(calls.length, initial)
+    const selected = 'D:/fixture/selected.sqlite'
+    host.ipc.window_show_open_dialog = async params => {
+      assert.equal(params.filters, 'SQLite 数据库|*.db;*.sqlite;*.sqlite3')
+      assert.deepEqual(params.properties, ['openFile'])
+      return { canceled: false, filePath: selected }
+    }
+    await open(); await tick()
+    assert.equal(calls.at(-1).params.dbPath, selected)
+    assert.equal(view.tree().props.searchBarAccessory.props.value, selected)
+    assert.match(view.tree().props.filterBar.summaryText, /selected\.sqlite/)
+  } finally { view.unmount() }
+})
+
+test('读取错误不再经旧 SDK 无会话重试，保留宿主原始错误', async () => {
+  const host = createHost(); installHost(host)
+  const previous = globalThis.ztools
+  let legacyCalls = 0
+  globalThis.ztools = { dllplugin: { call: async () => { legacyCalls++; throw new Error('旧 SDK 错误') } } }
+  host.ipc.dllplugin_call = async () => ({ success: false, error: '原始读取错误' })
+  const view = await mount(SqlitePluginCommand)
+  try {
+    assert.match(view.text(), /原始读取错误/)
+    assert.equal(legacyCalls, 0)
+  } finally { view.unmount(); globalThis.ztools = previous }
 })

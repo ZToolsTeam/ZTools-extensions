@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { gitTestTool } from '../../shared/test-tools.mjs'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
@@ -11,23 +12,45 @@ import { diffText, formatUnifiedDiff, splitLines, MAX_DIFF_LINES, fencedDiffMark
 const host = createHost()
 test.beforeEach(() => host.reset())
 
-test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 patch 正确应用', () => {
+// 以独立的二维动态规划计算最少插入/删除数，不把系统 diff 的启发式输出当作最优答案。
+function minimumEditCount(left, right) {
+  // 保留每行结尾的 LF，末行缺少换行本身也是需要写进补丁的差异。
+  const a = left.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  const b = right.match(/[^\n]*\n|[^\n]+$/g) ?? []
+  const cost = Array.from({ length: a.length + 1 }, () => new Uint16Array(b.length + 1))
+  for (let i = 0; i <= a.length; i++) cost[i][0] = i
+  for (let j = 0; j <= b.length; j++) cost[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      cost[i][j] = a[i - 1] === b[j - 1]
+        ? cost[i - 1][j - 1]
+        : Math.min(cost[i - 1][j], cost[i][j - 1]) + 1
+    }
+  }
+  return cost[a.length][b.length]
+}
+
+test('差异最小且可逆：与独立最小编辑数一致，报告能被 patch 正确应用', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-diff-'))
-  const rnd = (n) => Array.from({ length: n }, () => 'abcde'[Math.floor(Math.random() * 5)]).join('\n')
+  let seed = 0x20261103
+  const randomInt = (limit) => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+    return Math.floor(seed / 0x100000000 * limit)
+  }
+  const rnd = (n) => Array.from({ length: n }, () => 'abcde'[randomInt(5)]).join('\n')
   try {
     for (let t = 0; t < 120; t++) {
-      const A = rnd(Math.floor(Math.random() * 30))
-      const B = rnd(Math.floor(Math.random() * 30))
+      const A = rnd(randomInt(30))
+      const B = rnd(randomInt(30))
       const r = diffText(A, B)
+      assert.equal(r.approximate, false)
       assert.equal(r.lines.filter((l) => l.op !== 'remove').map((l) => l.text).join('\n'), splitLines(B).join('\n'))
-      fs.writeFileSync(path.join(dir, 'a'), A ? A + '\n' : '')
-      fs.writeFileSync(path.join(dir, 'b'), B ? B + '\n' : '')
-      let out = ''
-      try { execFileSync('diff', [path.join(dir, 'a'), path.join(dir, 'b')]) } catch (e) { out = String(e.stdout) }
-      assert.equal(r.added + r.removed, out.split('\n').filter((l) => /^[<>] /.test(l)).length)
+      fs.writeFileSync(path.join(dir, 'a'), A)
+      fs.writeFileSync(path.join(dir, 'b'), B)
+      assert.equal(r.added + r.removed, minimumEditCount(A, B), `固定样本 ${t}: ${JSON.stringify({ A, B })}`)
       if (!r.identical) {
-        fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b') + '\n')
-        execFileSync('patch', ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
+        fs.writeFileSync(path.join(dir, 'p'), formatUnifiedDiff(r, 'a', 'b'))
+        execFileSync(gitTestTool('patch'), ['-s', '-o', path.join(dir, 'o'), path.join(dir, 'a'), path.join(dir, 'p')])
         assert.equal(fs.readFileSync(path.join(dir, 'o'), 'utf8'), fs.readFileSync(path.join(dir, 'b'), 'utf8'))
       }
     }
@@ -37,7 +60,7 @@ test('差异最小且可逆：与系统 diff 改动行数一致，报告能被 p
 })
 
 test('[边界] 换行符差异、忽略空白、空文本、超大文本', () => {
-  assert.equal(diffText('x\r\ny', 'x\ny').identical, true)
+  assert.equal(diffText('x\r\ny', 'x\ny').identical, false)
   assert.equal(diffText('a  b', 'a b', { ignoreWhitespace: true }).identical, true)
   assert.equal(diffText('', '').identical, true)
   assert.equal(diffText('', 'a').added, 1)
@@ -56,7 +79,7 @@ test('界面：空状态无示例数据；填写两段文本后列出差异并�
   const hunk = view.item('hunk-0')
   assert.match(hunk.props.subtitle, /删除 1 行，新增 1 行/)
   await view.run(hunk, '复制差异报告')
-  assert.equal(host.clipboard.text, '--- 左侧\n+++ 右侧\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c')
+  assert.equal(host.clipboard.text, '--- 左侧\n+++ 右侧\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\\ No newline at end of file\n')
 })
 
 test('[故障注入] 选择的文件不是 UTF-8 文本时提示，不显示乱码对比', async () => {

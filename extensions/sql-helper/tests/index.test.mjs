@@ -266,3 +266,48 @@ test('PostgreSQL仅裸标识符转小写；MySQL SERIAL/ZEROFILL遵循真实整�
   assert.match(mysql.generatedCode.golang, /Id uint64/)
   assert.match(mysql.generatedCode.golang, /Count \*uint64/)
 })
+
+test('美化：连接修饰词与 JOIN 同行，同名函数 LEFT()/RIGHT() 与 CHARACTER SET 不换行，执行结果不变', () => {
+  const source = "select a.id, left(a.name, 2) as l, right(a.name, 1) as r from a left join b on a.id = b.id inner join c on c.id = a.id left outer join d on d.id = a.id cross join e natural join f where a.id > 0 order by a.id"
+  const { beautified } = formatAndMinifySql(source, 'sqlite')
+  assert.deepEqual(beautified.split('\n'), [
+    'select a.id, left(a.name, 2) as l, right(a.name, 1) as r',
+    'from a',
+    'left join b on a.id = b.id',
+    'inner join c on c.id = a.id',
+    'left outer join d on d.id = a.id',
+    'cross join e',
+    'natural join f',
+    'where a.id > 0',
+    'order by a.id'
+  ])
+  const db = new DatabaseSync(':memory:')
+  try {
+    db.exec("CREATE TABLE a(id INTEGER, name TEXT); CREATE TABLE b(id INTEGER); CREATE TABLE c(id INTEGER); CREATE TABLE d(id INTEGER); CREATE TABLE e(x INTEGER); CREATE TABLE f(id INTEGER, name TEXT);")
+    db.exec("INSERT INTO a VALUES (1, '甲乙丙'); INSERT INTO b VALUES (1); INSERT INTO c VALUES (1); INSERT INTO d VALUES (1); INSERT INTO e VALUES (9); INSERT INTO f VALUES (1, '甲乙丙');")
+    // SQLite 没有 LEFT()/RIGHT() 函数，执行校验用 substr 等价改写后的同结构语句
+    const runnable = source.replace('left(a.name, 2)', 'substr(a.name, 1, 2)').replace('right(a.name, 1)', 'substr(a.name, -1)')
+    assert.deepEqual(db.prepare(formatAndMinifySql(runnable, 'sqlite').beautified).all(), db.prepare(runnable).all())
+  } finally { db.close() }
+  assert.doesNotMatch(formatAndMinifySql('create table t (a varchar(3) character set utf8mb4)').beautified, /\nset/i)
+  assert.match(formatAndMinifySql('update t set a = 1').beautified, /^update t\nset a = 1$/)
+  // 没有原始空白的位置不插入换行（如 x)left join 这类紧贴写法不改变 token 间距）
+  assert.equal(formatAndMinifySql('select left(x,1)from t').beautified, 'select left(x,1)from t')
+})
+
+test('空状态按模式给出不同的引导，标题不缺空格，提示里不写 ⌘/Ctrl 混写快捷键', async () => {
+  const seen = new Set()
+  for (const tab of ['sql-formatter', 'mybatis-merge', 'ddl-to-entity']) {
+    const view = await open(tab)
+    const item = view.item('input')
+    assert.doesNotMatch(item.props.title, /开始SQL/)
+    assert.doesNotMatch(`${item.props.subtitle} ${item.props.detail.props.markdown}`, /⌘\/Ctrl|Ctrl\+Enter|⌘/)
+    seen.add(item.props.detail.props.markdown)
+  }
+  assert.equal(seen.size, 3)
+  const view = await open('mybatis-merge')
+  assert.match(view.item('input').props.detail.props.markdown, /Preparing/)
+  await view.run(view.item('input'), '编辑源码')
+  const form = await mountPushed(host)
+  try { assert.doesNotMatch(form.text(), /⌘\/Ctrl/) } finally { form.unmount() }
+})

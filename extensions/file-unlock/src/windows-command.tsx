@@ -196,7 +196,7 @@ export default function FileUnlockCommand(props?: {
               : '解除占用失败',
         message: res.error || '请尝试使用管理员权限运行'
       })
-      if (res.errorCode === 'PROCESS_IDENTITY_MISMATCH' && targetPath) {
+      if (['PROCESS_IDENTITY_MISMATCH', 'LOCK_CHANGED', 'LOCK_RECHECK_FAILED', 'PROCESS_GONE'].includes(res.errorCode ?? '') && targetPath) {
         await runInspection(targetPath)
       }
       return
@@ -286,7 +286,7 @@ export default function FileUnlockCommand(props?: {
       return `目标: ${extractBaseName(targetPath)} | 只检查了部分文件，未发现占用，但结果不完整`
     }
     if (processes.length === 0) {
-      return `目标: ${extractBaseName(targetPath)} | 未发现句柄占用，可安全删除、重命名或弹出`
+      return `目标: ${extractBaseName(targetPath)} | 当前检测未发现文件占用；目录句柄或权限外的占用可能无法识别`
     }
     return `目标: ${extractBaseName(targetPath)} | 发现 ${processes.length} 个占用进程（可结束 ${killableCount} 个）`
   }, [targetPath, lastError, processes.length, killableCount, partialScan])

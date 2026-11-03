@@ -40,3 +40,26 @@ test('错误提示不包含可被 Markdown 解释的用户原文', () => {
     catch (error) { assert.doesNotMatch(error.message,/example\.invalid|!\[/) }
   }
 })
+
+test('子网掩码写法：点分、0x 十六进制（macOS ifconfig）与空格分隔，非连续掩码拒绝', () => {
+  for (const input of ['192.168.1.5 255.255.255.0', '192.168.1.5/255.255.255.0', '192.168.1.5/0xffffff00', '192.168.1.5   0xFFFFFF00']) {
+    const r = calculateIpv4Cidr(input)
+    assert.equal(r.prefixLength, 24, input)
+    assert.equal(r.networkAddress, '192.168.1.0', input)
+  }
+  assert.equal(calculateIpv4Cidr('10.1.2.3/255.255.255.252').prefixLength, 30)
+  assert.equal(calculateIpv4Cidr('10.1.2.3 0.0.0.0').prefixLength, 0)
+  assert.equal(calculateIpv4Cidr('10.1.2.3/0xffffffff').prefixLength, 32)
+  for (const bad of ['10.0.0.1/255.0.255.0', '10.0.0.1/0xff00ff00', '10.0.0.1 255.255.255.0 extra', '10.0.0.1/24 255.255.255.0', '10.0.0.1/256.0.0.0', '10.0.0.1/0xfffff']) {
+    assert.throws(() => calculateIpv4Cidr(bad), bad)
+  }
+})
+
+test('macOS ls -l 的 @ / + 与 Linux 的 . 标记不影响权限解析', () => {
+  for (const [input, octal, ls] of [['drwxr-xr-x@', '755', 'drwxr-xr-x'], ['-rw-r--r--+', '644', '-rw-r--r--'], ['-rwsr-xr-x.', '4755', '-rwsr-xr-x']]) {
+    const r = convertChmod(input)
+    assert.equal(r.octal, octal, input)
+    assert.equal(r.lsSymbolic, ls, input)
+  }
+  for (const bad of ['rwxr-xr-x@', 'drwxr-xr-x@@', 'drwxr-xr-x#']) assert.throws(() => convertChmod(bad), bad)
+})

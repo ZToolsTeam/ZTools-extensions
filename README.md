@@ -13,9 +13,18 @@
   <a href="https://github.com/ZToolsTeam/ZTools-extensions/issues">插件问题</a>
 </p>
 
-本仓库存放 ZTools 插件的源码，以及开发插件要用的 SDK、脚手架、构建和检查脚本。插件用 `List`、`Detail`、`Form`、`ActionPanel` 等声明式组件描述界面，由 ZTools 客户端负责渲染和提供系统能力。
+本仓库存放：
 
-**只想安装插件**：从 [ZTools Releases](https://github.com/ZToolsTeam/ZTools/releases) 下载客户端，在客户端的插件市场里安装。仓库里有某个插件的源码，不代表它已经在市场上架，能装哪些以插件市场为准。
+- ZTools 插件的源码
+- 开发插件要用的 SDK、脚手架、构建和检查脚本
+
+插件用 `List`、`Detail`、`Form`、`ActionPanel` 等声明式组件描述界面，由 ZTools 客户端负责渲染和提供系统能力。
+
+> **只想安装插件？**
+>
+> 从 [ZTools Releases](https://github.com/ZToolsTeam/ZTools/releases) 下载客户端，在客户端的插件市场里安装。
+>
+> 仓库里有某个插件的源码，不代表它已经在市场上架，能装哪些以插件市场为准。
 
 ## 5 分钟贡献你的首款插件
 
@@ -60,7 +69,14 @@ node --test extensions/my-tool/tests/*.test.mjs
 
 ## 问题反馈
 
-插件或本仓库开发工具的问题请提交到[本仓库 Issues](https://github.com/ZToolsTeam/ZTools-extensions/issues)，注明插件 ID 与版本、客户端版本、操作系统及架构、复现步骤和错误信息；源码构建问题请附 Node.js 版本与执行的命令。日志和截图请先去掉个人信息与凭据。客户端本身的问题请提交到 [ZTools Issues](https://github.com/ZToolsTeam/ZTools/issues)。
+插件或本仓库开发工具的问题请提交到[本仓库 Issues](https://github.com/ZToolsTeam/ZTools-extensions/issues)，并注明：
+
+- 插件 ID 与版本、客户端版本
+- 操作系统及架构
+- 复现步骤和错误信息
+- 源码构建问题：Node.js 版本与执行的命令
+
+日志和截图请先去掉个人信息与凭据。客户端本身的问题请提交到 [ZTools Issues](https://github.com/ZToolsTeam/ZTools/issues)。
 
 ## 许可证
 

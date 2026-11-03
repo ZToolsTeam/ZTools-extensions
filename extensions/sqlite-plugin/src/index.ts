@@ -18,7 +18,7 @@ import {
   useEffect,
   useState
 } from "@ztools/declarative-ui";
-import { isRealElectronHost } from "./native-ipc.js";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
 import {
   NOT_IN_CLIENT_MESSAGE,
   PREVIEW_LIMIT,
@@ -255,6 +255,24 @@ export function SqlitePluginCommand() {
     filterBar: {
       summaryText,
       actions: [
+        {
+          id: "open-database",
+          title: "打开数据库…",
+          style: "secondary",
+          onAction: async () => {
+            const result = await callHostTransport<{ canceled?: boolean; filePath?: string }>("window_show_open_dialog", {
+              title: "打开 SQLite 数据库",
+              filters: "SQLite 数据库|*.db;*.sqlite;*.sqlite3",
+              properties: ["openFile"]
+            });
+            if (!result.ok) {
+              await showToast({ style: Toast.Style.Failure, title: "无法打开数据库", message: result.error });
+            } else if (!result.data?.canceled && result.data?.filePath) {
+              if (activeDbPath === result.data.filePath) await reloadSqliteWorkspace(activeDbPath);
+              else setActiveDbPath(result.data.filePath);
+            }
+          }
+        },
         {
           id: "rescan",
           title: "重新扫描",

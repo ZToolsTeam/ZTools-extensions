@@ -1,9 +1,9 @@
 {
   "id": "clean-keyboard",
   "name": "键盘清洁锁",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Mac 系统键盘清洁锁，可同时拦截鼠标，支持 5～300 秒倒计时、紧急解锁与失联自动解除",
-  "author": "ZTools Community",
+  "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [

@@ -59,14 +59,16 @@ export default function CleanerCommand() {
       const res = await fetchCleanRulesAndScan()
       setGroups(res.groups)
       setSummary(res.summary)
-      setScanError('')
+      setScanError(res.error || '')
       if (options.keepSelection) {
         const existing = new Set(res.groups.flatMap(g => g.sampleFiles.map(f => f.path)))
         setCheckedFilePaths(prev => prev.filter(p => existing.has(p)))
       } else {
         setCheckedFilePaths(pickDefaultCheckedSamplePaths(res.groups))
       }
-      if (options.showIndicator) {
+      if (res.error) {
+        showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: res.error })
+      } else if (options.showIndicator) {
         showToast({
           style: Toast.Style.Success,
           title: '扫描完成',
@@ -373,7 +375,7 @@ export default function CleanerCommand() {
     }),
     filterBar: {
       summaryText: scanError
-        ? `扫描失败：${scanError}`
+        ? `${groups.length ? '扫描结果不完整' : '扫描失败'}：${scanError}`
         : `共占用 ${formatBytes(summary.totalSizeBytes)} · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})${diskText}`,
       actions: [
         {

@@ -73,3 +73,19 @@ test('Windows：明确提示暂不可用，不调用旧测速接口、不显示�
  host.ipc.system_get_platform=async()=>{throw Error('平台查询失败')}
  const failed=await open();assert.match(failed.text(),/平台查询失败/)
 })
+test('节点检测状态按失败数量描述：全部成功不提失败原因，部分失败写明数量',async()=>{
+ const v=await open(commands['speedtest-ping-check'])
+ const summary=()=>v.tree().props.filterBar.summaryText
+ assert.equal(summary(),'节点检测完成，1 个节点均已连通');assert.doesNotMatch(summary(),/失败/)
+ host.ipc.network_speedtest=async()=>({...diagnosis(),nodes:[sample(),{...sample(),host:'bad.example',samplesMs:[],latencyMs:null,jitterMs:null,error:'ETIMEDOUT'}]})
+ await v.tree().props.filterBar.actions[0].onAction();await tick()
+ assert.equal(summary(),'节点检测完成，1 个节点连接失败，原因见各行')
+ host.ipc.network_speedtest=async()=>({...diagnosis(),nodes:[{...sample(),host:'bad.example',samplesMs:[],latencyMs:null,jitterMs:null,error:'ETIMEDOUT'}]})
+ await v.run(v.item('node-bad.example:443'),'重新检测此节点');await tick()
+ assert.equal(summary(),'节点检测完成，1 个节点连接失败，原因见各行')
+})
+test('带宽测速入口标题与主动作叫法一致',async()=>{
+ const v=await open()
+ assert.equal(v.item('bandwidth').props.title,'开始测量带宽')
+ assert.equal(v.actions(v.item('bandwidth'))[0].props.title,'开始测量带宽')
+})

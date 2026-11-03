@@ -60,13 +60,13 @@ export function CleanKeyboardCommand() {
   }
   const locked = state?.status === 'locked'
   return <List navigationTitle="键盘清洁锁" isShowingDetail={false} isLoading={busy}
-    searchBarPlaceholder="选择清洁时长，⌘+U 或 Ctrl+U 紧急解除"
+    searchBarPlaceholder="选择清洁时长，⌘+U 或 Control+U 紧急解除"
     searchBarAccessory={!locked ? <List.Dropdown value={pointer ? 'all' : 'keyboard'} onChange={value => setPointer(value === 'all')}>
       <List.Dropdown.Item value="keyboard" title="仅键盘" /><List.Dropdown.Item value="all" title="键盘与鼠标" />
     </List.Dropdown> : undefined}
     filterBar={{ summaryText: error ? `状态未确认：${error}` : locked ? `系统输入锁已启用 · 剩余 ${state.remainingSeconds} 秒` : state?.reason ? unlockReasons[state.reason] || '输入锁已退出' : '最长 5 分钟；电源键、Touch ID、系统保留按键与部分手势不在保护范围' }}>
     {locked ? <List.Item id="active" icon={Icon.Lock} title={error ? '锁定状态未确认，请勿开始清洁' : state.lockPointer ? '键盘与鼠标已锁定' : '键盘已锁定'}
-      subtitle="⌘+U 或 Ctrl+U 立即解除；到时或离开插件自动解除" accessories={error ? [] : [{ text: `${state.blockedEvents} 次拦截` }]}
+      subtitle="⌘+U 或 Control+U 立即解除；到时或离开插件自动解除" accessories={error ? [] : [{ text: `${state.blockedEvents} 次拦截` }]}
       actions={<ActionPanel><Action title="立即解除" icon={Icon.Unlock} onAction={async () => { await change() }} /></ActionPanel>} /> :
       state ? <>{CLEAN_DURATION_PRESETS.map(seconds => <List.Item key={seconds} id={`duration-${seconds}`} icon={Icon.Clock} title={`清洁 ${formatCleanDuration(seconds)}`}
         subtitle={pointer ? '暂时拦截键盘、鼠标点击与滚动；使用紧急快捷键解除' : '暂时拦截键盘输入；鼠标可用于点击“立即解除”'}

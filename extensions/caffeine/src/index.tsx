@@ -92,6 +92,9 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
     return CAFFEINE_PRESETS.filter(p => !q || `${p.title} ${p.subtitle} ${p.minutes}`.toLowerCase().includes(q))
   }, [searchText])
 
+  // 生效中的那一档在列表里可见时，它的主动作就是“停止防休眠”，顶部不再重复；被搜索过滤掉时才在顶部提供
+  const activePresetVisible = status.active && filteredPresets.some(p => p.minutes === status.durationMinutes)
+
   return (
     <List isLoading={isLoading} searchText={searchText} onSearchTextChange={setSearchText}
       searchBarPlaceholder="选择防休眠持续时间（回车立即生效）..."
@@ -103,10 +106,10 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
       }
       filterBar={{
         summaryText: statusError ? `状态无法确认：${statusError}` : isLoading ? '正在读取系统状态…' : status.active
-          ? `已开启${status.mode === 'display' ? '屏幕常亮' : '系统保活'} · 剩余 ${status.remainingText}`
+          ? `已开启${status.mode === 'display' ? '屏幕常亮' : '系统保活'} · ${status.durationMinutes === 0 || status.remainingMs === null ? status.remainingText : `剩余 ${status.remainingText}`}`
           : '未开启 · 系统按默认电源策略运行',
         actions: [
-          ...(status.active ? [{ id: 'stop', title: '停止防休眠', onAction: () => perform(() => stopCaffeineSession(props.hostOverride)) }] : []),
+          ...(status.active && !activePresetVisible ? [{ id: 'stop', title: '停止防休眠', onAction: () => perform(() => stopCaffeineSession(props.hostOverride)) }] : []),
           ...(statusError ? [{ id: 'retry', title: '重试查询', onAction: () => refresh() }] : [])
         ]
       }}>
@@ -114,11 +117,15 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
         {filteredPresets.map(preset => (
           <List.Item key={preset.id} id={preset.id} title={preset.title} subtitle={preset.subtitle}
             icon={status.active && status.durationMinutes === preset.minutes ? Icon.CheckCircle : Icon.Clock}
-            accessories={[status.active && status.durationMinutes === preset.minutes
-              ? { tag: `生效中 · ${status.remainingText}` }
-              : { text: preset.minutes === 0 ? '手动停止' : '到期自动停止' }]}
-            actions={<ActionPanel><Action title={`开启：${preset.title}`} icon={Icon.Bolt}
-              onAction={() => perform(() => startCaffeineSession(preset.minutes, mode, props.hostOverride))} /></ActionPanel>}
+            // 剩余时间只在顶部状态栏显示一次；未生效的时长项不加重复的说明标签
+            accessories={status.active && status.durationMinutes === preset.minutes ? [{ tag: '生效中' }] : []}
+            actions={status.active && status.durationMinutes === preset.minutes
+              // 正在生效的这一项：回车停止，而不是重复开启同一档
+              ? <ActionPanel><Action title="停止防休眠" icon={Icon.Stop}
+                onAction={() => perform(() => stopCaffeineSession(props.hostOverride))} /></ActionPanel>
+              // 各档时长由条目标题区分，动作名保持简短，避免在底部操作栏被截断
+              : <ActionPanel><Action title={status.active ? '改为此时长' : '开启防休眠'} icon={Icon.Bolt}
+                onAction={() => perform(() => startCaffeineSession(preset.minutes, mode, props.hostOverride))} /></ActionPanel>}
           />
         ))}
       </List.Section>

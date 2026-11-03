@@ -4,6 +4,8 @@ export interface FolderItem {
   path: string
   category: 'personal' | 'system' | 'temp'
   description: string
+  /** 额外搜索关键词（英文目录名等），不显示在标题里 */
+  keywords?: string[]
   shortcut?: string
 }
 
@@ -33,35 +35,35 @@ export function getDefaultFolders(envOverrides?: Record<string, string>): Folder
   return [
     {
       id: 'desktop',
-      name: '桌面 (Desktop)',
+      name: '桌面', keywords: ['Desktop'],
       path: `${userProfile}\\Desktop`,
       category: 'personal',
       description: '个人桌面文件与工作区'
     },
     {
       id: 'downloads',
-      name: '下载 (Downloads)',
+      name: '下载', keywords: ['Downloads'],
       path: `${userProfile}\\Downloads`,
       category: 'personal',
       description: '浏览器与网络文件默认下载目录'
     },
     {
       id: 'documents',
-      name: '文档 (Documents)',
+      name: '文档', keywords: ['Documents'],
       path: `${userProfile}\\Documents`,
       category: 'personal',
       description: '个人文档、工程与应用数据'
     },
     {
       id: 'pictures',
-      name: '图片 (Pictures)',
+      name: '图片', keywords: ['Pictures'],
       path: `${userProfile}\\Pictures`,
       category: 'personal',
       description: '照片与屏幕截图保存目录'
     },
     {
       id: 'userprofile',
-      name: '用户主目录 (Home)',
+      name: '用户主目录', keywords: ['Home'],
       path: userProfile,
       category: 'personal',
       description: '当前系统登录用户根目录'
@@ -82,7 +84,7 @@ export function getDefaultFolders(envOverrides?: Record<string, string>): Folder
     },
     {
       id: 'temp',
-      name: '临时文件夹 (Temp)',
+      name: '临时文件夹', keywords: ['Temp'],
       path: temp,
       category: 'temp',
       description: '系统与应用临时文件存放目录'
@@ -148,13 +150,13 @@ export function buildFolders(paths: HostFolderPaths): FolderItem[] {
   const pick = (value: string, child: string) => String(value || '').trim() || joinPath(home, child, windows)
 
   const personal: FolderItem[] = [
-    { id: 'desktop', name: '桌面 (Desktop)', path: pick(paths.desktop, 'Desktop'), category: 'personal', description: '个人桌面文件与工作区' },
-    { id: 'downloads', name: '下载 (Downloads)', path: pick(paths.downloads, 'Downloads'), category: 'personal', description: '浏览器与网络文件默认下载目录' },
-    { id: 'documents', name: '文档 (Documents)', path: pick(paths.documents, 'Documents'), category: 'personal', description: '个人文档、工程与应用数据' },
-    { id: 'pictures', name: '图片 (Pictures)', path: pick(paths.pictures, 'Pictures'), category: 'personal', description: '照片与屏幕截图保存目录' },
-    { id: 'videos', name: windows ? '视频 (Videos)' : '影片 (Movies)', path: pick(paths.videos, windows ? 'Videos' : 'Movies'), category: 'personal', description: '视频与录屏文件' },
-    { id: 'music', name: '音乐 (Music)', path: pick(paths.music, 'Music'), category: 'personal', description: '音乐与音频文件' },
-    { id: 'userprofile', name: '用户主目录 (Home)', path: home, category: 'personal', description: '当前系统登录用户根目录' }
+    { id: 'desktop', name: '桌面', keywords: ['Desktop'], path: pick(paths.desktop, 'Desktop'), category: 'personal', description: '个人桌面文件与工作区' },
+    { id: 'downloads', name: '下载', keywords: ['Downloads'], path: pick(paths.downloads, 'Downloads'), category: 'personal', description: '浏览器与网络文件默认下载目录' },
+    { id: 'documents', name: '文档', keywords: ['Documents'], path: pick(paths.documents, 'Documents'), category: 'personal', description: '个人文档、工程与应用数据' },
+    { id: 'pictures', name: '图片', keywords: ['Pictures'], path: pick(paths.pictures, 'Pictures'), category: 'personal', description: '照片与屏幕截图保存目录' },
+    { id: 'videos', name: windows ? '视频' : '影片', keywords: [windows ? 'Videos' : 'Movies'], path: pick(paths.videos, windows ? 'Videos' : 'Movies'), category: 'personal', description: '视频与录屏文件' },
+    { id: 'music', name: '音乐', keywords: ['Music'], path: pick(paths.music, 'Music'), category: 'personal', description: '音乐与音频文件' },
+    { id: 'userprofile', name: '用户主目录', keywords: ['Home'], path: home, category: 'personal', description: '当前系统登录用户根目录' }
   ]
 
   if (windows) {
@@ -165,17 +167,17 @@ export function buildFolders(paths: HostFolderPaths): FolderItem[] {
       { id: 'appdata-roaming', name: 'AppData Roaming', path: pick(paths.appData, 'AppData\\Roaming'), category: 'system', description: '应用程序漫游配置与核心数据' },
       { id: 'appdata-local', name: 'AppData Local', path: localAppData, category: 'system', description: '应用程序本地缓存与运行时数据' },
       { id: 'system-drive', name: `系统盘 (${drive})`, path: `${drive}\\`, category: 'system', description: 'Windows 系统安装驱动器' },
-      { id: 'temp', name: '临时文件夹 (Temp)', path: systemTempPath(home, true), category: 'temp', description: '系统与应用临时文件存放目录' }
+      { id: 'temp', name: '临时文件夹', keywords: ['Temp'], path: systemTempPath(home, true), category: 'temp', description: '系统与应用临时文件存放目录' }
     ]
   }
 
   return [
     ...personal,
-    { id: 'applications', name: '应用程序 (Applications)', path: '/Applications', category: 'system', description: '系统安装的应用程序' },
+    { id: 'applications', name: '应用程序', keywords: ['Applications'], path: '/Applications', category: 'system', description: '系统安装的应用程序' },
     { id: 'app-support', name: 'Application Support', path: pick(paths.appData, 'Library/Application Support'), category: 'system', description: '应用程序配置与数据' },
-    { id: 'library', name: '资源库 (Library)', path: joinPath(home, 'Library', false), category: 'system', description: '当前用户的偏好设置、缓存与日志' },
-    { id: 'caches', name: '缓存 (Caches)', path: joinPath(home, 'Library/Caches', false), category: 'temp', description: '应用程序缓存文件' },
-    { id: 'temp', name: '临时文件夹 (Temp)', path: systemTempPath(home, false), category: 'temp', description: '系统与应用临时文件存放目录' }
+    { id: 'library', name: '资源库', keywords: ['Library'], path: joinPath(home, 'Library', false), category: 'system', description: '当前用户的偏好设置、缓存与日志' },
+    { id: 'caches', name: '缓存', keywords: ['Caches'], path: joinPath(home, 'Library/Caches', false), category: 'temp', description: '应用程序缓存文件' },
+    { id: 'temp', name: '临时文件夹', keywords: ['Temp'], path: systemTempPath(home, false), category: 'temp', description: '系统与应用临时文件存放目录' }
   ]
 }
 
@@ -194,15 +196,15 @@ type FolderTemplate = Omit<FolderItem, 'id' | 'path'> & { itemId: string }
  */
 function folderTemplates(windows: boolean): Array<[string, FolderTemplate]> {
   const personal: Array<[string, FolderTemplate]> = [
-    ['desktop', { itemId: 'desktop', name: '桌面 (Desktop)', category: 'personal', description: '个人桌面文件与工作区' }],
-    ['downloads', { itemId: 'downloads', name: '下载 (Downloads)', category: 'personal', description: '浏览器与网络文件默认下载目录' }],
-    ['documents', { itemId: 'documents', name: '文档 (Documents)', category: 'personal', description: '个人文档、工程与应用数据' }],
-    ['pictures', { itemId: 'pictures', name: '图片 (Pictures)', category: 'personal', description: '照片与屏幕截图保存目录' }],
-    ['videos', { itemId: 'videos', name: windows ? '视频 (Videos)' : '影片 (Movies)', category: 'personal', description: '视频与录屏文件' }],
-    ['music', { itemId: 'music', name: '音乐 (Music)', category: 'personal', description: '音乐与音频文件' }],
-    ['home', { itemId: 'userprofile', name: '用户主目录 (Home)', category: 'personal', description: '当前系统登录用户根目录' }]
+    ['desktop', { itemId: 'desktop', name: '桌面', keywords: ['Desktop'], category: 'personal', description: '个人桌面文件与工作区' }],
+    ['downloads', { itemId: 'downloads', name: '下载', keywords: ['Downloads'], category: 'personal', description: '浏览器与网络文件默认下载目录' }],
+    ['documents', { itemId: 'documents', name: '文档', keywords: ['Documents'], category: 'personal', description: '个人文档、工程与应用数据' }],
+    ['pictures', { itemId: 'pictures', name: '图片', keywords: ['Pictures'], category: 'personal', description: '照片与屏幕截图保存目录' }],
+    ['videos', { itemId: 'videos', name: windows ? '视频' : '影片', keywords: [windows ? 'Videos' : 'Movies'], category: 'personal', description: '视频与录屏文件' }],
+    ['music', { itemId: 'music', name: '音乐', keywords: ['Music'], category: 'personal', description: '音乐与音频文件' }],
+    ['home', { itemId: 'userprofile', name: '用户主目录', keywords: ['Home'], category: 'personal', description: '当前系统登录用户根目录' }]
   ]
-  const temp: [string, FolderTemplate] = ['temp', { itemId: 'temp', name: '临时文件夹 (Temp)', category: 'temp', description: '系统与应用临时文件存放目录' }]
+  const temp: [string, FolderTemplate] = ['temp', { itemId: 'temp', name: '临时文件夹', keywords: ['Temp'], category: 'temp', description: '系统与应用临时文件存放目录' }]
   if (windows) {
     return [
       ...personal,
@@ -214,10 +216,10 @@ function folderTemplates(windows: boolean): Array<[string, FolderTemplate]> {
   }
   return [
     ...personal,
-    ['applications', { itemId: 'applications', name: '应用程序 (Applications)', category: 'system', description: '系统安装的应用程序' }],
+    ['applications', { itemId: 'applications', name: '应用程序', keywords: ['Applications'], category: 'system', description: '系统安装的应用程序' }],
     ['appData', { itemId: 'app-support', name: 'Application Support', category: 'system', description: '应用程序配置与数据' }],
-    ['library', { itemId: 'library', name: '资源库 (Library)', category: 'system', description: '当前用户的偏好设置、缓存与日志' }],
-    ['libraryCaches', { itemId: 'caches', name: '缓存 (Caches)', category: 'temp', description: '应用程序缓存文件' }],
+    ['library', { itemId: 'library', name: '资源库', keywords: ['Library'], category: 'system', description: '当前用户的偏好设置、缓存与日志' }],
+    ['libraryCaches', { itemId: 'caches', name: '缓存', keywords: ['Caches'], category: 'temp', description: '应用程序缓存文件' }],
     temp
   ]
 }

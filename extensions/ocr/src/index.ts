@@ -1,371 +1,306 @@
 import {
   List,
+  Detail,
   ActionPanel,
   Action,
   Icon,
   Clipboard,
+  LocalStorage,
   useState,
   useEffect,
   useRef,
+  useCachedState,
   showToast,
-  Toast,
-  FilterBar
+  Toast
 } from '@ztools/declarative-ui'
 import {
   NOT_IN_CLIENT_MESSAGE,
-  OCR_LANGUAGE_MODELS,
-  OcrBatchResult,
-  OcrLayoutStrategy,
-  OcrPostAction,
-  OcrQueueItem,
-  captureScreenAreaOcr,
-  executeBatchOcr,
-  fetchOcrWorkspace,
-  formatBytes,
-  openOcrFileLocation,
-  resolveOcrLanguage
-} from './logic.js'
-import { isRealElectronHost } from './native-ipc.js'
+  OCR_LANGUAGES,
+  type HostTransport,
+  type OcrLanguage,
+  type OcrOutcome,
+  countCharacters,
+  fileNameOf,
+  firstLine,
+  getClientTransport,
+  notify,
+  pickImageFiles,
+  recognizeClipboardImage,
+  recognizeImageFile,
+  recognizeScreenRegion,
+  resolveLanguage,
+  textAsMarkdown
+} from './ocr-service.js'
 
-export * from './logic.js'
+export * from './ocr-service.js'
 
-const POST_ACTION_LABELS: Record<OcrPostAction, string> = {
-  copy_clipboard: '复制到剪贴板',
-  export_file: '导出为同名 .txt 或 .md 文件',
-  copy_and_export: '复制到剪贴板并导出文件'
+const LANGUAGE_KEY = 'language'
+
+export interface OcrEntry {
+  id: string
+  source: 'file' | 'region' | 'clipboard'
+  title: string
+  /** 图片文件路径；框选和剪贴板没有 */
+  path?: string
+  status: 'running' | 'done' | 'failed'
+  text: string
+  error?: string
 }
 
-/** 把一次批量识别的结果整理成一句如实的说明（成功、失败、复制、导出各自的结果） */
-export function describeOcrBatchResult(res: OcrBatchResult): { failed: boolean; title: string; message: string } {
-  if (!res.ok) {
-    return { failed: true, title: '识别失败', message: res.error || '没有识别到文字' }
+async function loadLanguage(): Promise<OcrLanguage> {
+  try {
+    return resolveLanguage(await LocalStorage.getItem(LANGUAGE_KEY))
+  } catch {
+    return resolveLanguage(undefined)
   }
-  const parts: string[] = []
-  let failed = res.failedCount > 0
-  if (res.failedCount > 0) parts.push(`${res.failedCount} 张失败`)
-  if (res.copied === true) parts.push('已复制到剪贴板')
-  if (res.copied === false) {
-    failed = true
-    parts.push(res.copyError || '写入剪贴板失败')
+}
+
+function requireTransport(): HostTransport {
+  const transport = getClientTransport()
+  if (!transport) throw new Error(NOT_IN_CLIENT_MESSAGE)
+  return transport
+}
+
+function timeLabel(): string {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+let entrySeq = 0
+function newEntryId(): string {
+  entrySeq += 1
+  return `ocr-${Date.now()}-${entrySeq}`
+}
+
+function applyOutcome(entry: OcrEntry, outcome: OcrOutcome): OcrEntry {
+  return outcome.ok
+    ? { ...entry, status: 'done', text: outcome.text, error: undefined }
+    : { ...entry, status: 'failed', text: '', error: outcome.error }
+}
+
+/** 无界面命令：框选屏幕区域，识别后复制到剪贴板 */
+export async function ocrRegion(): Promise<string> {
+  const transport = requireTransport()
+  const outcome = await recognizeScreenRegion(transport, await loadLanguage(), false)
+  if (!outcome.ok) {
+    if (outcome.canceled) return '已取消框选'
+    throw new Error(outcome.error)
   }
-  if (res.exportCanceled) parts.push('已取消导出')
-  if (res.exportError) {
-    failed = true
-    parts.push(`导出失败：${res.exportError}`)
-  }
-  if (res.exportedFiles.length > 0) parts.push(`已导出 ${res.exportedFiles.length} 个文件`)
-  if (res.exportFailures.length > 0) {
-    failed = true
-    parts.push(`${res.exportFailures.length} 个文件未导出：${res.exportFailures[0].error}`)
-  }
-  return {
-    failed,
-    title: `已识别 ${res.recognizedCount} 张图片`,
-    message: parts.join('；')
-  }
+  await Clipboard.copy(outcome.text)
+  // 框选时 ZTools 窗口已经收起，用系统通知告诉用户结果
+  await notify(transport, '已复制识别的文字', firstLine(outcome.text, 80))
+  return `已复制 ${countCharacters(outcome.text)} 个字`
+}
+
+/** 无界面命令：识别剪贴板里的图片，结果复制回剪贴板 */
+export async function ocrClipboard(): Promise<string> {
+  const transport = requireTransport()
+  const outcome = await recognizeClipboardImage(transport, await loadLanguage())
+  if (!outcome.ok) throw new Error(outcome.error)
+  await Clipboard.copy(outcome.text)
+  return `已复制 ${countCharacters(outcome.text)} 个字`
 }
 
 export function OcrCommand() {
-  const isRealHost = isRealElectronHost()
+  const transport = getClientTransport()
+  const [language, setLanguage] = useState<OcrLanguage>(OCR_LANGUAGES[0])
+  const [entries, setEntries] = useCachedState<OcrEntry[]>('entries', [])
   const [searchText, setSearchText] = useState('')
-  const [languageModelId, setLanguageModelId] = useState<string>(OCR_LANGUAGE_MODELS[0].id)
-  const [layoutStrategy, setLayoutStrategy] = useState<OcrLayoutStrategy>('natural_paragraph')
-  const [postAction, setPostAction] = useState<OcrPostAction>('copy_clipboard')
-  const [filterStampNoise, setFilterStampNoise] = useState<boolean>(true)
-  const [items, setItems] = useState<OcrQueueItem[]>([])
-  const [checkedIds, setCheckedIds] = useState<string[]>([])
-  const [isLoading, setIsLoading] = useState(isRealHost)
-  const [statusText, setStatusText] = useState<string>(isRealHost ? '' : NOT_IN_CLIENT_MESSAGE)
-  const busy = useRef(false)
-
-  async function refreshWorkspace(showIndicator = false) {
-    if (!isRealHost) return
-    setIsLoading(true)
-    try {
-      const ws = await fetchOcrWorkspace()
-      setItems(ws.items)
-      setCheckedIds(ws.items.map(i => i.id))
-      if (ws.error) {
-        setStatusText(`扫描失败：${ws.error}`)
-        await showToast({ style: Toast.Style.Failure, title: '扫描图片失败', message: ws.error })
-        return
-      }
-      setStatusText('')
-      if (showIndicator) {
-        await showToast({
-          style: Toast.Style.Success,
-          title: '已重新扫描',
-          message: `找到 ${ws.items.length} 张图片`
-        })
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setStatusText(`扫描失败：${message}`)
-      await showToast({ style: Toast.Style.Failure, title: '扫描图片失败', message })
-    } finally {
-      setIsLoading(false)
-    }
-  }
+  const [selectedId, setSelectedId] = useState<string | undefined>(undefined)
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
 
   useEffect(() => {
-    void refreshWorkspace(false)
+    void loadLanguage().then(setLanguage)
   }, [])
 
-  const activeLanguage = resolveOcrLanguage(languageModelId)
+  function changeLanguage(id: string) {
+    const next = resolveLanguage(id)
+    setLanguage(next)
+    void LocalStorage.setItem(LANGUAGE_KEY, next.id).catch(() => undefined)
+  }
 
-  async function runExclusive(task: () => Promise<void>) {
-    if (busy.current) return
-    busy.current = true
-    setIsLoading(true)
+  function updateEntry(id: string, change: (entry: OcrEntry) => OcrEntry) {
+    setEntries(previous => previous.map(entry => (entry.id === id ? change(entry) : entry)))
+  }
+
+  /** 同一时间只做一件事：框选、选择图片、识别都会占用识别组件 */
+  async function exclusive(task: (host: HostTransport) => Promise<void>) {
+    if (!transport) {
+      await showToast({ style: Toast.Style.Failure, title: NOT_IN_CLIENT_MESSAGE })
+      return
+    }
+    if (busyRef.current) return
+    busyRef.current = true
+    setBusy(true)
     try {
-      await task()
+      await task(transport)
     } finally {
-      busy.current = false
-      setIsLoading(false)
+      busyRef.current = false
+      setBusy(false)
     }
   }
 
-  async function handleRunBatchOcr() {
-    if (!isRealHost) {
-      await showToast({ style: Toast.Style.Failure, title: NOT_IN_CLIENT_MESSAGE })
-      return
-    }
-    await runExclusive(async () => {
-      const selected = items.filter(i => checkedIds.includes(i.id))
-      const res = await executeBatchOcr(selected, {
-        languageModelId,
-        layoutStrategy,
-        postAction,
-        filterStampNoise
-      })
-      if (res.items.length > 0) {
-        const byId = new Map(res.items.map(i => [i.id, i]))
-        setItems(prev => prev.map(i => byId.get(i.id) || i))
+  async function recognizeInto(entry: OcrEntry, run: () => Promise<OcrOutcome>): Promise<OcrOutcome> {
+    const outcome = await run()
+    updateEntry(entry.id, current => applyOutcome(current, outcome))
+    return outcome
+  }
+
+  function addEntry(entry: OcrEntry) {
+    setEntries(previous => [entry, ...previous])
+    setSelectedId(entry.id)
+  }
+
+  async function handleRegion() {
+    await exclusive(async host => {
+      const entry: OcrEntry = { id: newEntryId(), source: 'region', title: `框选截图 ${timeLabel()}`, status: 'running', text: '' }
+      const outcome = await recognizeScreenRegion(host, language)
+      if (!outcome.ok && outcome.canceled) return
+      addEntry(applyOutcome(entry, outcome))
+      if (outcome.ok) {
+        await Clipboard.copy(outcome.text)
+        await showToast({ style: Toast.Style.Success, title: '已识别并复制', message: firstLine(outcome.text) })
+      } else {
+        await showToast({ style: Toast.Style.Failure, title: '截图识别失败', message: outcome.error })
       }
-      const summary = describeOcrBatchResult(res)
-      setStatusText(summary.message ? `${summary.title}：${summary.message}` : summary.title)
+    })
+  }
+
+  async function handleClipboard() {
+    await exclusive(async host => {
+      const outcome = await recognizeClipboardImage(host, language)
+      if (!outcome.ok && !outcome.empty && outcome.error === '剪贴板里没有图片') {
+        await showToast({ style: Toast.Style.Failure, title: '剪贴板里没有图片' })
+        return
+      }
+      addEntry(applyOutcome({ id: newEntryId(), source: 'clipboard', title: `剪贴板图片 ${timeLabel()}`, status: 'running', text: '' }, outcome))
+      if (!outcome.ok) await showToast({ style: Toast.Style.Failure, title: '识别失败', message: outcome.error })
+    })
+  }
+
+  async function handleAddImages() {
+    await exclusive(async host => {
+      let paths: string[]
+      try {
+        paths = await pickImageFiles(host)
+      } catch (error) {
+        await showToast({ style: Toast.Style.Failure, title: '无法打开选择图片窗口', message: error instanceof Error ? error.message : String(error) })
+        return
+      }
+      if (paths.length === 0) return
+      const added = paths.map((path): OcrEntry => ({ id: newEntryId(), source: 'file', title: fileNameOf(path), path, status: 'running', text: '' }))
+      setEntries(previous => [...added, ...previous])
+      setSelectedId(added[0].id)
+      let failed = 0
+      for (const entry of added) {
+        const outcome = await recognizeInto(entry, () => recognizeImageFile(host, entry.path as string, language))
+        if (!outcome.ok) failed += 1
+      }
+      const done = added.length - failed
       await showToast({
-        style: summary.failed ? Toast.Style.Failure : Toast.Style.Success,
-        title: summary.title,
-        message: summary.message
+        style: failed > 0 ? Toast.Style.Failure : Toast.Style.Success,
+        title: failed > 0 ? `${done} 张识别成功，${failed} 张失败` : `已识别 ${done} 张图片`
       })
     })
   }
 
-  async function handleCaptureScreenOcr() {
-    if (!isRealHost) {
-      await showToast({ style: Toast.Style.Failure, title: NOT_IN_CLIENT_MESSAGE })
-      return
-    }
-    await runExclusive(async () => {
-      const res = await captureScreenAreaOcr(languageModelId)
-      if (!res.ok) {
-        await showToast({ style: Toast.Style.Failure, title: '截屏识别失败', message: res.error })
-        return
-      }
-      if (!res.copied) {
-        await showToast({ style: Toast.Style.Failure, title: res.error || '写入剪贴板失败', message: res.text.slice(0, 64) })
-        return
-      }
-      await showToast({ style: Toast.Style.Success, title: '已识别截图文字并复制', message: res.text.slice(0, 64) })
+  async function handleRetry(entry: OcrEntry) {
+    if (!entry.path) return
+    await exclusive(async host => {
+      updateEntry(entry.id, current => ({ ...current, status: 'running', error: undefined }))
+      const outcome = await recognizeInto(entry, () => recognizeImageFile(host, entry.path as string, language))
+      if (!outcome.ok) await showToast({ style: Toast.Style.Failure, title: '识别失败', message: outcome.error })
     })
   }
 
-  async function handleCopyItemText(item: OcrQueueItem) {
-    try {
-      await Clipboard.copy(item.recognizedText)
-      await showToast({ style: Toast.Style.Success, title: `已复制 ${item.name} 的识别结果` })
-    } catch (err) {
-      await showToast({
-        style: Toast.Style.Failure,
-        title: '复制失败',
-        message: err instanceof Error ? err.message : String(err)
-      })
-    }
+  function handleRemove(entry: OcrEntry) {
+    setEntries(previous => previous.filter(item => item.id !== entry.id))
   }
 
-  async function handleShowInFolder(item: OcrQueueItem) {
-    const ok = await openOcrFileLocation(item.path)
-    if (!ok) {
-      await showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中显示', message: item.path })
-    }
-  }
+  const query = searchText.trim().toLowerCase()
+  const visible = entries.filter(entry => !query || entry.title.toLowerCase().includes(query) || entry.text.toLowerCase().includes(query))
+  const doneEntries = entries.filter(entry => entry.status === 'done')
+  const allText = doneEntries.map(entry => (doneEntries.length > 1 ? `${entry.title}\n${entry.text}` : entry.text)).join('\n\n')
 
-  const selectedItems = items.filter(i => checkedIds.includes(i.id))
-  const totalBytes = selectedItems.reduce((s, i) => s + i.sizeBytes, 0)
-  const q = searchText.trim().toLowerCase()
-  const filteredItems = items.filter(
-    i =>
-      !q ||
-      i.name.toLowerCase().includes(q) ||
-      i.path.toLowerCase().includes(q) ||
-      i.recognizedText.toLowerCase().includes(q)
-  )
+  const clipboardAction = Action({
+    title: '识别剪贴板图片',
+    icon: Icon.Clipboard,
+    shortcut: { modifiers: ['cmd', 'shift'], key: 'v' },
+    onAction: handleClipboard
+  })
+  const startActions = [
+    Action({ title: '截图识别', icon: Icon.Camera, onAction: handleRegion }),
+    Action({ title: '添加图片', icon: Icon.Plus, shortcut: { modifiers: ['cmd'], key: 'o' }, onAction: handleAddImages }),
+    clipboardAction
+  ]
 
-  const maxImgBytes = Math.max(1, ...filteredItems.map(i => i.sizeBytes))
-  const rightQueueItems = filteredItems.map(item => {
-    const isChecked = checkedIds.includes(item.id)
-    const volRatio = Math.max(10, Math.min(100, Math.round((item.sizeBytes / maxImgBytes) * 100)))
-    const subtitle =
-      item.status === 'recognized'
-        ? item.recognizedText.replace(/\s+/g, ' ').slice(0, 65)
-        : item.status === 'failed'
-          ? `识别失败：${item.error || '未知原因'}`
-          : item.parentDir
-
+  const items = visible.map(entry => {
+    const subtitle = entry.status === 'done' ? firstLine(entry.text) : entry.status === 'failed' ? entry.error || '识别失败' : '正在识别'
+    const markdown = entry.status === 'done' ? textAsMarkdown(entry.text) : entry.status === 'failed' ? `识别失败：${entry.error || '未知原因'}` : '正在识别…'
+    const entryActions = [
+      ...(entry.status === 'done'
+        ? [Action.CopyToClipboard({ title: '复制文字', content: entry.text })]
+        : []),
+      ...(entry.path && entry.status !== 'running'
+        ? [Action({ title: '重新识别', icon: Icon.ArrowClockwise, shortcut: { modifiers: ['cmd'], key: 'r' }, onAction: () => handleRetry(entry) })]
+        : []),
+      ...(doneEntries.length > 1
+        ? [Action.CopyToClipboard({ title: `复制全部 ${doneEntries.length} 条结果`, content: allText, shortcut: { modifiers: ['cmd', 'shift'], key: 'c' } })]
+        : []),
+      ...(entry.path ? [Action.ShowInFinder({ path: entry.path })] : []),
+      Action({ title: '从列表移除', icon: Icon.Trash, shortcut: { modifiers: ['cmd'], key: 'backspace' }, onAction: () => handleRemove(entry) })
+    ]
     return List.Item({
-      id: item.id,
-      title: item.name,
+      id: entry.id,
+      title: entry.title,
       subtitle,
-      checkable: true,
-      checked: isChecked,
-      onCheckChange: c => {
-        if (c) {
-          setCheckedIds(Array.from(new Set([...checkedIds, item.id])))
-        } else {
-          setCheckedIds(checkedIds.filter(id => id !== item.id))
-        }
-      },
-      icon: {
-        source: Icon.Text
-      },
-      accessories: [
-        { progress: { value: volRatio } },
-        ...(item.status === 'pending' ? [] : [{ tag: { value: item.status === 'recognized' ? '已识别' : '识别失败' } }]),
-        { text: formatBytes(item.sizeBytes) }
-      ],
+      icon: entry.source === 'file' ? Icon.Image : entry.source === 'region' ? Icon.Camera : Icon.Clipboard,
+      accessories: entry.status === 'done'
+        ? [{ text: `${countCharacters(entry.text)} 字` }]
+        : [{ tag: entry.status === 'failed' ? '失败' : '识别中' }],
+      detail: Detail({ markdown }),
       actions: ActionPanel({
-        title: item.name,
         children: [
-          Action({
-            title: `识别已勾选的 ${selectedItems.length} 张图片`,
-            icon: Icon.Text,
-            onAction: handleRunBatchOcr
-          }),
-          Action({
-            title: '截取主屏幕并识别',
-            icon: Icon.Camera,
-            onAction: handleCaptureScreenOcr
-          }),
-          ...(item.status === 'recognized'
-            ? [
-                Action({
-                  title: '复制这张图片的识别结果',
-                  icon: Icon.CopyClipboard,
-                  onAction: () => handleCopyItemText(item)
-                })
-              ]
-            : []),
-          Action({
-            title: '在资源管理器中显示',
-            icon: Icon.Folder,
-            onAction: () => handleShowInFolder(item)
-          })
+          ActionPanel.Section({ children: entryActions }),
+          ActionPanel.Section({ title: '新的识别', children: startActions })
         ]
       })
     })
   })
 
+  const summaryText = !transport
+    ? NOT_IN_CLIENT_MESSAGE
+    : entries.length === 0
+      ? '框选屏幕上的文字，或添加图片，在本机识别'
+      : `${doneEntries.length} 条识别结果${busy ? '，正在处理' : ''}`
+
   return List({
-    searchBarPlaceholder: '搜索图片文件名、路径或识别结果',
+    searchBarPlaceholder: '搜索识别结果',
     onSearchTextChange: setSearchText,
-    isShowingDetail: false,
-    isLoading,
+    isLoading: busy,
+    isShowingDetail: visible.length > 0,
+    selectedItemId: selectedId,
+    onSelectionChange: (id: string | null) => setSelectedId(id ?? undefined),
     searchBarAccessory: List.Dropdown({
       tooltip: '识别语言',
-      value: languageModelId,
-      onChange: val => setLanguageModelId(val),
-      children: OCR_LANGUAGE_MODELS.map(m =>
-        List.Dropdown.Item({
-          title: `识别语言：${m.title}`,
-          value: m.id
-        })
-      )
+      value: language.id,
+      onChange: changeLanguage,
+      children: OCR_LANGUAGES.map(item => List.Dropdown.Item({ title: item.title, value: item.id }))
     }),
-    filterBar: FilterBar({
-      summaryText:
-        statusText || `已选 ${selectedItems.length}/${items.length} 张图片（${formatBytes(totalBytes)}）`,
-      actions: isRealHost
+    filterBar: {
+      summaryText,
+      actions: transport
         ? [
-            {
-              id: 'rescan-ocr',
-              label: '重新扫描',
-              title: '重新扫描',
-              style: 'secondary',
-              onAction: () => refreshWorkspace(true)
-            }
+            { id: 'ocr-region', title: '截图识别', icon: Icon.Camera, onAction: handleRegion },
+            { id: 'ocr-add', title: '添加图片', icon: Icon.Plus, onAction: handleAddImages }
           ]
         : []
-    }),
-    workbenchPanel: {
-      title: '图片识字',
-      subtitle: `识别语言：${activeLanguage.title}（需安装对应的 Windows OCR 语言包）`,
-      fields: [
-        {
-          id: 'wb-ocr-layout',
-          label: '结果排版',
-          type: 'select',
-          value: layoutStrategy,
-          onChange: val => setLayoutStrategy(val as OcrLayoutStrategy),
-          options: [
-            { label: '保持识别出的分行（多张时按文件分段）', value: 'natural_paragraph' },
-            { label: '合并为单行纯文本', value: 'single_line' },
-            { label: '按文件汇总为 Markdown 表格', value: 'markdown_table' }
-          ]
-        },
-        {
-          id: 'wb-ocr-post',
-          label: '识别后',
-          type: 'select',
-          value: postAction,
-          onChange: val => setPostAction(val as OcrPostAction),
-          options: (Object.keys(POST_ACTION_LABELS) as OcrPostAction[]).map(value => ({
-            label: POST_ACTION_LABELS[value],
-            value
-          }))
-        },
-        {
-          id: 'wb-ocr-stamp',
-          label: '删除页码行和印章文字行',
-          type: 'toggle',
-          value: filterStampNoise,
-          onChange: val => setFilterStampNoise(Boolean(val))
-        },
-        {
-          id: 'wb-ocr-runtime',
-          label: '识别方式',
-          type: 'info',
-          value: 'Windows 系统文字识别，在本机完成'
-        }
-      ],
-      previewCard: {
-        title: `已选 ${selectedItems.length} 张图片`,
-        subtitle: `${formatBytes(totalBytes)} · 识别后${POST_ACTION_LABELS[postAction]}`
-      }
     },
-    subList: {
-      title: '待识别图片',
-      subtitle: `${filteredItems.length} 张图片 · 已选 ${selectedItems.length} 张`,
-      checkable: filteredItems.length > 0,
-      checked:
-        filteredItems.length > 0 && filteredItems.every(i => checkedIds.includes(i.id))
-          ? true
-          : filteredItems.some(i => checkedIds.includes(i.id))
-            ? 'indeterminate'
-            : false,
-      onCheckChange: checked => {
-        setCheckedIds(checked ? filteredItems.map(i => i.id) : [])
-      },
-      emptyText: isRealHost ? '没有找到待识别的图片' : NOT_IN_CLIENT_MESSAGE,
-      items: rightQueueItems
-    },
-    children: [
-      List.Section({
-        title: `待识别图片 (${filteredItems.length})`,
-        children: rightQueueItems
-      })
-    ]
+    actions: ActionPanel({ children: startActions }),
+    children: items
   })
 }
 
+export const ocrWorkbench = OcrCommand
 export default OcrCommand

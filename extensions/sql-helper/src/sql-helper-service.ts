@@ -1,8 +1,29 @@
 import type { FormattedSqlOutput, MyBatisParsedResult, SqlDialect } from './types.js'
-import { tokenizeSql, checkInput } from './sql-lexer.js'
+import { tokenizeSql, checkInput, type SqlToken } from './sql-lexer.js'
 export { parseDdlToEntities } from './ddl-service.js'
 
-const CLAUSES = new Set(['FROM', 'WHERE', 'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'INTERSECT', 'EXCEPT', 'SET', 'VALUES', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'CROSS', 'FULL'])
+const CLAUSES = new Set(['FROM', 'WHERE', 'HAVING', 'LIMIT', 'OFFSET', 'UNION', 'INTERSECT', 'EXCEPT', 'SET', 'VALUES', 'JOIN'])
+const JOIN_MODIFIERS = new Set(['LEFT', 'RIGHT', 'INNER', 'CROSS', 'FULL', 'NATURAL', 'OUTER'])
+const wordOf = (token: SqlToken | undefined) => token?.kind === 'word' ? token.text.toUpperCase() : ''
+
+/**
+ * 该词是否开始一个新子句：LEFT / INNER / FULL OUTER 等连接修饰词与 JOIN 作为整体换一次行，
+ * LEFT(name, 3)、RIGHT(...) 这类同名函数与 CHARACTER SET 不换行。
+ */
+function startsClause(tokens: SqlToken[], i: number): boolean {
+  const upper = wordOf(tokens[i]), previous = wordOf(tokens[i - 1])
+  if (!upper) return false
+  if (upper === 'JOIN') return !JOIN_MODIFIERS.has(previous)
+  if (JOIN_MODIFIERS.has(upper)) {
+    if (upper === 'OUTER' || JOIN_MODIFIERS.has(previous)) return false
+    let j = i + 1
+    while (JOIN_MODIFIERS.has(wordOf(tokens[j]))) j++
+    return wordOf(tokens[j]) === 'JOIN'
+  }
+  if (upper === 'SET') return previous !== 'CHARACTER'
+  if (upper === 'ORDER' || upper === 'GROUP') return wordOf(tokens[i + 1]) === 'BY'
+  return CLAUSES.has(upper)
+}
 /** 仅调整 token 间已有空白，绝不替换字符串、注释、标识符或操作符。 */
 export function formatAndMinifySql(rawSql: string, dialect: SqlDialect = 'mysql'): FormattedSqlOutput {
   const tokens = tokenizeSql(rawSql, dialect)
@@ -14,8 +35,7 @@ export function formatAndMinifySql(rawSql: string, dialect: SqlDialect = 'mysql'
     const needsNewline = previous?.kind === 'lineComment' || (dialect === 'postgresql' && /[\r\n]/.test(gap))
     const compactGap = needsNewline ? '\n' : gap ? ' ' : ''
     let prettyGap = compactGap
-    const upper = token.kind === 'word' ? token.text.toUpperCase() : ''
-    if (gap && (CLAUSES.has(upper) || (['ORDER', 'GROUP'].includes(upper) && tokens[i + 1]?.text.toUpperCase() === 'BY') || previous?.text === ';')) prettyGap = '\n' + '  '.repeat(depth)
+    if (gap && (startsClause(tokens, i) || previous?.text === ';')) prettyGap = '\n' + '  '.repeat(depth)
     if (token.text === ')') depth--
     beautified += prettyGap + token.text
     minified += compactGap + token.text

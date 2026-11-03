@@ -13,9 +13,10 @@ import {
   getRealFileSize,
   getRealSystemPath,
   invokeDllPluginCapability,
+  validateNativeCapabilityPayload,
   isRealElectronHost,
   listRealDirectoryContents,
-  scanRealDirectoryTree,
+  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem,
   openRealPath
@@ -23,23 +24,9 @@ import {
 
 export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
-export interface CapabilityActionItem {
-  id: string
-  title: string
-  subtitle: string
-  tag: string
-  method: string
-  params: Record<string, unknown>
-}
+import type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
+export type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
 
-export interface NativeInvocationResult {
-  ok: boolean
-  pluginName: string
-  method: string
-  data?: unknown
-  error?: string
-  fromFallback?: boolean
-}
 
 /**
  * 与 Windows 原生插件一致的官方清理分组 ID (201~213) + 999 聊天核心数据库保护区
@@ -98,6 +85,7 @@ export interface QQScanSnapshot {
   allFiles: QQScannedFileEntry[]
   totalScannableBytes: number
   protectedDbBytes: number
+  error?: string
 }
 
 export interface QQCleanupResult {
@@ -362,33 +350,7 @@ export function formatDateTime(mtimeSeconds: number): string {
 }
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
-  if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
-  }
-  if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
-  }
-  if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
-  }
-
-  const record = params as Record<string, unknown>
-  for (const [key, val] of Object.entries(record)) {
-    if (typeof val === 'string') {
-      if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
-      }
-      if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
-      }
-    } else if (typeof val === 'number') {
-      if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
-      }
-    }
-  }
-
-  return { valid: true }
+  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, FORBIDDEN_REASON)
 }
 
 export async function invokeNativeCapability(
@@ -592,6 +554,7 @@ export function classifyQQFilePath(fullPath: string): {
  * 探测并深度扫描本机真实 QQ / NTQQ / TIM 存储路径、登录 QQ 号 (UIN)、12 大官方清理分组与核心聊天数据库保护区
  */
 export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown>): Promise<QQScanSnapshot> {
+  const scanner = createDirectoryScanner(hostOverride)
   const [documentsDir, appDataDir, homeDir] = await Promise.all([
     getRealSystemPath('documents', hostOverride),
     getRealSystemPath('appData', hostOverride),
@@ -694,7 +657,7 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     ]
 
     const seenSubdirTotals = new Set<string>()
-    const scanResults = await Promise.all(deepTargets.map(t => scanRealDirectoryTree(t.dir, 140, hostOverride)))
+    const scanResults = await Promise.all(deepTargets.map(t => scanner.scan(t.dir, 140)))
 
     // 从 Tencent Files 与 Tencent\Users 一级子目录提取全部本机登录 QQ 号 (UIN)
     for (let i = 0; i < deepTargets.length; i++) {
@@ -875,7 +838,8 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     categories,
     allFiles,
     totalScannableBytes,
-    protectedDbBytes
+    protectedDbBytes,
+    error: scanner.error
   }
 }
 

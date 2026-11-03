@@ -48,6 +48,10 @@ test('预览文案校验、CSS 转义、许可链接限制与缺字提示', () =
   assert.equal(licenseUrl('javascript:alert(1)'), undefined); assert.equal(licenseUrl('file:///tmp/font'), undefined)
   assert.match(previewMarkdown({ ...preview('Winter'), fallbacks: ['PingFangSC-Regular'] }), /PingFangSC/)
   assert.match(previewMarkdown({ ...preview('Winter'), coverageWarning: '缺少字符，可能显示方框' }), /可能显示方框/)
+  // macOS 用 LastResort 画缺字占位框：不当作回退字体列出，而是明确说明缺字
+  const lastResort = previewMarkdown({ ...preview('Winter'), fallbacks: ['AppleColorEmoji', 'LastResort'] })
+  assert.match(lastResort, /AppleColorEmoji/); assert.doesNotMatch(lastResort, /LastResort/); assert.match(lastResort, /占位方框/)
+  assert.doesNotMatch(previewMarkdown({ ...preview('Winter'), fallbacks: ['LastResort'] }), /回退字体|由所选字体绘制/)
 })
 test('旧宿主提示升级，不调用 DLL 或伪造字体', async () => {
   globalThis.__ztoolsElectron.transport.methods = {}; const v = await open()

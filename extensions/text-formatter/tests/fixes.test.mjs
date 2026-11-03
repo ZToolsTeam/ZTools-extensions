@@ -87,6 +87,22 @@ test('从剪贴板读取多行文本后，在搜索框输入只筛选转换项�
   assert.match(sourceSubtitle(view), /7 行/)
 })
 
+test('结果标题去掉纯英文翻译括注，命名格式名保留，英文仍可搜索', async () => {
+  const view = await mount(TextFormatterCommand)
+  const titles = view.items().filter((i) => i.props.id !== 'source-text').map((i) => i.props.title)
+  for (const title of titles) {
+    const inner = /\(([^)]*)\)/.exec(title)?.[1]
+    if (inner && !['camelCase', 'snake_case', 'kebab-case'].includes(inner)) assert.doesNotMatch(inner, /^[A-Za-z][A-Za-z ]*(-> ?[A-Za-z ]+)?$/, `含英文翻译括注：${title}`)
+  }
+  assert.ok(titles.includes('驼峰命名 (camelCase)'))
+  assert.ok(titles.includes('全部大写') && titles.includes('简体转繁体'))
+  await view.search('title case')
+  assert.deepEqual(view.items().map((i) => i.props.id), ['title-case'])
+  await view.search('traditional')
+  assert.deepEqual(view.items().map((i) => i.props.id).sort(), ['to-simplified', 'to-traditional'])
+  view.unmount()
+})
+
 test('「将此结果设为当前输入」保留多行；空结果不替换当前文本', async () => {
   const view = await mount(TextFormatterCommand)
   await applyViaEditor(view, 'b\na')
@@ -136,7 +152,7 @@ test('复制：空结果提示无内容、宿主拒绝写入时提示失败，�
     throw Object.assign(new Error('剪贴板文本超过 8 MiB 上限'), { code: 'RESPONSE_TOO_LARGE' })
   }
   try {
-    await view.run(view.item('upper-case'), '复制: 全部大写 (UPPERCASE)')
+    await view.run(view.item('upper-case'), '复制: 全部大写')
   } finally {
     bridge.copyToClipboard = original
   }
@@ -144,7 +160,7 @@ test('复制：空结果提示无内容、宿主拒绝写入时提示失败，�
   assert.match(host.lastToast().message, /8 MiB/)
   assert.equal(host.clipboard.text, 'SENTINEL')
 
-  await view.run(view.item('upper-case'), '复制: 全部大写 (UPPERCASE)')
+  await view.run(view.item('upper-case'), '复制: 全部大写')
   assert.equal(host.clipboard.text, '你好世界')
   assert.equal(host.lastToast().style, Toast.Style.Success)
 })
@@ -278,7 +294,7 @@ test('开启右侧详情，完整展示结果的换行、缩进与空白', async
   assert.equal(previewBody(detailOf(view, 'add-line-numbers')), '01.   a   b  \n02. \n03. \tc')
   // 列表行只显示转换名与字符数，不再塞单行预览
   const row = view.item('trim-lines')
-  assert.equal(row.props.title, '去除每行首尾空白 (Trim Lines)')
+  assert.equal(row.props.title, '去除每行首尾空白')
   assert.deepEqual(row.props.accessories, [{ text: '8 字符' }])
 })
 
@@ -299,7 +315,7 @@ test('预览边界：空结果给出说明、内容含 ``` 不会提前结束代
 
   // 超长文本：复制得到的是完整结果，不是预览
   await applyViaEditor(view, long)
-  await view.run(view.item('upper-case'), '复制: 全部大写 (UPPERCASE)')
+  await view.run(view.item('upper-case'), '复制: 全部大写')
   assert.equal(host.clipboard.text.length, PREVIEW_CHAR_LIMIT + 5)
 })
 
@@ -324,4 +340,26 @@ test('清单版本已升级，package.json 与 plugin.json 一致', () => {
   const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
   assert.match(manifest.version, /^\d+\.\d+\.\d+$/)
   assert.equal(pkg.version, manifest.version)
+})
+
+test('示例文本每行显示宽度不超过 44（中文按 2 计），详情栏代码块不会被横向截断；编辑框快捷键按平台显示', async () => {
+  const host = createHost()
+  const view = await mount(TextFormatterCommand, host)
+  try {
+    const md = view.item('source-text').props.detail.props.markdown
+    const body = md.split('\n').slice(1, -1)
+    assert.ok(body.length >= 4)
+    const width = line => [...line].reduce((sum, ch) => sum + (/[\u2E80-\uFFEF]/.test(ch) ? 2 : 1), 0)
+    for (const line of body) assert.ok(width(line) <= 44, `${line} 宽 ${width(line)}`)
+  } finally { view.unmount() }
+  const { modEnterLabel } = await import('../dist/index.js')
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  try {
+    Object.defineProperty(globalThis, 'navigator', { value: { platform: 'MacIntel' }, configurable: true, writable: true })
+    assert.equal(modEnterLabel(), '⌘Enter')
+    Object.defineProperty(globalThis, 'navigator', { value: { platform: 'Win32', userAgent: 'Windows' }, configurable: true, writable: true })
+    assert.equal(modEnterLabel(), 'Ctrl+Enter')
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator
+  }
 })

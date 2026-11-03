@@ -32,6 +32,8 @@ function rebuild(r) {
 
 /** O(NM) 最长公共子序列，作为「最少改动行数」的参照 */
 function lcsLength(a, b) {
+  a = a.map((line, i) => line + (i < a.length - 1 ? '\n' : ''))
+  b = b.map((line, i) => line + (i < b.length - 1 ? '\n' : ''))
   let prev = new Int32Array(b.length + 1)
   for (let i = 1; i <= a.length; i++) {
     const cur = new Int32Array(b.length + 1)
@@ -143,7 +145,7 @@ test('只选了左侧文件：提示还需右侧，不出现整篇删除差异�
   await view.run(item, '选择文件作为右侧…')
   assert.match(view.item('hunk-0').props.subtitle, /删除 1 行，新增 1 行/)
   await view.run(view.item('hunk-0'), '复制差异报告')
-  assert.equal(host.clipboard.text, '--- left.txt\n+++ right.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c')
+  assert.equal(host.clipboard.text, '--- left.txt\n+++ right.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n')
 })
 
 test('剪贴板设为左侧后：主动作是「剪贴板内容设为右侧」，补上后正常对比', async () => {
@@ -224,4 +226,25 @@ test('编辑表单只有「开始对比」一个动作（宿主把它映射到 �
   const again = await mountPushed(host)
   assert.equal(again.field('left').props.value, 'a\nb\n')
   assert.equal(again.field('right').props.value, 'a\nc\n')
+})
+
+test('搜索框占位里的动作面板快捷键按平台只写一种：macOS 为 ⌘K，Windows 为 Ctrl+K', async () => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+  try {
+    for (const [platform, expected, absent] of [['MacIntel', '⌘K', /Ctrl/], ['Win32', 'Ctrl+K', /⌘/]]) {
+      Object.defineProperty(globalThis, 'navigator', { value: { platform, userAgent: '' }, configurable: true })
+      const view = await mount(FileCompareCommand)
+      try {
+        const placeholder = view.tree().props.searchBarPlaceholder
+        assert.ok(placeholder.includes(expected), placeholder)
+        assert.doesNotMatch(placeholder, absent)
+      } finally { view.unmount() }
+    }
+    // navigator 不可用时按 Windows 写法兜底，不抛错
+    Object.defineProperty(globalThis, 'navigator', { value: undefined, configurable: true })
+    const view = await mount(FileCompareCommand)
+    try { assert.match(view.tree().props.searchBarPlaceholder, /Ctrl\+K/) } finally { view.unmount() }
+  } finally {
+    if (original) Object.defineProperty(globalThis, 'navigator', original)
+  }
 })

@@ -365,6 +365,8 @@ export interface RealDirectoryScanResult extends Iterable<RealIndexedFileEntry> 
   approximate?: boolean
   /** 宿主实际遍历的条目数 */
   visitedEntries?: number
+  /** 读取失败的真实原因；已有文件仍可使用，但不能当作完整结果。 */
+  error?: string
 }
 
 interface ScanResultMeta {
@@ -479,7 +481,27 @@ export async function scanRealDirectoryTree(
   limitOrOptions: number | ScanDirectoryTreeOptions = 160,
   hostOverrideArg?: DynamicBridge
 ): Promise<RealDirectoryScanResult> {
-  return (await scanDirectoryTreeWithError(dirPath, limitOrOptions, hostOverrideArg)).scan
+  const result = await scanDirectoryTreeWithError(dirPath, limitOrOptions, hostOverrideArg)
+  return result.error ? { ...result.scan, error: result.error } : result.scan
+}
+
+/** 一次界面扫描的错误汇总；多个目录并行扫描时保留可读目录的结果。 */
+export function createDirectoryScanner(hostOverride?: DynamicBridge) {
+  const failures = new Map<string, string>()
+  return {
+    async scan(dir: string, options: number | ScanDirectoryTreeOptions = 160) {
+      const result = await scanRealDirectoryTree(dir, options, hostOverride)
+      const error = result.error || (result.truncated || result.approximate ? '扫描结果不完整' : '')
+      if (error) failures.set(dir, error)
+      else failures.delete(dir)
+      return result
+    },
+    get error(): string | undefined {
+      if (!failures.size) return undefined
+      const details = [...failures].slice(0, 3).map(([dir, error]) => `${dir}：${error}`).join('；')
+      return `目录读取失败或不完整：${details}${failures.size > 3 ? `；另有 ${failures.size - 3} 个目录` : ''}`
+    }
+  }
 }
 
 /** scanRealDirectoryTree 的实现：额外带回读取失败原因（目录不存在 / 为空 / 无权限 / 载荷异常） */
@@ -526,10 +548,7 @@ async function scanDirectoryTreeWithError(
 
     if (
       rawPayload &&
-      Array.isArray(rawPayload.files) &&
-      (rawPayload.files.length > 0 ||
-        Number(rawPayload.total_matches || 0) > 0 ||
-        (Array.isArray(rawPayload.subdirs) && rawPayload.subdirs.length > 0))
+      Array.isArray(rawPayload.files)
     ) {
       let files: RealIndexedFileEntry[] = rawPayload.files.map(normalizeIndexedFileEntry)
       if (filterExt instanceof RegExp) {
@@ -581,11 +600,12 @@ async function scanDirectoryTreeWithError(
           truncated: rawPayload.truncated === true,
           approximate: rawPayload.approximate === true,
           ...(Number.isFinite(visited) && visited >= 0 ? { visitedEntries: visited } : {})
-        })
+        }),
+        ...(typeof rawPayload.scan_error === 'string' && rawPayload.scan_error ? { error: rawPayload.scan_error } : {})
       }
     }
 
-    // dir: 扫描无结果（目录不存在 / 为空 / 测试替身未实现）时，退回 filesystem_get_directory_contents 读取一级目录
+    // 深度扫描失败或回执无效时，仅以一级目录读取补回可见结果；不冒充完整目录树。
     const listing = await listDirectoryViaFilesystem(targetDir, hostOverride, { withSizes: true, limit: safeLimit })
     if (listing.ok && listing.entries.length > 0) {
       const files: RealIndexedFileEntry[] = []
@@ -597,14 +617,16 @@ async function scanDirectoryTreeWithError(
         files.push(entry)
         totalBytes += entry.isDir ? 0 : entry.size
       }
-      return { scan: makeScanResult(files, files.length, totalBytes, []) }
+      const incomplete = listing.entries.some(entry => entry.isDir) || listing.entries.length >= safeLimit
+      return {
+        scan: makeScanResult(files, files.filter(file => !file.isDir).length, totalBytes, [], { approximate: incomplete }),
+        ...(incomplete ? { error: res.error || '深度扫描不可用，仅列出一级目录，结果不完整' } : {})
+      }
     }
-    return { scan: empty, error: listing.ok ? DIRECTORY_EMPTY_OR_UNREADABLE : listing.error }
-  } catch {
-    // ignore
+    return listing.ok ? { scan: empty } : { scan: empty, error: listing.error || 'DIRECTORY_READ_FAILED' }
+  } catch (error) {
+    return { scan: empty, error: error instanceof Error ? error.message : String(error) }
   }
-
-  return { scan: empty, error: DIRECTORY_EMPTY_OR_UNREADABLE }
 }
 
 
@@ -838,7 +860,8 @@ export async function getRealFileSize(
 }
 
 /**
- * 在 Windows Explorer 中定位并高亮文件/目录
+ * 在访达 / 资源管理器中定位并高亮文件或目录。
+ * 定位失败直接返回 false，不能改用“打开”：对可执行文件那等于运行它。
  */
 export async function showRealItemInFolder(
   fullPath: string,
@@ -846,9 +869,7 @@ export async function showRealItemInFolder(
 ): Promise<boolean> {
   if (!fullPath) return false
   const res = await callHostTransport('shell_show_item_in_folder', { fullPath }, hostOverride)
-  if (res.ok) return true
-  const fallback = await callHostTransport('shell_open_path', { fullPath }, hostOverride)
-  return fallback.ok
+  return res.ok
 }
 
 /**
@@ -892,6 +913,56 @@ export interface DllCapabilityResponse<T = DynamicBridge> {
   pluginName: string
   method: string
   fromFallback?: boolean
+}
+
+/** 声明式能力菜单项及其调用回执，供相同宿主协议的插件共用。 */
+export interface CapabilityActionItem {
+  id: string
+  title: string
+  subtitle: string
+  tag: string
+  method: string
+  params: Record<string, unknown>
+}
+
+export type PluginInvocationResult = Pick<
+  DllCapabilityResponse<unknown>, 'ok' | 'pluginName' | 'method' | 'error' | 'fromFallback'
+> & { data?: unknown }
+
+/** 多个原生能力插件共用的参数边界校验；保护目标由各插件按自身业务提供。 */
+export function validateNativeCapabilityPayload(
+  method: string,
+  params: unknown,
+  forbiddenPattern: RegExp,
+  forbiddenReason: string
+): { valid: boolean; error?: string } {
+  if (typeof method !== 'string' || method.trim().length === 0) {
+    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+  }
+  if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
+    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+  }
+  if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
+    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+  }
+
+  const record = params as Record<string, unknown>
+  for (const [key, val] of Object.entries(record)) {
+    if (typeof val === 'string') {
+      if (val.length > 4096) {
+        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+      }
+      if (forbiddenPattern.test(val)) {
+        return { valid: false, error: `SECURITY_INTERCEPTED: ${forbiddenReason}` }
+      }
+    } else if (typeof val === 'number') {
+      if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
+        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+      }
+    }
+  }
+
+  return { valid: true }
 }
 
 export async function invokeDllPluginCapability<T = DynamicBridge>(

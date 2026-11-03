@@ -169,7 +169,6 @@ test('screenshots: 真实 PNG/GIF/BMP 文件头尺寸解析、真实剪贴板回
             pinned: false,
             ocrText: '',
             ocrStatus: 'pending',
-            thumbnailSvg: ''
           }),
         /OCR_SERVICE_DOWN/
       )

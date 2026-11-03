@@ -74,7 +74,7 @@ test('弹出闭环：输入与缩进带到新窗口，新窗口里继续编辑�
 
   // 新窗口里的状态是独立的：继续编辑后再弹出，带走的是新值
   await type(win, '[1]')
-  await win.act('切换为')
+  indentDropdown(win).props.onChange('2'); await tick(20)
   assert.deepEqual(win.popout().seed, { jsonText: '[1]', indent: 2 })
 })
 
@@ -97,7 +97,7 @@ test('[异常] 交接来的值类型不对（旧版本形状、篡改）时回�
     assert.equal(area(win).props.value, '', JSON.stringify(seed))
     assert.equal(indentDropdown(win).props.value, '2')
     // 坏值上的函数式更新以默认值为基础，不会把坏值带进计算
-    await win.act('切换为 4 格缩进')
+    indentDropdown(win).props.onChange('4'); await tick(20)
     assert.equal(indentDropdown(win).props.value, '4')
     await type(win, '{"ok":true}')
     assert.deepEqual(win.popout().seed, { jsonText: '{"ok":true}', indent: 4 })

@@ -1,5 +1,5 @@
 import React, { Form, ActionPanel, Action, Clipboard, showToast, ToastStyle, useState, useRef, useEffect, useNavigation } from '@ztools/declarative-ui'
-import { signJwtHmacSha256 } from './jwt-url-service.js'
+import { signJwtHmacSha256, displayError } from './jwt-url-service.js'
 
 export function JwtSignForm({ initialPayload = '{}', onCreated }: { initialPayload?: string; onCreated: (token: string) => void }) {
   const [payload, setPayload] = useState(initialPayload)
@@ -24,7 +24,7 @@ export function JwtSignForm({ initialPayload = '{}', onCreated }: { initialPaylo
       if (alive.current) pop()
     } catch (error) {
       if (alive.current) await showToast({ style: ToastStyle.Failure, title: '未完成签发与复制',
-        message: error instanceof SyntaxError ? 'Payload 和 Header 必须是合法 JSON 对象' : error instanceof Error ? error.message : String(error) })
+        message: error instanceof SyntaxError ? 'Payload 和 Header 必须是合法 JSON 对象' : displayError(error instanceof Error ? error.message : String(error)) })
     } finally {
       busy.current = false
       if (alive.current) setSaving(false)

@@ -23,6 +23,22 @@ import {
 export * from './types.js'
 export * from './curl-service.js'
 
+/** 生成不会被内容里的反引号提前截断的 Markdown 代码块 */
+function fenced(content: string, lang = ''): string {
+  const longest = Math.max(2, ...(content.match(/`+/g) ?? []).map((run) => run.length))
+  const fence = '`'.repeat(longest + 1)
+  return `${fence}${lang}\n${content}\n${fence}`
+}
+
+function responseMarkdown(snap: HttpResponseSnapshot | null, ignoredOptions: string[]): string {
+  const notes: string[] = []
+  if (ignoredOptions.length > 0) notes.push(`未生效的参数：${ignoredOptions.join('、')}`)
+  if (snap && snap.ignoredHeaders.length > 0) notes.push(`已去掉由客户端自动处理的请求头：${snap.ignoredHeaders.join('、')}`)
+  const noteText = notes.length > 0 ? `\n\n${notes.map((n) => `- ${n}`).join('\n')}` : ''
+  if (!snap) return `### 响应\n按 Enter 发起请求，在这里查看响应正文。${noteText}`
+  return `### 响应 (HTTP ${snap.status} ${snap.statusText} · ${snap.elapsedMs}ms)${noteText}\n\n${fenced(snap.bodyText, snap.isJson ? 'json' : 'text')}`
+}
+
 export function CurlHttpCommand() {
   // 初始为空，不预填示例请求
   const [rawCurl, setRawCurl] = useState<string>('')
@@ -30,8 +46,15 @@ export function CurlHttpCommand() {
   const [responseSnap, setResponseSnap] = useState<HttpResponseSnapshot | null>(null)
   const [isSending, setIsSending] = useState<boolean>(false)
   const requestRevision = useRef(0)
+  const mounted = useRef(true)
 
-  useEffect(() => () => { requestRevision.current += 1 }, [])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      requestRevision.current += 1
+    }
+  }, [])
 
   const replaceRequest = (value: string): void => {
     requestRevision.current += 1
@@ -110,7 +133,7 @@ export function CurlHttpCommand() {
         message: err instanceof Error ? err.message : String(err),
       })
     } finally {
-      setIsSending(false)
+      if (mounted.current) setIsSending(false)
     }
   }
 
@@ -134,17 +157,40 @@ export function CurlHttpCommand() {
         </List.Dropdown>
       }
     >
-      {!parsedState.ok && (
+      {!parsedState.ok && !rawCurl.trim() && (
+        <List.Item
+          id="curl-empty"
+          title="粘贴 cURL 命令或 HTTP URL"
+          subtitle="支持浏览器开发者工具里的 Copy as cURL（bash / cmd）"
+          icon={Icon.Clipboard}
+          detail={
+            <List.Item.Detail
+              markdown={`### 开始使用\n\n在搜索框粘贴 cURL 命令或网址，或按回车从剪贴板读取。\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
+            />
+          }
+          actions={
+            <ActionPanel>
+              <Action
+                title="从剪贴板粘贴 cURL"
+                icon={Icon.Clipboard}
+                onAction={() => void handleLoadClipboard()}
+              />
+            </ActionPanel>
+          }
+        />
+      )}
+
+      {!parsedState.ok && rawCurl.trim() !== '' && (
         <List.Section title="cURL 语法解析错误">
           <List.Item
             id="curl-parse-error"
             title="无法解析 cURL 命令"
-            subtitle={parsedState.error}
+            subtitle={parsedState.error.replace(/^[A-Z_]+:\s*/, '')}
             icon={Icon.ExclamationMark}
             accessories={[{ tag: { value: '语法错误', color: Color.Red } }]}
             detail={
               <List.Item.Detail
-                markdown={`### cURL 解析异常\n\n\`\`\`text\n${parsedState.error}\n\`\`\`\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
+                markdown={`### cURL 解析异常\n\n${fenced(parsedState.error, 'text')}\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
               />
             }
             actions={
@@ -181,13 +227,10 @@ export function CurlHttpCommand() {
             ]}
             detail={
               <List.Item.Detail
-                markdown={`### 生成代码 (${targetLang.toUpperCase()})\n\`\`\`${
-                  targetLang === 'python' ? 'python' : targetLang === 'go' ? 'go' : 'ts'
-                }\n${parsedState.generatedCode}\n\`\`\`\n\n${
-                  responseSnap
-                    ? `### 实时响应结果 (HTTP ${responseSnap.status} · ${responseSnap.elapsedMs}ms)\n\`\`\`json\n${responseSnap.bodyText}\n\`\`\``
-                    : '### 实时响应结果\n按回车执行「立即发起 HTTP 请求」即可在本地验证此接口并查看响应载荷。'
-                }`}
+                markdown={`### 生成代码 (${targetLang.toUpperCase()})\n${fenced(
+                  parsedState.generatedCode,
+                  targetLang === 'python' ? 'python' : targetLang === 'go' ? 'go' : 'ts',
+                )}\n\n${responseMarkdown(responseSnap, parsedState.parsed.ignoredOptions ?? [])}`}
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
@@ -251,7 +294,7 @@ export function CurlHttpCommand() {
                 accessories={[{ tag: 'Header' }]}
                 detail={
                   <List.Item.Detail
-                    markdown={`### Request Header: \`${hKey}\`\n\n\`\`\`text\n${String(hVal)}\n\`\`\``}
+                    markdown={`### 请求头 ${hKey}\n\n${fenced(String(hVal), 'text')}`}
                   />
                 }
                 actions={

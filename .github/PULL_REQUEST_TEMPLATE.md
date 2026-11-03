@@ -29,6 +29,7 @@
 
 ## 检查清单
 
+- [ ] 按[作者署名](https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/publishing.md#作者署名)填写 `author`；社区新插件署名本人或实际团队，参与已有插件保留原署名
 - [ ] 按 [界面规范](https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/ui-guidelines.md#提交前自检) 做完「提交前自检」6 条
 - [ ] 修改已有插件时升高了 `version`
 - [ ] `targets` 只包含实际测试过的平台

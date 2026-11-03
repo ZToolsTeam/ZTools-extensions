@@ -2,7 +2,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import { pasteSequentialClipboard, resetPasteSequence } from '../dist/clipboard-storage.js'
+import { pasteSequentialClipboard, resetPasteSequence, sequencePosition } from '../dist/clipboard-storage.js'
 
 const items = [
   { id: 'a', content: 'alpha', pinned: false, createdAt: 2 },
@@ -36,17 +36,19 @@ test('宿主粘贴失败（PERMISSION_DENIED）时返回 pasteFailed，不再本
   assert.equal(res.success, false)
   assert.equal(res.pasteFailed, true)
   assert.equal(res.item.id, 'h1')
-  assert.equal(res.remaining, 3)
+  // sequenceIndex 是失败条目的下标（从 0 开始）：界面上是第 1 项
+  assert.equal(res.offset, 1)
+  assert.equal(res.remaining, 2)
   assert.match(res.message, /辅助功能/)
   assert.deepEqual(pasted, [], '失败后不能再通过本地回退粘贴并报成功')
 })
 
-test('宿主粘贴成功时如实返回序号与剩余条数', async () => {
+test('宿主粘贴成功时如实返回序号与剩余条数（宿主 sequenceIndex 从 0 开始）', async () => {
   const { pasted } = installBridge(async () => ({ success: true, item: { id: 'h2', content: 'x' }, sequenceIndex: 1, total: 3 }))
   const res = await pasteSequentialClipboard(items)
   assert.equal(res.success, true)
-  assert.equal(res.offset, 1)
-  assert.equal(res.remaining, 2)
+  assert.equal(res.offset, 2, '下标 1 是第 2 项')
+  assert.equal(res.remaining, 1, '3 条里粘了第 2 项，还剩 1 条')
   assert.equal(res.pasteFailed, undefined)
   assert.deepEqual(pasted, [])
 })
@@ -69,4 +71,13 @@ test('宿主没有可用条目（无 item）或调用抛错时，仍按本地列
   const res3 = await pasteSequentialClipboard(items)
   assert.equal(res3.pasteFailed, undefined)
   assert.equal(malformed.pasted.length, 1)
+})
+
+test('[边界] sequencePosition：首条、末条、越界与畸形下标', () => {
+  assert.deepEqual(sequencePosition({ sequenceIndex: 0, total: 5 }), { offset: 1, remaining: 4 })
+  assert.deepEqual(sequencePosition({ sequenceIndex: 4, total: 5 }), { offset: 5, remaining: 0 })
+  assert.deepEqual(sequencePosition({ sequenceIndex: -1, total: 5 }), { offset: 0, remaining: 5 })
+  assert.deepEqual(sequencePosition({ sequenceIndex: 9, total: 5 }), { offset: 0, remaining: 5 })
+  assert.deepEqual(sequencePosition({ sequenceIndex: 'x' }), { offset: 0, remaining: 0 })
+  assert.deepEqual(sequencePosition(null), { offset: 0, remaining: 0 })
 })

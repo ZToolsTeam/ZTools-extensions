@@ -52,7 +52,7 @@ export function formatRemainingDuration(
 ): string {
   if (!active) return '未开启'
   if (durationMinutes === 0 || remainingMs === null) {
-    return '无限期（手动关闭）'
+    return '直到手动关闭'
   }
   const totalSec = Math.max(0, Math.ceil(remainingMs / 1000))
   if (totalSec < 60) {

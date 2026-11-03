@@ -5,7 +5,7 @@
 ## 使用
 
 - 命令：文件透视（关键词如 `文件编码检测`、`file inspector`）、csv乱码修复（`解决excel乱码`）、修复假后缀（`fix extension`）。三个命令打开同一个工作台，都要先点“选择本地文件”选取文件。
-- 按文件头识别 PNG、JPEG、WebP、AVIF、GIF、PDF、ZIP（扩展名为 docx、pptx、xlsx、jar、apk 时视为一致）以及以 HTML 标记开头的文本，显示前 16 字节的十六进制和真实 MIME 类型；扩展名与识别结果不一致时给出提示。
+- 按文件头识别 PNG、JPEG、WebP、AVIF、GIF、PDF、ZIP（扩展名为 docx、xlsx、pptx、odt、epub、jar、apk 以及 macOS 的 pages、numbers、key 等 ZIP 容器格式时视为一致；Illustrator 的 .ai 与 PDF 视为一致）以及以 HTML 标记开头的文本（只在扩展名本应是图片、PDF、压缩包等二进制格式时提示不符，.php、.htm 等模板不提示），显示前 16 字节的十六进制和真实 MIME 类型；扩展名与识别结果不一致时给出提示。
 - 文本编码：有 BOM 时按 BOM 识别 UTF-8 / UTF-16；没有 BOM 时，合法的 UTF-8 判为 UTF-8，其余一律按 GBK / GB18030 处理，状态条会写明是按哪种依据判断的；不带 BOM 的 UTF-16 会被当作二进制文件。也可手动指定 UTF-8、GBK / GB18030、Big5、UTF-16LE。同时检测 CRLF、LF、CR 或混合换行符。列表显示解码后的前 100 行，搜索框可过滤这些行；二进制文件只显示一行文件头十六进制。
 - 预览行上：`Enter` 执行主动作（文本文件为“另存为 UTF-8-BOM”，扩展名不符的二进制文件为“修正扩展名”），`⌘/Ctrl+Enter` 执行次动作，`⌘/Ctrl+K` 打开动作面板（修正扩展名、复制该行）。
 - 另存为 UTF-8-BOM 时按所选“目标换行符”（CRLF 或 LF）统一换行，通过保存窗口另存为新文件，结果不能超过 16 MiB；按源编码解码出错时不保存。二进制文件不做转码。

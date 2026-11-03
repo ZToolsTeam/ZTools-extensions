@@ -238,6 +238,7 @@ SDK 没有封装的系统能力（读写文件、系统对话框、截图、系�
 | `clipboard_history_restore`，`{ id, paste? }` | `id` 必须来自宿主 `clipboard_history_query` 返回的历史条目（1–64 个字符），不能使用插件自建历史 ID 或传入文件路径、文本、图片内容。按原始文本 / 图片 / 文件类型恢复剪贴板；`paste: true` 还会隐藏窗口并向目标应用粘贴，默认仅恢复。成功返回 `{ success: true }`；条目失效、原文件不可访问或粘贴失败都会报错 |
 | `filesystem_move_file_no_replace`，`{ sourcePath, destPath }` | 路径参数版本仅适用于 SDK Contract 1。要求源和目标都有写授权，由原生文件组件原子拒绝覆盖已存在目标，成功返回 `{ success: true }`。缺少原生组件明确报错，不会降级为可能覆盖文件的移动。当前不支持仅修改文件名大小写；完全相同的源、目标路径为空操作 |
 | `filesystem_get_directory_contents`，`{ path }` | SDK Contract 1 的路径参数版本返回 `{ success: true, files, writeAuthorized }`。列目录成功只表示有读授权；`writeAuthorized` 表示当前目录是否另有写授权。为 `false` 时应先让用户通过目录选择授权再改名，不能由「可读取」推断「可修改」。即使为 `true`，具体写操作仍可能因系统权限或目录变化失败 |
+| `image_ocr`，`{ action, lang?, path?, restoreWindow? }` | 用系统自带的文字识别在本机识别图片文字，不联网。`lang` 为 `zh-Hans-CN`（默认，中英混排）、`en-US`、`ja-JP` 或 `ko-KR`。`action` 取值：`recognizeImage` 识别 `path` 指向的图片（必须是用户经文件对话框等方式授权过的文件，不超过 16 MB）；`recognizeClipboard` 识别剪贴板里的图片（需要 `clipboard` 权限）；`captureRegion` 先收起发起调用的窗口，让用户框选屏幕区域后识别（需要 `screen` 权限，`restoreWindow: false` 时识别后不再显示窗口）。成功返回 `{ ok: true, text, lines }`；没有识别到文字返回 `{ ok: false, empty: true, error }`，用户取消框选返回 `{ ok: false, canceled: true, error }`，其余失败返回 `{ ok: false, error }`。框选要等用户操作，调用时把超时设到 3 分钟左右。macOS 与 Windows 都支持这三种动作；Windows 需要已安装所选语言的 OCR 语言包 |
 
 每个卷的字段：
 

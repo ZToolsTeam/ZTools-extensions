@@ -176,12 +176,15 @@ export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: V
 
 export interface PasswordVaultProps {
   featureCode?: string
+  /** 从生成器进入时，新建凭据预先填入这个密码 */
+  prefillPassword?: string
   initialUnlockedEntries?: VaultEntry[]
   initialMasterPassword?: string
 }
 
 export function PasswordVault({
   featureCode = 'vault-list',
+  prefillPassword,
   initialUnlockedEntries,
   initialMasterPassword
 }: PasswordVaultProps = {}) {
@@ -476,7 +479,7 @@ export function PasswordVault({
         />
         <Form.PasswordField
           id="masterPassword"
-          title="主密码 (Master Password)"
+          title="主密码"
           placeholder="输入主密码以解锁或初始化本地保险箱..."
           value={passwordInput}
           onChange={setPasswordInput}
@@ -511,7 +514,7 @@ export function PasswordVault({
               push(
                 <VaultEntryForm
                   initialPassword={
-                    featureCode === 'vault-generator' ? generateSecurePassword(20, true) : ''
+                    prefillPassword || (featureCode === 'vault-generator' ? generateSecurePassword(20, true) : '')
                   }
                   onSave={handleSaveEntry}
                 />
@@ -526,7 +529,7 @@ export function PasswordVault({
           key={item.id}
           id={item.id}
           title={item.title}
-          subtitle={`${item.username || item.endpoint || '私密条目'}${item.note ? ` · ${item.note}` : ''}`}
+          subtitle={`${item.username || item.endpoint || '私密条目'}${item.note ? (revealedId === item.id ? ` · ${item.note}` : ' · 有加密备注') : ''}`}
           icon={getCategoryIcon(item.category)}
           accessories={[
             { tag: item.categoryLabel },
@@ -544,9 +547,9 @@ export function PasswordVault({
                 <Action.CopyToClipboard title="复制用户名 / 账号" content={item.username} />
               )}
               <Action
-                title={revealedId === item.id ? '隐藏明文密码' : '临时显示明文密码'}
+                title={revealedId === item.id ? '隐藏明文密码与备注' : '临时显示明文密码与备注'}
                 icon={Icon.Eye}
-                shortcut={{ modifiers: ['cmd'], key: 'h' }}
+                shortcut={{ modifiers: ['cmd'], key: 'e' }}
                 onAction={() => setRevealedId((cur: string | null) => (cur === item.id ? null : item.id))}
               />
               <Action.Push
@@ -577,13 +580,122 @@ export function PasswordVault({
 
 export const PasswordVaultCommand = PasswordVault
 
+interface GeneratorPreset {
+  id: string
+  title: string
+  length: number
+  symbols: boolean
+}
+
+const GENERATOR_PRESETS: GeneratorPreset[] = [
+  { id: 'strong-20', title: '20 位 · 含符号', length: 20, symbols: true },
+  { id: 'plain-20', title: '20 位 · 仅字母数字', length: 20, symbols: false },
+  { id: 'strong-32', title: '32 位 · 含符号', length: 32, symbols: true },
+  { id: 'plain-16', title: '16 位 · 仅字母数字', length: 16, symbols: false }
+]
+
+function generatePresetPasswords(): Record<string, string> {
+  const result: Record<string, string> = {}
+  for (const preset of GENERATOR_PRESETS) result[preset.id] = generateSecurePassword(preset.length, preset.symbols)
+  return result
+}
+
+/**
+ * 「随机密码」入口：生成随机密码不需要保险箱，直接生成并安全复制；
+ * 只有选择「存入保险箱」时才进入解锁流程。
+ */
+export function PasswordGenerator() {
+  const [initial] = useState<{ passwords: Record<string, string>; error: string }>(() => {
+    try {
+      return { passwords: generatePresetPasswords(), error: '' }
+    } catch (error) {
+      return { passwords: {}, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  const [passwords, setPasswords] = useState<Record<string, string>>(initial.passwords)
+  const [generateError, setGenerateError] = useState<string>(initial.error)
+
+  const regenerate = useCallback(() => {
+    try {
+      setPasswords(generatePresetPasswords())
+      setGenerateError('')
+    } catch (error) {
+      setGenerateError(error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+
+  const handleCopy = useCallback(async (password: string) => {
+    try {
+      await copySecretWithAutoClear(password)
+      await showToast({ style: Toast.Style.Success, title: '已复制随机密码', message: '将在 30 秒后自动清空剪贴板痕迹' })
+    } catch (error) {
+      await showToast({ style: Toast.Style.Failure, title: '复制失败', message: error instanceof Error ? error.message : String(error) })
+    }
+  }, [])
+
+  if (generateError) {
+    return (
+      <List>
+        <List.Item
+          id="generate-error"
+          title="无法生成随机密码"
+          subtitle={generateError}
+          icon={Icon.ExclamationMark}
+          actions={
+            <ActionPanel>
+              <Action title="重新生成" icon={Icon.ArrowClockwise} onAction={regenerate} />
+            </ActionPanel>
+          }
+        />
+      </List>
+    )
+  }
+
+  return (
+    <List
+      searchBarPlaceholder="选择密码规格，回车复制"
+      filterBar={{ summaryText: '复制后 30 秒自动清除剪贴板' }}
+    >
+      {GENERATOR_PRESETS.map((preset) => {
+        const password = passwords[preset.id] || ''
+        return (
+          <List.Item
+            key={preset.id}
+            id={preset.id}
+            title={password}
+            subtitle={preset.title}
+            icon={Icon.Key}
+            actions={
+              <ActionPanel>
+                <Action title="复制密码" icon={Icon.Clipboard} onAction={() => handleCopy(password)} />
+                <Action
+                  title="重新生成"
+                  icon={Icon.ArrowClockwise}
+                  shortcut={{ modifiers: ['cmd'], key: 'r' }}
+                  onAction={regenerate}
+                />
+                <Action.Push
+                  title="存入保险箱…"
+                  icon={Icon.Lock}
+                  shortcut={{ modifiers: ['cmd'], key: 's' }}
+                  target={<PasswordVault featureCode="vault-generator" prefillPassword={password} />}
+                />
+              </ActionPanel>
+            }
+          />
+        )
+      })}
+    </List>
+  )
+}
+
 /**
  * 两个入口对应的根组件。客户端调用根组件时不传参数，靠 commands 按 featureCode 找到入口；
- * 「随机密码」入口解锁后，「新建凭据」会预先填入一个随机密码。
+ * 「随机密码」入口不需要解锁，直接生成并复制，选择存入保险箱时才要求主密码。
  */
 export const commands = {
   'vault-list': () => PasswordVault({ featureCode: 'vault-list' }),
-  'vault-generator': () => PasswordVault({ featureCode: 'vault-generator' })
+  'vault-generator': () => PasswordGenerator()
 }
 
 export default PasswordVault

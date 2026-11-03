@@ -8,7 +8,7 @@ export default function MacSpeedtestCommand({ diagnostic = false }: { diagnostic
   const alive = useRef(true), latestId = useRef(''), operation = useRef<{ id: string; cancelled: boolean; stopping: boolean } | null>(null)
   const copy = async (text: string) => {
     try { await Clipboard.copy(text); if (alive.current) await showToast({ style: Toast.Style.Success, title: '已复制' }) }
-    catch (e) { if (alive.current) setError(String(e)) }
+    catch (e) { if (alive.current) setError(e instanceof Error ? e.message : String(e)) }
   }
   const run = async (kind: 'bandwidth' | 'diagnose', target?: string, replaceNode?: MacProbe) => {
     if (operation.current || !alive.current) return
@@ -18,6 +18,7 @@ export default function MacSpeedtestCommand({ diagnostic = false }: { diagnostic
     try {
       const result = kind === 'bandwidth' ? await measureBandwidth(task.id) : await diagnoseNetwork(task.id, target)
       if (!alive.current || task.cancelled) return
+      let doneStatus = '测速完成'
       if (kind === 'bandwidth') setBandwidth(result as MacBandwidth)
       else {
         const next = result as MacDiagnosis
@@ -28,10 +29,13 @@ export default function MacSpeedtestCommand({ diagnostic = false }: { diagnostic
           next.nodes = diagnosis.nodes.map(n => n.host === replaceNode.host && n.port === replaceNode.port ? { ...replacement, name: n.name, group: n.group } : n)
         } else if (target) { setSearch(''); setGroup('all') }
         setDiagnosis(next)
+        // 按实际失败数量写状态，全部连通时不能再提示“连接失败原因见各行”
+        const failed = next.nodes.filter(n => n.error).length
+        doneStatus = failed ? `节点检测完成，${failed} 个节点连接失败，原因见各行` : `节点检测完成，${next.nodes.length} 个节点均已连通`
         if (!replaceNode && next.nodes[0]) setSelected('node-' + next.nodes[0].host + ':' + next.nodes[0].port)
       }
-      setStatus(kind === 'bandwidth' ? '测速完成' : '节点检测完成，连接失败原因见各行')
-    } catch (e) { if (alive.current && !task.cancelled) { setError(String(e)); setStatus('检测未完成') } }
+      setStatus(doneStatus)
+    } catch (e) { if (alive.current && !task.cancelled) { setError(e instanceof Error ? e.message : String(e)); setStatus('检测未完成') } }
     finally { if (operation.current === task) operation.current = null; if (alive.current) setBusy('') }
   }
   const cancel = async () => {
@@ -39,7 +43,7 @@ export default function MacSpeedtestCommand({ diagnostic = false }: { diagnostic
     if (!task || task.stopping) return
     task.cancelled = true; task.stopping = true; setStatus('正在停止')
     try { await stopSpeedtest(task.id); if (alive.current && latestId.current === task.id) setStatus('已停止') }
-    catch (e) { if (alive.current && latestId.current === task.id) { setError(`停止未确认：${String(e)}`); setStatus('等待当前操作结束') } }
+    catch (e) { if (alive.current && latestId.current === task.id) { setError(`停止未确认：${e instanceof Error ? e.message : String(e)}`); setStatus('等待当前操作结束') } }
     finally { task.stopping = false }
   }
   useEffect(() => {
@@ -55,7 +59,7 @@ export default function MacSpeedtestCommand({ diagnostic = false }: { diagnostic
     searchBarAccessory={<List.Dropdown value={group} onChange={setGroup} tooltip="节点范围"><List.Dropdown.Item value="all" title="全部" /><List.Dropdown.Item value="domestic" title="国内节点" /><List.Dropdown.Item value="global" title="国际节点" /></List.Dropdown>}
     filterBar={{ summaryText: status, actions: [{ id: 'diagnose', title: busy ? '停止检测' : '检测预设节点', onAction: busy ? cancel : () => run('diagnose') }, { id: 'report', title: '复制报告', onAction: () => copy(report()), disabled: !bandwidth && !diagnosis }] }}>
     {custom ? <List.Item id="custom" title={`检测 ${target}`} subtitle="Enter 检测此地址的 TCP 连接；默认端口 443" icon={Icon.Globe} actions={<ActionPanel><Action title="检测此地址" onAction={() => run('diagnose', target)} /></ActionPanel>} /> : null}
-    {!target && group === 'all' ? <List.Item id="bandwidth" title={bandwidth ? `下载 ${bandwidth.downloadMbps.toFixed(1)} Mbps · 上传 ${bandwidth.uploadMbps.toFixed(1)} Mbps` : '开始宽带测速'}
+    {!target && group === 'all' ? <List.Item id="bandwidth" title={bandwidth ? `下载 ${bandwidth.downloadMbps.toFixed(1)} Mbps · 上传 ${bandwidth.uploadMbps.toFixed(1)} Mbps` : '开始测量带宽'}
       subtitle={bandwidth ? `Apple 测试服务 · ${bandwidth.interfaceName} · ${new Date(bandwidth.checkedAt).toLocaleTimeString()}` : '约 15 秒，可能产生 GB 级流量；使用当前网络及 VPN'} icon={Icon.Bolt}
       actions={<ActionPanel><Action title={bandwidth ? '重新测量带宽' : '开始测量带宽'} onAction={() => run('bandwidth')} />{bandwidth ? <Action title="复制带宽结果" onAction={() => copy(networkReport(bandwidth, null))} /> : null}</ActionPanel>} /> : null}
     {bandwidth && !target && group === 'all' ? <List.Item id="quality" title={`空闲延迟 ${ms(bandwidth.baseRttMs)}`} subtitle={`负载响应 ${bandwidth.responsivenessRpm === null ? '未提供' : bandwidth.responsivenessRpm.toFixed(1) + ' RPM'} · 实测用时 ${(bandwidth.durationMs / 1000).toFixed(1)} 秒`} icon={Icon.Clock}

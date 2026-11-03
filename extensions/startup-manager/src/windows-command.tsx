@@ -29,8 +29,8 @@ import type {
 function renderStartupItemActions(params: {
   item: StartupEntryItem
   onToggle: (item: StartupEntryItem) => void
-  onRevealExe: (exePath: string) => void
-  onCopyCommand: (command: string) => void
+  onRevealExe: (exePath: string) => void | Promise<void>
+  onCopyCommand: (command: string) => void | Promise<void>
   onRemoveBroken: (item: StartupEntryItem) => void
   onRescan: () => void
 }) {
@@ -49,7 +49,7 @@ function renderStartupItemActions(params: {
           title="在资源管理器中定位程序"
           icon={Icon.Folder}
           onAction={() => {
-            onRevealExe(item.exePath)
+            void onRevealExe(item.exePath)
           }}
         />
       )}
@@ -58,7 +58,7 @@ function renderStartupItemActions(params: {
         icon={Icon.Clipboard}
         shortcut={{ modifiers: ['ctrl'], key: 'c' }}
         onAction={() => {
-          onCopyCommand(item.command)
+          void onCopyCommand(item.command)
         }}
       />
       {item.fileMissing && (
@@ -357,15 +357,17 @@ export default function StartupManagerCommand(props?: {
                   onToggle: (entry) => {
                     void handleToggleItem(entry)
                   },
-                  onRevealExe: (exePath) => {
-                    void revealStartupExeInFolder(exePath, props?.hostOverride)
+                  onRevealExe: async (exePath) => {
+                    const shown = await revealStartupExeInFolder(exePath, props?.hostOverride)
+                    if (!shown) {
+                      await showToast({ style: Toast.Style.Failure, title: '无法定位程序文件', message: exePath })
+                    }
                   },
                   onCopyCommand: async (cmd) => {
-                    await copyStartupCommandToClipboard(cmd, props?.hostOverride)
-                    await showToast({
-                      style: Toast.Style.Success,
-                      title: '已复制启动命令行'
-                    })
+                    const copied = await copyStartupCommandToClipboard(cmd, props?.hostOverride)
+                    await showToast(copied
+                      ? { style: Toast.Style.Success, title: '已复制启动命令行' }
+                      : { style: Toast.Style.Failure, title: '复制启动命令行失败', message: '剪贴板写入未成功' })
                   },
                   onRemoveBroken: (entry) => {
                     void handleRemoveSingleBroken(entry)

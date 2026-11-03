@@ -138,6 +138,9 @@ export function getRemainingSeconds(period = 30, nowMs = Date.now()): number {
   return remaining === 0 ? period : remaining;
 }
 
+/** 支持的最长刷新周期（秒） */
+export const MAX_PERIOD_SECONDS = 300;
+
 export interface ParsedOTPAuth {
   type: "totp";
   secret: string;
@@ -185,10 +188,22 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
       throw new Error("链接中缺少有效的 Base32 secret 密钥参数");
     }
 
-    const digits = parseInt(parsedUrl.searchParams.get("digits") || "6", 10) || 6;
-    const period = parseInt(parsedUrl.searchParams.get("period") || "30", 10) || 30;
-    const rawAlgo = (parsedUrl.searchParams.get("algorithm") || "SHA1").toUpperCase();
-    const algorithm: OTPAlgorithm = rawAlgo === "SHA256" || rawAlgo === "SHA512" ? rawAlgo : "SHA1";
+    // 链接里的位数、周期、算法不受支持时直接拒绝：悄悄换成默认值会生成与服务端不一致的口令
+    const rawDigits = (parsedUrl.searchParams.get("digits") ?? "6").trim();
+    if (!/^[678]$/.test(rawDigits)) {
+      throw new Error(`不支持 ${rawDigits || "空"} 位口令，仅支持 6～8 位`);
+    }
+    const digits = Number(rawDigits);
+    const rawPeriod = (parsedUrl.searchParams.get("period") ?? "30").trim();
+    if (!/^[1-9]\d{0,2}$/.test(rawPeriod) || Number(rawPeriod) > MAX_PERIOD_SECONDS) {
+      throw new Error(`刷新周期 ${rawPeriod || "空"} 无效，需为 1～${MAX_PERIOD_SECONDS} 秒的整数`);
+    }
+    const period = Number(rawPeriod);
+    const rawAlgo = (parsedUrl.searchParams.get("algorithm") ?? "SHA1").trim().toUpperCase();
+    if (rawAlgo !== "SHA1" && rawAlgo !== "SHA256" && rawAlgo !== "SHA512") {
+      throw new Error(`不支持 ${rawAlgo || "空"} 算法，仅支持 SHA1、SHA256、SHA512`);
+    }
+    const algorithm: OTPAlgorithm = rawAlgo;
 
     return {
       type: "totp",
@@ -199,8 +214,8 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
       digits,
       algorithm
     };
-  } catch (err: any) {
-    throw new Error(`解析 otpauth 链接失败: ${err.message}`);
+  } catch (err) {
+    throw new Error(`解析 otpauth 链接失败: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
@@ -227,6 +242,19 @@ export function createAccount(params: {
 
   if (!isValidBase32(cleaned)) {
     throw new Error("密钥不是合法的 Base32 编码（仅支持 A-Z 与 2-7）");
+  }
+  // 不足 2 个字符解不出任何字节，算出的口令与服务端无关
+  if (base32Decode(cleaned).length === 0) {
+    throw new Error("密钥太短，请检查是否完整复制");
+  }
+  if (params.digits !== undefined && ![6, 7, 8].includes(params.digits)) {
+    throw new Error("口令位数仅支持 6～8 位");
+  }
+  if (params.period !== undefined && (!Number.isInteger(params.period) || params.period < 1 || params.period > MAX_PERIOD_SECONDS)) {
+    throw new Error(`刷新周期需为 1～${MAX_PERIOD_SECONDS} 秒的整数`);
+  }
+  if (params.algorithm !== undefined && !["SHA1", "SHA256", "SHA512"].includes(params.algorithm)) {
+    throw new Error("算法仅支持 SHA1、SHA256、SHA512");
   }
 
   if (typeof globalThis.crypto?.randomUUID !== 'function') {

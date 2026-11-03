@@ -12,7 +12,8 @@ const FILE_C = `${DUMPS}\\app.exe.1234.dmp`
 
 function installHost(host, { failPaths = [] } = {}) {
   const wipeCalls = []
-  host.ipc.system_get_path = async ({ name }) => (name === 'temp' ? TEMP : name === 'home' ? HOME : '')
+  host.ipc.system_list_common_folders = async () => ({ folders: [{ id: 'temp', path: TEMP, exists: true }] })
+  host.ipc.system_get_path = async ({ name }) => (name === 'temp' ? `${HOME}\\PluginTemp` : name === 'home' ? HOME : '')
   host.ipc.system_search_files = async ({ query }) => {
     const q = String(query)
     if (q === `dir:${TEMP}`) {

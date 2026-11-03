@@ -4,6 +4,24 @@ import { isStopped, type ContainerStatusFilter, type ContainerSummary, type Dock
 export * from './types.js'
 export * from './docker-service.js'
 const failureMessage = (e: unknown) => e instanceof Error ? e.message : String(e)
+/** 空列表提示按实际原因区分：已连上 Docker 但没有匹配项时，不能再提示“请启动 Docker 引擎”。 */
+export function emptyHint(error: string, busy: boolean, snapshot: DockerSnapshot | null, total: number): string {
+  if (error) return error
+  if (busy) return '正在连接本机 Docker 引擎…'
+  if (!snapshot) return '请确认本机 Docker 引擎已启动，然后刷新。'
+  return total ? '换个搜索词或状态筛选试试。' : '当前 Docker 上下文中还没有容器。'
+}
+export const DOCKER_DOWNLOAD_URL = 'https://www.docker.com/products/docker-desktop/'
+/** 空列表条目：错误原文只在条目里出现一次（首句作标题、其余作说明），摘要栏只写“Docker 未就绪”。 */
+export function emptyState(error: string, busy: boolean, snapshot: DockerSnapshot | null, total: number) {
+  if (error) {
+    const at = error.indexOf('。')
+    const title = at > 0 ? error.slice(0, at) : error, rest = at > 0 ? error.slice(at + 1).trim() : ''
+    return { title, subtitle: rest || '处理后按回车刷新', icon: Icon.ExclamationMark, missingCli: /未找到 Docker 命令行/.test(error) }
+  }
+  if (busy) return { title: '正在读取 Docker', subtitle: emptyHint(error, busy, snapshot, total), icon: Icon.CircleProgress, missingCli: false }
+  return { title: snapshot ? '没有符合条件的容器' : '未连接 Docker', subtitle: emptyHint(error, busy, snapshot, total), icon: Icon.Info, missingCli: false }
+}
 export interface DockerManagerCommandProps { featureCode?: string }
 export function DockerManagerCommand({ featureCode = 'docker-all' }: DockerManagerCommandProps = {}) {
   const [snapshot, setSnapshot] = useState<DockerSnapshot | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
@@ -63,14 +81,24 @@ export function DockerManagerCommand({ featureCode = 'docker-all' }: DockerManag
   const containers = snapshot?.containers || [], q = query.toLowerCase().trim()
   const visible = containers.filter(c => (status === 'all' || (status === 'running' ? c.state === 'running' : isStopped(c))) && (!q || `${c.name} ${c.image} ${c.id} ${c.ports}`.toLowerCase().includes(q)))
   const stoppedCount = containers.filter(isStopped).length
+  // 没拿到列表时错误原文放在空状态条目里，摘要只写“Docker 未就绪”；有列表时操作失败仍在摘要显示原文。
+  const loadError = snapshot ? '' : error
+  // 未连上 Docker 时空状态行带“刷新”动作（与客户端提示“再点击刷新”一致），顶部不再重复同一按钮
+  const emptyOffersRetry = !visible.length && !busy && !snapshot
   return <List navigationTitle="容器管控" isLoading={busy} isShowingDetail={Boolean(selected && logs[selected])} selectedItemId={selected || undefined} onSelectionChange={setSelected}
     searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索容器、镜像或端口"
     searchBarAccessory={<List.Dropdown value={status} onChange={value => setStatus(value as ContainerStatusFilter)} tooltip="容器状态">
       <List.Dropdown.Item value="all" title="全部容器" /><List.Dropdown.Item value="running" title="运行中" /><List.Dropdown.Item value="exited" title="已停止" />
     </List.Dropdown>}
-    filterBar={{ summaryText: error || (busy ? '正在读取或操作 Docker…' : snapshot ? `${snapshot.context} · ${containers.length} 个容器${snapshot.statsError ? ' · ' + snapshot.statsError : ''}` : '尚未连接 Docker'),
-      actions: busy ? [{ id: 'cancel', title: '取消', onAction: cancel }] : [{ id: 'refresh', title: '刷新', onAction: refresh }, ...(stoppedCount ? [{ id: 'prune', title: '清理停止容器', onAction: prune }] : [])] }}>
-    {!visible.length && <List.Item id="empty" title={error ? 'Docker 未就绪' : busy ? '正在读取 Docker' : snapshot ? '没有符合条件的容器' : '未连接 Docker'} subtitle={error || '请确认本机 Docker 引擎已启动，然后刷新。'} icon={Icon.Document} />}
+    filterBar={{ summaryText: loadError ? 'Docker 未就绪' : error || (busy ? '正在读取或操作 Docker…' : snapshot ? `${snapshot.context} · ${containers.length} 个容器${snapshot.statsError ? ' · ' + snapshot.statsError : ''}` : '尚未连接 Docker'),
+      actions: busy ? [{ id: 'cancel', title: '取消', onAction: cancel }] : [...(emptyOffersRetry ? [] : [{ id: 'refresh', title: '刷新', onAction: refresh }]), ...(stoppedCount ? [{ id: 'prune', title: '清理停止容器', onAction: prune }] : [])] }}>
+    {!visible.length && (() => { const empty = emptyState(loadError, busy, snapshot, containers.length)
+      return <List.Item id="empty" title={empty.title} subtitle={empty.subtitle} icon={empty.icon}
+        actions={busy || snapshot ? undefined : <ActionPanel>
+          {empty.missingCli && <Action.OpenInBrowser title="打开 Docker 官网下载页" url={DOCKER_DOWNLOAD_URL} />}
+          <Action title="刷新" icon={Icon.ArrowClockwise} onAction={refresh} />
+        </ActionPanel>} />
+    })()}
     {visible.map(c => { const url = c.state === 'running' ? containerWebUrl(c.ports) : undefined
       return <List.Item key={c.id} id={c.id} title={c.name} subtitle={`${c.image}${c.ports ? ' · ' + c.ports : ''}`} icon={c.state === 'running' ? Icon.CheckCircle : Icon.Circle}
         accessories={[...(c.cpu ? [{ text: `CPU ${c.cpu}` }] : []), ...(c.memory ? [{ text: c.memory }] : []), { text: c.status || c.state }]}

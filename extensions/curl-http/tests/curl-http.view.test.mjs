@@ -64,7 +64,9 @@ test('不在客户端里运行时同样不预填示例请求', async () => {
     const view = await mount(CurlHttpCommand)
     await tick()
     assert.doesNotMatch(view.text(), /httpbin\.org|declarative-ui/)
-    assert.equal(view.items()[0].props.id, 'curl-parse-error')
+    // 空输入是引导状态，不显示红色解析错误与内部错误码
+    assert.equal(view.items()[0].props.id, 'curl-empty')
+    assert.doesNotMatch(view.text(), /EMPTY_CURL_INPUT|语法错误/)
     view.unmount()
   } finally {
     globalThis.__ztoolsElectron = saved
@@ -96,5 +98,16 @@ test('DELETE / PUT 请求发送前必须确认，取消时不发请求；GET 不
   await tick()
   assert.equal(host.confirms.length, 3)
   assert.equal(host.ipcCalls.filter(([m]) => m === 'network_http_request').length, 2)
+  view.unmount()
+})
+
+test('输入无法解析时显示解析错误，副标题不带内部错误码', async () => {
+  const view = await mount(CurlHttpCommand)
+  await tick()
+  await view.search('curl')
+  await tick()
+  const item = view.items()[0]
+  assert.equal(item.props.id, 'curl-parse-error')
+  assert.doesNotMatch(String(item.props.subtitle), /^[A-Z_]+:/)
   view.unmount()
 })

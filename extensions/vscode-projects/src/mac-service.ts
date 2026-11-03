@@ -25,12 +25,23 @@ export async function scanMacProjects(operationId: string): Promise<MacProjectsR
         (p.gitBranch !== null && typeof p.gitBranch !== 'string') || (p.pathError !== null && typeof p.pathError !== 'string')) throw new Error('项目条目无效')
     ids.add(p.id)
   }
-  if (!data.sourcesRead && (data.projects.length || data.warnings.length)) throw new Error('未能读取项目历史，请检查编辑器配置权限')
+  // 一份历史都没读到却有警告：把具体原因带出来，不用笼统的"检查权限"盖掉真实错误
+  if (!data.sourcesRead && data.warnings.length) throw new Error(`未能读取项目历史：${(data.warnings as string[]).slice(0, 3).join('；')}`)
+  if (!data.sourcesRead && data.projects.length) throw new Error('项目历史缺少来源记录')
   return data as unknown as MacProjectsReport
 }
 export async function openMacProject(project: MacProject, action: 'open' | 'terminal') {
   const result = await projectsInvoke('recent_projects', { action, id: project.id })
   if (result.accepted !== true || result.id !== project.id || result.action !== action) throw new Error('系统未确认项目打开请求')
+}
+/** 宿主打开失败时常带 Node 原始错误（ENOENT / EACCES），换成用户看得懂的中文说明，保留原文便于排查 */
+export function describeOpenError(error: unknown, project: Pick<MacProject, 'path'>) {
+  const raw = error instanceof Error ? error.message : String(error)
+  // 只有报错指向项目路径本身才改写；编辑器程序缺失等其他 ENOENT 保留原文，避免误报成项目被删除
+  if (!raw.includes(project.path)) return raw
+  if (/\bENOENT\b|\bENOTDIR\b/.test(raw)) return `项目路径已不存在：${project.path}。若已恢复请重新扫描`
+  if (/\bEACCES\b|\bEPERM\b/.test(raw)) return `没有访问项目路径的权限：${project.path}（${raw}）`
+  return raw
 }
 export const cancelMacProjects = (operationId: string) => projectsInvoke('recent_projects', { action: 'cancel', operationId })
 export function filterMacProjects(items: MacProject[], query: string, family: string, hideMissing: boolean) {

@@ -36,7 +36,7 @@ export default function MacLanCommand() {
       { id: busy ? 'stop' : 'scan', title: busy ? '停止扫描' : '重新扫描', onAction: () => busy ? stop() : scan() },
       { id: 'range', title: '选择范围', onAction: chooseRange }
     ] }}>
-    {error && <List.Item id="error" title={error} actions={<ActionPanel><Action.Push title="远程唤醒设备" target={<WakeForm />} /></ActionPanel>} />}
+    {error && <List.Item id="error" title={error} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title="重新扫描" icon={Icon.ArrowClockwise} onAction={() => scan()} /><Action.Push title="远程唤醒设备" target={<WakeForm />} /></ActionPanel>} />}
     {rows.map(d => <List.Item key={d.ip} id={`device-${d.ip}`} title={d.ip} subtitle={d.mac || 'MAC 地址不可用'} icon={Icon.Desktop} accessories={[{ tag: d.response }, { text: d.openPorts.length ? `端口 ${d.openPorts.join(', ')}` : '未发现常见开放端口' }]} actions={<ActionPanel>
       <Action.CopyToClipboard title="复制 IP 地址" content={d.ip} />
       <Action.Push title="查看服务与探测详情" target={<Detail markdown={`## 服务探测\n\n${d.openPorts.length ? d.openPorts.map(p => `- TCP ${p}：连接成功`).join('\n') : '未发现所测常见端口开放。'}\n\n响应方式：${d.response}；${d.latencyMs === null ? '未测得延迟' : `响应耗时 ${d.latencyMs.toFixed(2)} ms`}。\n\n${help}`} />} />

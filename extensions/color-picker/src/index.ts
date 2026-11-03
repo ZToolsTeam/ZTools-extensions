@@ -18,6 +18,10 @@ import {
   saveColorToPalette,
   clearPalette,
   removeFromPalette,
+  calculateContrast,
+  evaluateRating,
+  splitColorInputs,
+  generateContrastPreviewSvg,
   type ColorConversionResult,
   type SavedColorItem
 } from "./converter.js";
@@ -48,6 +52,27 @@ function colorDetailMarkdown(color: ColorConversionResult): string {
   ].join("\n");
 }
 
+const USAGE_MARKDOWN = [
+  "**支持的写法**",
+  "",
+  "- `#0A84FF`、`#0A84FF80`、`#abc`",
+  "- `rgb(10, 132, 255)`、`hsl(210, 100%, 52%)`、`hsv(...)`",
+  "- `oklch(62.8% 0.2577 29.23)`、`cmyk(96%, 48%, 0%, 0%)`",
+  "- 颜色英文名，例如 `orange`"
+].join("\n");
+
+const PALETTE_EMPTY_MARKDOWN = "在任一写法上打开动作面板，选「收藏到调色板」即可保存常用颜色。";
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** macOS 只写 ⌘，Windows 写 Ctrl */
+function modKey(): string {
+  const nav = (globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator;
+  return /Mac/i.test(String(nav?.platform || nav?.userAgent || "")) ? "⌘" : "Ctrl";
+}
+
 /** 半透明颜色以 8 位 HEX 作为代表写法，否则用 6 位 */
 function displayHex(color: ColorConversionResult): string {
   return color.hasAlpha ? color.hex8 : color.hex;
@@ -62,7 +87,7 @@ export function ColorPickerCommand() {
     let cancelled = false;
     getSavedPalette()
       .then((items) => { if (!cancelled) setPalette(items); })
-      .catch((err: any) => showToast(Toast.Style.Failure, "读取调色板失败", err?.message || String(err)))
+      .catch((err: unknown) => showToast(Toast.Style.Failure, "读取调色板失败", errorText(err)))
       .finally(() => { if (!cancelled) setLoaded(true); });
     return () => { cancelled = true; };
   }, []);
@@ -81,8 +106,8 @@ export function ColorPickerCommand() {
       const hex = displayHex(c);
       setPalette(await saveColorToPalette(hex, hex));
       await showToast(Toast.Style.Success, `已收藏 ${hex}`);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "收藏失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "收藏失败", errorText(err));
     }
   };
 
@@ -97,8 +122,8 @@ export function ColorPickerCommand() {
     try {
       setPalette(await removeFromPalette(item.id));
       await showToast(Toast.Style.Success, `已移除 ${item.hex}`);
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "移除失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "移除失败", errorText(err));
     }
   };
 
@@ -115,12 +140,12 @@ export function ColorPickerCommand() {
       await clearPalette();
       setPalette([]);
       await showToast(Toast.Style.Success, "已清空调色板");
-    } catch (err: any) {
-      await showToast(Toast.Style.Failure, "清空失败", err?.message || String(err));
+    } catch (err: unknown) {
+      await showToast(Toast.Style.Failure, "清空失败", errorText(err));
     }
   };
 
-  const sections: any[] = [];
+  const sections: ReturnType<typeof List.Section>[] = [];
 
   if (color && valid) {
     const oklch = rgbToOklch(color.rgb);
@@ -167,7 +192,7 @@ export function ColorPickerCommand() {
           title: `无法识别「${trimmed}」`,
           subtitle: "支持 #RGB、#RRGGBB、#RRGGBBAA、rgb()、hsl()、hsv()、oklch()、cmyk()、颜色英文名",
           icon: Icon.ExclamationMark,
-          detail: List.Item.Detail({ markdown: "" })
+          detail: List.Item.Detail({ markdown: USAGE_MARKDOWN })
         })
       ])
     );
@@ -179,7 +204,7 @@ export function ColorPickerCommand() {
           title: "在上方输入颜色",
           subtitle: "例如 #0A84FF、rgb(10, 132, 255)、hsl(210, 100%, 52%)、orange",
           icon: Icon.Brush,
-          detail: List.Item.Detail({ markdown: "" })
+          detail: List.Item.Detail({ markdown: USAGE_MARKDOWN })
         })
       ])
     );
@@ -216,9 +241,9 @@ export function ColorPickerCommand() {
         List.Item({
           id: "palette-empty",
           title: "调色板还是空的",
-          subtitle: "在上面任一写法上按 ⌘/Ctrl+Enter 收藏到调色板",
+          subtitle: `在上面任一写法上按 ${modKey()}+Enter 收藏到调色板`,
           icon: Icon.Star,
-          detail: List.Item.Detail({ markdown: "" })
+          detail: List.Item.Detail({ markdown: PALETTE_EMPTY_MARKDOWN })
         })
       ])
     );
@@ -227,8 +252,127 @@ export function ColorPickerCommand() {
   return List(
     {
       navigationTitle: "调色板与色彩转换",
-      isShowingDetail: true,
+      // 没有可展示的颜色时不开右侧详情栏，避免整块空白
+      isShowingDetail: valid || paletteMatches.length > 0,
       searchBarPlaceholder: "输入颜色：#0A84FF、rgb(10, 132, 255)、hsl(210, 100%, 52%)…",
+      searchText: input,
+      onSearchTextChange: (val: string) => setInput(val)
+    },
+    sections
+  );
+}
+
+const RATING_TEXT: Record<string, string> = {
+  AAA: "AAA 通过",
+  AA: "AA 通过",
+  "AA Large": "仅大字 AA 通过",
+  Fail: "不通过"
+};
+
+function contrastMarkdown(fg: ColorConversionResult, bg: ColorConversionResult, ratio: number): string {
+  const pass = (ok: boolean) => (ok ? "通过" : "不通过");
+  return [
+    `![${displayHex(fg)} / ${displayHex(bg)}](${generateContrastPreviewSvg(fg.hex, bg.hex)})`,
+    "",
+    `**对比度** ${ratio}:1`,
+    "",
+    `- 正文 AA（≥ 4.5:1）：${pass(ratio >= 4.5)}`,
+    `- 正文 AAA（≥ 7:1）：${pass(ratio >= 7)}`,
+    `- 大字 AA（≥ 3:1，18pt 或 14pt 粗体以上）：${pass(ratio >= 3)}`,
+    `- 大字 AAA（≥ 4.5:1）：${pass(ratio >= 4.5)}`,
+    "",
+    ...(fg.hasAlpha || bg.hasAlpha ? ["> 含透明度的颜色按不透明颜色计算。", ""] : []),
+    `前景色 \`${displayHex(fg)}\`，背景色 \`${displayHex(bg)}\``
+  ].join("\n");
+}
+
+const CONTRAST_USAGE_MARKDOWN = [
+  "**输入两种颜色**：前景色（文字）在前，背景色在后，用空格分隔。",
+  "",
+  "- `#333333 #FFFFFF`",
+  "- `rgb(10, 132, 255) on white`",
+  "",
+  "只输入一种颜色时，分别计算它在白色与黑色背景上的对比度。"
+].join("\n");
+
+/** WCAG 对比度检测：前景色与背景色两种颜色之间的对比度 */
+export function ContrastCheckCommand() {
+  const [input, setInput] = useState("");
+  const parts = splitColorInputs(input.trim());
+  const colors = parts.slice(0, 2).map((part) => parseColor(part));
+  const invalidPart = parts.find((part, index) => index < 2 && !colors[index].isValid);
+
+  const copy = async (value: string) => {
+    await Clipboard.copy(value);
+    await showToast(Toast.Style.Success, `已复制 ${value}`);
+  };
+
+  const pairItem = (id: string, fg: ColorConversionResult, bg: ColorConversionResult, title: string) => {
+    const ratio = calculateContrast(fg.rgb, bg.rgb);
+    const ratioText = `${ratio}:1`;
+    return List.Item({
+      id,
+      title,
+      subtitle: `对比度 ${ratioText}`,
+      icon: Icon.Eye,
+      accessories: [{ text: RATING_TEXT[evaluateRating(ratio)] }],
+      detail: List.Item.Detail({ markdown: contrastMarkdown(fg, bg, ratio) }),
+      actions: ActionPanel({ title }, [
+        Action({ title: "复制对比度", icon: Icon.CopyClipboard, onAction: () => copy(ratioText) }),
+        Action({
+          title: "交换前景色与背景色",
+          icon: Icon.ArrowClockwise,
+          onAction: () => setInput(`${displayHex(bg)} ${displayHex(fg)}`)
+        })
+      ])
+    });
+  };
+
+  let sections: ReturnType<typeof List.Section>[];
+  let showDetail = true;
+  if (parts.length > 2) {
+    showDetail = false;
+    sections = [List.Section({ title: "无法计算" }, [List.Item({
+      id: "too-many",
+      title: "只能比较两种颜色",
+      subtitle: `已输入 ${parts.length} 段，请保留前景色和背景色两种`,
+      icon: Icon.ExclamationMark
+    })])];
+  } else if (invalidPart) {
+    showDetail = false;
+    sections = [List.Section({ title: "无法识别" }, [List.Item({
+      id: "invalid",
+      title: `无法识别「${invalidPart}」`,
+      subtitle: "支持 #RGB、#RRGGBB、rgb()、hsl()、hsv()、oklch()、cmyk()、颜色英文名",
+      icon: Icon.ExclamationMark
+    })])];
+  } else if (colors.length === 2) {
+    sections = [List.Section({ title: "前景色与背景色" }, [
+      pairItem("pair", colors[0], colors[1], `${displayHex(colors[0])} 在 ${displayHex(colors[1])} 上`)
+    ])];
+  } else if (colors.length === 1) {
+    const white = parseColor("#FFFFFF");
+    const black = parseColor("#000000");
+    const fg = colors[0];
+    sections = [List.Section({ title: `${displayHex(fg)} 作为文字颜色（再输入一种颜色可指定背景）` }, [
+      pairItem("on-white", fg, white, "在白色背景上"),
+      pairItem("on-black", fg, black, "在黑色背景上")
+    ])];
+  } else {
+    sections = [List.Section({ title: "开始" }, [List.Item({
+      id: "hint",
+      title: "输入前景色和背景色",
+      subtitle: "例如 #333333 #FFFFFF",
+      icon: Icon.Eye,
+      detail: List.Item.Detail({ markdown: CONTRAST_USAGE_MARKDOWN })
+    })])];
+  }
+
+  return List(
+    {
+      navigationTitle: "对比度检测",
+      isShowingDetail: showDetail,
+      searchBarPlaceholder: "前景色 背景色，例如 #333333 #FFFFFF",
       searchText: input,
       onSearchTextChange: (val: string) => setInput(val)
     },
@@ -238,7 +382,7 @@ export function ColorPickerCommand() {
 
 export const commands = {
   "convert-color": ColorPickerCommand,
-  "contrast-check": ColorPickerCommand
+  "contrast-check": ContrastCheckCommand
 };
 
 export default ColorPickerCommand;

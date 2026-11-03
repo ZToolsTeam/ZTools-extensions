@@ -169,7 +169,6 @@ export function ColorPickerCommand() {
   const [inputColor, setInputColor] = useState("#0A84FF");
   const [copyFormat, setCopyFormat] = useState<"hex" | "rgb" | "hsl" | "oklch" | "tailwind">("hex");
   const [wcagStandard, setWcagStandard] = useState<"aa" | "aaa">("aa");
-  const [magnifierZoom, setMagnifierZoom] = useState<"8x" | "16x">("8x");
   const [paletteGroup, setPaletteGroup] = useState<"all" | "recent" | "neutral" | "brand">("all");
   const [includeHashPrefix, setIncludeHashPrefix] = useState<boolean>(true);
   const isReal = isRealElectronHost();
@@ -202,7 +201,6 @@ export function ColorPickerCommand() {
 
   const handlePickScreenColor = async () => {
     try {
-      await showToast(Toast.Style.Animated, "正在启动屏幕拾色器...");
       const picked = await pickScreenColor();
       setInputColor(picked.hex);
       const updatedHist = await saveColorHistory(picked);
@@ -215,6 +213,7 @@ export function ColorPickerCommand() {
         picked.source === "native" ? "已通过原生屏幕拾色器拾取" : "高精度放大镜模拟取色"
       );
     } catch (err: unknown) {
+      if (err instanceof Error && err.name === "AbortError") return;
       const msg = String(err instanceof Error ? err.message : err || "未知异常");
       if (msg.includes("SCREEN_RECORDING") || msg.includes("TCC") || msg.includes("屏幕录制")) {
         await showToast(
@@ -386,7 +385,7 @@ export function ColorPickerCommand() {
       }}
       workbenchPanel={{
         title: "屏幕拾色与色彩换算工作台",
-        subtitle: `放大镜 ${magnifierZoom} · WCAG ${wcagStandard.toUpperCase()} 校验`,
+        subtitle: `点击屏幕选点，Esc 取消 · WCAG ${wcagStandard.toUpperCase()} 校验`,
         fields: [
           {
             id: "wb-copy-format",
@@ -411,17 +410,6 @@ export function ColorPickerCommand() {
             options: [
               { label: "AA 标准 (4.5:1 常规正文)", value: "aa" },
               { label: "AAA 严苛 (7.0:1 增强对比)", value: "aaa" }
-            ]
-          },
-          {
-            id: "wb-zoom",
-            label: "屏幕取色放大镜倍率",
-            type: "select",
-            value: magnifierZoom,
-            onChange: (val) => setMagnifierZoom(val as "8x" | "16x"),
-            options: [
-              { label: "8x 像素级标准网格", value: "8x" },
-              { label: "16x 极限亚像素网格", value: "16x" }
             ]
           },
           {

@@ -47,6 +47,12 @@ export async function readClipboardImage(signal: AbortSignal): Promise<ImageMeta
   const result = await loadImage(decodeBase64(data.image), '剪贴板图片.png')
   signal.throwIfAborted(); return result
 }
+/** macOS / Windows 默认文件系统不区分大小写，且 macOS 可能返回 NFD 文件名：按宽松规则比较，宁可误拦也不覆盖原图。 */
+function samePathText(left: string, right: string): boolean {
+  const normalize = (value: string) => value.normalize('NFC').replace(/\\/g, '/').toLowerCase()
+  return normalize(left) === normalize(right)
+}
+// 用户在系统另存为对话框中选择已有文件时，系统已请其确认替换；因此按覆盖写入（宿主原子替换），否则会出现确认替换后仍保存失败。
 export async function outputImage(image: ImageMetadata, options: WatermarkOptions, copy: boolean, signal: AbortSignal): Promise<string | null> {
   let outputPath = ''
   if (!copy) {
@@ -54,13 +60,13 @@ export async function outputImage(image: ImageMetadata, options: WatermarkOption
     if (data.canceled === true) return null
     if (data.canceled !== false || typeof data.filePath !== 'string' || !/\.png$/i.test(data.filePath)) throw new Error('请使用 .png 扩展名保存新图片')
     outputPath = data.filePath
-    if (outputPath === image.path) throw new Error('请另选新文件名，原图不会被覆盖')
+    if (image.path && samePathText(outputPath, image.path)) throw new Error('请另选新文件名，原图不会被覆盖')
   }
   const rendered = await renderWatermarkOnImage(image, options)
   signal.throwIfAborted()
   const bytes = new Uint8Array(await rendered.blob.arrayBuffer()), encoded = encodeBase64(bytes)
   signal.throwIfAborted()
-  const data = await request(copy ? 'clipboard_copy_image' : 'filesystem_write_file', copy ? { image: encoded } : { path: outputPath, content: encoded, encoding: 'base64', overwrite: false }, signal)
+  const data = await request(copy ? 'clipboard_copy_image' : 'filesystem_write_file', copy ? { image: encoded } : { path: outputPath, content: encoded, encoding: 'base64', overwrite: true }, signal)
   if (data.success !== true || (!copy && data.size !== bytes.length)) throw new Error('输出未确认，请检查目标后再试')
   return copy ? '已复制加水印图片' : `已保存新副本：${outputPath}`
 }
