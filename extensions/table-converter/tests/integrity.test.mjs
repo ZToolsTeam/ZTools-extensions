@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { detectAndParse, parseDelimitedRows, gridToJson, gridToCsv, gridToHtml, gridToMarkdown, gridToSql } from '../dist/table-service.js'
+
+setRuntimeLocale('zh-CN')
 const grid = (text, header = true) => detectAndParse(text, header).grid
 const json = (text, header = true) => JSON.parse(gridToJson(grid(text, header)))
 

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import {
   CANCEL_COMMAND,
   HOST_REQUIRED_MESSAGE,

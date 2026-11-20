@@ -1,17 +1,23 @@
 /**
  * 批量音频转换、响度标准化与音效工坊业务逻辑层 (BatchAudio 2.0 Logic)
  * 通过 Windows 原生插件提供 12 大核心音频批处理能力
- * 真实扫描本机 Music / Downloads / Desktop 目录下的音频与媒体文件，对接 BatchAudioPlugin 与 FFmpeg 声学滤镜链
+ * 音频由用户通过选择文件、选择文件夹或拖入导入，对接 BatchAudioPlugin 与 FFmpeg 声学滤镜链
  */
 
 import { getHostTransport } from '@ztools/declarative-ui'
 import {
-  formatBytes,
-  getRealSystemPath,
+  callHostTransport,
   invokeDllPluginCapability,
-  createDirectoryScanner,
   showRealItemInFolder
 } from './native-ipc.js'
+import {
+  collectFolderFiles,
+  friendlyFileError,
+  isVolumeRoot,
+  pickFolder
+} from './file-import.js'
+import type { FileImportOptions, FileImportResult, FileImportRules, FileImportTransport, ImportedFile } from './file-import.js'
+import { t } from './i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -40,129 +46,138 @@ export interface RealAudioFileItem {
   path: string
   parentDir: string
   extension: string
-  sizeBytes: number
+  /** 字节数；宿主未授权读取或不可用时为 null（界面显示「大小未识别」） */
+  sizeBytes: number | null
 }
 
 export const DLL_PLUGIN_NAME = 'BatchAudioPlugin'
 export const FORBIDDEN_TARGET_PATTERN = /(?:^|[\\/])Windows[\\/]System32(?:[\\/]|$)|(?:^|[\\/])\.\.(?:[\\/]|$)/i
-export const FORBIDDEN_REASON = '音频批处理输出路径不可指向系统受保护目录或包含路径穿越'
+export const FORBIDDEN_REASON = t('forbiddenReason')
+/** 合并模式（BatchMergeAudio）宿主上限：单次最多 100 个文件、总大小 2 GiB */
+export const MERGE_MAX_FILES = 100
+export const MERGE_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+export const MERGE_LIMIT_ERROR = t('mergeLimitError')
 
 /**
  * 通过 Windows 原生插件提供 12 大核心音频处理模式
  */
-export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = [
-  {
-    id: 'audio-convert-mp3',
-    title: '01. 批量格式转码为 MP3 (320kbps CBR)',
-    subtitle: '使用 MP3 320kbps 编码，保留源音频文本元数据',
-    tag: 'MP3 320k',
-    method: 'BatchConvertFormat',
-    params: { format: 'mp3', bitrate: '320k', sampleRate: 44100 },
-    ffmpegFilter: '-c:a libmp3lame -b:a 320k -ar 44100'
-  },
-  {
-    id: 'audio-convert-flac',
-    title: '02. 批量转码为无损 FLAC (Level 8)',
-    subtitle: 'FLAC 无损编码，采样率按左侧选项设置',
-    tag: '无损 FLAC',
-    method: 'BatchConvertFormat',
-    params: { format: 'flac', compressionLevel: 8 },
-    ffmpegFilter: '-c:a flac -compression_level 8'
-  },
-  {
-    id: 'audio-loudnorm',
-    title: '03. EBU R128 广播级响度标准化 (-16 LUFS)',
-    subtitle: '自动平衡多首音频响度差异，防止破音失真 (Podcast/流媒体标准)',
-    tag: 'R128 响度',
-    method: 'BatchLoudnorm',
-    params: { targetI: -16, targetTp: -1.5, targetLra: 11 },
-    ffmpegFilter: '-af "loudnorm=I=-16:TP=-1.5:LRA=11"'
-  },
-  {
-    id: 'audio-gain',
-    title: '04. 固定音量分贝增益放大 (+3.5 dB)',
-    subtitle: '针对录音音量偏小的会议/课程素材统一提升分贝增益',
-    tag: '音量增益',
-    method: 'BatchAdjustVolume',
-    params: { gainDb: 3.5 },
-    ffmpegFilter: '-af "volume=3.5dB"'
-  },
-  {
-    id: 'audio-silence',
-    title: '05. 首尾静音片段自动检测与切除 (-50dB)',
-    subtitle: '基于 BatchAudioSilenceParser 自动剔除录音首尾空白静音段',
-    tag: '切除静音',
-    method: 'BatchTrimAudio',
-    params: { stripSilence: true, thresholdDb: -50 },
-    ffmpegFilter: '-af "silenceremove=start_periods=1:start_silence=0.3:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_silence=0.3:start_threshold=-50dB,areverse"'
-  },
-  {
-    id: 'audio-trim-ends',
-    title: '06. 音频去头去尾定时裁剪 (跳过首尾2秒)',
-    subtitle: '批量去除固定片头播报或片尾版权提示音',
-    tag: '去头去尾',
-    method: 'BatchTrimDuration',
-    params: { skipStartSec: 2, skipEndSec: 2 },
-    ffmpegFilter: '-ss 00:00:02 -c:a copy'
-  },
-  {
-    id: 'audio-fade',
-    title: '07. 批量添加柔和淡入淡出过渡 (3秒)',
-    subtitle: '为背景配乐与铃声添加平滑 afade 首尾过渡曲线',
-    tag: '淡入淡出',
-    method: 'BatchFadeInOut',
-    params: { fadeInSec: 3, fadeOutSec: 3 },
-    ffmpegFilter: '-af "afade=t=in:st=0:d=3,afade=t=out:st=180:d=3"'
-  },
-  {
-    id: 'audio-eq-vocal',
-    title: '08. 10 段频率均衡器 (EQ 人声与播客清晰增强)',
-    subtitle: '衰减 100Hz 以下低频轰鸣，提升 3kHz 人声清晰度频段',
-    tag: 'EQ 均衡器',
-    method: 'BatchEqualizer',
-    params: { preset: 'vocal_clarity', lowCutHz: 90, boost3kHzDb: 4 },
-    ffmpegFilter: '-af "highpass=f=90,equalizer=f=3000:width_type=q:w=1.2:g=4"'
-  },
-  {
-    id: 'audio-compressor',
-    title: '09. 动态范围压缩器 (Compressor 防忽大忽小)',
-    subtitle: '压制突发大音量峰值并抬升轻声细语细节',
-    tag: '动态压缩',
-    method: 'BatchCompressor',
-    params: { thresholdDb: -18, ratio: 4, attackMs: 20, releaseMs: 250 },
-    ffmpegFilter: '-af "acompressor=threshold=-18dB:ratio=4:attack=20:release=250"'
-  },
-  {
-    id: 'audio-denoise',
-    title: '10. 频谱背景降噪 (afftdn 空调/电流底噪消除)',
-    subtitle: '基于 FFT 频谱滤波消除环境白噪音与麦克风底噪',
-    tag: '频谱降噪',
-    method: 'BatchDenoise',
-    params: { noiseReductionDb: 14, noiseFloorDb: -45 },
-    ffmpegFilter: '-af "afftdn=nr=14:nf=-45"'
-  },
-  {
-    id: 'audio-merge',
-    title: '11. 多音频轨道无缝拼接合并',
-    subtitle: '按勾选顺序自动统一采样率并无缝合并为单一音频文件',
-    tag: '无缝合并',
-    method: 'BatchMergeAudio',
-    params: { normalizeBeforeMerge: true },
-    ffmpegFilter: '-filter_complex "concat=n=2:v=0:a=1"'
-  },
-  {
-    id: 'audio-id3',
-    title: '12. 批量音频 ID3v2 元数据与版权标签写入',
-    subtitle: '统一写入艺术家、专辑名称、年份与发行版权签名',
-    tag: 'ID3 标签',
-    method: 'BatchWriteMetadata',
-    params: { artist: 'ZTools Audio Studio', year: '2026' },
-    ffmpegFilter: '-metadata artist="ZTools Audio Studio" -metadata date="2026"'
-  }
-]
+export function getAudioWorkshopModes(): CapabilityActionItem[] {
+  return [
+    {
+      id: 'audio-convert-mp3',
+      title: t('mode01Title'),
+      subtitle: t('mode01Sub'),
+      tag: t('mode01Tag'),
+      method: 'BatchConvertFormat',
+      params: { format: 'mp3', bitrate: '320k', sampleRate: 44100 },
+      ffmpegFilter: '-c:a libmp3lame -b:a 320k -ar 44100'
+    },
+    {
+      id: 'audio-convert-flac',
+      title: t('mode02Title'),
+      subtitle: t('mode02Sub'),
+      tag: t('mode02Tag'),
+      method: 'BatchConvertFormat',
+      params: { format: 'flac', compressionLevel: 8 },
+      ffmpegFilter: '-c:a flac -compression_level 8'
+    },
+    {
+      id: 'audio-loudnorm',
+      title: t('mode03Title'),
+      subtitle: t('mode03Sub'),
+      tag: t('mode03Tag'),
+      method: 'BatchLoudnorm',
+      params: { targetI: -16, targetTp: -1.5, targetLra: 11 },
+      ffmpegFilter: '-af "loudnorm=I=-16:TP=-1.5:LRA=11"'
+    },
+    {
+      id: 'audio-gain',
+      title: t('mode04Title'),
+      subtitle: t('mode04Sub'),
+      tag: t('mode04Tag'),
+      method: 'BatchAdjustVolume',
+      params: { gainDb: 3.5 },
+      ffmpegFilter: '-af "volume=3.5dB"'
+    },
+    {
+      id: 'audio-silence',
+      title: t('mode05Title'),
+      subtitle: t('mode05Sub'),
+      tag: t('mode05Tag'),
+      method: 'BatchTrimAudio',
+      params: { stripSilence: true, thresholdDb: -50 },
+      ffmpegFilter: '-af "silenceremove=start_periods=1:start_silence=0.3:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_silence=0.3:start_threshold=-50dB,areverse"'
+    },
+    {
+      id: 'audio-trim-ends',
+      title: t('mode06Title'),
+      subtitle: t('mode06Sub'),
+      tag: t('mode06Tag'),
+      method: 'BatchTrimDuration',
+      params: { skipStartSec: 2, skipEndSec: 2 },
+      ffmpegFilter: '-ss 00:00:02 -c:a copy'
+    },
+    {
+      id: 'audio-fade',
+      title: t('mode07Title'),
+      subtitle: t('mode07Sub'),
+      tag: t('mode07Tag'),
+      method: 'BatchFadeInOut',
+      params: { fadeInSec: 3, fadeOutSec: 3 },
+      ffmpegFilter: '-af "afade=t=in:st=0:d=3,afade=t=out:st=180:d=3"'
+    },
+    {
+      id: 'audio-eq-vocal',
+      title: t('mode08Title'),
+      subtitle: t('mode08Sub'),
+      tag: t('mode08Tag'),
+      method: 'BatchEqualizer',
+      params: { preset: 'vocal_clarity', lowCutHz: 90, boost3kHzDb: 4 },
+      ffmpegFilter: '-af "highpass=f=90,equalizer=f=3000:width_type=q:w=1.2:g=4"'
+    },
+    {
+      id: 'audio-compressor',
+      title: t('mode09Title'),
+      subtitle: t('mode09Sub'),
+      tag: t('mode09Tag'),
+      method: 'BatchCompressor',
+      params: { thresholdDb: -18, ratio: 4, attackMs: 20, releaseMs: 250 },
+      ffmpegFilter: '-af "acompressor=threshold=-18dB:ratio=4:attack=20:release=250"'
+    },
+    {
+      id: 'audio-denoise',
+      title: t('mode10Title'),
+      subtitle: t('mode10Sub'),
+      tag: t('mode10Tag'),
+      method: 'BatchDenoise',
+      params: { noiseReductionDb: 14, noiseFloorDb: -45 },
+      ffmpegFilter: '-af "afftdn=nr=14:nf=-45"'
+    },
+    {
+      id: 'audio-merge',
+      title: t('mode11Title'),
+      subtitle: t('mode11Sub'),
+      tag: t('mode11Tag'),
+      method: 'BatchMergeAudio',
+      params: { normalizeBeforeMerge: true },
+      ffmpegFilter: '-filter_complex "concat=n=2:v=0:a=1"'
+    },
+    {
+      id: 'audio-id3',
+      title: t('mode12Title'),
+      subtitle: t('mode12Sub'),
+      tag: t('mode12Tag'),
+      method: 'BatchWriteMetadata',
+      params: { artist: 'ZTools Audio Studio', year: '2026' },
+      ffmpegFilter: '-metadata artist="ZTools Audio Studio" -metadata date="2026"'
+    }
+  ]
+}
+
+export const AUDIO_WORKSHOP_MODES: CapabilityActionItem[] = getAudioWorkshopModes()
 
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return AUDIO_WORKSHOP_MODES.map(item => ({
+  return getAudioWorkshopModes().map(item => ({
     ...item,
     params: { ...item.params }
   }))
@@ -194,22 +209,23 @@ function isAudioPath(value: unknown): value is string {
 /** 这里只接受音频处理契约；数值滤镜范围由实际执行它的宿主统一校验。 */
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   const reject = (error: string) => ({ valid: false, error })
-  if (!AUDIO_METHODS.has(method)) return reject('INVALID_METHOD: 不支持的音频处理模式')
-  if (!params || typeof params !== 'object' || Array.isArray(params)) return reject('INVALID_PARAMS: 音频参数必须为对象')
+  if (!AUDIO_METHODS.has(method)) return reject(t('errInvalidMethod'))
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return reject(t('errInvalidParams'))
   const record = params as Record<string, unknown>
   const inputs = record.files === undefined ? [record.inputPath] : record.files
-  if (!Array.isArray(inputs) || !inputs.length) return reject('INVALID_FILES: 请选择至少一首音频')
+  if (!Array.isArray(inputs) || !inputs.length) return reject(t('errInvalidFilesEmpty'))
   for (const input of inputs) {
-    if (!isAudioPath(input)) return reject('INVALID_FILES: 每个音频输入都必须是有效的绝对文件路径')
+    if (!isAudioPath(input)) return reject(t('errInvalidFilesPath'))
   }
-  if (method === 'BatchMergeAudio' && inputs.length < 2) return reject('INVALID_FILES: 合并需要至少两首音频')
+  if (method === 'BatchMergeAudio' && inputs.length < 2) return reject(t('errMergeMinFiles'))
+  if (method === 'BatchMergeAudio' && inputs.length > MERGE_MAX_FILES) return reject(`INVALID_FILES: ${t('mergeLimitError')}`)
   for (const key of ['outputDir', 'outputPath']) {
     if (record[key] === undefined) continue
-    if (!isAudioPath(record[key])) return reject(`INVALID_OUTPUT: ${key} 必须为有效的绝对路径`)
-    if (FORBIDDEN_TARGET_PATTERN.test(record[key])) return reject(`SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}`)
+    if (!isAudioPath(record[key])) return reject(t('errInvalidOutputPath', { key }))
+    if (FORBIDDEN_TARGET_PATTERN.test(record[key])) return reject(`SECURITY_INTERCEPTED: ${t('forbiddenReason')}`)
   }
   if (record.outputPath !== undefined && inputs.length > 1 && method !== 'BatchMergeAudio') {
-    return reject('INVALID_OUTPUT: 多个独立任务不能共用一个输出文件')
+    return reject(t('errMultiOutputSingle'))
   }
   return { valid: true }
 }
@@ -221,7 +237,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errValidationFailed'))
   }
   const transport = hostBridge ? null : getHostTransport()
   if (transport) {
@@ -232,7 +248,7 @@ export async function invokeNativeCapability(
       const data = raw?.data && typeof raw.data === 'object' ? raw.data as Record<string, unknown> : raw
       const ok = data?.ok === true && data.success !== false
       return { ok, pluginName: DLL_PLUGIN_NAME, method, data, fromFallback: false,
-        ...(ok ? {} : { error: String(data?.error || '客户端未确认音频处理成功') }) }
+        ...(ok ? {} : { error: String(data?.error || t('errHostUnconfirmed')) }) }
     } catch (err) {
       return { ok: false, pluginName: DLL_PLUGIN_NAME, method, error: err instanceof Error ? err.message : String(err) }
     }
@@ -255,100 +271,147 @@ export interface AudioBatchResult {
   errors: string[]
 }
 
-/** 合并一次提交全部输入；独立任务逐个记录回执，部分失败不冒充全部完成。 */
+/**
+ * 合并模式执行前预检：单次最多 100 个文件、总计 2 GiB；
+ * 未知大小（null）计入文件数量，不计入已知体积总量。
+ */
+export function checkMergeAudioLimits(
+  files: ReadonlyArray<Pick<RealAudioFileItem, 'sizeBytes'>>
+): string | null {
+  if (files.length > MERGE_MAX_FILES) return t('mergeLimitError')
+  let knownBytes = 0
+  for (const file of files) {
+    if (typeof file.sizeBytes === 'number' && Number.isFinite(file.sizeBytes) && file.sizeBytes >= 0) {
+      knownBytes += file.sizeBytes
+    }
+  }
+  if (knownBytes > MERGE_MAX_TOTAL_BYTES) return t('mergeLimitError')
+  return null
+}
+
+/** 合并一次提交全部输入；独立任务逐个记录回执，支持跳过处理中移除的条目，部分失败不冒充全部完成。 */
 export async function processAudioSelection(
-  method: string, params: Record<string, unknown>, files: RealAudioFileItem[], hostOverride?: unknown
+  method: string,
+  params: Record<string, unknown>,
+  files: RealAudioFileItem[],
+  hostOverride?: unknown,
+  options: {
+    shouldSkip?: (id: string) => boolean
+    onStart?: (ids: string[]) => void
+    onDone?: (ids: string[]) => void
+  } = {}
 ): Promise<AudioBatchResult> {
   const result: AudioBatchResult = { completed: 0, failed: 0, outputs: [], errors: [] }
   const merge = method === 'BatchMergeAudio'
   if (!files.length || (merge && files.length < 2)) {
-    return { ...result, failed: files.length || 1, errors: ['合并需要至少两首音频，其他处理需要至少一首音频'] }
+    return { ...result, failed: files.length || 1, errors: [t('errMinAudioForRun')] }
+  }
+  if (merge) {
+    const limitError = checkMergeAudioLimits(files)
+    if (limitError) {
+      return { ...result, failed: files.length, errors: [limitError] }
+    }
   }
   const groups = merge ? [files] : files.map(file => [file])
   for (const group of groups) {
+    if (!merge && group.every(file => options.shouldSkip?.(file.id))) continue
+    const groupIds = group.map(file => file.id)
+    options.onStart?.(groupIds)
     try {
       const res = await invokeNativeCapability(method, { ...params, files: group.map(file => file.path) }, hostOverride)
       const data = res.data as { results?: Array<{ outputPath?: unknown; sizeBytes?: unknown }>; errors?: unknown[] } | undefined
       const output = data?.results?.[0]
       if (!res.ok || data?.errors?.length || !output || typeof output.outputPath !== 'string' || !output.outputPath.trim() || !(Number(output.sizeBytes) > 0)) {
-        throw new Error(res.error || '客户端没有返回有效的音频输出文件')
+        throw new Error(friendlyFileError(res.error || t('errNoValidOutput')))
       }
       result.completed += group.length
       result.outputs.push(output.outputPath)
     } catch (err) {
       result.failed += group.length
-      result.errors.push(`${group.map(file => file.name).join('、')}：${err instanceof Error ? err.message : String(err)}`)
+      result.errors.push(
+        t('errItemPrefix', {
+          names: group.map(file => file.name).join(t('errItemJoinSep')),
+          msg: friendlyFileError(err)
+        })
+      )
+    } finally {
+      options.onDone?.(groupIds)
     }
   }
   return result
 }
 
-const AUDIO_EXT_REGEX = /\.(?:mp3|flac|wav|aac|m4a|ogg|wma|opus|aiff)$/i
+export const AUDIO_IMPORT_EXTENSIONS = ['.mp3', '.flac', '.wav', '.aac', '.m4a', '.ogg', '.wma', '.opus', '.aiff'] as const
+export const AUDIO_EXT_REGEX = /\.(?:mp3|flac|wav|aac|m4a|ogg|wma|opus|aiff)$/i
+export const AUDIO_IMPORT_SUPPORTED_TEXT = 'MP3 / FLAC / WAV / AAC / M4A / OGG / WMA / OPUS / AIFF'
 
-export type AudioWorkspaceSnapshot = RealAudioFileItem[] & {
-  scannedDirs: string[]
-  files: RealAudioFileItem[]
-  items: RealAudioFileItem[]
-  presets: CapabilityActionItem[]
-  error?: string
+/** 音频导入规则：递归 5 层、最多 500 个文件、跳过系统保护目录 */
+export const AUDIO_IMPORT_RULES: FileImportRules = {
+  extensions: AUDIO_IMPORT_EXTENSIONS,
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
 }
 
-/**
- * 扫描本机 Music / Downloads / Desktop 目录下的真实音频文件
- * 严禁回退扫描非音频文件充当音频，严禁在真实宿主下拼接 INITIAL_SAMPLE_AUDIOS
- */
-export async function fetchRealAudioWorkspace(hostOverride?: unknown): Promise<AudioWorkspaceSnapshot> {
-  const [musicDir, downloadsDir, desktopDir] = await Promise.all([
-    getRealSystemPath('music', hostOverride),
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride)
-  ])
+/** 把宿主调用包装为共享导入模块所需的 transport */
+export function createAudioImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
 
-  const scannedDirs = [musicDir, downloadsDir, desktopDir].filter(Boolean)
-  const files: RealAudioFileItem[] = []
-  const scanner = createDirectoryScanner(hostOverride)
-  const seenPaths = new Set<string>()
-
-  for (const dir of scannedDirs) {
-    const audioScan = await scanner.scan(dir, {
-      maxDepth: 2,
-      maxFiles: 250,
-      collectTopN: 40,
-      filterExt: AUDIO_EXT_REGEX,
-      hostOverride
-    })
-    for (const f of audioScan.files) {
-      if (f.sizeBytes <= 0) continue
-      if (!AUDIO_EXT_REGEX.test(f.name)) continue
-      const normPath = f.path.toLowerCase()
-      if (seenPaths.has(normPath)) continue
-      seenPaths.add(normPath)
-      const dot = f.name.lastIndexOf('.')
-      const ext = dot > 0 ? f.name.slice(dot).toLowerCase() : '.mp3'
-      files.push({
-        id: `aud-${files.length}-${f.path}`,
-        name: f.name,
-        path: f.path,
-        parentDir: dir,
-        extension: ext,
-        sizeBytes: f.sizeBytes
-      })
+/** 选择文件夹并收集音频（选中整个磁盘根目录时先请用户确认） */
+export async function pickAudioFolderWithConfirm(
+  transport: FileImportTransport,
+  confirmVolumeRoot: (folderPath: string) => Promise<boolean>,
+  options: FileImportOptions = {}
+): Promise<FileImportResult> {
+  const picked = await pickFolder(transport, { title: t('pickFolderTitle') })
+  if (options.signal?.aborted || picked.canceled) {
+    return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+  }
+  if (picked.error || !picked.folderPath) {
+    return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: picked.error || t('noFolderSelected') }
+  }
+  if (isVolumeRoot(picked.folderPath)) {
+    const confirmed = await confirmVolumeRoot(picked.folderPath)
+    if (options.signal?.aborted || !confirmed) {
+      return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
     }
   }
-
-  files.sort((a, b) => b.sizeBytes - a.sizeBytes)
-  const presets = getCapabilityItems()
-
-  return Object.assign([...files], {
-    scannedDirs,
-    files,
-    items: files,
-    presets,
-    error: scanner.error || (scannedDirs.length ? undefined : '无法获取音频目录的位置')
-  })
+  return collectFolderFiles(transport, picked.folderPath, AUDIO_IMPORT_RULES, options)
 }
 
-export const scanLocalAudioQueue = fetchRealAudioWorkspace
+function splitAudioPath(filePath: string): { dir: string; fileName: string; ext: string } {
+  const sepIdx = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'))
+  const dir = sepIdx >= 0 ? filePath.slice(0, sepIdx) : ''
+  const fileName = sepIdx >= 0 ? filePath.slice(sepIdx + 1) : filePath
+  const dot = fileName.lastIndexOf('.')
+  const ext = dot > 0 ? fileName.slice(dot).toLowerCase() : '.mp3'
+  return { dir, fileName, ext }
+}
+
+let audioItemSeq = 0
+
+/** 从路径构造音频队列项 */
+export function makeAudioItem(
+  id: string,
+  filePath: string,
+  sizeBytes: number | null,
+  parentDirOverride?: string
+): RealAudioFileItem {
+  const { dir, fileName, ext } = splitAudioPath(filePath)
+  return {
+    id,
+    name: fileName,
+    path: filePath,
+    parentDir: parentDirOverride ?? dir,
+    extension: ext,
+    sizeBytes: typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : null
+  }
+}
+
+/** 把共享导入结果转为音频队列项 */
+export function toAudioItem(file: ImportedFile): RealAudioFileItem {
+  audioItemSeq += 1
+  return makeAudioItem(`aud-${audioItemSeq}-${file.path}`, file.path, file.sizeBytes, file.parentDir)
+}
 
 export async function openAudioFileLocation(fullPath: string, hostOverride?: unknown): Promise<boolean> {
   if (!fullPath) return false

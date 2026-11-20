@@ -1,4 +1,121 @@
+import { t } from './i18n.js'
 import type { Quicklink, QuicklinkCategory, QuicklinkItem, QuicklinkResolved } from './types'
+
+export function getDefaultQuicklinks(): Quicklink[] {
+  return [
+    {
+      id: 'ql-1',
+      title: t('defQl1Title'),
+      link: 'https://github.com/search?q={query}',
+      urlPattern: 'https://github.com/search?q={query}',
+      keyword: 'gh',
+      alias: 'gh',
+      category: 'search',
+      isGroup: false,
+      description: t('defQl1Desc'),
+      icon: 'code',
+      defaultArgument: 'ztools',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-2',
+      title: t('defQl2Title'),
+      link: 'https://www.zhihu.com/search?type=content&q={query}',
+      urlPattern: 'https://www.zhihu.com/search?type=content&q={query}',
+      keyword: 'zh',
+      alias: 'zh',
+      category: 'search',
+      isGroup: false,
+      description: t('defQl2Desc'),
+      icon: 'globe',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-3',
+      title: t('defQl3Title'),
+      link: 'https://search.bilibili.com/all?keyword={query}',
+      urlPattern: 'https://search.bilibili.com/all?keyword={query}',
+      keyword: 'bili',
+      alias: 'bili',
+      category: 'search',
+      isGroup: false,
+      description: t('defQl3Desc'),
+      icon: 'play',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-6',
+      title: t('defQl6Title'),
+      link: 'https://www.google.com/search?q={query}',
+      urlPattern: 'https://www.google.com/search?q={query}',
+      keyword: 'gg',
+      alias: 'gg',
+      category: 'search',
+      isGroup: false,
+      description: t('defQl6Desc'),
+      icon: 'globe',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-7',
+      title: t('defQl7Title'),
+      link: 'https://www.xiaohongshu.com/search_result?keyword={query}',
+      urlPattern: 'https://www.xiaohongshu.com/search_result?keyword={query}',
+      keyword: 'xhs',
+      alias: 'xhs',
+      category: 'search',
+      isGroup: false,
+      description: t('defQl7Desc'),
+      icon: 'globe',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-4',
+      title: t('defQl4Title'),
+      link: 'https://chat.deepseek.com',
+      urlPattern: 'https://chat.deepseek.com',
+      keyword: 'ds',
+      alias: 'ds',
+      category: 'direct',
+      isGroup: false,
+      description: t('defQl4Desc'),
+      icon: 'globe',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    },
+    {
+      id: 'ql-5',
+      title: t('defQl5Title'),
+      link: 'https://developer.mozilla.org/zh-CN/',
+      urlPattern: 'https://developer.mozilla.org/zh-CN/',
+      keyword: 'docs',
+      alias: 'docs',
+      category: 'group',
+      isGroup: true,
+      urls: [
+        'https://developer.mozilla.org/zh-CN/',
+        'https://stackoverflow.com/',
+        'https://github.com/trending'
+      ],
+      description: t('defQl5Desc'),
+      icon: 'window',
+      openCount: 0,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000
+    }
+  ]
+}
 
 export const DEFAULT_QUICKLINKS: Quicklink[] = [
   {
@@ -136,7 +253,7 @@ export function validateQuicklinkUrlPattern(rawUrl: string): {
 } {
   const trimmed = String(rawUrl ?? '').trim()
   if (!trimmed) {
-    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 目标网址不能为空' }
+    return { valid: false, normalizedUrl: '', error: t('errEmptyUrl') }
   }
   const lower = trimmed.toLowerCase()
   if (
@@ -147,7 +264,7 @@ export function validateQuicklinkUrlPattern(rawUrl: string): {
     return {
       valid: false,
       normalizedUrl: '',
-      error: 'DANGEROUS_PROTOCOL: 严禁使用 javascript: 等危险脚本伪协议'
+      error: t('errDangerousProto')
     }
   }
   let normalizedUrl = ''
@@ -159,7 +276,7 @@ export function validateQuicklinkUrlPattern(rawUrl: string): {
     return {
       valid: false,
       normalizedUrl: '',
-      error: 'INVALID_URL: 请输入合法的 http(s):// 网址或域名'
+      error: t('errInvalidUrlOrDomain')
     }
   }
   // 与客户端打开网址的校验一致：必须能解析出主机名，且不能带账号密码，否则保存后也打不开
@@ -167,13 +284,13 @@ export function validateQuicklinkUrlPattern(rawUrl: string): {
   try {
     parsed = new URL(normalizedUrl.replace(new RegExp(PLACEHOLDER_SOURCE, 'gi'), 'q'))
   } catch {
-    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址格式无效' }
+    return { valid: false, normalizedUrl: '', error: t('errMalformedUrl') }
   }
   if (!parsed.hostname) {
-    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址缺少域名' }
+    return { valid: false, normalizedUrl: '', error: t('errMissingHostname') }
   }
   if (parsed.username || parsed.password) {
-    return { valid: false, normalizedUrl: '', error: 'INVALID_URL: 网址不能包含账号或密码' }
+    return { valid: false, normalizedUrl: '', error: t('errUrlCredentials') }
   }
   return { valid: true, normalizedUrl }
 }
@@ -186,21 +303,21 @@ export function validateQuicklinkAlias(
 ): { valid: boolean; alias?: string; error?: string } {
   const alias = String(rawAlias ?? '').trim()
   if (!alias) return { valid: true }
-  if (/\s/.test(alias)) return { valid: false, error: '别名不能包含空格' }
+  if (/\s/.test(alias)) return { valid: false, error: t('errAliasWhitespace') }
   const lower = alias.toLowerCase()
   const clash = links.find((item) => item.id !== selfId && (item.alias || item.keyword || '').toLowerCase() === lower)
-  if (clash) return { valid: false, error: `别名「${alias}」已被「${clash.title}」使用` }
+  if (clash) return { valid: false, error: t('errAliasConflict', { alias, title: clash.title }) }
   return { valid: true, alias }
 }
 
 /** 网址组：每行一个网址，全部合法才通过 */
 export function parseGroupUrls(text: string): { valid: boolean; urls: string[]; error?: string } {
   const lines = String(text ?? '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
-  if (lines.length === 0) return { valid: false, urls: [], error: '网址组至少需要一个网址' }
+  if (lines.length === 0) return { valid: false, urls: [], error: t('errGroupEmpty') }
   const urls: string[] = []
   for (const [index, line] of lines.entries()) {
     const check = validateQuicklinkUrlPattern(line)
-    if (!check.valid) return { valid: false, urls: [], error: `第 ${index + 1} 行：${check.error}` }
+    if (!check.valid) return { valid: false, urls: [], error: t('errGroupLine', { line: index + 1, error: check.error || '' }) }
     urls.push(check.normalizedUrl)
   }
   return { valid: true, urls }
@@ -249,16 +366,16 @@ async function openExternalUrl(targetUrl: string): Promise<void> {
     | { transport?: { methods?: Record<string, (request: Record<string, unknown>) => Promise<{ success?: boolean; error?: { message?: string } } | undefined>> } }
     | undefined
   if (typeof ztools?.shell?.openExternal === 'function') {
-    if ((await ztools.shell.openExternal(targetUrl)) === false) throw new Error(`系统未能打开：${targetUrl}`)
+    if ((await ztools.shell.openExternal(targetUrl)) === false) throw new Error(t('errSystemOpenFailed', { url: targetUrl }))
     return
   }
   const method = electron?.transport?.methods?.shell_open_external
   if (typeof method === 'function') {
     const reply = await method({ params: { url: targetUrl } })
-    if (reply?.success !== true) throw new Error(reply?.error?.message || `系统未能打开：${targetUrl}`)
+    if (reply?.success !== true) throw new Error(reply?.error?.message || t('errSystemOpenFailed', { url: targetUrl }))
     return
   }
-  throw new Error('当前客户端不支持打开网址，请升级客户端')
+  throw new Error(t('errClientNoOpenExternal'))
 }
 
 export async function launchQuicklink(
@@ -276,7 +393,7 @@ export async function launchQuicklink(
         await openFn(target)
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
-        throw new Error(launched.length ? `已打开 ${launched.length} 个，第 ${launched.length + 1} 个打开失败：${reason}` : reason)
+        throw new Error(launched.length ? t('errGroupPartialOpen', { opened: launched.length, next: launched.length + 1, reason }) : reason)
       }
       launched.push(target)
     }
@@ -290,16 +407,16 @@ export async function launchQuicklink(
 }
 
 function getStorage(): Storage {
-  if (typeof localStorage === 'undefined') throw new Error('当前宿主没有快捷链接存储，无法保存')
+  if (typeof localStorage === 'undefined') throw new Error(t('errNoStorage'))
   return localStorage
 }
 
 export async function getQuicklinks(): Promise<Quicklink[]> {
   const data = getStorage().getItem(STORAGE_KEY)
-  if (data === null) return [...DEFAULT_QUICKLINKS]
+  if (data === null) return getDefaultQuicklinks()
   const parsed = JSON.parse(data) as Quicklink[]
   if (!Array.isArray(parsed) || parsed.some((item) => !item || typeof item.id !== 'string' || typeof item.title !== 'string' || typeof item.link !== 'string')) {
-    throw new Error('快捷链接存储格式无效，未覆盖原数据')
+    throw new Error(t('errCorruptStorage'))
   }
   return parsed
 }
@@ -401,7 +518,7 @@ export function importQuicklinksJson(
         success: false,
         importedCount: 0,
         result: existing,
-        error: '导入内容必须为 Quicklink 数组 JSON'
+        error: t('errImportNotArray')
       }
     }
     const existingMap = new Map<string, Quicklink>()
@@ -437,7 +554,7 @@ export function importQuicklinksJson(
       success: false,
       importedCount: 0,
       result: existing,
-      error: err instanceof Error ? err.message : 'JSON 解析失败'
+      error: err instanceof Error ? err.message : t('errJsonParse')
     }
   }
 }

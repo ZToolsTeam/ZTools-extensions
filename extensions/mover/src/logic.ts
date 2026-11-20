@@ -19,6 +19,7 @@ import {
   scanRealDirectoryTree,
   showRealItemInFolder
 } from "./native-ipc.js";
+import { t } from "./i18n.js";
 
 export { formatBytes };
 
@@ -38,11 +39,15 @@ export interface MoverCategoryMeta {
   subtitle: string;
 }
 
-export const MOVER_CATEGORIES: MoverCategoryMeta[] = [
-  { id: "social_office", name: "微信与 QQ 文件", subtitle: "WeChat Files、xwechat_files、Tencent Files" },
-  { id: "user_profile", name: "个人文件夹", subtitle: "下载、文档、视频" },
-  { id: "dev_cache", name: "开发缓存", subtitle: "npm、pip、NuGet 缓存" }
-];
+export function getMoverCategories(): MoverCategoryMeta[] {
+  return [
+    { id: "social_office", name: t("catSocialName"), subtitle: t("catSocialSubtitle") },
+    { id: "user_profile", name: t("catUserName"), subtitle: t("catUserSubtitle") },
+    { id: "dev_cache", name: t("catDevName"), subtitle: t("catDevSubtitle") }
+  ];
+}
+
+export const MOVER_CATEGORIES: MoverCategoryMeta[] = getMoverCategories();
 
 export interface TargetDriveOption {
   id: string;
@@ -123,11 +128,11 @@ export function destinationPathFor(sourcePath: string, targetRoot: string): stri
 }
 
 export async function fetchMoverSnapshot(hostBridge?: DynamicBridge): Promise<MoverSnapshot> {
-  if (!hostBridge && !isRealElectronHost()) return createEmptyMoverSnapshot(NOT_IN_CLIENT_MESSAGE);
+  if (!hostBridge && !isRealElectronHost()) return createEmptyMoverSnapshot(t("notInClient"));
   try {
     // 拿不到真实用户目录时不能退回默认用户目录去扫描
     const home = await getRealSystemPath("home", hostBridge);
-    if (!home) return createEmptyMoverSnapshot("无法获取用户目录位置");
+    if (!home) return createEmptyMoverSnapshot(t("errNoHomePath"));
     const [paths, drives] = await Promise.all([
       resolveRealSpecialPaths(hostBridge),
       probeRealDiskDrives(["C", "D", "E", "F", "G", "H"], hostBridge)
@@ -143,22 +148,25 @@ export async function fetchMoverSnapshot(hostBridge?: DynamicBridge): Promise<Mo
           id: root,
           driveLetter: letter,
           targetRoot: root,
-          label: `迁移至 ${root}（可用 ${formatBytes(d.availableBytes)}）`,
+          label: t("driveLabel", { root, free: formatBytes(d.availableBytes) }),
           freeBytes: d.availableBytes,
           totalBytes: d.totalBytes
         };
       });
 
+    const catSocial = t("catSocialName");
+    const catUser = t("catUserName");
+    const catDev = t("catDevName");
     const candidateDefs: Array<Omit<MovableFolderItem, "sizeBytes" | "fileCount">> = [
-      { id: "mover_wechat", name: "WeChat Files（微信文件）", sourcePath: `${paths.documents}\\WeChat Files`, category: "social_office", categoryName: "微信与 QQ 文件" },
-      { id: "mover_xwechat", name: "xwechat_files（新版微信文件）", sourcePath: `${paths.documents}\\xwechat_files`, category: "social_office", categoryName: "微信与 QQ 文件" },
-      { id: "mover_qq", name: "Tencent Files（QQ 文件）", sourcePath: `${paths.documents}\\Tencent Files`, category: "social_office", categoryName: "微信与 QQ 文件" },
-      { id: "mover_downloads", name: "下载", sourcePath: paths.downloads, category: "user_profile", categoryName: "个人文件夹" },
-      { id: "mover_documents", name: "文档", sourcePath: paths.documents, category: "user_profile", categoryName: "个人文件夹" },
-      { id: "mover_videos", name: "视频", sourcePath: paths.videos, category: "user_profile", categoryName: "个人文件夹" },
-      { id: "mover_npm_cache", name: "npm 缓存（npm-cache）", sourcePath: `${paths.localAppData}\\npm-cache`, category: "dev_cache", categoryName: "开发缓存" },
-      { id: "mover_pip_cache", name: "pip 缓存", sourcePath: `${paths.localAppData}\\pip\\Cache`, category: "dev_cache", categoryName: "开发缓存" },
-      { id: "mover_nuget_cache", name: "NuGet 包缓存", sourcePath: `${paths.userProfile}\\.nuget\\packages`, category: "dev_cache", categoryName: "开发缓存" }
+      { id: "mover_wechat", name: t("folderWechat"), sourcePath: `${paths.documents}\\WeChat Files`, category: "social_office", categoryName: catSocial },
+      { id: "mover_xwechat", name: t("folderXwechat"), sourcePath: `${paths.documents}\\xwechat_files`, category: "social_office", categoryName: catSocial },
+      { id: "mover_qq", name: t("folderQq"), sourcePath: `${paths.documents}\\Tencent Files`, category: "social_office", categoryName: catSocial },
+      { id: "mover_downloads", name: t("folderDownloads"), sourcePath: paths.downloads, category: "user_profile", categoryName: catUser },
+      { id: "mover_documents", name: t("folderDocuments"), sourcePath: paths.documents, category: "user_profile", categoryName: catUser },
+      { id: "mover_videos", name: t("folderVideos"), sourcePath: paths.videos, category: "user_profile", categoryName: catUser },
+      { id: "mover_npm_cache", name: t("folderNpm"), sourcePath: `${paths.localAppData}\\npm-cache`, category: "dev_cache", categoryName: catDev },
+      { id: "mover_pip_cache", name: t("folderPip"), sourcePath: `${paths.localAppData}\\pip\\Cache`, category: "dev_cache", categoryName: catDev },
+      { id: "mover_nuget_cache", name: t("folderNuget"), sourcePath: `${paths.userProfile}\\.nuget\\packages`, category: "dev_cache", categoryName: catDev }
     ];
 
     const scanned = await Promise.all(
@@ -179,7 +187,7 @@ export async function fetchMoverSnapshot(hostBridge?: DynamicBridge): Promise<Mo
       totalMovableBytes: folders.reduce((acc, item) => acc + item.sizeBytes, 0)
     };
   } catch (err) {
-    return createEmptyMoverSnapshot(`扫描失败：${err instanceof Error ? err.message : String(err)}`);
+    return createEmptyMoverSnapshot(t("errScanFailed", { error: err instanceof Error ? err.message : String(err) }));
   }
 }
 
@@ -193,20 +201,20 @@ export function validateMoveSelection(
   targetFreeBytes = 0
 ): string | null {
   const list = (items || []).filter(Boolean);
-  if (list.length === 0) return "请先勾选要迁移的目录";
+  if (list.length === 0) return t("errSelectFolderFirst");
   const root = trimTrailingSeparators(targetRoot);
-  if (!/^[A-Za-z]:\\./.test(root) || FORBIDDEN_TARGET_PATTERN.test(root)) return FORBIDDEN_REASON;
-  if (/^c:/i.test(root)) return "目标位置不能在 C 盘";
+  if (!/^[A-Za-z]:\\./.test(root) || FORBIDDEN_TARGET_PATTERN.test(root)) return t("forbiddenReason");
+  if (/^c:/i.test(root)) return t("errTargetNotC");
   for (const item of list) {
-    if (!item.sourcePath || FORBIDDEN_TARGET_PATTERN.test(item.sourcePath)) return FORBIDDEN_REASON;
+    if (!item.sourcePath || FORBIDDEN_TARGET_PATTERN.test(item.sourcePath)) return t("forbiddenReason");
     if (isSameOrInside(root, item.sourcePath) || isSameOrInside(item.sourcePath, root)) {
-      return `目标位置与「${item.name}」重叠，请换一个目标位置`;
+      return t("errOverlap", { name: item.name });
     }
   }
   for (let i = 0; i < list.length; i++) {
     for (let j = 0; j < list.length; j++) {
       if (i !== j && isSameOrInside(list[i].sourcePath, list[j].sourcePath)) {
-        return `「${list[i].name}」位于「${list[j].name}」里面，请只勾选其中一个`;
+        return t("errNested", { child: list[i].name, parent: list[j].name });
       }
     }
   }
@@ -214,12 +222,12 @@ export function validateMoveSelection(
   for (const item of list) {
     const key = normalizeWinPath(destinationPathFor(item.sourcePath, root));
     const other = seen.get(key);
-    if (other) return `「${other.name}」和「${item.name}」迁移后会同名，请分两次迁移到不同位置`;
+    if (other) return t("errSameDestName", { other: other.name, item: item.name });
     seen.set(key, item);
   }
   const totalBytes = list.reduce((acc, item) => acc + (item.sizeBytes || 0), 0);
   if (targetFreeBytes > 0 && totalBytes > targetFreeBytes) {
-    return `所选目录约 ${formatBytes(totalBytes)}，超过目标分区可用空间 ${formatBytes(targetFreeBytes)}`;
+    return t("errInsufficientSpace", { selected: formatBytes(totalBytes), free: formatBytes(targetFreeBytes) });
   }
   return null;
 }
@@ -235,14 +243,14 @@ export async function authorizeMoveTarget(
   const driveRoot = `${root.slice(0, 2).toUpperCase()}\\`;
   const picked = await callHostTransport<{ canceled?: boolean; folderPath?: string }>(
     "window_show_select_folder_dialog",
-    { title: `选择 ${driveRoot} 以允许迁移到 ${root}`, defaultPath: driveRoot },
+    { title: t("authorizeDialogTitle", { driveRoot, root }), defaultPath: driveRoot },
     hostOverride
   );
-  if (!picked.ok) return { ok: false, error: picked.error || "无法打开选择文件夹窗口" };
+  if (!picked.ok) return { ok: false, error: picked.error || t("errOpenFolderDialog") };
   if (picked.data?.canceled) return { ok: false, canceled: true };
   const folder = String(picked.data?.folderPath || "");
   if (!folder || !isSameOrInside(root, folder)) {
-    return { ok: false, error: `请选择 ${driveRoot} 或 ${root}，没有迁移任何目录` };
+    return { ok: false, error: t("errAuthorizeMismatch", { driveRoot, root }) };
   }
   return { ok: true };
 }
@@ -263,10 +271,10 @@ async function readSourceStates(sourcePaths: string[], hostOverride?: DynamicBri
     hostOverride
   );
   if (!res.ok || res.data?.ok === false || res.data?.success === false) {
-    return { ok: false, error: String(res.error || res.data?.error || "读取失败"), map: new Map() };
+    return { ok: false, error: String(res.error || res.data?.error || t("errReadFailed")), map: new Map() };
   }
   const list = Array.isArray(res.data?.items) ? res.data.items : Array.isArray(res.data?.candidates) ? res.data.candidates : null;
-  if (!list) return { ok: false, error: "客户端返回的数据格式不正确", map: new Map() };
+  if (!list) return { ok: false, error: t("errInvalidHostFormat"), map: new Map() };
   const map = new Map<string, { isJunction: boolean }>();
   for (const entry of list) {
     if (entry && typeof entry.sourcePath === "string") {
@@ -283,11 +291,11 @@ async function checkDestinationFree(dest: string, hostOverride?: DynamicBridge):
   ]);
   for (const res of [dir, file]) {
     if (!res.ok || typeof res.data?.exists !== "boolean") {
-      return `无法确认目标位置 ${dest} 是否已有内容（${res.error || "客户端没有返回结果"}），没有迁移`;
+      return t("errCheckDestFailed", { dest, error: res.error || t("errHostNoResult") });
     }
   }
-  if (dir.data?.exists) return `目标位置已有同名文件夹 ${dest}，为避免合并或覆盖，没有迁移`;
-  if (file.data?.exists) return `目标位置已有同名文件 ${dest}，没有迁移`;
+  if (dir.data?.exists) return t("errDestDirExists", { dest });
+  if (file.data?.exists) return t("errDestFileExists", { dest });
   return null;
 }
 
@@ -302,32 +310,32 @@ async function rollbackAfterFailure(
 ): Promise<{ status: "failed" | "needs_check"; detail: string }> {
   const destNow = await callHostTransport<{ exists?: boolean }>("filesystem_directory_exists", { path: dest }, hostOverride);
   if (!destNow.ok || typeof destNow.data?.exists !== "boolean") {
-    return { status: "needs_check", detail: `无法确认目标位置 ${dest} 的状态，请手动检查是否留有复制了一半的文件` };
+    return { status: "needs_check", detail: t("errDestStatusUnknown", { dest }) };
   }
-  if (!destNow.data.exists) return { status: "failed", detail: "目标位置没有留下文件，原目录未改动" };
+  if (!destNow.data.exists) return { status: "failed", detail: t("detailNoLeftover") };
 
   const states = await readSourceStates([sourcePath], hostOverride);
   if (!states.ok) {
-    return { status: "needs_check", detail: `无法确认原目录状态（${states.error}），没有清理目标位置 ${dest}，请手动检查` };
+    return { status: "needs_check", detail: t("detailSourceCheckFailed", { error: states.error || "", dest }) };
   }
   const state = states.map.get(normalizeWinPath(sourcePath));
   if (!state) {
     return {
       status: "needs_check",
-      detail: `原目录已不在原处，可能已改名为带 ${BACKUP_MARKER} 的备份；没有清理目标位置 ${dest}，请手动检查`
+      detail: t("detailSourceMissing", { marker: BACKUP_MARKER, dest })
     };
   }
   if (state.isJunction) {
     return {
       status: "needs_check",
-      detail: `原位置已建立指向 ${dest} 的联接，但客户端报告失败；没有清理目标位置，请检查原目录旁是否留有带 ${BACKUP_MARKER} 的文件夹`
+      detail: t("detailJunctionCreated", { dest, marker: BACKUP_MARKER })
     };
   }
   const del = await callHostTransport<{ success?: boolean }>("filesystem_delete_directory", { path: dest }, hostOverride);
   if (del.ok && del.data?.success === true) {
-    return { status: "failed", detail: `已删除复制到 ${dest} 的文件，原目录未改动` };
+    return { status: "failed", detail: t("detailRolledBack", { dest }) };
   }
-  return { status: "needs_check", detail: `清理目标位置失败（${del.error || "客户端没有确认删除"}），请手动删除 ${dest}；原目录未改动` };
+  return { status: "needs_check", detail: t("detailCleanupFailed", { error: del.error || t("errHostNoDeleteConfirm"), dest }) };
 }
 
 function summarizeMoveResults(results: MoveItemResult[], targetRoot: string, freedBytes: number): string {
@@ -336,11 +344,11 @@ function summarizeMoveResults(results: MoveItemResult[], targetRoot: string, fre
   const skipped = results.filter((r) => r.status === "skipped");
   const notAttempted = results.filter((r) => r.status === "not_attempted");
   const parts: string[] = [];
-  if (moved.length > 0) parts.push(`已把 ${moved.length} 个目录迁移到 ${targetRoot}，C 盘约腾出 ${formatBytes(freedBytes)}`);
-  if (problem) parts.push(`「${problem.name}」迁移失败：${problem.detail}`);
-  if (skipped.length > 0) parts.push(`跳过 ${skipped.length} 个：「${skipped[0].name}」${skipped[0].detail}`);
-  if (notAttempted.length > 0) parts.push(`其余 ${notAttempted.length} 个没有执行`);
-  return parts.join("；") || "没有迁移任何目录";
+  if (moved.length > 0) parts.push(t("summaryMoved", { count: moved.length, targetRoot, freed: formatBytes(freedBytes) }));
+  if (problem) parts.push(t("summaryProblem", { name: problem.name, detail: problem.detail }));
+  if (skipped.length > 0) parts.push(t("summarySkipped", { count: skipped.length, name: skipped[0].name, detail: skipped[0].detail }));
+  if (notAttempted.length > 0) parts.push(t("summaryNotAttempted", { count: notAttempted.length }));
+  return parts.join(t("summarySep")) || t("summaryNone");
 }
 
 /**
@@ -362,7 +370,7 @@ export async function executeDirectoryMove(
       ok: false,
       movedCount: 0,
       freedBytes: 0,
-      message: `无法确认原目录状态（${states.error}），没有迁移任何目录`,
+      message: t("errSourceStateUnknown", { error: states.error || "" }),
       results: []
     };
   }
@@ -373,16 +381,16 @@ export async function executeDirectoryMove(
   for (const item of items) {
     const base = { name: item.name, sourcePath: item.sourcePath, destinationPath: destinationPathFor(item.sourcePath, root) };
     if (stopped) {
-      results.push({ ...base, status: "not_attempted", detail: "前一个目录迁移失败，没有执行" });
+      results.push({ ...base, status: "not_attempted", detail: t("detailPrevFailed") });
       continue;
     }
     const state = states.map.get(normalizeWinPath(item.sourcePath));
     if (!state) {
-      results.push({ ...base, status: "skipped", detail: "原目录不存在或读取不到" });
+      results.push({ ...base, status: "skipped", detail: t("detailSourceMissingSkip") });
       continue;
     }
     if (state.isJunction) {
-      results.push({ ...base, status: "skipped", detail: "原位置已经是目录联接（可能之前迁移过）" });
+      results.push({ ...base, status: "skipped", detail: t("detailAlreadyJunction") });
       continue;
     }
     const occupied = await checkDestinationFree(base.destinationPath, hostOverride);
@@ -398,10 +406,10 @@ export async function executeDirectoryMove(
     );
     if (res.ok && res.data?.ok !== false && res.data?.success !== false) {
       freedBytes += item.sizeBytes;
-      results.push({ ...base, status: "moved", detail: `已迁移到 ${base.destinationPath}` });
+      results.push({ ...base, status: "moved", detail: t("detailMovedTo", { dest: base.destinationPath }) });
       continue;
     }
-    const hostError = String(res.error || res.data?.error || "客户端没有完成迁移");
+    const hostError = String(res.error || res.data?.error || t("errHostMoveIncomplete"));
     const rollback = await rollbackAfterFailure(item.sourcePath, base.destinationPath, hostOverride);
     results.push({ ...base, status: rollback.status, detail: `${hostError}。${rollback.detail}` });
     stopped = true;

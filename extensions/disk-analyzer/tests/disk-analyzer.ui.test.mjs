@@ -3,9 +3,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import { getDeclarativeBridge } from '@ztools/declarative-ui'
-import DiskAnalyzerCommand from '../dist/index.js'
-import { OFFICIAL_FILE_TYPE_GROUPS, FORBIDDEN_TARGET_PATTERN, deleteDiskFileItem } from '../dist/logic.js'
+import { getDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { default: DiskAnalyzerCommand } = await import('../dist/index.js')
+const { OFFICIAL_FILE_TYPE_GROUPS, FORBIDDEN_TARGET_PATTERN, deleteDiskFileItem } = await import('../dist/logic.js')
 
 const host = createHost()
 const MB = 1024 * 1024

@@ -6,6 +6,7 @@ import {
   Clipboard,
   useState,
   useEffect,
+  useLocale,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
@@ -16,6 +17,7 @@ import {
   type HostFolderPaths
 } from './logic.js'
 import { callHostTransport, getRealSystemPath } from './native-ipc.js'
+import { t } from './i18n.js'
 
 /**
  * 读取常用目录：优先用宿主的 system_list_common_folders（按平台生成、标明是否存在，并把存在的目录授权给本窗口打开）；
@@ -43,7 +45,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('copyFailedTitle'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -52,6 +54,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
 }
 
 export default function QuickFoldersCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [folders, setFolders] = useState<FolderItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -61,14 +64,14 @@ export default function QuickFoldersCommand() {
     // 从宿主读取当前用户的真实目录，不再写死 C:\Users\Default；读取失败时如实显示宿主给出的原因
     loadFolders()
       .then(
-        (list) => ({ list, error: list.length === 0 ? '没有读到当前用户的常用目录' : '' }),
+        (list) => ({ list, error: list.length === 0 ? t('noFoldersError') : '' }),
         (err: unknown) => ({ list: [] as FolderItem[], error: err instanceof Error ? err.message : String(err) })
       )
       .then(({ list, error }) => {
         if (!alive) return
         setFolders(list)
         setLoading(false)
-        if (error) void showToast({ style: Toast.Style.Failure, title: '读取系统目录失败', message: error })
+        if (error) void showToast({ style: Toast.Style.Failure, title: t('loadFailedTitle'), message: error })
       })
     return () => { alive = false }
   }, [])
@@ -76,8 +79,8 @@ export default function QuickFoldersCommand() {
   async function openFolder(folder: FolderItem) {
     const res = await callHostTransport('shell_open_path', { fullPath: folder.path })
     await showToast(res.ok
-      ? { style: Toast.Style.Success, title: '已打开目录', message: folder.path }
-      : { style: Toast.Style.Failure, title: '打开目录失败', message: res.error ? `${folder.path}：${res.error}` : folder.path })
+      ? { style: Toast.Style.Success, title: t('openedTitle'), message: folder.path }
+      : { style: Toast.Style.Failure, title: t('openFailedTitle'), message: res.error ? `${folder.path}：${res.error}` : folder.path })
   }
 
   const query = searchText.trim().toLowerCase()
@@ -111,15 +114,15 @@ export default function QuickFoldersCommand() {
         title: f.name,
         children: [
           Action({
-            title: '打开目录',
+            title: t('openAction'),
             icon: Icon.ArrowRight,
             onAction: () => openFolder(f)
           }),
           Action({
-            title: '复制完整路径',
+            title: t('copyPathAction'),
             icon: Icon.Clipboard,
             shortcut: { modifiers: ['ctrl'], key: 'c' },
-            onAction: () => copyWithToast(f.path, '已复制路径', f.path)
+            onAction: () => copyWithToast(f.path, t('copiedPathTitle'), f.path)
           })
         ]
       })
@@ -128,22 +131,22 @@ export default function QuickFoldersCommand() {
 
   return List({
     isLoading: loading,
-    searchBarPlaceholder: '搜索常用目录，如 桌面、下载、资源库、临时',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     children: [
       personal.length > 0 &&
         List.Section({
-          title: `个人常用目录 (${personal.length})`,
+          title: t('sectionPersonal', { count: personal.length }),
           children: personal.map(renderFolderItem)
         }),
       system.length > 0 &&
         List.Section({
-          title: `系统与配置目录 (${system.length})`,
+          title: t('sectionSystem', { count: system.length }),
           children: system.map(renderFolderItem)
         }),
       temp.length > 0 &&
         List.Section({
-          title: `临时与缓存目录 (${temp.length})`,
+          title: t('sectionTemp', { count: temp.length }),
           children: temp.map(renderFolderItem)
         })
     ].filter(Boolean)

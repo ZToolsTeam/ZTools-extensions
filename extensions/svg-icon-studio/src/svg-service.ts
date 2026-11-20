@@ -1,4 +1,5 @@
 import type { SvgProcessResult } from './types.js'
+import { t } from './i18n.js'
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
 const XML_NS = 'http://www.w3.org/XML/1998/namespace'
@@ -32,13 +33,13 @@ function literal(value: string | Record<string, unknown>): string {
 }
 
 function readStaticSvg(input: string) {
-  if (/<!DOCTYPE|<!ENTITY/i.test(input)) fail('UNSUPPORTED_DTD', '不支持 DTD 或实体定义，请使用独立的静态 SVG')
-  if (typeof DOMParser === 'undefined') fail('XML_PARSER_UNAVAILABLE', '当前环境没有 XML 解析器')
+  if (/<!DOCTYPE|<!ENTITY/i.test(input)) fail('UNSUPPORTED_DTD', t('errUnsupportedDtd'))
+  if (typeof DOMParser === 'undefined') fail('XML_PARSER_UNAVAILABLE', t('errNoXmlParser'))
   // 只读取独立 XML 文档，绝不将输入节点插入客户端界面。
   const parsed = new DOMParser().parseFromString(input, 'image/svg+xml')
   const root = parsed.documentElement
   if (!root || root.localName !== 'svg' || (root.namespaceURI && root.namespaceURI !== SVG_NS) || parsed.getElementsByTagNameNS('*', 'parsererror').length) {
-    fail('INVALID_SVG_DOCUMENT', 'SVG XML 不合法，或根节点不是 SVG')
+    fail('INVALID_SVG_DOCUMENT', t('errInvalidSvgDoc'))
   }
   const acceptedNamespace = root.namespaceURI
   const warnings = new Set<string>(), ids = new Map<string, SvgElement>()
@@ -67,34 +68,34 @@ function readStaticSvg(input: string) {
       if (!declaration.trim()) continue
       const match = declaration.match(/^\s*([a-z-]+)\s*:\s*(.+?)\s*$/i)
       if (!match || !presentation.has(match[1].toLowerCase()) || /!|[\\{}@]|\/\*|\*\//.test(match[2]) || !/^(?:[^'"]|'[^']*'|"[^"]*")*$/.test(match[2])) {
-        fail('UNSUPPORTED_STYLE', '内联样式含不支持的属性或语法，请先转为 SVG 静态展示属性')
+        fail('UNSUPPORTED_STYLE', t('errUnsupportedStyle'))
       }
       const name = match[1].toLowerCase(), value = match[2]
       const refs: string[] = []
-      if (!safeValue(name, value, refs)) fail('UNSAFE_STYLE', '内联样式只能引用本 SVG 内的 #id，不能包含外部资源或转义语法')
+      if (!safeValue(name, value, refs)) fail('UNSAFE_STYLE', t('errUnsafeStyle'))
       names.add(name)
       references.push(...refs)
     }
     // 由浏览器 CSS 解析器决定重复/无效声明的最终值；只读独立文档中的样式数据。
     const cssRoot = new DOMParser().parseFromString(`<svg xmlns="${SVG_NS}" style="${escapeXml(source, true)}"/>`, 'image/svg+xml').documentElement as unknown as SVGElement
-    if (!cssRoot.style) fail('CSS_PARSER_UNAVAILABLE', '当前环境没有 SVG 样式解析器')
+    if (!cssRoot.style) fail('CSS_PARSER_UNAVAILABLE', t('errNoCssParser'))
     for (const name of names) {
       const value = cssRoot.style.getPropertyValue(name)
-      if (!value) fail('UNSUPPORTED_STYLE', `内联样式 ${name} 无效或当前环境不支持`)
+      if (!value) fail('UNSUPPORTED_STYLE', t('errInvalidStyleProp', { name }))
       style[camelName(name)] = value
     }
     return { values: style, cssText: cssRoot.style.cssText }
   }
   function read(node: Node, depth: number): SvgNode | null {
-    if (++nodeCount > 5000 || depth > 64) fail('SVG_COMPLEXITY_LIMIT', 'SVG 超过 5000 个节点或 64 层嵌套上限')
+    if (++nodeCount > 5000 || depth > 64) fail('SVG_COMPLEXITY_LIMIT', t('errComplexityNodes'))
     if (node.nodeType === 3 || node.nodeType === 4) return node.nodeValue || ''
     if (node.nodeType !== 1) {
-      if (node.nodeType === 7) removed('已移除处理指令')
+      if (node.nodeType === 7) removed(t('warnRemovedPi'))
       return null
     }
     const element = node as Element, name = element.localName
     if (element.namespaceURI !== acceptedNamespace || !elements.has(name)) {
-      removed(`已移除非静态图形元素：${element.tagName}`)
+      removed(t('warnRemovedNonStaticElement', { tag: element.tagName }))
       return null
     }
     const item: SvgElement = { name, attrs: [], styleValues: {}, children: [], references: [] }
@@ -105,7 +106,7 @@ function readStaticSvg(input: string) {
       const value = attr.value
       if (attr.namespaceURI === XLINK_NS && attr.localName === 'href') key = 'href'
       else if (attr.namespaceURI === XML_NS && ['space', 'lang'].includes(attr.localName)) key = `xml:${attr.localName}`
-      else if (attr.namespaceURI) { removed(`已移除不支持的命名空间属性：${key}`); continue }
+      else if (attr.namespaceURI) { removed(t('warnRemovedNsAttr', { key })); continue }
       if (key === 'style') {
         const style = readStyle(value, item.references)
         item.styleValues = style.values
@@ -113,21 +114,21 @@ function readStaticSvg(input: string) {
         continue
       }
       if (!(attributes.has(key) || presentation.has(key) || ['href', 'xml:space', 'xml:lang'].includes(key) || /^(?:aria|data)-[a-z][a-z0-9-]*$/.test(key))) {
-        removed(`已移除不支持的属性：${key}`)
+        removed(t('warnRemovedAttr', { key }))
         continue
       }
       if (key === 'id') {
-        if (!localId.test(value) || ids.has(value)) fail('INVALID_SVG_ID', 'SVG 包含重复 ID 或不支持的 ID 格式（字母/下划线开头，最长 256 字符）')
+        if (!localId.test(value) || ids.has(value)) fail('INVALID_SVG_ID', t('errInvalidSvgId'))
         ids.set(value, item)
       }
-      if (key === 'tabindex' && !/^[+-]?\d{1,6}$/.test(value)) fail('INVALID_SVG_ATTRIBUTE', 'tabindex 必须是整数')
-      if (key === 'preserveAlpha' && !['true', 'false'].includes(value)) fail('INVALID_SVG_ATTRIBUTE', 'preserveAlpha 必须是 true 或 false')
+      if (key === 'tabindex' && !/^[+-]?\d{1,6}$/.test(value)) fail('INVALID_SVG_ATTRIBUTE', t('errTabindexInt'))
+      if (key === 'preserveAlpha' && !['true', 'false'].includes(value)) fail('INVALID_SVG_ATTRIBUTE', t('errPreserveAlphaBool'))
       if (presentation.has(key) || key === 'href') {
         const refs: string[] = []
-        if (!safeValue(key, value, refs)) { removed(`已移除外部引用或不支持的展示属性：${key}`); continue }
+        if (!safeValue(key, value, refs)) { removed(t('warnRemovedExternalOrUnsupportedAttr', { key })); continue }
         item.references.push(...refs)
       }
-      if (item.attrs.some(([previous]) => previous === key)) fail('DUPLICATE_SVG_ATTRIBUTE', `SVG 包含重复的 ${key} 属性`)
+      if (item.attrs.some(([previous]) => previous === key)) fail('DUPLICATE_SVG_ATTRIBUTE', t('errDuplicateAttr', { key }))
       item.attrs.push([key, value])
     }
     for (const child of Array.from(element.childNodes)) {
@@ -137,28 +138,28 @@ function readStaticSvg(input: string) {
     return item
   }
   // XML 声明以外的顶层处理指令也不能带进导出结果。
-  for (const node of Array.from(parsed.childNodes)) if (node.nodeType === 7 && node.nodeName !== 'xml') removed('已移除处理指令')
+  for (const node of Array.from(parsed.childNodes)) if (node.nodeType === 7 && node.nodeName !== 'xml') removed(t('warnRemovedPi'))
   const tree = read(root, 0) as SvgElement
   tree.attrs.unshift(['xmlns', SVG_NS])
   const visiting = new Set<SvgElement>(), sizes = new Map<SvgElement, { size: number; height: number }>()
   function expandedSize(item: SvgElement, depth = 0): { size: number; height: number } {
-    if (depth > 128) fail('SVG_COMPLEXITY_LIMIT', 'SVG 引用链超过 128 层上限')
-    if (visiting.has(item)) fail('CYCLIC_SVG_REFERENCE', 'SVG 存在循环引用')
+    if (depth > 128) fail('SVG_COMPLEXITY_LIMIT', t('errRefChainLimit'))
+    if (visiting.has(item)) fail('CYCLIC_SVG_REFERENCE', t('errCyclicRef'))
     const cached = sizes.get(item)
     if (cached !== undefined) {
-      if (depth + cached.height > 128) fail('SVG_COMPLEXITY_LIMIT', 'SVG 引用链超过 128 层上限')
+      if (depth + cached.height > 128) fail('SVG_COMPLEXITY_LIMIT', t('errRefChainLimit'))
       return cached
     }
     visiting.add(item)
     let size = 1, height = 0
-    const targets = item.references.map(id => ids.get(id) || fail('MISSING_SVG_REFERENCE', `SVG 引用的 #${id} 不存在或已被移除`))
+    const targets = item.references.map(id => ids.get(id) || fail('MISSING_SVG_REFERENCE', t('errMissingRef', { id })))
     for (const child of [...item.children.filter((child): child is SvgElement => typeof child !== 'string'), ...targets]) {
       const expanded = expandedSize(child, depth + 1)
       size += expanded.size
       height = Math.max(height, expanded.height + 1)
-      if (size > 20000) fail('SVG_COMPLEXITY_LIMIT', 'SVG 引用展开超过 20000 个节点上限')
+      if (size > 20000) fail('SVG_COMPLEXITY_LIMIT', t('errExpandedNodesLimit'))
     }
-    if (depth + height > 128) fail('SVG_COMPLEXITY_LIMIT', 'SVG 引用链超过 128 层上限')
+    if (depth + height > 128) fail('SVG_COMPLEXITY_LIMIT', t('errRefChainLimit'))
     const measured = { size, height }
     visiting.delete(item); sizes.set(item, measured)
     return measured
@@ -189,15 +190,15 @@ function serialize(node: SvgNode, format: 'svg' | 'react' | 'vue', root = false)
 }
 
 export function optimizeSvgSource(rawInput: string): SvgProcessResult {
-  if (typeof rawInput !== 'string' || !rawInput.trim()) fail('EMPTY_SVG_INPUT', 'SVG 源码不能为空')
+  if (typeof rawInput !== 'string' || !rawInput.trim()) fail('EMPTY_SVG_INPUT', t('errEmptySvg'))
   const originalBytes = new TextEncoder().encode(rawInput).length
-  if (originalBytes > 256 * 1024) fail('SVG_SIZE_LIMIT', 'SVG 源码不能超过 256 KiB')
+  if (originalBytes > 256 * 1024) fail('SVG_SIZE_LIMIT', t('errSizeLimit'))
   const { tree, warnings, removedItems, pathCount } = readStaticSvg(rawInput)
   const optimizedSvg = serialize(tree, 'svg')
   const encoded = new TextEncoder().encode(optimizedSvg)
   const savedBytes = originalBytes - encoded.length
   const reactTsxCode = ["import React from 'react'", '', 'export function SvgIcon(props: React.SVGProps<SVGSVGElement>): React.ReactElement {', `  return (${serialize(tree, 'react', true)})`, '}', '', 'export default SvgIcon'].join('\n')
-  const vueSfcCode = ['<script setup lang="ts">', '// 静态 SVG 图标；文本按字面内容保留。', '</script>', '', '<template>', `  ${serialize(tree, 'vue', true)}`, '</template>'].join('\n')
+  const vueSfcCode = ['<script setup lang="ts">', t('vueSfcComment'), '</script>', '', '<template>', `  ${serialize(tree, 'vue', true)}`, '</template>'].join('\n')
   let binary = ''
   for (const byte of encoded) binary += String.fromCharCode(byte)
   return {
@@ -205,6 +206,76 @@ export function optimizeSvgSource(rawInput: string): SvgProcessResult {
     dataUri: `data:image/svg+xml;charset=utf-8,${encodeURIComponent(optimizedSvg)}`,
     base64DataUri: `data:image/svg+xml;base64,${btoa(binary)}`,
     warnings,
-    metrics: { originalBytes, optimizedBytes: encoded.length, savedBytes, savedPercentage: Math.round(savedBytes / originalBytes * 1000) / 10, viewBox: tree.attrs.find(([key]) => key === 'viewBox')?.[1] || '未设置', pathCount, removedItems },
+    metrics: { originalBytes, optimizedBytes: encoded.length, savedBytes, savedPercentage: Math.round(savedBytes / originalBytes * 1000) / 10, viewBox: tree.attrs.find(([key]) => key === 'viewBox')?.[1] || t('viewBoxUnset'), pathCount, removedItems },
   }
+}
+
+
+let svgHostSeq = 0
+
+async function callSvgHost<T = Record<string, unknown>>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+  const g = globalThis as Record<string, unknown>
+  const win = (g.window && typeof g.window === 'object' ? g.window : g) as Record<string, unknown>
+  const methods = ((win.__ztoolsElectron as { transport?: { methods?: Record<string, (req: unknown) => Promise<unknown>> } } | undefined)?.transport?.methods)
+    ?? ((g.__ztoolsElectron as { transport?: { methods?: Record<string, (req: unknown) => Promise<unknown>> } } | undefined)?.transport?.methods)
+  const fn = methods?.[method]
+  if (typeof fn !== 'function') fail('HOST_UNAVAILABLE', t('errHostUnavailable', { method }))
+  svgHostSeq = (svgHostSeq + 1) % 1_000_000
+  const envelope = (await fn({ messageId: `svg_${Date.now()}_${svgHostSeq}`, params })) as {
+    success?: boolean
+    data?: T
+    error?: { message?: string } | string
+  } | null
+  if (!envelope || typeof envelope !== 'object') fail('HOST_INVALID_RESPONSE', t('errHostInvalidResp'))
+  if (envelope.success === false) {
+    const msg = typeof envelope.error === 'string' ? envelope.error : envelope.error?.message || t('errHostCallFailed', { method })
+    throw new Error(msg)
+  }
+  return (envelope.data !== undefined ? envelope.data : (envelope as unknown as T))
+}
+
+export function extractDroppedSvgPath(envelopeOrPayload: unknown): string | null {
+  if (!envelopeOrPayload || typeof envelopeOrPayload !== 'object') return null
+  const obj = envelopeOrPayload as Record<string, unknown>
+  const innerPayload = obj.payload && typeof obj.payload === 'object' ? (obj.payload as Record<string, unknown>) : obj
+  const rawFiles = Array.isArray(innerPayload.files)
+    ? innerPayload.files
+    : Array.isArray(obj.files)
+      ? obj.files
+      : []
+  for (const item of rawFiles) {
+    const p = typeof item === 'string'
+      ? item.trim()
+      : item && typeof item === 'object' && typeof (item as { path?: unknown }).path === 'string'
+        ? (item as { path: string }).path.trim()
+        : ''
+    if (p && !/[\0\r\n"]/.test(p) && /\.svg$/i.test(p)) return p
+  }
+  return null
+}
+
+export async function pickSvgFilePath(): Promise<{ canceled: boolean; filePath?: string }> {
+  const picked = await callSvgHost<{ canceled?: boolean; filePath?: string; filePaths?: Array<string | { path?: string }> }>(
+    'window_show_open_dialog',
+    {
+      title: t('dialogPickTitle'),
+      filters: t('dialogPickFilter'),
+      properties: ['openFile']
+    }
+  )
+  if (!picked || picked.canceled) return { canceled: true }
+  const firstFromList = Array.isArray(picked.filePaths) && picked.filePaths.length > 0
+    ? (typeof picked.filePaths[0] === 'string' ? picked.filePaths[0] : picked.filePaths[0]?.path)
+    : undefined
+  const filePath = (typeof picked.filePath === 'string' && picked.filePath.trim()) || (typeof firstFromList === 'string' && firstFromList.trim()) || ''
+  if (!filePath) return { canceled: true }
+  return { canceled: false, filePath }
+}
+
+export async function readSvgFileContent(filePath: string): Promise<string> {
+  if (!/\.svg$/i.test(filePath.trim())) fail('INVALID_SVG_FILE', t('errInvalidSvgFile'))
+  const sizeRes = await callSvgHost<{ size?: number }>('filesystem_get_file_size', { path: filePath })
+  if (Number(sizeRes?.size) > 256 * 1024) fail('SVG_SIZE_LIMIT', t('errSizeLimit'))
+  const read = await callSvgHost<{ content?: string }>('filesystem_read_file', { path: filePath, encoding: 'utf8' })
+  return typeof read?.content === 'string' ? read.content : ''
 }

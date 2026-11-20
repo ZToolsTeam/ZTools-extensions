@@ -1,12 +1,15 @@
 {
   "id": "batch-rename",
   "name": "批量重命名",
-  "description": "批量修改文件夹里的文件名：查找替换、加前缀 / 后缀 / 当天日期前缀、追加序号、去括号、下划线或全小写规范，执行前预览并确认，本次打开期间可撤销",
-  "version": "2.0.13",
+  "description": "选择或拖入文件/文件夹批量改名：查找替换、加前缀 / 后缀 / 当天日期前缀、追加序号、去括号、下划线或全小写规范，执行前预览并确认，本次打开期间可撤销",
+  "version": "2.0.16",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "category": "utility",
+  "category": [
+    "文件管理"
+  ],
+  "categoryId": "files",
   "permissions": [
     "fs",
     "dialog",
@@ -26,5 +29,20 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Batch File Renamer",
+      "description": "Batch rename selected or dropped files and folders with find-and-replace, prefix/suffix, date prefix, sequential numbering, bracket removal, and case/underscore normalization. Includes live preview and session undo.",
+      "keywords": [
+        "rename",
+        "batch rename",
+        "files",
+        "prefix",
+        "suffix",
+        "numbering"
+      ]
+    }
+  }
 }

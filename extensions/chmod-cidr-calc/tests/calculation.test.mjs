@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { calculateIpv4Cidr, convertChmod } from '../dist/chmod-cidr-service.js'
+
+setRuntimeLocale('zh-CN')
 
 test('CIDR 拒绝多余斜线、前导零八位组及非整数前缀', () => {
   for (const input of ['1.2.3.4/24/junk', '1.2.3.4/24/', '01.2.3.4/24', '1.2.3.4/-1', '1.2.3.4/33', '1.2.3.4/2.5', '1.2.3.4/', '1.2.3/24']) assert.throws(() => calculateIpv4Cidr(input), input)

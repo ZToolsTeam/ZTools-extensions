@@ -12,7 +12,9 @@ import React, {
   useMemo,
   useRef,
   useEffect,
+  useLocale,
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import type { CodeTargetLang, HttpResponseSnapshot } from './types.js'
 import {
   parseCurlCommand,
@@ -23,6 +25,19 @@ import {
 export * from './types.js'
 export * from './curl-service.js'
 
+/** 是否运行在 macOS：Mac 用户只会从开发者工具复制 bash 写法，说明里不提 cmd / PowerShell */
+export function isMacPlatform(): boolean {
+  const nav = (globalThis as { navigator?: { platform?: string; userAgent?: string } }).navigator
+  return /Mac/i.test(String(nav?.platform || nav?.userAgent || ''))
+}
+
+/** 支持的复制格式与续行写法，按平台给 */
+export function copyFormatHint(mac: boolean = isMacPlatform()): string {
+  return mac
+    ? '支持从 Chrome / Edge / Safari 开发者工具复制的 `Copy as cURL`，多行命令可用行尾 `\\` 续行。'
+    : '支持从 Chrome / Edge 开发者工具复制的 `Copy as cURL (bash)` 与 `Copy as cURL (cmd)`，多行命令可用 `\\`、`^` 或 PowerShell 反引号续行。'
+}
+
 /** 生成不会被内容里的反引号提前截断的 Markdown 代码块 */
 function fenced(content: string, lang = ''): string {
   const longest = Math.max(2, ...(content.match(/`+/g) ?? []).map((run) => run.length))
@@ -32,14 +47,21 @@ function fenced(content: string, lang = ''): string {
 
 function responseMarkdown(snap: HttpResponseSnapshot | null, ignoredOptions: string[]): string {
   const notes: string[] = []
-  if (ignoredOptions.length > 0) notes.push(`未生效的参数：${ignoredOptions.join('、')}`)
-  if (snap && snap.ignoredHeaders.length > 0) notes.push(`已去掉由客户端自动处理的请求头：${snap.ignoredHeaders.join('、')}`)
+  if (ignoredOptions.length > 0) notes.push(t('note.ignoredOptions', { list: ignoredOptions.join(', ') }))
+  if (snap && snap.ignoredHeaders.length > 0) notes.push(t('note.ignoredHeaders', { list: snap.ignoredHeaders.join(', ') }))
   const noteText = notes.length > 0 ? `\n\n${notes.map((n) => `- ${n}`).join('\n')}` : ''
-  if (!snap) return `### 响应\n按 Enter 发起请求，在这里查看响应正文。${noteText}`
-  return `### 响应 (HTTP ${snap.status} ${snap.statusText} · ${snap.elapsedMs}ms)${noteText}\n\n${fenced(snap.bodyText, snap.isJson ? 'json' : 'text')}`
+  if (!snap) return t('response.empty', { notes: noteText })
+  return t('response.title', {
+    status: snap.status,
+    statusText: snap.statusText,
+    elapsedMs: snap.elapsedMs,
+    notes: noteText,
+    body: fenced(snap.bodyText, snap.isJson ? 'json' : 'text')
+  })
 }
 
 export function CurlHttpCommand() {
+  useLocale()
   // 初始为空，不预填示例请求
   const [rawCurl, setRawCurl] = useState<string>('')
   const [targetLang, setTargetLang] = useState<CodeTargetLang>('fetch')
@@ -81,20 +103,20 @@ export function CurlHttpCommand() {
       if (!clip || !clip.trim()) {
         await showToast({
           style: ToastStyle.Failure,
-          title: '剪贴板为空',
-          message: '请先从浏览器 DevTools 复制 Copy as cURL 命令',
+          title: t('toast.clipboardEmpty'),
+          message: t('toast.clipboardEmptyMsg'),
         })
         return
       }
       replaceRequest(clip.trim())
       await showToast({
         style: ToastStyle.Success,
-        title: '已载入剪贴板 cURL 命令',
+        title: t('toast.clipboardLoaded'),
       })
     } catch (err) {
       await showToast({
         style: ToastStyle.Failure,
-        title: '读取剪贴板失败',
+        title: t('toast.clipboardReadFailed'),
         message: err instanceof Error ? err.message : String(err),
       })
     }
@@ -106,10 +128,13 @@ export function CurlHttpCommand() {
     // DELETE / PUT 会删除或覆盖服务器上的数据，发送前请用户确认；取消或无法确认时不发送
     if (method === 'DELETE' || method === 'PUT') {
       const confirmed = await confirmAlert({
-        title: `确认发送 ${method} 请求？`,
-        message: `${url}\n${method === 'DELETE' ? '可能删除服务器上的数据' : '可能覆盖服务器上的数据'}，发送后无法撤回。`,
-        primaryAction: { title: `发送 ${method}`, style: 'destructive' },
-        dismissAction: { title: '取消' }
+        title: t('confirm.title', { method }),
+        message: t('confirm.message', {
+          url,
+          warning: method === 'DELETE' ? t('confirm.deleteWarning') : t('confirm.putWarning')
+        }),
+        primaryAction: { title: t('confirm.primary', { method }), style: 'destructive' },
+        dismissAction: { title: t('confirm.cancel') }
       })
       if (!confirmed) return
     }
@@ -129,7 +154,7 @@ export function CurlHttpCommand() {
       if (revision !== requestRevision.current) return
       await showToast({
         style: ToastStyle.Failure,
-        title: '请求执行失败',
+        title: t('toast.requestFailed'),
         message: err instanceof Error ? err.message : String(err),
       })
     } finally {
@@ -141,12 +166,12 @@ export function CurlHttpCommand() {
     <List
       isShowingDetail={true}
       isLoading={isSending}
-      searchBarPlaceholder="粘贴 cURL 命令或 HTTP URL..."
+      searchBarPlaceholder={t('search.placeholder')}
       searchText={rawCurl}
       onSearchTextChange={replaceRequest}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="选择目标代码语言"
+          tooltip={t('dropdown.tooltip')}
           value={targetLang}
           onChange={(val: string) => setTargetLang(val as CodeTargetLang)}
         >
@@ -160,18 +185,18 @@ export function CurlHttpCommand() {
       {!parsedState.ok && !rawCurl.trim() && (
         <List.Item
           id="curl-empty"
-          title="粘贴 cURL 命令或 HTTP URL"
-          subtitle="支持浏览器开发者工具里的 Copy as cURL（bash / cmd）"
+          title={t('empty.title')}
+          subtitle={isMacPlatform() ? t('empty.subtitleMac') : t('empty.subtitle')}
           icon={Icon.Clipboard}
           detail={
             <List.Item.Detail
-              markdown={`### 开始使用\n\n在搜索框粘贴 cURL 命令或网址，或按回车从剪贴板读取。\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
+              markdown={isMacPlatform() ? t('empty.markdownMac') : t('empty.markdown')}
             />
           }
           actions={
             <ActionPanel>
               <Action
-                title="从剪贴板粘贴 cURL"
+                title={t('action.pasteFromClipboard')}
                 icon={Icon.Clipboard}
                 onAction={() => void handleLoadClipboard()}
               />
@@ -181,22 +206,22 @@ export function CurlHttpCommand() {
       )}
 
       {!parsedState.ok && rawCurl.trim() !== '' && (
-        <List.Section title="cURL 语法解析错误">
+        <List.Section title={t('section.parseError')}>
           <List.Item
             id="curl-parse-error"
-            title="无法解析 cURL 命令"
+            title={t('error.parseTitle')}
             subtitle={parsedState.error.replace(/^[A-Z_]+:\s*/, '')}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '语法错误', color: Color.Red } }]}
+            accessories={[{ tag: { value: t('tag.syntaxError'), color: Color.Red } }]}
             detail={
               <List.Item.Detail
-                markdown={`### cURL 解析异常\n\n${fenced(parsedState.error, 'text')}\n\n支持从 Chrome / Edge 开发者工具复制的 \`Copy as cURL (bash)\` 与 \`Copy as cURL (cmd)\`，多行命令可用 \`\\\`、\`^\` 或 PowerShell 反引号续行。`}
+                markdown={isMacPlatform() ? t('error.parseMarkdownMac', { code: fenced(parsedState.error, 'text') }) : t('error.parseMarkdown', { code: fenced(parsedState.error, 'text') })}
               />
             }
             actions={
               <ActionPanel>
                 <Action
-                  title="从剪贴板粘贴 cURL"
+                  title={t('action.pasteFromClipboard')}
                   icon={Icon.Clipboard}
                   onAction={() => void handleLoadClipboard()}
                 />
@@ -207,11 +232,11 @@ export function CurlHttpCommand() {
       )}
 
       {parsedState.ok && (
-        <List.Section title="请求结构与多语言代码互转">
+        <List.Section title={t('section.overview')}>
           <List.Item
             id="curl-overview"
             title={`${parsedState.parsed.method} ${parsedState.parsed.url}`}
-            subtitle={`Headers: ${Object.keys(parsedState.parsed.headers).length} 项 · 代码目标: ${targetLang.toUpperCase()}`}
+            subtitle={t('overview.subtitle', { count: Object.keys(parsedState.parsed.headers).length, lang: targetLang.toUpperCase() })}
             icon={Icon.Terminal}
             accessories={[
               responseSnap
@@ -227,30 +252,30 @@ export function CurlHttpCommand() {
             ]}
             detail={
               <List.Item.Detail
-                markdown={`### 生成代码 (${targetLang.toUpperCase()})\n${fenced(
+                markdown={`${t('detail.codeHeading', { lang: targetLang.toUpperCase() })}\n${fenced(
                   parsedState.generatedCode,
                   targetLang === 'python' ? 'python' : targetLang === 'go' ? 'go' : 'ts',
                 )}\n\n${responseMarkdown(responseSnap, parsedState.parsed.ignoredOptions ?? [])}`}
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
-                      title="请求方法 (Method)"
+                      title={t('meta.method')}
                       text={parsedState.parsed.method}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="目标地址 (URL)"
+                      title={t('meta.url')}
                       text={parsedState.parsed.url}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="请求头数量"
-                      text={`${Object.keys(parsedState.parsed.headers).length} 项`}
+                      title={t('meta.headerCount')}
+                      text={t('meta.headerCountValue', { count: Object.keys(parsedState.parsed.headers).length })}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="请求体 (Body)"
+                      title={t('meta.body')}
                       text={
                         parsedState.parsed.body
-                          ? `${parsedState.parsed.body.length} 字符`
-                          : '无请求体'
+                          ? t('meta.bodyChars', { count: parsedState.parsed.body.length })
+                          : t('meta.noBody')
                       }
                     />
                   </List.Item.Detail.Metadata>
@@ -260,22 +285,22 @@ export function CurlHttpCommand() {
             actions={
               <ActionPanel>
                 <Action
-                  title="立即发起 HTTP 请求"
+                  title={t('action.sendRequest')}
                   icon={Icon.Play}
                   onAction={() => void handleSendRequest()}
                 />
                 <Action.CopyToClipboard
-                  title={`复制 ${targetLang.toUpperCase()} 代码`}
+                  title={t('action.copyCode', { lang: targetLang.toUpperCase() })}
                   content={parsedState.generatedCode}
                 />
                 {responseSnap && (
                   <Action.CopyToClipboard
-                    title="复制响应 Body"
+                    title={t('action.copyResponse')}
                     content={responseSnap.bodyText}
                   />
                 )}
                 <Action
-                  title="从剪贴板载入 cURL"
+                  title={t('action.loadClipboard')}
                   icon={Icon.Clipboard}
                   onAction={() => void handleLoadClipboard()}
                 />
@@ -294,13 +319,13 @@ export function CurlHttpCommand() {
                 accessories={[{ tag: 'Header' }]}
                 detail={
                   <List.Item.Detail
-                    markdown={`### 请求头 ${hKey}\n\n${fenced(String(hVal), 'text')}`}
+                    markdown={`${t('header.heading', { key: hKey })}\n\n${fenced(String(hVal), 'text')}`}
                   />
                 }
                 actions={
                   <ActionPanel>
                     <Action.CopyToClipboard
-                      title={`复制 ${hKey}`}
+                      title={t('action.copyHeader', { key: hKey })}
                       content={`${hKey}: ${String(hVal)}`}
                     />
                   </ActionPanel>

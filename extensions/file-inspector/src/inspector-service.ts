@@ -1,3 +1,4 @@
+import { t } from './i18n.js'
 import { callHostTransport } from './native-ipc.js'
 import type {
   DecodedPreviewLine,
@@ -157,7 +158,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: false,
       detectedEncoding: 'Empty',
-      detectionBasis: '空文件',
+      detectionBasis: t('basisEmpty'),
       hasBom: false
     }
   }
@@ -167,7 +168,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-8-BOM',
-      detectionBasis: '按文件开头的 BOM 判断',
+      detectionBasis: t('basisBom'),
       hasBom: true
     }
   }
@@ -177,7 +178,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-16LE',
-      detectionBasis: '按文件开头的 BOM 判断',
+      detectionBasis: t('basisBom'),
       hasBom: true
     }
   }
@@ -187,7 +188,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-16BE',
-      detectionBasis: '按文件开头的 BOM 判断',
+      detectionBasis: t('basisBom'),
       hasBom: true
     }
   }
@@ -205,7 +206,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: false,
       detectedEncoding: 'Binary',
-      detectionBasis: '含空字节或较多控制字符，按二进制文件处理',
+      detectionBasis: t('basisBinary'),
       hasBom: false
     }
   }
@@ -217,7 +218,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'UTF-8',
-      detectionBasis: '全文是合法的 UTF-8',
+      detectionBasis: t('basisValidUtf8'),
       hasBom: false
     }
   } catch {
@@ -225,7 +226,7 @@ export function detectTextEncodingAndBom(bytes: Uint8Array): {
     return {
       isText: true,
       detectedEncoding: 'GBK',
-      detectionBasis: '不是合法的 UTF-8，按 GBK / GB18030 推测',
+      detectionBasis: t('basisGuessGbk'),
       hasBom: false
     }
   }
@@ -286,7 +287,7 @@ export function inspectFileFromBuffer(
     ? {
         isText: false,
         detectedEncoding: 'Binary',
-        detectionBasis: `按文件头识别为 ${magic.realMimeType}`,
+        detectionBasis: t('basisMagicHeader', { mime: magic.realMimeType }),
         hasBom: false
       }
     : detectTextEncodingAndBom(bytes)
@@ -376,10 +377,10 @@ export function convertTextBufferEncoding(
   targetLineEnding?: 'CRLF' | 'LF'
 ): Uint8Array {
   if (!bytes || bytes.byteLength === 0) {
-    throw new Error('EMPTY_FILE_BUFFER: 空文件无法执行字符集转码')
+    throw new Error(t('errEmptyBufferConvert'))
   }
   if (targetEncoding !== 'utf-8' && targetEncoding !== 'utf-8-bom') {
-    throw new Error('不支持的目标编码，请选择 UTF-8 或 UTF-8-BOM')
+    throw new Error(t('errUnsupportedTargetEnc'))
   }
   const source = sourceEncoding.toLowerCase().replace('utf-8-bom', 'utf-8')
   // 保存时严格解码，避免把替换字符写入文件，造成不可逆的数据丢失。
@@ -414,27 +415,27 @@ export async function fixFileExtension(
   hostOverride?: unknown
 ): Promise<FileOperationResult & { newPath?: string }> {
   if (!/^[a-z0-9]{1,16}$/i.test(correctExt)) {
-    return { ok: false, error: '目标扩展名无效' }
+    return { ok: false, error: t('errInvalidTargetExt') }
   }
   const split = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1
   const name = filePath.slice(split)
   if (!name || filePath.split(/[\\/]/).some(part => part === '..' || part === '.')) {
-    return { ok: false, error: '文件路径无效' }
+    return { ok: false, error: t('errInvalidFilePath') }
   }
   const directory = filePath.slice(0, split) || '.'
   // 打开文件仅授予读权限；改名需要用户明确选择其所在目录，不能扩大宿主授权。
   const grant = await callHostTransport<{ canceled?: boolean; folderPath?: string }>(
     'window_show_select_folder_dialog',
-    { title: '选择文件所在文件夹以允许修正后缀', defaultPath: directory }, hostOverride
+    { title: t('dialogSelectFolderFixExt'), defaultPath: directory }, hostOverride
   )
-  if (!grant.ok) return { ok: false, error: grant.error || '无法选择文件夹' }
+  if (!grant.ok) return { ok: false, error: grant.error || t('errCannotSelectFolder') }
   if (grant.data?.canceled) return { ok: false, canceled: true }
   const normalize = (value: string) => {
     const path = value.replace(/[\\/]+$/, '')
     return /^[a-z]:/i.test(filePath) ? path.replace(/\\/g, '/').toLowerCase() : path
   }
   if (!grant.data?.folderPath || normalize(grant.data.folderPath) !== normalize(directory)) {
-    return { ok: false, error: '请选择当前文件所在的文件夹，文件尚未改名' }
+    return { ok: false, error: t('errSelectSameFolder') }
   }
   const dot = name.lastIndexOf('.')
   const newPath = filePath.slice(0, split) + (dot > 0 ? name.slice(0, dot) : name) + '.' + correctExt
@@ -443,7 +444,7 @@ export async function fixFileExtension(
   )
   return res.ok && res.data?.success === true
     ? { ok: true, newPath }
-    : { ok: false, error: res.error || '修正文件后缀失败，未确认文件已移动' }
+    : { ok: false, error: res.error || t('errFixExtFailed') }
 }
 
 export async function saveConvertedTextFile(
@@ -452,17 +453,17 @@ export async function saveConvertedTextFile(
   hostOverride?: unknown
 ): Promise<FileOperationResult & { outputPath?: string }> {
   if (encodedBytes.byteLength > 16 * 1024 * 1024) {
-    return { ok: false, error: '转码结果超过 16 MiB，请拆分文件后再保存' }
+    return { ok: false, error: t('errFileOver16Mib') }
   }
   const name = filePath.split(/[\\/]/).pop() || 'text.txt'
   const dot = name.lastIndexOf('.')
   const defaultName = dot > 0 ? `${name.slice(0, dot)}_utf8bom${name.slice(dot)}` : `${name}_utf8bom.txt`
   const picked = await callHostTransport<{ canceled?: boolean; filePath?: string }>(
-    'window_show_save_dialog', { title: '另存为 UTF-8-BOM 文件', defaultName }, hostOverride
+    'window_show_save_dialog', { title: t('dialogSaveUtf8Bom'), defaultName }, hostOverride
   )
-  if (!picked.ok) return { ok: false, error: picked.error || '打开保存窗口失败' }
+  if (!picked.ok) return { ok: false, error: picked.error || t('errSaveDialogFailed') }
   if (picked.data?.canceled) return { ok: false, canceled: true }
-  if (!picked.data?.filePath) return { ok: false, error: '保存窗口未返回文件路径' }
+  if (!picked.data?.filePath) return { ok: false, error: t('errSaveDialogNoPath') }
   // 分块处理，避免较大文件触发函数参数数量上限；浏览器插件无需 Buffer。
   const chunks: string[] = []
   for (let i = 0; i < encodedBytes.length; i += 8192) {
@@ -475,30 +476,63 @@ export async function saveConvertedTextFile(
   )
   return res.ok && res.data?.success === true && res.data.size === encodedBytes.byteLength
     ? { ok: true, outputPath: picked.data.filePath }
-    : { ok: false, error: res.error || '未确认完整写入文件，请检查保存结果' }
+    : { ok: false, error: res.error || t('errWriteUnconfirmed') }
+}
+
+export async function readLocalFileByPath(
+  filePath: string,
+  hostOverride?: unknown
+): Promise<FileOperationResult & { filePath?: string; bytes?: Uint8Array }> {
+  const read = await callHostTransport<{ content?: string; size?: number }>(
+    'filesystem_read_file', { path: filePath, encoding: 'base64' }, hostOverride
+  )
+  if (!read.ok || typeof read.data?.content !== 'string') {
+    return { ok: false, error: read.error || t('errReadBytesFailed') }
+  }
+  try {
+    const bytes = Uint8Array.from(atob(read.data.content), c => c.charCodeAt(0))
+    if (read.data.size !== bytes.byteLength) return { ok: false, error: t('errIncompleteFileData') }
+    return { ok: true, filePath, bytes }
+  } catch (error) {
+    return { ok: false, error: t('errReadBytesWithReason', { error: error instanceof Error ? error.message : String(error) }) }
+  }
+}
+
+export async function readDroppedLocalFile(
+  envelopeOrPayload: unknown,
+  hostOverride?: unknown
+): Promise<FileOperationResult & { filePath?: string; bytes?: Uint8Array }> {
+  const record = envelopeOrPayload && typeof envelopeOrPayload === 'object' ? (envelopeOrPayload as Record<string, unknown>) : {}
+  const payload = record.payload && typeof record.payload === 'object' ? (record.payload as Record<string, unknown>) : record
+  const files = Array.isArray(payload.files)
+    ? payload.files.filter((f): f is string => typeof f === 'string' && f.trim().length > 0).map(f => f.trim())
+    : []
+  const filePath = files[0]
+  if (!filePath) return { ok: false, error: t('errNoDroppedFile') }
+  return readLocalFileByPath(filePath, hostOverride)
 }
 
 export async function pickAndReadLocalFile(
   hostOverride?: unknown
 ): Promise<FileOperationResult & { filePath?: string; bytes?: Uint8Array }> {
   const picked = await callHostTransport<{ canceled?: boolean; filePath?: string }>(
-    'window_show_open_dialog', { title: '选择需要透视或转码的文件', properties: ['openFile'] }, hostOverride
+    'window_show_open_dialog', { title: t('dialogPickFileTitle'), properties: ['openFile'] }, hostOverride
   )
-  if (!picked.ok) return { ok: false, error: picked.error || '打开选择文件窗口失败' }
+  if (!picked.ok) return { ok: false, error: picked.error || t('errOpenDialogFailed') }
   if (picked.data?.canceled) return { ok: false, canceled: true }
   const filePath = picked.data?.filePath
-  if (!filePath) return { ok: false, error: '选择窗口未返回文件路径' }
+  if (!filePath) return { ok: false, error: t('errOpenDialogNoPath') }
   const read = await callHostTransport<{ content?: string; size?: number }>(
     'filesystem_read_file', { path: filePath, encoding: 'base64' }, hostOverride
   )
   if (!read.ok || typeof read.data?.content !== 'string') {
-    return { ok: false, error: read.error || '读取文件字节失败' }
+    return { ok: false, error: read.error || t('errReadBytesFailed') }
   }
   try {
     const bytes = Uint8Array.from(atob(read.data.content), c => c.charCodeAt(0))
-    if (read.data.size !== bytes.byteLength) return { ok: false, error: '文件数据不完整，请重新选择文件' }
+    if (read.data.size !== bytes.byteLength) return { ok: false, error: t('errIncompleteFileData') }
     return { ok: true, filePath, bytes }
   } catch (error) {
-    return { ok: false, error: `读取文件字节失败：${error instanceof Error ? error.message : String(error)}` }
+    return { ok: false, error: t('errReadBytesWithReason', { error: error instanceof Error ? error.message : String(error) }) }
   }
 }

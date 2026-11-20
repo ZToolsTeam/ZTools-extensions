@@ -4,14 +4,15 @@ import type {
   UrlInspectResult,
   UrlQueryParamItem,
 } from './types'
+import { t } from './i18n.js'
 
 export function decodeBase64UrlToUtf8(segment: string): string {
   const trimmed = String(segment || '')
   if (!trimmed) {
-    throw new Error('EMPTY_BASE64URL_SEGMENT: Base64URL 段不能为空')
+    throw new Error(t('errEmptyB64Seg'))
   }
   if (!/^[A-Za-z0-9\-_]+$/.test(trimmed) || trimmed.length % 4 === 1) {
-    throw new Error('INVALID_BASE64URL_CHARS: 包含非法 Base64URL 字符')
+    throw new Error(t('errInvalidB64Chars'))
   }
 
   const normalized = trimmed.replace(/-/g, '+').replace(/_/g, '/')
@@ -21,7 +22,7 @@ export function decodeBase64UrlToUtf8(segment: string): string {
   const bytes = typeof Buffer !== 'undefined' ? new Uint8Array(Buffer.from(padded, 'base64'))
     : Uint8Array.from(atob(padded), character => character.charCodeAt(0))
   const decoded = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
-  if (encodeUtf8ToBase64Url(decoded) !== trimmed) throw new Error('INVALID_BASE64URL_ENCODING: 非规范编码')
+  if (encodeUtf8ToBase64Url(decoded) !== trimmed) throw new Error(t('errNonCanonicalB64'))
   return decoded
 }
 
@@ -61,10 +62,10 @@ function formatDurationSec(absSec: number): string {
   const minutes = Math.floor((absSec % 3600) / 60)
   const seconds = Math.floor(absSec % 60)
   const parts: string[] = []
-  if (days > 0) parts.push(`${days}天`)
-  if (hours > 0) parts.push(`${hours}小时`)
-  if (minutes > 0) parts.push(`${minutes}分`)
-  if (parts.length === 0 || seconds > 0) parts.push(`${seconds}秒`)
+  if (days > 0) parts.push(t('durDays', { n: days }))
+  if (hours > 0) parts.push(t('durHours', { n: hours }))
+  if (minutes > 0) parts.push(t('durMinutes', { n: minutes }))
+  if (parts.length === 0 || seconds > 0) parts.push(t('durSeconds', { n: seconds }))
   return parts.slice(0, 3).join(' ')
 }
 
@@ -75,13 +76,13 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
     .trim()
 
   if (!cleaned) {
-    throw new Error('EMPTY_JWT_TOKEN: JWT Token 不能为空')
+    throw new Error(t('errEmptyJwt'))
   }
 
   const segments = cleaned.split('.')
   if (segments.length !== 3) {
     throw new Error(
-      `INVALID_JWT_STRUCTURE: 标准 JWT 必须包含 3 段 (Header.Payload.Signature)，当前为 ${segments.length} 段`,
+      t('errInvalidJwtStruct', { count: segments.length }),
     )
   }
 
@@ -93,14 +94,14 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
     const headerJson = decodeBase64UrlToUtf8(headerRaw)
     const parsedHeader = JSON.parse(headerJson)
     if (!parsedHeader || typeof parsedHeader !== 'object' || Array.isArray(parsedHeader)) {
-      throw new Error('Header 不是合法 JSON 对象')
+      throw new Error(t('errHeaderNotObj'))
     }
     headerObj = parsedHeader as Record<string, unknown>
   } catch (err) {
     throw new Error(
-      `INVALID_JWT_HEADER: Header 段 Base64URL 或 JSON 解析失败 (${
-        err instanceof Error ? err.message : String(err)
-      })`,
+      t('errInvalidJwtHeader', {
+        error: err instanceof Error ? err.message : String(err),
+      }),
     )
   }
 
@@ -108,14 +109,14 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
     const payloadJson = decodeBase64UrlToUtf8(payloadRaw)
     const parsedPayload = JSON.parse(payloadJson)
     if (!parsedPayload || typeof parsedPayload !== 'object' || Array.isArray(parsedPayload)) {
-      throw new Error('Payload 不是合法 JSON 对象')
+      throw new Error(t('errPayloadNotObj'))
     }
     payloadObj = parsedPayload as Record<string, unknown>
   } catch (err) {
     throw new Error(
-      `INVALID_JWT_PAYLOAD: Payload 段 Base64URL 或 JSON 解析失败 (${
-        err instanceof Error ? err.message : String(err)
-      })`,
+      t('errInvalidJwtPayload', {
+        error: err instanceof Error ? err.message : String(err),
+      }),
     )
   }
 
@@ -124,25 +125,26 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
   const notBeforeText = formatEpochSec(payloadObj.nbf)
   const expiresAtText = formatEpochSec(payloadObj.exp)
 
-  if (!Number.isFinite(nowMs)) throw new Error('INVALID_CURRENT_TIME: 当前时间无效')
+  if (!Number.isFinite(nowMs)) throw new Error(t('errInvalidNow'))
   const nowSec = nowMs / 1000
   const invalidTime = ['exp', 'nbf', 'iat'].some(key => key in payloadObj && formatEpochSec(payloadObj[key]) === undefined)
     || (typeof payloadObj.nbf === 'number' && typeof payloadObj.exp === 'number' && payloadObj.nbf >= payloadObj.exp)
   const isExpired = typeof payloadObj.exp === 'number' && Number.isFinite(payloadObj.exp) && payloadObj.exp <= nowSec
   // RFC 7519 的 NumericDate 以秒为单位；超过 1e11（约公元 5138 年）基本是误填的毫秒时间戳，按秒计算会得出“尚未过期”的错误结论
   const millisecondLike = ['exp', 'nbf', 'iat'].filter(key => typeof payloadObj[key] === 'number' && Math.abs(payloadObj[key] as number) > 1e11)
-  let timeStatus: JwtDecodedResult['timeStatus'] = '未声明到期'
-  let expiryCountdownText = '未声明 exp，无法判断到期时间'
+  let timeStatus: JwtDecodedResult['timeStatus'] = t('tsUndeclared')
+  let timeStatusWarning = false
+  let expiryCountdownText = t('cdUndeclared')
   if (millisecondLike.length) {
-    timeStatus = '时间声明异常'; expiryCountdownText = `${millisecondLike.join('、')} 数值过大，疑似毫秒时间戳（JWT 规定以秒为单位）`
+    timeStatus = t('tsInvalid'); timeStatusWarning = true; expiryCountdownText = t('cdMillisecondLike', { keys: millisecondLike.join(t('listSep')) })
   } else if (invalidTime) {
-    timeStatus = '时间声明异常'; expiryCountdownText = 'exp、nbf 或 iat 不是有效时间，或生效时间不早于到期时间'
+    timeStatus = t('tsInvalid'); timeStatusWarning = true; expiryCountdownText = t('cdInvalidTime')
   } else if (isExpired) {
-    timeStatus = '已过期'; expiryCountdownText = `已过期 ${formatDurationSec(nowSec - Number(payloadObj.exp))}`
+    timeStatus = t('tsExpired'); timeStatusWarning = true; expiryCountdownText = t('cdExpired', { duration: formatDurationSec(nowSec - Number(payloadObj.exp)) })
   } else if (typeof payloadObj.nbf === 'number' && payloadObj.nbf > nowSec) {
-    timeStatus = '尚未生效'; expiryCountdownText = `距离 nbf 生效时间 ${formatDurationSec(payloadObj.nbf - nowSec)}`
+    timeStatus = t('tsNotYetValid'); timeStatusWarning = true; expiryCountdownText = t('cdNotBefore', { duration: formatDurationSec(payloadObj.nbf - nowSec) })
   } else if (typeof payloadObj.exp === 'number') {
-    timeStatus = '尚未过期'; expiryCountdownText = `距离 exp 到期时间 ${formatDurationSec(payloadObj.exp - nowSec)}`
+    timeStatus = t('tsValid'); expiryCountdownText = t('cdExpiresIn', { duration: formatDurationSec(payloadObj.exp - nowSec) })
   }
 
   return {
@@ -158,6 +160,7 @@ export function decodeJwtToken(rawInput: string, nowMs: number = Date.now()): Jw
     expiresAtText,
     isExpired,
     timeStatus,
+    timeStatusWarning,
     expiryCountdownText,
   }
 }
@@ -188,7 +191,7 @@ async function computeHmacSha256Base64Url(signingInput: string, secret: string):
     return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
   }
 
-  throw new Error('CRYPTO_UNAVAILABLE: 当前环境不支持 WebCrypto SubtleCrypto HMAC-SHA256')
+  throw new Error(t('errCryptoUnavailable'))
 }
 
 export async function verifyJwtHmacSha256(
@@ -197,7 +200,7 @@ export async function verifyJwtHmacSha256(
 ): Promise<JwtVerificationResult> {
   const decoded = decodeJwtToken(rawToken)
   if (!secret) {
-    throw new Error('EMPTY_JWT_SECRET: 验签密钥 Secret 不能为空')
+    throw new Error(t('errEmptyVerifySecret'))
   }
   if (decoded.algorithm !== 'HS256' || 'crit' in decoded.header || 'b64' in decoded.header) {
     return {
@@ -205,7 +208,7 @@ export async function verifyJwtHmacSha256(
       algorithm: decoded.algorithm,
       expectedSignature: '',
       actualSignature: decoded.signatureRaw,
-      reason: '当前仅支持 alg 为 HS256 且不含 crit/b64 扩展的标准签名',
+      reason: t('verifyUnsupportedAlg'),
     }
   }
 
@@ -218,7 +221,7 @@ export async function verifyJwtHmacSha256(
     algorithm: decoded.algorithm,
     expectedSignature,
     actualSignature: decoded.signatureRaw,
-    reason: verified ? 'HMAC-SHA256 签名一致；未校验签发方、接收方或授权范围' : '签名不匹配，密钥错误或载荷已被篡改',
+    reason: verified ? t('verifyMatch') : t('verifyMismatch'),
   }
 }
 
@@ -228,16 +231,16 @@ export async function signJwtHmacSha256(
   headerOverrides?: Record<string, unknown>,
 ): Promise<string> {
   if (!secret) {
-    throw new Error('EMPTY_JWT_SECRET: 签发密钥 Secret 不能为空')
+    throw new Error(t('errEmptySignSecret'))
   }
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    throw new Error('INVALID_JWT_PAYLOAD: Payload 必须是合法 JSON 对象')
+    throw new Error(t('errSignPayloadNotObj'))
   }
   if (headerOverrides !== undefined && (!headerOverrides || typeof headerOverrides !== 'object' || Array.isArray(headerOverrides))) {
-    throw new Error('INVALID_JWT_HEADER: Header 必须是 JSON 对象')
+    throw new Error(t('errSignHeaderNotObj'))
   }
   if (headerOverrides && (('alg' in headerOverrides && headerOverrides.alg !== 'HS256') || 'crit' in headerOverrides || 'b64' in headerOverrides)) {
-    throw new Error('UNSUPPORTED_JWT_HEADER: 仅支持 HS256，不能覆盖算法或使用 crit/b64 扩展')
+    throw new Error(t('errUnsupportedHeaderExt'))
   }
 
   const header = {
@@ -263,7 +266,7 @@ function safeDecodeURIComponent(val: string): string {
 export function parseAndInspectUrl(rawInput: string): UrlInspectResult {
   const trimmed = String(rawInput || '').trim()
   if (!trimmed) {
-    throw new Error('EMPTY_URL_INPUT: URL 或 Query 字符串不能为空')
+    throw new Error(t('errEmptyUrlInput'))
   }
 
   const authorityWithPort = /^[^/?#]+:\d+(?:[/?#]|$)/.test(trimmed)
@@ -280,7 +283,7 @@ export function parseAndInspectUrl(rawInput: string): UrlInspectResult {
     parsed = new URL(normalizedUrlStr)
   } catch (err) {
     throw new Error(
-      `INVALID_URL_FORMAT: 无法解析 URL (${err instanceof Error ? err.message : String(err)})`,
+      t('errInvalidUrlFormat', { error: err instanceof Error ? err.message : String(err) }),
     )
   }
 

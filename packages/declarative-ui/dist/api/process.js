@@ -1,4 +1,5 @@
 import { getDeclarativeBridge } from "./bridge.js";
+import { tApiError } from "./error-messages.js";
 import { ZToolsHostError } from "./host-error.js";
 /**
  * 结束本机任意进程。插件必须在 plugin.json 声明 "process" 权限。
@@ -10,11 +11,11 @@ import { ZToolsHostError } from "./host-error.js";
  */
 export async function terminateProcess(pid, options = {}) {
     if (!Number.isInteger(pid) || pid < 2 || pid > 0xffff_ffff) {
-        throw new ZToolsHostError("INVALID_REQUEST", "pid 必须是 2–4294967295 的整数");
+        throw new ZToolsHostError("INVALID_REQUEST", tApiError("processInvalidPid"));
     }
     const impl = getDeclarativeBridge()?.terminateProcess;
     if (!impl)
-        throw new ZToolsHostError("HOST_FEATURE_UNAVAILABLE", "当前宿主不支持结束任意进程，请升级 ZTools");
+        throw new ZToolsHostError("HOST_FEATURE_UNAVAILABLE", tApiError("processTerminateUnsupported"));
     return impl(pid, options);
 }
 export function getHostTransport() {

@@ -9,20 +9,22 @@ import {
   useState,
   useEffect,
   useRef,
+  useLocale,
   showToast,
   Toast,
   confirmAlert,
   useNavigation
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
-  NOT_IN_CLIENT_MESSAGE,
+  getNotInClientMessage,
   type ProcessItem,
   type SystemInfoData,
   type ProcessDetailInfo,
   type ProcessServiceInfo,
   type ProcessSortKey,
   type ProcessTerminateMode,
-  FORBIDDEN_REASON,
+  getForbiddenReason,
   getTerminationRisk,
   resolveCpuLoadPercent,
   describeProcessProfile,
@@ -52,7 +54,7 @@ type ProcessViewFilter = 'port' | 'memory' | 'cpu' | 'high-load' | 'system' | 'u
  */
 /** 系统文件管理器名称：Windows 路径为资源管理器，其余（macOS）为访达 */
 function fileManagerName(samplePath: string): string {
-  return /^[a-zA-Z]:[\\/]|^\\\\/.test(samplePath) ? '资源管理器' : '访达'
+  return /^[a-zA-Z]:[\\/]|^\\\\/.test(samplePath) ? t('fileMgrExplorer') : t('fileMgrFinder')
 }
 
 async function copyWithToast(text: string, successTitle: string, successMessage?: string): Promise<void> {
@@ -61,7 +63,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('copyFailedToast'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -70,8 +72,10 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
 }
 
 export default function ProcessMonitorCommand({ initialView = 'memory' }: { initialView?: ProcessViewFilter } = {}) {
+  useLocale()
   const { push } = useNavigation()
   const inRealHost = isRealElectronHost()
+  const notInClientMsg = getNotInClientMessage()
   const [searchText, setSearchText] = useState('')
   const [viewFilter, setViewFilter] = useState<ProcessViewFilter>(initialView)
   const [autoRefresh, setAutoRefresh] = useState<boolean>(true)
@@ -89,7 +93,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     processCount: 0,
     threadCount: 0
   })
-  const [loadError, setLoadError] = useState(inRealHost ? '' : NOT_IN_CLIENT_MESSAGE)
+  const [loadError, setLoadError] = useState(inRealHost ? '' : notInClientMsg)
   const [portsError, setPortsError] = useState('')
   const [ports, setPorts] = useState<ProcessPort[]>([])
   // macOS 宿主改用 lsof 兜底时只能看到当前用户进程的端口，系统服务占用的端口查不到，需要如实提示
@@ -134,7 +138,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     } catch (err) {
       showToast({
         style: Toast.Style.Failure,
-        title: '读取签名与托管服务失败',
+        title: t('profileFetchFailed'),
         message: err instanceof Error ? err.message : String(err)
       })
       return
@@ -146,8 +150,8 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (fields.length === 0) {
       showToast({
         style: Toast.Style.Failure,
-        title: '未读取到签名与托管服务信息',
-        message: `当前系统没有为 ${proc.name} (PID: ${proc.pid}) 提供数字签名、版本或关联服务数据`
+        title: t('profileEmptyTitle'),
+        message: t('profileEmptyMsg', { name: proc.name, pid: proc.pid })
       })
       return
     }
@@ -197,7 +201,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
       if (request !== refreshSequenceRef.current) return
       const message = error instanceof Error ? error.message : String(error)
       setLoadError(message)
-      if (showIndicator) await showToast({ style: Toast.Style.Failure, title: '刷新失败', message })
+      if (showIndicator) await showToast({ style: Toast.Style.Failure, title: t('refreshFailedToast'), message })
     } finally {
       if (request === refreshSequenceRef.current) {
         refreshingRef.current = false
@@ -265,8 +269,8 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (!next) setIsLoading(false)
     showToast({
       style: Toast.Style.Success,
-      title: next ? '已开启 2 秒实时自动刷新' : '已暂停实时自动刷新',
-      message: next ? '每 2 秒自动同步 CPU 与内存快照' : '列表已锁定，可点「刷新列表」手动刷新'
+      title: next ? t('autoRefreshOnTitle') : t('autoRefreshOffTitle'),
+      message: next ? t('autoRefreshOnMsg') : t('autoRefreshOffMsg')
     })
   }
 
@@ -286,29 +290,29 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (risk === 'forbidden') {
       showToast({
         style: Toast.Style.Failure,
-        title: `已拦截：${proc.name} 是系统关键进程`,
-        message: FORBIDDEN_REASON
+        title: t('blockedCriticalTitle', { name: proc.name }),
+        message: getForbiddenReason()
       })
       return
     }
-    const modeLabel = mode === 'tree' ? '强制结束进程树' : mode === 'graceful' ? '平缓关闭进程' : '结束进程'
+    const modeLabel = mode === 'tree' ? t('modeTree') : mode === 'graceful' ? t('modeGraceful') : t('modeForce')
 
     if (risk === 'high-risk') {
       const confirmed = await confirmAlert({
-        title: `高危操作：结束系统界面进程 [${proc.name}]`,
-        message: `进程 PID: ${proc.pid} 是系统界面组件，结束后程序坞、桌面或菜单栏会短暂消失，通常由系统自动重新启动。\n\n确定依然执行 [${modeLabel}]？`,
+        title: t('highRiskTitle', { name: proc.name }),
+        message: t('highRiskMsg', { pid: proc.pid, mode: modeLabel }),
         primaryAction: {
-          title: '依然结束',
+          title: t('stillEndBtn'),
           style: 'destructive'
         }
       })
       if (!confirmed) return
     } else {
       const confirmed = await confirmAlert({
-        title: `确认${modeLabel} [${proc.name}]`,
-        message: `目标进程 PID: ${proc.pid}，未保存的数据可能会丢失。`,
+        title: t('confirmEndTitle', { mode: modeLabel, name: proc.name }),
+        message: t('confirmEndMsg', { pid: proc.pid }),
         primaryAction: {
-          title: '确认结束',
+          title: t('confirmEndBtn'),
           style: 'destructive'
         }
       })
@@ -317,7 +321,7 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
 
     showToast({
       style: Toast.Style.Animated,
-      title: `正在执行: ${modeLabel}`,
+      title: t('executingModeToast', { mode: modeLabel }),
       message: `${proc.name} (PID: ${proc.pid})`
     })
 
@@ -325,18 +329,18 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (!res.ok && res.canForce) {
       // 平缓关闭超时：宿主不自动升级，强制结束必须由用户再次确认
       const force = await confirmAlert({
-        title: `${proc.name} (PID: ${proc.pid}) 没有响应平缓关闭`,
-        message: `${res.error}。强制结束会立即终止它，未保存的数据会丢失。`,
+        title: t('gracefulTimeoutTitle', { name: proc.name, pid: proc.pid }),
+        message: t('gracefulTimeoutMsg', { error: res.error || '' }),
         primaryAction: {
-          title: '强制结束',
+          title: t('forceEndBtn'),
           style: 'destructive'
         }
       })
       if (!force) {
         showToast({
           style: Toast.Style.Failure,
-          title: '进程仍在运行',
-          message: `已取消强制结束 ${proc.name} (PID: ${proc.pid})`
+          title: t('stillRunningTitle'),
+          message: t('cancelledForceMsg', { name: proc.name, pid: proc.pid })
         })
         return
       }
@@ -345,15 +349,15 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (!res.ok) {
       showToast({
         style: Toast.Style.Failure,
-        title: '终止失败',
-        message: res.error || '终止进程失败'
+        title: t('terminateFailedTitle'),
+        message: res.error || t('terminateFailedFallback')
       })
       return
     }
 
     showToast({
       style: Toast.Style.Success,
-      title: res.alreadyExited ? '进程已经退出' : '进程已成功终止',
+      title: res.alreadyExited ? t('processExitedTitle') : t('processTerminatedTitle'),
       message: `${proc.name} (PID: ${proc.pid})`
     })
 
@@ -368,8 +372,8 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (!targetPath) {
       showToast({
         style: Toast.Style.Failure,
-        title: '无法定位路径',
-        message: '系统没有提供该进程的可执行文件路径（内核进程、受权限保护或改写了进程名的程序）'
+        title: t('locateFailedTitle'),
+        message: t('locateFailedNoPath')
       })
       return
     }
@@ -377,15 +381,15 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
     if (ok) {
       showToast({
         style: Toast.Style.Success,
-        title: `已在${fileManagerName(targetPath)}中定位`,
+        title: t('locatedInFileMgr', { mgr: fileManagerName(targetPath) }),
         message: targetPath
       })
     } else {
       showToast({
         style: Toast.Style.Failure,
-        title: '打开路径失败',
+        title: t('openPathFailedTitle'),
         // 宿主拒绝（列表刷新后授权过期、文件已不在）时说明怎么办，不只回显路径
-        message: `${targetPath}\n文件可能已被移动或删除，或授权已过期，请刷新进程列表后再试`
+        message: t('openPathFailedMsg', { path: targetPath })
       })
     }
   }
@@ -424,33 +428,47 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
   )
 
   return List({
-    navigationTitle: '进程监控',
-    searchBarPlaceholder: portMode ? '输入本地端口号，例如 8080' : '搜索进程、PID 或输入 port:8080 查询端口占用',
+    navigationTitle: t('navTitle'),
+    searchBarPlaceholder: portMode ? t('searchPortPlaceholder') : t('searchDefaultPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '切换进程筛选与排序维度',
+      tooltip: t('viewDropdownTooltip'),
       value: viewFilter,
       onChange: (val: string) => setViewFilter(val as ProcessViewFilter),
       children: [
-        List.Dropdown.Item({ title: '本地端口占用', value: 'port' }),
-        List.Dropdown.Item({ title: '全部进程 · 按内存排序', value: 'memory' }),
-        List.Dropdown.Item({ title: '全部进程 · 按 CPU 排序', value: 'cpu' }),
-        List.Dropdown.Item({ title: '仅高负载进程', value: 'high-load' }),
-        List.Dropdown.Item({ title: '系统关键服务', value: 'system' }),
-        List.Dropdown.Item({ title: '用户应用程序', value: 'user' }),
-        List.Dropdown.Item({ title: '按进程名称排序', value: 'name' }),
-        List.Dropdown.Item({ title: '按 PID 升序', value: 'pid' })
+        List.Dropdown.Item({ title: t('viewPort'), value: 'port' }),
+        List.Dropdown.Item({ title: t('viewMemory'), value: 'memory' }),
+        List.Dropdown.Item({ title: t('viewCpu'), value: 'cpu' }),
+        List.Dropdown.Item({ title: t('viewHighLoad'), value: 'high-load' }),
+        List.Dropdown.Item({ title: t('viewSystem'), value: 'system' }),
+        List.Dropdown.Item({ title: t('viewUser'), value: 'user' }),
+        List.Dropdown.Item({ title: t('viewName'), value: 'name' }),
+        List.Dropdown.Item({ title: t('viewPid'), value: 'pid' })
       ]
     }),
     filterBar: {
-      summaryText: loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? `数据不可用或已过期：${loadError}` : portMode ? (portsError ? `端口读取失败：${portsError}` : `本地端口匹配 ${filtered.length} 个进程${portsPartial ? '（只能看到当前用户进程的端口，系统服务占用的端口可能查不到）' : ''}`) : `CPU 负载 ${totalCpuPercent}% · 物理内存已用 ${formatBytes(usedMem)} / ${formatBytes(totalMem)} (${memPercent}%) · 活动进程 ${filtered.length} 个`,
+      summaryText: !inRealHost
+        ? notInClientMsg
+        : loadError
+          ? t('summaryError', { error: loadError })
+          : portMode
+            ? portsError
+              ? t('summaryPortsError', { error: portsError })
+              : t('summaryPorts', { count: filtered.length, partial: portsPartial ? t('portsPartialNote') : '' })
+            : t('summaryStats', {
+                cpu: totalCpuPercent,
+                used: formatBytes(usedMem),
+                total: formatBytes(totalMem),
+                pct: memPercent,
+                count: filtered.length
+              }),
       actions: [
         {
           id: 'refresh-list',
-          label: '刷新列表',
-          title: '刷新列表',
+          label: t('refreshListBtn'),
+          title: t('refreshListBtn'),
           style: 'secondary',
           onAction: () => {
             void handleRefresh()
@@ -458,8 +476,8 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
         },
         {
           id: 'toggle-auto-refresh',
-          label: autoRefresh ? '暂停自动刷新' : '开启自动刷新',
-          title: autoRefresh ? '暂停自动刷新' : '开启自动刷新',
+          label: autoRefresh ? t('pauseAutoRefreshBtn') : t('resumeAutoRefreshBtn'),
+          title: autoRefresh ? t('pauseAutoRefreshBtn') : t('resumeAutoRefreshBtn'),
           style: 'secondary',
           onAction: () => {
             handleToggleAutoRefresh()
@@ -472,40 +490,42 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
         ? [
             List.Item({
               id: 'load-error',
-              title: loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : '无法读取进程列表',
-              subtitle: loadError === NOT_IN_CLIENT_MESSAGE ? '在 ZTools 中打开「进程监控」后查看本机进程' : loadError,
+              title: !inRealHost ? notInClientMsg : t('cannotReadProcessList'),
+              subtitle: !inRealHost ? t('openInClientHint') : loadError,
               icon: Icon.ExclamationMark
             })
           ]
         : []),
       List.Section({
-        title: `${portMode ? '端口占用进程' : '活动进程列表'}（${filtered.length}）`,
+        title: portMode
+          ? t('sectionPortsTitle', { count: filtered.length })
+          : t('sectionProcsTitle', { count: filtered.length }),
         children: filtered.map((proc) => {
           const isCrit = getTerminationRisk(proc.pid, proc.name) === 'forbidden'
           const memVal = proc.workingSetBytes ?? proc.memoryBytes ?? 0
           const memRatio = Math.min(100, Math.max(4, Math.round((memVal / maxMemBytes) * 100)))
           const isHighLoad = proc.cpuPercent >= 25 || memVal >= 1024 * 1024 * 1024
           const procServices = services[proc.pid] || []
-          const svcHint = procServices.length > 0 ? `托管服务 ${procServices.length} 项` : ''
+          const svcHint = procServices.length > 0 ? t('svcHint', { count: procServices.length }) : ''
 
           return List.Item({
             id: String(proc.pid),
             title: proc.name,
             subtitle: [
               `PID: ${proc.pid}`,
-              ...(portMode ? [`端口 ${[...new Set(portRows.filter(p => p.pid === proc.pid).map(p => p.localPort))].join(", ")}`] : []),
-              ...(proc.threadCount ? [`线程 ${proc.threadCount}`] : []),
+              ...(portMode ? [t('portLabel', { ports: [...new Set(portRows.filter(p => p.pid === proc.pid).map(p => p.localPort))].join(', ') })] : []),
+              ...(proc.threadCount ? [t('threadsLabel', { count: proc.threadCount })] : []),
               ...(svcHint ? [svcHint] : []),
-              proc.path || proc.commandLine || '路径未提供'
+              proc.path || proc.commandLine || t('pathNotProvided')
             ].join(' · '),
             icon: isCrit ? Icon.Shield : isHighLoad ? Icon.ExclamationMark : Icon.Terminal,
             accessories: [
               { progress: { value: memRatio } },
               ...(isCrit
-                ? [{ tag: { value: '系统关键' } }]
+                ? [{ tag: { value: t('tagCritical') } }]
                 : isHighLoad
-                ? [{ tag: { value: '高负载', color: Color.Red } }]
-                : [{ tag: { value: proc.isSystem ? '系统服务' : '用户应用' } }]),
+                ? [{ tag: { value: t('tagHighLoad'), color: Color.Red } }]
+                : [{ tag: { value: proc.isSystem ? t('tagSystemService') : t('tagUserApp') } }]),
               { text: `CPU ${proc.cpuPercent.toFixed(1)}%` },
               { text: formatBytes(memVal) }
             ],
@@ -513,74 +533,74 @@ export default function ProcessMonitorCommand({ initialView = 'memory' }: { init
               title: `${proc.name} (PID: ${proc.pid})`,
               children: [
                 Action({
-                  title: '结束进程',
+                  title: t('actionEndProcess'),
                   icon: Icon.XMarkCircle,
                   style: 'destructive',
                   onAction: () => handleTerminate(proc, 'force')
                 }),
                 Action({
-                  title: '强制结束进程树',
+                  title: t('actionForceEndTree'),
                   icon: Icon.Trash,
                   style: 'destructive',
                   shortcut: { modifiers: ['ctrl'], key: 'return' },
                   onAction: () => handleTerminate(proc, 'tree')
                 }),
                 Action({
-                  title: '定位文件目录',
+                  title: t('actionLocateDir'),
                   icon: Icon.Folder,
                   shortcut: { modifiers: ['ctrl'], key: 'o' },
                   onAction: () => handleOpenLocation(proc)
                 }),
                 Action({
-                  title: '复制 PID',
+                  title: t('actionCopyPid'),
                   icon: Icon.Key,
                   shortcut: { modifiers: ['ctrl'], key: 'c' },
-                  onAction: () => copyWithToast(String(proc.pid), '已复制 PID', String(proc.pid))
+                  onAction: () => copyWithToast(String(proc.pid), t('copiedPidTitle'), String(proc.pid))
                 }),
                 Action({
-                  title: '平缓关闭进程 (Graceful)',
+                  title: t('actionGracefulClose'),
                   icon: Icon.Stop,
                   onAction: () => handleTerminate(proc, 'graceful')
                 }),
                 Action({
-                  title: '查看数字签名与托管服务',
+                  title: t('actionViewProfile'),
                   icon: Icon.MagnifyingGlass,
                   shortcut: { modifiers: ['ctrl'], key: 'i' },
                   onAction: () => handleShowProfile(proc)
                 }),
                 Action({
-                  title: '复制完整可执行路径',
+                  title: t('actionCopyExecPath'),
                   icon: Icon.Document,
                   shortcut: { modifiers: ['ctrl', 'shift'], key: 'c' },
                   onAction: () => {
                     const targetPath = details[proc.pid]?.path || proc.path
                     if (targetPath) {
-                      return copyWithToast(targetPath, '已复制可执行路径', targetPath)
+                      return copyWithToast(targetPath, t('copiedExecPathTitle'), targetPath)
                     } else {
                       showToast({
                         style: Toast.Style.Failure,
-                        title: '路径不可用',
-                        message: '没有读取到该进程的可执行文件路径'
+                        title: t('pathUnavailableTitle'),
+                        message: t('pathUnavailableMsg')
                       })
                     }
                   }
                 }),
                 Action({
-                  title: '复制启动命令行 (CommandLine)',
+                  title: t('actionCopyCmdLine'),
                   icon: Icon.Terminal,
                   onAction: () => {
                     // 只复制系统真实给出的命令行；没有时如实提示，不拿路径或进程名冒充
                     const cmdLine = details[proc.pid]?.commandLine || proc.commandLine
-                    if (cmdLine) return copyWithToast(cmdLine, '已复制启动命令行', cmdLine)
+                    if (cmdLine) return copyWithToast(cmdLine, t('copiedCmdLineTitle'), cmdLine)
                     showToast({
                       style: Toast.Style.Failure,
-                      title: '没有读取到启动命令行',
-                      message: `当前系统没有为 ${proc.name} (PID: ${proc.pid}) 提供启动命令行`
+                      title: t('noCmdLineTitle'),
+                      message: t('noCmdLineMsg', { name: proc.name, pid: proc.pid })
                     })
                   }
                 }),
                 Action({
-                  title: '刷新列表',
+                  title: t('refreshListBtn'),
                   icon: Icon.ArrowClockwise,
                   shortcut: { modifiers: ['ctrl'], key: 'r' },
                   onAction: handleRefresh

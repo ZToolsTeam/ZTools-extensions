@@ -1,4 +1,5 @@
 import type { CodeTargetLang, HttpResponseSnapshot, ParsedCurlRequest } from './types'
+import { t } from './i18n.js'
 
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 
@@ -18,12 +19,12 @@ async function requestViaHost(parsed: ParsedCurlRequest, timeoutMs: number): Pro
     window?: { __ztoolsElectron?: { transport?: { methods?: { network_http_request?: HostNetworkMethod } } } }
   }
   const request = root.window?.__ztoolsElectron?.transport?.methods?.network_http_request
-  if (typeof request !== 'function') throw new Error('当前客户端不支持网络请求，请升级客户端')
+  if (typeof request !== 'function') throw new Error(t('error.hostNetworkUnsupported'))
   if (!['GET', 'HEAD', 'POST', 'PUT', 'DELETE'].includes(parsed.method)) {
-    throw new Error(`当前客户端不支持 ${parsed.method} 请求，可复制生成的代码执行`)
+    throw new Error(t('error.hostMethodUnsupported', { method: parsed.method }))
   }
   if (parsed.method === 'DELETE' && parsed.body) {
-    throw new Error('当前客户端不支持带请求体的 DELETE 请求，可复制生成的代码执行')
+    throw new Error(t('error.hostDeleteBodyUnsupported'))
   }
   const envelope = await request({
     messageId: `curl_http_${Date.now()}_${++networkSequence}`,
@@ -34,16 +35,16 @@ async function requestViaHost(parsed: ParsedCurlRequest, timeoutMs: number): Pro
     }
   })
   if (!envelope.success) {
-    if (envelope.error?.code === 'REQUEST_TIMEOUT') throw new DOMException('网络请求超时', 'AbortError')
-    throw new Error(envelope.error?.message || '宿主网络请求失败')
+    if (envelope.error?.code === 'REQUEST_TIMEOUT') throw new DOMException(t('error.requestTimeout'), 'AbortError')
+    throw new Error(envelope.error?.message || t('error.hostNetworkFailed'))
   }
   const response = envelope.data
   if (!isRecord(response) || response.success !== true || !isRecord(response.data)) {
-    throw new Error('宿主网络响应格式无效')
+    throw new Error(t('error.hostResponseInvalid'))
   }
   const data = response.data
   if (typeof data.statusCode !== 'number' || !Number.isInteger(data.statusCode) || data.statusCode < 200 || data.statusCode > 599 || typeof data.body !== 'string' || typeof data.statusText !== 'string') {
-    throw new Error('宿主网络响应缺少状态码或正文')
+    throw new Error(t('error.hostResponseIncomplete'))
   }
   const body = data.body
   return {
@@ -57,7 +58,7 @@ async function requestViaHost(parsed: ParsedCurlRequest, timeoutMs: number): Pro
 }
 
 const unclosedQuote = (quote: string): Error =>
-  new Error(`UNCLOSED_QUOTE_IN_CURL: cURL 命令存在未闭合引号 (${quote})`)
+  new Error(t('error.unclosedQuote', { quote }))
 
 /** 读取 bash 的 $'...' 字符串（浏览器「Copy as cURL (bash)」在内容含单引号、换行或控制字符时使用），返回解码后的内容与结束位置。 */
 function readAnsiCString(src: string, start: number): { value: string; end: number } {
@@ -100,7 +101,7 @@ function readAnsiCString(src: string, start: number): { value: string; end: numb
       if (esc === 'x') {
         value += String.fromCharCode(code)
       } else if (code > 0x10ffff) {
-        throw new Error(`INVALID_CURL_ESCAPE: $'...' 中的 \\${esc}${digits} 超出 Unicode 范围`)
+        throw new Error(t('error.invalidUnicodeEscape', { esc, digits }))
       } else {
         value += String.fromCodePoint(code)
       }
@@ -287,7 +288,7 @@ function splitWindowsCommandLine(commandLine: string): string[] {
     hasToken = true
   }
   if (inQuote) {
-    throw new Error('UNCLOSED_QUOTE_IN_CURL: cURL 命令存在未闭合引号 (")')
+    throw new Error(t('error.unclosedQuote', { quote: '"' }))
   }
   if (hasToken) args.push(current)
   return args
@@ -319,10 +320,10 @@ const IGNORED_VALUE_OPTIONS = new Set([
 
 /** 本插件无法如实发出的选项：直接报错，避免发出和原命令不一样的请求 */
 const UNSUPPORTED_OPTIONS: Record<string, string> = {
-  '-F': '表单上传（-F）', '--form': '表单上传（--form）', '--form-string': '表单上传（--form-string）',
-  '-T': '上传文件（-T）', '--upload-file': '上传文件（--upload-file）',
-  '-K': '读取配置文件（-K）', '--config': '读取配置文件（--config）',
-  '--unix-socket': 'Unix 套接字（--unix-socket）', '--abstract-unix-socket': 'Unix 套接字（--abstract-unix-socket）'
+  '-F': 'unsupported.form', '--form': 'unsupported.form', '--form-string': 'unsupported.form',
+  '-T': 'unsupported.upload', '--upload-file': 'unsupported.upload',
+  '-K': 'unsupported.config', '--config': 'unsupported.config',
+  '--unix-socket': 'unsupported.unixSocket', '--abstract-unix-socket': 'unsupported.unixSocket'
 }
 
 const SHORT_VALUE_OPTIONS = new Set(['X', 'H', 'd', 'b', 'u', 'A', 'e', 'F', 'T', 'o', 'x', 'U', 'm', 'c', 'w', 'r', 'E', 'K', 'y', 'Y', 'z', 'D', 'C', 'Q'])
@@ -340,7 +341,7 @@ function encodeDataUrlencode(arg: string): string {
     return name ? `${name}=${curlUrlEncode(arg.slice(eq + 1))}` : curlUrlEncode(arg.slice(eq + 1))
   }
   if (arg.includes('@')) {
-    throw new Error('UNSUPPORTED_CURL_FILE: --data-urlencode 的 @文件 写法需要读取本地文件，请把文件内容直接写进命令')
+    throw new Error(t('error.dataUrlencodeFile'))
   }
   return curlUrlEncode(arg)
 }
@@ -369,10 +370,10 @@ function normalizeTargetUrl(raw: string): string {
   try {
     parsed = new URL(candidate)
   } catch {
-    throw new Error(`INVALID_TARGET_URL: 无法识别网址 ${raw}`)
+    throw new Error(t('error.invalidTargetUrl', { raw }))
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`UNSUPPORTED_PROTOCOL: 只支持 http / https 网址，当前为 ${parsed.protocol.replace(/:$/, '')}`)
+    throw new Error(t('error.unsupportedProtocol', { protocol: parsed.protocol.replace(/:$/, '') }))
   }
   return candidate
 }
@@ -380,7 +381,7 @@ function normalizeTargetUrl(raw: string): string {
 export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
   const trimmed = String(rawInput || '').trim()
   if (!trimmed) {
-    throw new Error('EMPTY_CURL_INPUT: cURL 命令或 URL 不能为空')
+    throw new Error(t('error.emptyInput'))
   }
 
   if (/^https?:\/\//i.test(trimmed) && !/\s/.test(trimmed)) {
@@ -395,7 +396,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
 
   const tokens = isCmdStyleCurl(trimmed) ? tokenizeCmdCommand(trimmed) : tokenizeShellCommand(trimmed)
   if (tokens.length === 0) {
-    throw new Error('EMPTY_CURL_TOKENS: 无法从输入提取命令参数')
+    throw new Error(t('error.emptyTokens'))
   }
 
   const firstLower = tokens[0].toLowerCase()
@@ -413,23 +414,23 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
 
   const applyOption = (option: string, value: string | undefined): void => {
     const requireValue = (): string => {
-      if (typeof value !== 'string') throw new Error(`MISSING_CURL_VALUE: ${option} 参数后缺少内容`)
+      if (typeof value !== 'string') throw new Error(t('error.missingValue', { option }))
       return value
     }
     if (UNSUPPORTED_OPTIONS[option]) {
-      throw new Error(`UNSUPPORTED_CURL_OPTION: 不支持${UNSUPPORTED_OPTIONS[option]}，请改用其他工具发送`)
+      throw new Error(t('error.unsupportedOption', { label: t(UNSUPPORTED_OPTIONS[option], { option }) }))
     }
     switch (option) {
       case '-X': case '--request': {
         const next = requireValue()
-        if (!next) throw new Error('MISSING_CURL_METHOD: -X 参数后缺少 HTTP 方法')
+        if (!next) throw new Error(t('error.missingMethod'))
         method = next.toUpperCase()
         return
       }
       case '-H': case '--header': {
         const next = requireValue()
         if (next.startsWith('@')) {
-          throw new Error('UNSUPPORTED_CURL_FILE: -H @文件 写法需要读取本地文件，请把请求头直接写进命令')
+          throw new Error(t('error.headerFile'))
         }
         const colonIdx = next.indexOf(':')
         if (colonIdx > 0) {
@@ -443,14 +444,14 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
           deleteHeader(headers, key)
           headers[key] = ''
         } else {
-          throw new Error(`INVALID_CURL_HEADER: 无法识别请求头 ${next}`)
+          throw new Error(t('error.invalidHeader', { header: next }))
         }
         return
       }
       case '-d': case '--data': case '--data-ascii': case '--data-binary': case '--json': {
         const next = requireValue()
         if (next.startsWith('@')) {
-          throw new Error(`UNSUPPORTED_CURL_FILE: ${option} @文件 写法需要读取本地文件，请把文件内容直接写进命令`)
+          throw new Error(t('error.bodyFile', { option }))
         }
         bodyParts.push(next)
         if (option === '--json') jsonBody = true
@@ -465,7 +466,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
       case '-b': case '--cookie': {
         const next = requireValue()
         if (!next.includes('=')) {
-          throw new Error('UNSUPPORTED_CURL_FILE: -b 后面是 Cookie 文件名，需要读取本地文件，请改成 "name=value" 写法')
+          throw new Error(t('error.cookieFile'))
         }
         cookies = next
         headers['Cookie'] = next
@@ -473,7 +474,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
       }
       case '-u': case '--user': {
         const next = requireValue()
-        if (!next) throw new Error('MISSING_CURL_USER: -u 参数后缺少认证信息')
+        if (!next) throw new Error(t('error.missingUser'))
         headers['Authorization'] = `Basic ${utf8Base64(next.includes(':') ? next : `${next}:`)}`
         return
       }
@@ -490,8 +491,8 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
         return
       case '--url': {
         const next = requireValue()
-        if (!next) throw new Error('MISSING_CURL_URL: --url 参数后缺少目标地址')
-        if (url) ignoredOptions.push(`额外网址 ${next}`)
+        if (!next) throw new Error(t('error.missingUrl'))
+        if (url) ignoredOptions.push(t('ignored.extraUrl', { url: next }))
         else url = next
         return
       }
@@ -502,7 +503,7 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
         useHead = true
         return
       case '-k': case '--insecure':
-        ignoredOptions.push(`${option}（客户端仍会校验 HTTPS 证书）`)
+        ignoredOptions.push(t('ignored.insecure', { option }))
         return
       default:
         if (HARMLESS_FLAGS.has(option)) return
@@ -546,12 +547,12 @@ export function parseCurlCommand(rawInput: string): ParsedCurlRequest {
       }
       continue
     }
-    if (url) ignoredOptions.push(`额外网址 ${token}`)
+    if (url) ignoredOptions.push(t('ignored.extraUrl', { url: token }))
     else url = token
   }
 
   if (!url) {
-    throw new Error('MISSING_TARGET_URL: 未能在 cURL 命令中识别出合法的 http/https URL')
+    throw new Error(t('error.missingTargetUrl'))
   }
   url = normalizeTargetUrl(url)
 
@@ -700,13 +701,13 @@ export function prepareRequestHeaders(headers: Record<string, string>): { header
       continue
     }
     if (CLIENT_FORBIDDEN_HEADERS.has(lower)) {
-      throw new Error(`客户端不能自定义 ${name} 请求头，可复制生成的代码执行`)
+      throw new Error(t('error.forbiddenHeader', { name }))
     }
     if (!HEADER_NAME_PATTERN.test(name)) {
-      throw new Error(`请求头名称无效：${name}`)
+      throw new Error(t('error.invalidHeaderName', { name }))
     }
     if (/[\r\n\0]/.test(value)) {
-      throw new Error(`请求头 ${name} 的值含有换行或空字符`)
+      throw new Error(t('error.invalidHeaderValue', { name }))
     }
     result[name] = value
   }
@@ -722,10 +723,10 @@ export async function executeCurlRequest(
 ): Promise<HttpResponseSnapshot> {
   const timeoutMs = options?.timeoutMs ?? 10000
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000) {
-    throw new Error('请求超时必须为 1–300000 毫秒')
+    throw new Error(t('error.invalidTimeout'))
   }
   if (parsed.body !== undefined && parsed.body.length > MAX_REQUEST_BODY_CHARS) {
-    throw new Error(`请求体超过 ${MAX_REQUEST_BODY_CHARS / 1024} KB 上限，可复制生成的代码执行`)
+    throw new Error(t('error.bodyTooLarge', { maxKb: MAX_REQUEST_BODY_CHARS / 1024 }))
   }
   const prepared = prepareRequestHeaders(parsed.headers)
   const request: ParsedCurlRequest = { ...parsed, headers: prepared.headers }
@@ -750,7 +751,7 @@ export async function executeCurlRequest(
     let isJson = false
     if (sizeBytes > MAX_RESPONSE_BYTES) {
       truncated = true
-      bodyText = `${rawText.slice(0, 65536)}\n\n... [响应体超过 5MB 上限 (${sizeBytes} bytes)，只显示前 65536 个字符]`
+      bodyText = `${rawText.slice(0, 65536)}\n\n${t('response.truncated', { sizeBytes })}`
     } else {
       try {
         const parsedJson = JSON.parse(rawText)
@@ -780,7 +781,7 @@ export async function executeCurlRequest(
     }
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(`HTTP_TIMEOUT: 请求在 ${timeoutMs}ms 内未响应已超时中断`)
+      throw new Error(t('error.httpTimeout', { timeoutMs }))
     }
     throw new Error(`HTTP_REQUEST_FAILED: ${err instanceof Error ? err.message : String(err)}`)
   } finally {

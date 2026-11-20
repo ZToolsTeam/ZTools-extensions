@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "system"
@@ -23,5 +24,21 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Config Snapshot Backup",
+      "description": "Package Hosts, SSH, Git, terminal, and editor configs into local snapshots and extract them to a new folder when needed.",
+      "keywords": [
+        "backup",
+        "dotfiles",
+        "config",
+        "snapshot",
+        "ssh",
+        "git",
+        "hosts"
+      ]
+    }
+  }
 }

@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import {createHost} from '../../shared/test-harness.mjs'
 import {fetchHardwareTelemetrySnapshot} from '../dist/logic.js'
 import {probeRealDiskDrives} from '../dist/volume-ipc.js'

@@ -1,4 +1,5 @@
 import type { CommitTypeItem, GitEmergencyItem, GitignoreStackTemplate } from './types.js'
+import { t } from './i18n.js'
 
 export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
   {
@@ -152,9 +153,151 @@ export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
 
 /** 整份指南仅供阅读；每行都是 shell 注释，避免把可选方案串成连续命令。 */
 export function buildEmergencyGuide(item: GitEmergencyItem): string {
-  return [`场景：${item.title}`, '以下是说明，请逐项核对后单独执行命令；不需要把全部步骤连续运行。',
+  return [t('guideScenarioPrefix', { title: item.title }), t('guideIntro'),
     ...item.steps.flatMap((step, index) => [`${index + 1}. ${step.title}`, step.cmd, step.explain]), item.principle]
     .flatMap(line => line.split(/\r?\n/)).map(line => `# ${line}`).join('\n')
+}
+
+export function getEmergencyDatabase(): GitEmergencyItem[] {
+  const map: Record<string, {
+    title: string
+    categoryLabel: string
+    safetyKind: 'safe' | 'caution' | 'danger'
+    safetyKey: 'safetySafe' | 'safetyCaution' | 'safetyDanger'
+    diffKey: 'diffBeginner' | 'diffMedium' | 'diffExpert'
+    steps: Array<{ title: string; cmd?: string; explain: string }>
+    principle: string
+  }> = {
+    'undo-last-commit-keep-changes': {
+      title: t('emUndoTitle'),
+      categoryLabel: t('emUndoCat'),
+      safetyKind: 'caution',
+      safetyKey: 'safetyCaution',
+      diffKey: 'diffBeginner',
+      steps: [
+        { title: t('emUndoStep1Title'), explain: t('emUndoStep1Explain') },
+        { title: t('emUndoStep2Title'), explain: t('emUndoStep2Explain') }
+      ],
+      principle: t('emUndoPrinciple')
+    },
+    'amend-missing-file-or-message': {
+      title: t('emAmendTitle'),
+      categoryLabel: t('emAmendCat'),
+      safetyKind: 'caution',
+      safetyKey: 'safetyCaution',
+      diffKey: 'diffBeginner',
+      steps: [
+        { title: t('emAmendStep1Title'), cmd: t('emAmendStep1Cmd'), explain: t('emAmendStep1Explain') },
+        { title: t('emAmendStep2Title'), explain: t('emAmendStep2Explain') }
+      ],
+      principle: t('emAmendPrinciple')
+    },
+    'recover-deleted-branch-or-hard-reset': {
+      title: t('emRecoverTitle'),
+      categoryLabel: t('emRecoverCat'),
+      safetyKind: 'safe',
+      safetyKey: 'safetySafe',
+      diffKey: 'diffMedium',
+      steps: [
+        { title: t('emRecoverStep1Title'), explain: t('emRecoverStep1Explain') },
+        { title: t('emRecoverStep2Title'), cmd: t('emRecoverStep2Cmd'), explain: t('emRecoverStep2Explain') }
+      ],
+      principle: t('emRecoverPrinciple')
+    },
+    'committed-to-wrong-branch': {
+      title: t('emWrongBranchTitle'),
+      categoryLabel: t('emWrongBranchCat'),
+      safetyKind: 'caution',
+      safetyKey: 'safetyCaution',
+      diffKey: 'diffMedium',
+      steps: [
+        { title: t('emWrongBranchStep1Title'), explain: t('emWrongBranchStep1Explain') },
+        { title: t('emWrongBranchStep2Title'), explain: t('emWrongBranchStep2Explain') }
+      ],
+      principle: t('emWrongBranchPrinciple')
+    },
+    'undo-messy-git-pull-merge': {
+      title: t('emPullAbortTitle'),
+      categoryLabel: t('emPullAbortCat'),
+      safetyKind: 'caution',
+      safetyKey: 'safetyCaution',
+      diffKey: 'diffBeginner',
+      steps: [
+        { title: t('emPullAbortStep1Title'), explain: t('emPullAbortStep1Explain') },
+        { title: t('emPullAbortStep2Title'), explain: t('emPullAbortStep2Explain') }
+      ],
+      principle: t('emPullAbortPrinciple')
+    },
+    'revert-pushed-public-commit': {
+      title: t('emRevertTitle'),
+      categoryLabel: t('emRevertCat'),
+      safetyKind: 'caution',
+      safetyKey: 'safetyCaution',
+      diffKey: 'diffBeginner',
+      steps: [
+        { title: t('emRevertStep1Title'), explain: t('emRevertStep1Explain') },
+        { title: t('emRevertStep2Title'), explain: t('emRevertStep2Explain') }
+      ],
+      principle: t('emRevertPrinciple')
+    }
+  }
+  return GIT_EMERGENCY_DATABASE.map((item) => {
+    const tr = map[item.id]
+    if (!tr) return item
+    return {
+      ...item,
+      title: tr.title,
+      categoryLabel: tr.categoryLabel,
+      safetyKind: tr.safetyKind,
+      safetyLevel: t(tr.safetyKey),
+      difficulty: t(tr.diffKey),
+      principle: tr.principle,
+      steps: item.steps.map((s, idx) => ({
+        title: tr.steps[idx]?.title ?? s.title,
+        cmd: tr.steps[idx]?.cmd ?? s.cmd,
+        explain: tr.steps[idx]?.explain ?? s.explain
+      }))
+    }
+  })
+}
+
+export function getCommitTypes(): CommitTypeItem[] {
+  const map: Record<string, { chineseMeaning: string; description: string; examples: string[] }> = {
+    feat: { chineseMeaning: t('ctFeatMeaning'), description: t('ctFeatDesc'), examples: [t('ctFeatEx1'), t('ctFeatEx2')] },
+    fix: { chineseMeaning: t('ctFixMeaning'), description: t('ctFixDesc'), examples: [t('ctFixEx1'), t('ctFixEx2')] },
+    refactor: { chineseMeaning: t('ctRefactorMeaning'), description: t('ctRefactorDesc'), examples: [t('ctRefactorEx1')] },
+    perf: { chineseMeaning: t('ctPerfMeaning'), description: t('ctPerfDesc'), examples: [t('ctPerfEx1')] },
+    test: { chineseMeaning: t('ctTestMeaning'), description: t('ctTestDesc'), examples: [t('ctTestEx1')] },
+    docs: { chineseMeaning: t('ctDocsMeaning'), description: t('ctDocsDesc'), examples: [t('ctDocsEx1')] },
+    chore: { chineseMeaning: t('ctChoreMeaning'), description: t('ctChoreDesc'), examples: [t('ctChoreEx1')] }
+  }
+  return COMMIT_TYPES.map((item) => {
+    const tr = map[item.type]
+    return tr ? { ...item, ...tr } : item
+  })
+}
+
+export function getGitignoreStackTemplates(): GitignoreStackTemplate[] {
+  const catMap: Record<string, string> = {
+    Node: t('giCatLang'),
+    ReactVue: t('giCatFrontend'),
+    Python: t('giCatLang'),
+    Java: t('giCatLang'),
+    Go: t('giCatLang'),
+    Rust: t('giCatLang'),
+    macOS: t('giCatOS'),
+    Windows: t('giCatOS'),
+    IDEs: t('giCatIDE')
+  }
+  const nameMap: Record<string, string> = {
+    macOS: t('giNameMacOS'),
+    Windows: t('giNameWindows')
+  }
+  return GITIGNORE_STACK_TEMPLATES.map((tpl) => ({
+    ...tpl,
+    name: nameMap[tpl.id] ?? tpl.name,
+    category: catMap[tpl.id] ?? tpl.category
+  }))
 }
 
 export const COMMIT_TYPES: CommitTypeItem[] = [
@@ -326,20 +469,27 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
  * 大白话 + 拼音缩写容错检索 Git 救命锦囊
  */
 export function searchGitEmergencies(query: string): GitEmergencyItem[] {
+  const db = getEmergencyDatabase()
   const q = String(query ?? '')
     .trim()
     .toLowerCase()
-  if (!q) return GIT_EMERGENCY_DATABASE
+  if (!q) return db
 
-  return GIT_EMERGENCY_DATABASE.filter(
-    (item) =>
-      item.title.toLowerCase().includes(q) ||
-      item.categoryLabel.toLowerCase().includes(q) ||
-      item.primaryCommand.toLowerCase().includes(q) ||
-      item.tags.some((t) => t.toLowerCase().includes(q)) ||
-      item.pinyinKeywords.some((p) => p.includes(q) || q.includes(p)) ||
-      item.steps.some((s) => s.title.toLowerCase().includes(q) || s.cmd.toLowerCase().includes(q))
-  )
+  return db.filter((item) => {
+    const raw = GIT_EMERGENCY_DATABASE.find((r) => r.id === item.id)
+    const haystack = [
+      item.title,
+      item.categoryLabel,
+      item.primaryCommand,
+      ...item.tags,
+      ...item.steps.flatMap((s) => [s.title, s.cmd]),
+      ...(raw ? [raw.title, raw.categoryLabel, ...raw.tags] : [])
+    ]
+    return (
+      haystack.some((text) => text.toLowerCase().includes(q)) ||
+      item.pinyinKeywords.some((p) => p.includes(q) || q.includes(p))
+    )
+  })
 }
 
 /**
@@ -392,15 +542,15 @@ export function buildConventionalCommit(options: {
 
   const hasControl = /[\u0000-\u001f\u007f]/.test(cleanType + cleanScope + rawSubject)
   if (!rawSubject || hasControl) {
-    const placeholder = '请填写本次改动的简要说明'
+    const placeholder = t('commitPlaceholder')
     const msg = `${cleanType}${scopePart}${bang}: ${placeholder}`
     return {
       isValid: false,
       message: msg,
       gitCommand: '',
       validationHint: hasControl
-        ? '提交说明含有不可见的控制字符，请删除后重新输入'
-        : '提交说明不能为空，请简述本次修改的目的'
+        ? t('commitErrControlChars')
+        : t('commitErrEmpty')
     }
   }
 
@@ -427,11 +577,12 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
 
   const seenRules = new Set<string>()
   // 首行只写来源；具体模板名已在下面每段的 ### 标题里，不再在首行罗列
-  const sections: string[] = ['# 由 ZTools Git 助手生成']
+  const sections: string[] = [t('gitignoreGeneratedHeader')]
+  const localizedTemplates = getGitignoreStackTemplates()
 
   for (const stackId of effectiveIds) {
-    const tpl = GITIGNORE_STACK_TEMPLATES.find(
-      (t) => t.id.toLowerCase() === stackId.toLowerCase() || t.name.toLowerCase().includes(stackId.toLowerCase())
+    const tpl = localizedTemplates.find(
+      (tplItem) => tplItem.id.toLowerCase() === stackId.toLowerCase() || tplItem.name.toLowerCase().includes(stackId.toLowerCase())
     )
     if (!tpl) continue
 

@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { truncatePath, getFileCategory, sortAndFilterFiles, moveToTrash } from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 test('macOS 长路径缩写保持 / 分隔，不显示成 Windows 的反斜杠；Windows 路径仍用反斜杠', () => {
   const mac = '/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/项目/2026/季度报告/最终版.pdf'

@@ -1,13 +1,16 @@
 // calendar 现行代码（日程管理，对接宿主 calendar_* 接口）的宿主集成与故障注入测试
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
   fetchCalendarEvents,
   createCalendarEvent,
   deleteCalendarEvent,
   exportCalendarIcs,
   buildCalendarIcsContent
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 /** 宿主桩：按方法名返回 { success, data } 信封，未登记的方法视为宿主不支持 */
 function hostStub(handlers) {

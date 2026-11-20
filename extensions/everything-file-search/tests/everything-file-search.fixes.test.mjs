@@ -445,13 +445,13 @@ function withPlatform(platform, fn) {
     .finally(() => Object.defineProperty(globalThis, 'navigator', saved))
 }
 
-test('即时预览与系统快速预览各用各的快捷键（⌘⇧P / ⌘Y）', async () => {
+test('即时预览与系统快速预览各用各的快捷键（⌘⇧Y / ⌘Y）', async () => {
   const host = setupHost()
   const view = await mountList(host)
   await withPlatform('MacIntel', () => {
     const acts = view.actions(view.item(notesTxt))
     assert.deepEqual(acts.find((a) => a.props.title === 'Quick Look 快速预览').props.shortcut, { modifiers: ['ctrl'], key: 'y' })
-    assert.deepEqual(acts.find((a) => a.props.title === '即时预览').props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'p' })
+    assert.deepEqual(acts.find((a) => a.props.title === '即时预览').props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'y' })
   })
   view.unmount()
 })

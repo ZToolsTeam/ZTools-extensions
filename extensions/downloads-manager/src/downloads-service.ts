@@ -1,6 +1,7 @@
 import {
   callHostTransport, formatBytes
 } from './native-ipc.js'
+import { t } from './i18n.js'
 import { readDownloadPreferences, updateDownloadPreferences } from './downloads-preferences.js'
 import type {
   CleanResult,
@@ -66,24 +67,24 @@ export function classifyDownloadFile(fileName: string): Exclude<DownloadFileCate
 
 export function getDownloadCategoryLabel(category: DownloadFileCategory): string {
   switch (category) {
-    case 'all': return '全部类型'
-    case 'installer': return '安装包'
-    case 'archive': return '压缩归档'
-    case 'document': return '办公文档'
-    case 'image': return '图片设计'
-    case 'media': return '音视频'
-    case 'code': return '代码与数据'
-    case 'other': return '其他文件'
+    case 'all': return t('catAll')
+    case 'installer': return t('catInstaller')
+    case 'archive': return t('catArchive')
+    case 'document': return t('catDocument')
+    case 'image': return t('catImage')
+    case 'media': return t('catMedia')
+    case 'code': return t('catCode')
+    case 'other': return t('catOther')
   }
 }
 
 export function getDownloadChannelLabel(channel: DownloadSourceChannel): string {
   switch (channel) {
-    case 'all': return '全渠道汇总'
-    case 'im': return '办公 IM 接收'
-    case 'netdisk': return '网盘与下载器'
-    case 'browser': return '浏览器与系统下载'
-    case 'custom': return '自定义目录'
+    case 'all': return t('chanAll')
+    case 'im': return t('chanIm')
+    case 'netdisk': return t('chanNetdisk')
+    case 'browser': return t('chanBrowser')
+    case 'custom': return t('chanCustom')
   }
 }
 
@@ -134,13 +135,13 @@ function isAbsoluteFilePath(p: string): boolean {
 export function validateCustomDownloadDirPath(rawPath: string): { ok: boolean; normalizedPath?: string; error?: string } {
   const trimmed = String(rawPath || '').trim()
   if (!trimmed) {
-    return { ok: false, error: '目录路径不能为空' }
+    return { ok: false, error: t('errDirEmpty') }
   }
   if (trimmed.includes('\0')) {
-    return { ok: false, error: '目录路径包含无效字符' }
+    return { ok: false, error: t('errDirInvalidChar') }
   }
   if (/(?:^|[\\/])\.\.(?:[\\/]|$)/.test(trimmed) || !isAbsoluteFilePath(trimmed)) {
-    return { ok: false, error: '只能添加完整的绝对目录路径，不能包含 .. 等上级目录跳转' }
+    return { ok: false, error: t('errDirAbsoluteOnly') }
   }
   const isPosix = trimmed.startsWith('/')
   const normalized = isPosix
@@ -169,13 +170,13 @@ export async function addCustomDownloadDirectory(rawDirPath: string, hostOverrid
   if (!check.ok || !check.normalizedPath) return { ok: false, error: check.error }
   try {
     const response = await callHostTransport<{ ok?: boolean; path?: string; error?: string }>('downloads_manager', { action: 'validate', dirPath: check.normalizedPath }, hostOverride)
-    if (!response.ok || response.data?.ok === false || !response.data?.path) throw new Error(response.error || response.data?.error || '目录校验失败')
-    if (shouldContinue?.() === false) throw new Error('操作已取消，未保存目录')
+    if (!response.ok || response.data?.ok === false || !response.data?.path) throw new Error(response.error || response.data?.error || t('errDirValidateFailed'))
+    if (shouldContinue?.() === false) throw new Error(t('errOpCancelledNotSaved'))
     const validated = validateCustomDownloadDirPath(response.data.path)
-    if (!validated.ok || !validated.normalizedPath) throw new Error('宿主返回了无效目录路径')
+    if (!validated.ok || !validated.normalizedPath) throw new Error(t('errHostInvalidDir'))
     const target = validated.normalizedPath
     await updateDownloadPreferences(current => {
-      if (shouldContinue?.() === false) throw new Error('操作已取消，未保存目录')
+      if (shouldContinue?.() === false) throw new Error(t('errOpCancelledNotSaved'))
       return { ...current, directories: current.directories.some(path => normalizePathKey(path) === normalizePathKey(target)) ? current.directories : [...current.directories, target] }
     })
     return { ok: true, path: target }
@@ -185,10 +186,10 @@ export async function addCustomDownloadDirectory(rawDirPath: string, hostOverrid
 }
 
 export async function selectDownloadDirectory(hostOverride?: unknown): Promise<string | null> {
-  const response = await callHostTransport<{ canceled?: boolean; folderPath?: string }>('window_show_select_folder_dialog', { title: '选择下载目录' }, hostOverride)
-  if (!response.ok) throw new Error(response.error || '无法打开目录选择窗口')
+  const response = await callHostTransport<{ canceled?: boolean; folderPath?: string }>('window_show_select_folder_dialog', { title: t('selectDirTitle') }, hostOverride)
+  if (!response.ok) throw new Error(response.error || t('errDialogOpenFailed'))
   if (response.data?.canceled === true) return null
-  if (response.data?.canceled !== false || typeof response.data.folderPath !== 'string' || !validateCustomDownloadDirPath(response.data.folderPath).ok) throw new Error('目录选择未得到有效回执')
+  if (response.data?.canceled !== false || typeof response.data.folderPath !== 'string' || !validateCustomDownloadDirPath(response.data.folderPath).ok) throw new Error(t('errDialogInvalidReceipt'))
   return response.data.folderPath
 }
 
@@ -204,21 +205,21 @@ export async function discoverAllDownloadSources(customDirs?: string[], hostOver
   const directories = customDirs ?? await getCustomDownloadDirectories()
   const valid = directories.map(path => {
     const checked = validateCustomDownloadDirPath(path)
-    if (!checked.ok || !checked.normalizedPath) throw new Error(checked.error || '自定义目录无效')
+    if (!checked.ok || !checked.normalizedPath) throw new Error(checked.error || t('errInvalidCustomDir'))
     return checked.normalizedPath
   })
   const response = await callHostTransport<{ ok?: boolean; sources?: DownloadSourceDescriptor[] }>('downloads_manager', { action: 'discover', customDirs: valid }, hostOverride)
-  if (!response.ok || response.data?.ok === false || !Array.isArray(response.data?.sources)) throw new Error(response.error || '无法读取下载目录来源，请重试')
+  if (!response.ok || response.data?.ok === false || !Array.isArray(response.data?.sources)) throw new Error(response.error || t('errDiscoverFailed'))
   const sources = new Map<string, DownloadSourceDescriptor>()
   for (const source of response.data.sources) {
-    if (!source || typeof source.path !== 'string' || !validateCustomDownloadDirPath(source.path).ok || !['browser', 'im', 'netdisk', 'custom'].includes(source.channel)) throw new Error('宿主返回了无效的下载目录来源')
+    if (!source || typeof source.path !== 'string' || !validateCustomDownloadDirPath(source.path).ok || !['browser', 'im', 'netdisk', 'custom'].includes(source.channel)) throw new Error(t('errHostInvalidSource'))
     const key = normalizePathKey(source.path)
     if (!sources.has(key)) sources.set(key, { ...source, exists: true })
   }
   // 用户配置的目录即使暂时不存在也要显示读取失败，不能静默隐藏。
   for (const directory of valid) {
     const key = normalizePathKey(directory)
-    if (!sources.has(key)) sources.set(key, { id: `custom-${key}`, label: '自定义目录', channel: 'custom', appName: '自定义', path: directory })
+    if (!sources.has(key)) sources.set(key, { id: `custom-${key}`, label: t('customDirLabel'), channel: 'custom', appName: t('customAppLabel'), path: directory })
   }
   return [...sources.values()].sort((a, b) => b.path.length - a.path.length)
 }
@@ -239,7 +240,7 @@ function buildDownloadEntry(
     return null
   }
   const sizeBytes = Number(raw.size)
-  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) throw new Error('文件大小无效')
+  if (!Number.isFinite(sizeBytes) || sizeBytes < 0) throw new Error(t('errInvalidFileSize'))
 
   const dotIdx = fileName.lastIndexOf('.')
   const ext = dotIdx >= 0 ? fileName.slice(dotIdx).toLowerCase() : ''
@@ -247,7 +248,7 @@ function buildDownloadEntry(
   const ageDays = mtimeMs ? Math.max(0, Math.floor((nowMs - mtimeMs) / 86_400_000)) : null
   const id = `dl-${normalizePathKey(raw.path)}`
   const dt = new Date(mtimeMs)
-  const modifiedAt = !mtimeMs ? '修改时间未知' : `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`
+  const modifiedAt = !mtimeMs ? t('unknownModifiedTime') : `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')} ${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`
 
   return {
     id,
@@ -278,11 +279,11 @@ interface SearchResult { files?: SearchFile[]; total_matches?: number; truncated
 export async function scanDownloadsDirectory(customDirOrOptions?: string | { customDirs?: string[]; maxFilesPerSource?: number; shouldContinue?: () => boolean }, hostOverride?: unknown): Promise<DownloadsDashboardSummary> {
   const preferences = await readDownloadPreferences(), pinned = new Set(preferences.pins)
   const explicit = typeof customDirOrOptions === 'string' ? validateCustomDownloadDirPath(customDirOrOptions) : null
-  if (explicit && (!explicit.ok || !explicit.normalizedPath)) throw new Error(explicit.error || '下载目录无效')
-  const sources: DownloadSourceDescriptor[] = explicit ? [{ id: 'explicit-dir', label: '指定下载目录', channel: 'browser', appName: '系统下载', path: explicit.normalizedPath! }]
+  if (explicit && (!explicit.ok || !explicit.normalizedPath)) throw new Error(explicit.error || t('errInvalidDownloadDir'))
+  const sources: DownloadSourceDescriptor[] = explicit ? [{ id: 'explicit-dir', label: t('explicitDirLabel'), channel: 'browser', appName: t('systemDownloadsApp'), path: explicit.normalizedPath! }]
     : await discoverAllDownloadSources((typeof customDirOrOptions === 'object' ? customDirOrOptions.customDirs : undefined) ?? preferences.directories, hostOverride)
   const requested = typeof customDirOrOptions === 'object' ? customDirOrOptions.maxFilesPerSource ?? 100 : 100
-  if (!Number.isInteger(requested) || requested < 1 || requested > HOST_SCAN_LIMIT) throw new Error(`每个来源的显示上限必须为 1～${HOST_SCAN_LIMIT}`)
+  if (!Number.isInteger(requested) || requested < 1 || requested > HOST_SCAN_LIMIT) throw new Error(t('errMaxFilesRange', { max: HOST_SCAN_LIMIT }))
   const entries: DownloadEntry[] = [], seen = new Set<string>(), scanIssues: DownloadsDashboardSummary['scanIssues'] = []
   let partial = false
   for (const source of sources) {
@@ -291,7 +292,7 @@ export async function scanDownloadsDirectory(customDirOrOptions?: string | { cus
     // 让“今天 / 近 7 天”的小文件不被大文件挤掉。结果仍不完整时如实标注“仅部分结果”。
     const response = await callHostTransport<SearchResult>('system_search_files', { query: `dir:${source.path}`, limit: HOST_SCAN_LIMIT }, hostOverride)
     if (!response.ok || response.data?.success === false || !Array.isArray(response.data?.files)) {
-      scanIssues.push({ path: source.path, message: response.error || '目录扫描返回无效数据' }); continue
+      scanIssues.push({ path: source.path, message: response.error || t('errScanInvalidData') }); continue
     }
     const data = response.data
     if (data.truncated || data.approximate || (data.total_matches ?? 0) > data.files!.length || (data.files!.length >= HOST_SCAN_LIMIT && data.total_matches === undefined)) partial = true
@@ -299,7 +300,7 @@ export async function scanDownloadsDirectory(customDirOrOptions?: string | { cus
     for (const file of data.files!) {
       if (file.is_dir || file.isDir || file.isDirectory) continue
       if (typeof file.path !== 'string' || !isInsideDirectory(source.path, file.path)) {
-        scanIssues.push({ path: source.path, message: '已忽略不属于该目录的无效结果' }); continue
+        scanIssues.push({ path: source.path, message: t('errIgnoredOutsideFile') }); continue
       }
       if (isInsideMacPackage(source.path, file.path)) continue
       const key = normalizePathKey(file.path)
@@ -423,7 +424,7 @@ export function filterDownloadEntries(
 }
 
 export async function togglePinEntry(entries: DownloadEntry[], id: string): Promise<DownloadEntry[]> {
-  if (!entries.some(item => item.id === id)) throw new Error('未找到要保护的下载项')
+  if (!entries.some(item => item.id === id)) throw new Error(t('errPinTargetNotFound'))
   const preferences = await updateDownloadPreferences(current => ({ ...current, pins: current.pins.includes(id) ? current.pins.filter(pin => pin !== id) : [...current.pins, id] }))
   const pinned = new Set(preferences.pins)
   return entries.map(item => ({ ...item, isPinned: pinned.has(item.id) }))
@@ -443,7 +444,7 @@ async function trashPaths(paths: string[], hostOverride?: unknown, shouldContinu
     if (response.ok && response.data?.success === true) trashedPaths.push(fullPath)
     else {
       failedPaths.push(fullPath)
-      error = response.error || '未收到明确的回收成功回执，请刷新核对；没有自动重试。'
+      error = response.error || t('errTrashUnconfirmed')
     }
   }
   return { trashedPaths, failedPaths, error, cancelled }
@@ -516,7 +517,7 @@ export async function trashDownloadItem(
 ): Promise<{ ok: boolean; remainingEntries: DownloadEntry[]; freedBytes: number; error?: string }> {
   const target = entries.find((item) => item.id === targetIdOrPath || item.path === targetIdOrPath)
   if (!target) {
-    return { ok: false, remainingEntries: entries, freedBytes: 0, error: '未找到这个下载项，请刷新列表' }
+    return { ok: false, remainingEntries: entries, freedBytes: 0, error: t('errItemNotFound') }
   }
   const trashRes = await trashPaths([target.path], hostOverride)
   if (!trashRes.trashedPaths.includes(target.path)) {
@@ -524,7 +525,7 @@ export async function trashDownloadItem(
       ok: false,
       remainingEntries: entries,
       freedBytes: 0,
-      error: trashRes.error || '文件可能正在被占用或已不存在，请刷新列表后重试'
+      error: trashRes.error || t('errItemBusyOrMissing')
     }
   }
   return {
@@ -535,9 +536,9 @@ export async function trashDownloadItem(
 }
 
 async function fileAction(method: string, params: Record<string, string>, hostOverride?: unknown): Promise<{ ok: boolean; error?: string }> {
-  if (!Object.values(params).every(value => value && !value.includes('\0'))) return { ok: false, error: '文件路径无效' }
+  if (!Object.values(params).every(value => value && !value.includes('\0'))) return { ok: false, error: t('errInvalidFilePath') }
   const response = await callHostTransport<{ success?: boolean }>(method, params, hostOverride)
-  return response.ok && response.data?.success === true ? { ok: true } : { ok: false, error: response.error || '未收到成功回执，请核对后重试。' }
+  return response.ok && response.data?.success === true ? { ok: true } : { ok: false, error: response.error || t('errActionUnconfirmed') }
 }
 
 export async function copyDownloadFileEntity(filePath: string, hostOverride?: unknown): Promise<{ ok: boolean; error?: string }> {

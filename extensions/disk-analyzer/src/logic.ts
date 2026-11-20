@@ -1,6 +1,7 @@
 import { scanRealDirectoryTree } from './directory-scan.js'
 import { probeRealDiskDrives, uniqueCapacityDrives, type RealDiskDriveInfo } from './volume-ipc.js'
 import { hostUpgradeError, isHostMethodMissing } from './host-compat.js'
+import { t } from './i18n.js'
 /**
  * 磁盘空间分析业务逻辑
  * 读取磁盘分区容量 (system_get_disk_usage)、扫描分区与用户目录，
@@ -92,98 +93,40 @@ export interface OfficialFileTypeGroupMeta {
   sampleQueries: string[]
 }
 
-export const OFFICIAL_FILE_TYPE_GROUPS: OfficialFileTypeGroupMeta[] = [
-  {
-    groupId: 1,
-    name: '视频文件',
-    shortName: '视频文件',
-    color: '#a855f7',
-    legacyCategory: 'video',
-    description: '高清影视、录屏素材、直播缓存与流媒体切片 (.mp4, .mkv, .mov, .avi, .webm, .ts)',
-    sampleQueries: ['.mp4', '.mkv', '.mov', '.webm']
-  },
-  {
-    groupId: 2,
-    name: '音频文件',
-    shortName: '音频文件',
-    color: '#ec4899',
-    legacyCategory: 'video',
-    description: '无损音乐、播客录音、语音素材与音效文件 (.mp3, .flac, .wav, .m4a, .aac, .ogg)',
-    sampleQueries: ['.mp3', '.wav', '.flac', '.m4a']
-  },
-  {
-    groupId: 3,
-    name: '图片文件',
-    shortName: '图片文件',
-    color: '#10b981',
-    legacyCategory: 'other',
-    description: '相机照片、设计原图、截图与图标纹理 (.png, .jpg, .webp, .svg, .psd, .gif, .bmp)',
-    sampleQueries: ['.png', '.jpg', '.webp', '.svg']
-  },
-  {
-    groupId: 4,
-    name: '文档文件',
-    shortName: '文档文件',
-    color: '#3b82f6',
-    legacyCategory: 'document',
-    description: '办公文档、PDF 电子书、表格报表与演示文稿 (.pdf, .docx, .xlsx, .pptx, .md, .txt)',
-    sampleQueries: ['.pdf', '.docx', '.xlsx', '.pptx']
-  },
-  {
-    groupId: 5,
-    name: '压缩包与镜像',
-    shortName: '压缩包',
-    color: '#f59e0b',
-    legacyCategory: 'archive',
-    description: '归档压缩包、系统光盘镜像与固件包 (.zip, .7z, .rar, .tar, .gz, .iso, .wim)',
-    sampleQueries: ['.zip', '.7z', '.rar', '.gz']
-  },
-  {
-    groupId: 6,
-    name: '安装包与程序',
-    shortName: '安装包',
-    color: '#f97316',
-    legacyCategory: 'installer',
-    description: 'Windows 可执行安装程序、MSI 部署包与独立启动器 (.exe, .msi, .msix, .appx)',
-    sampleQueries: ['.exe', '.msi']
-  },
-  {
-    groupId: 7,
-    name: '代码与工程文件',
-    shortName: '代码文件',
-    color: '#06b6d4',
-    legacyCategory: 'other',
-    description: '源码文件、前端构建产物、脚本与工程配置 (.ts, .js, .vue, .py, .cpp, .rs, .json)',
-    sampleQueries: ['.js', '.ts', '.json', '.wasm']
-  },
-  {
-    groupId: 8,
-    name: '系统与运行库',
-    shortName: '系统文件',
-    color: '#ef4444',
-    legacyCategory: 'temp',
-    description: '动态链接库、驱动程序、崩溃转储与运行日志 (.dll, .sys, .pdb, .dmp, .log, .tmp)',
-    sampleQueries: ['.dll', '.log', '.dmp', '.pdb']
-  },
-  {
-    groupId: 9,
-    name: '数据库与资源包',
-    shortName: '数据库/资源',
-    color: '#6366f1',
-    legacyCategory: 'document',
-    description: 'SQLite 数据库、Electron 资源封包与索引数据 (.db, .sqlite, .asar, .pak, .bin, .dat)',
-    sampleQueries: ['.db', '.asar', '.pak', '.bin']
-  },
-  {
-    groupId: 99,
-    name: '其他文件',
-    shortName: '其他文件',
-    color: '#64748b',
-    legacyCategory: 'other',
-    description: '未归入以上 9 类的字体、模型权重、专有缓存与无后缀数据文件',
-    sampleQueries: ['.ttf', '.woff2']
-  }
+const GROUP_DEFS: Array<{
+  groupId: OfficialFileTypeGroupId
+  nameKey: 'group1Name' | 'group2Name' | 'group3Name' | 'group4Name' | 'group5Name' | 'group6Name' | 'group7Name' | 'group8Name' | 'group9Name' | 'group99Name'
+  shortKey: 'group1Short' | 'group2Short' | 'group3Short' | 'group4Short' | 'group5Short' | 'group6Short' | 'group7Short' | 'group8Short' | 'group9Short' | 'group99Short'
+  descKey: 'group1Desc' | 'group2Desc' | 'group3Desc' | 'group4Desc' | 'group5Desc' | 'group6Desc' | 'group7Desc' | 'group8Desc' | 'group9Desc' | 'group99Desc'
+  color: string
+  legacyCategory: DiskFileEntry['category']
+  sampleQueries: string[]
+}> = [
+  { groupId: 1, nameKey: 'group1Name', shortKey: 'group1Short', descKey: 'group1Desc', color: '#a855f7', legacyCategory: 'video', sampleQueries: ['.mp4', '.mkv', '.mov', '.webm'] },
+  { groupId: 2, nameKey: 'group2Name', shortKey: 'group2Short', descKey: 'group2Desc', color: '#ec4899', legacyCategory: 'video', sampleQueries: ['.mp3', '.wav', '.flac', '.m4a'] },
+  { groupId: 3, nameKey: 'group3Name', shortKey: 'group3Short', descKey: 'group3Desc', color: '#10b981', legacyCategory: 'other', sampleQueries: ['.png', '.jpg', '.webp', '.svg'] },
+  { groupId: 4, nameKey: 'group4Name', shortKey: 'group4Short', descKey: 'group4Desc', color: '#3b82f6', legacyCategory: 'document', sampleQueries: ['.pdf', '.docx', '.xlsx', '.pptx'] },
+  { groupId: 5, nameKey: 'group5Name', shortKey: 'group5Short', descKey: 'group5Desc', color: '#f59e0b', legacyCategory: 'archive', sampleQueries: ['.zip', '.7z', '.rar', '.gz'] },
+  { groupId: 6, nameKey: 'group6Name', shortKey: 'group6Short', descKey: 'group6Desc', color: '#f97316', legacyCategory: 'installer', sampleQueries: ['.exe', '.msi'] },
+  { groupId: 7, nameKey: 'group7Name', shortKey: 'group7Short', descKey: 'group7Desc', color: '#06b6d4', legacyCategory: 'other', sampleQueries: ['.js', '.ts', '.json', '.wasm'] },
+  { groupId: 8, nameKey: 'group8Name', shortKey: 'group8Short', descKey: 'group8Desc', color: '#ef4444', legacyCategory: 'temp', sampleQueries: ['.dll', '.log', '.dmp', '.pdb'] },
+  { groupId: 9, nameKey: 'group9Name', shortKey: 'group9Short', descKey: 'group9Desc', color: '#6366f1', legacyCategory: 'document', sampleQueries: ['.db', '.asar', '.pak', '.bin'] },
+  { groupId: 99, nameKey: 'group99Name', shortKey: 'group99Short', descKey: 'group99Desc', color: '#64748b', legacyCategory: 'other', sampleQueries: ['.ttf', '.woff2'] }
 ]
+
+export function getOfficialFileTypeGroups(): OfficialFileTypeGroupMeta[] {
+  return GROUP_DEFS.map(g => ({
+    groupId: g.groupId,
+    name: t(g.nameKey),
+    shortName: t(g.shortKey),
+    color: g.color,
+    legacyCategory: g.legacyCategory,
+    description: t(g.descKey),
+    sampleQueries: g.sampleQueries
+  }))
+}
+
+export const OFFICIAL_FILE_TYPE_GROUPS: OfficialFileTypeGroupMeta[] = getOfficialFileTypeGroups()
 
 export interface DiskFileEntry {
   id: string
@@ -233,13 +176,11 @@ export interface DiskScanFailure {
 export function describeScanFailure(directory: string, error: unknown): string {
   let raw = (error instanceof Error ? error.message : String(error ?? '')).trim()
   if (raw.startsWith(`${directory}: `)) raw = raw.slice(directory.length + 2).trim()
-  if (!raw) raw = '目录扫描失败'
+  if (!raw) raw = t('scanDirFailed')
   const permission = /PERMISSION_DENIED|EACCES|EPERM|not permitted|权限|拒绝访问|未授权/i.test(raw)
   if (!permission) return raw
-  const hint = directory.startsWith('/')
-    ? '可在「系统设置 › 隐私与安全性 › 文件与文件夹」中允许 ZTools 访问后重新扫描'
-    : '请确认当前账户有权读取该目录后重新扫描'
-  return `${raw}（${hint}）`
+  const hint = directory.startsWith('/') ? t('permHintMac') : t('permHintWin')
+  return t('permHintWrap', { raw, hint })
 }
 
 export interface DiskAnalysisSnapshot {
@@ -285,48 +226,46 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp(
   `${WINDOWS_PROTECTED_PATTERN.source}|${MACOS_PROTECTED_PATTERN.source}|${PARENT_SEGMENT_PATTERN.source}`,
   'i'
 )
-export const FORBIDDEN_REASON = '系统核心目录、应用程序包内部文件与卷影副本区受保护，禁止通过分析器直接清理'
-
-const PRESET_ITEMS: CapabilityActionItem[] = [
-  {
-    id: 'disk-c-overview',
-    title: '系统盘 (C:) 空间占用深度透视',
-    subtitle: '定位 AppData、休眠文件、虚拟内存与大体积残留目录',
-    tag: '系统盘分析',
-    method: 'StartScanAsync',
-    params: { drive: 'C:\\' }
-  },
-  {
-    id: 'disk-large-files',
-    title: '全盘超大文件排行榜 (> 500MB)',
-    subtitle: '快速揪出遗忘的系统镜像 ISO、未清理安装包与冗余视频',
-    tag: '大文件排行',
-    method: 'GetGroupFiles',
-    params: { minSizeMb: 500 }
-  },
-  {
-    id: 'disk-ext-stats',
-    title: '按文件扩展名类型统计空间分布',
-    subtitle: '统计视频、开发依赖 (node_modules)、文档与归档占比',
-    tag: '类型分布',
-    method: 'GetExtensionStats',
-    params: { topN: 20 }
-  },
-  {
-    id: 'disk-drives-list',
-    title: '查看本机全部物理卷与挂载分区健康度',
-    subtitle: '汇总各分区总容量、剩余可用空间与文件系统格式',
-    tag: '分区概览',
-    method: 'GetAvailableDrives',
-    params: {}
-  }
-]
+export const FORBIDDEN_REASON = t('forbiddenReason')
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
 
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return PRESET_ITEMS.map(item => ({
-    ...item,
-    params: { ...item.params }
-  }))
+  return [
+    {
+      id: 'disk-c-overview',
+      title: t('presetCOverviewTitle'),
+      subtitle: t('presetCOverviewSub'),
+      tag: t('presetCOverviewTag'),
+      method: 'StartScanAsync',
+      params: { drive: 'C:\\' }
+    },
+    {
+      id: 'disk-large-files',
+      title: t('presetLargeTitle'),
+      subtitle: t('presetLargeSub'),
+      tag: t('presetLargeTag'),
+      method: 'GetGroupFiles',
+      params: { minSizeMb: 500 }
+    },
+    {
+      id: 'disk-ext-stats',
+      title: t('presetExtTitle'),
+      subtitle: t('presetExtSub'),
+      tag: t('presetExtTag'),
+      method: 'GetExtensionStats',
+      params: { topN: 20 }
+    },
+    {
+      id: 'disk-drives-list',
+      title: t('presetDrivesTitle'),
+      subtitle: t('presetDrivesSub'),
+      tag: t('presetDrivesTag'),
+      method: 'GetAvailableDrives',
+      params: {}
+    }
+  ]
 }
 
 export function filterCapabilityItems(items: CapabilityActionItem[], query: string): CapabilityActionItem[] {
@@ -345,10 +284,10 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 }
 
 export function formatDateTime(mtimeSeconds: number): string {
-  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return '未知时间'
+  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return t('unknownTime')
   const ms = mtimeSeconds > 1e12 ? mtimeSeconds : mtimeSeconds * 1000
   const d = new Date(ms)
-  if (Number.isNaN(d.getTime())) return '未知时间'
+  if (Number.isNaN(d.getTime())) return t('unknownTime')
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
@@ -357,27 +296,27 @@ export function formatDateTime(mtimeSeconds: number): string {
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('invalidMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('invalidMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('invalidParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('paramTooLong', { key }) }
       }
       if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: t('securityIntercepted', { reason: getForbiddenReason() }) }
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: t('paramOutOfRange', { key }) }
       }
     }
   }
@@ -392,7 +331,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('paramValidateFailed'))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -406,7 +345,8 @@ export async function invokeNativeCapability(
 }
 
 export function getGroupMetaById(groupId: OfficialFileTypeGroupId): OfficialFileTypeGroupMeta {
-  return OFFICIAL_FILE_TYPE_GROUPS.find(g => g.groupId === groupId) || OFFICIAL_FILE_TYPE_GROUPS[OFFICIAL_FILE_TYPE_GROUPS.length - 1]
+  const groups = getOfficialFileTypeGroups()
+  return groups.find(g => g.groupId === groupId) || groups[groups.length - 1]
 }
 
 /**
@@ -425,7 +365,7 @@ export function classifyFileExtension(filePath: string): {
   const rawExt = dotIdx > 0 ? name.slice(dotIdx).toLowerCase() : ''
   // 版本号结尾（如 2.1.301、libfoo.so.1）不是扩展名：否则同一程序的多个版本会各自成为一个「扩展名」，
   // 与无后缀、以哈希命名的同类文件分到不同统计里。扩展名至少含一个字母、不超过 16 个字符。
-  const ext = /^\.[a-z0-9_+-]{1,15}$/.test(rawExt) && /[a-z]/.test(rawExt) ? rawExt : '(无扩展名)'
+  const ext = /^\.[a-z0-9_+-]{1,15}$/.test(rawExt) && /[a-z]/.test(rawExt) ? rawExt : t('noExtension')
 
   let groupId: OfficialFileTypeGroupId = 99
   if (/\.(?:mp4|mkv|mov|avi|flv|webm|wmv|mts|m2ts|m4v|rmvb|mpg|mpeg|3gp)$/i.test(ext)) {
@@ -499,9 +439,10 @@ export function computeExtStats(files: DiskFileEntry[]): DiskExtStat[] {
  * 汇总 10 大官方分类统计及其内部二级扩展名占比
  */
 export function computeGroupStats(files: DiskFileEntry[]): DiskGroupStat[] {
+  const groups = getOfficialFileTypeGroups()
   const grandTotal = files.reduce((acc, f) => acc + f.sizeBytes, 0)
   const byGroup = new Map<OfficialFileTypeGroupId, DiskFileEntry[]>()
-  for (const g of OFFICIAL_FILE_TYPE_GROUPS) {
+  for (const g of groups) {
     byGroup.set(g.groupId, [])
   }
   for (const f of files) {
@@ -512,7 +453,7 @@ export function computeGroupStats(files: DiskFileEntry[]): DiskGroupStat[] {
   }
 
   const result: DiskGroupStat[] = []
-  for (const meta of OFFICIAL_FILE_TYPE_GROUPS) {
+  for (const meta of groups) {
     const groupFiles = byGroup.get(meta.groupId) || []
     const totalSizeBytes = groupFiles.reduce((acc, f) => acc + f.sizeBytes, 0)
     const sharePercent =
@@ -563,12 +504,12 @@ function extractDrivePrefix(filePath: string): string {
  */
 export async function probeDiskVolumesTolerant(hostOverride?: HostOverride): Promise<{ drives: RealDiskDriveInfo[]; errors: string[] }> {
   const res = await callHostTransport<Record<string, unknown>>('system_list_volumes', {}, hostOverride)
-  if (!res.ok && isHostMethodMissing(res.error)) throw hostUpgradeError('读取磁盘卷列表')
-  if (!res.ok || !res.data || !Array.isArray(res.data.volumes)) throw new Error(res.error || '无法读取挂载卷列表')
+  if (!res.ok && isHostMethodMissing(res.error)) throw hostUpgradeError(t('volumeListFeature'))
+  if (!res.ok || !res.data || !Array.isArray(res.data.volumes)) throw new Error(res.error || t('volumeListUnavailable'))
   const errors = res.data.partial
-    ? (Array.isArray(res.data.errors) && res.data.errors.length ? res.data.errors.map(String) : ['部分卷容量读取失败'])
+    ? (Array.isArray(res.data.errors) && res.data.errors.length ? res.data.errors.map(String) : [t('someVolumeFailed')])
     : []
-  if (!res.data.volumes.length && errors.length) throw new Error(`没有读取到已挂载卷：${errors.join('；')}`)
+  if (!res.data.volumes.length && errors.length) throw new Error(t('noMountedVolumes', { detail: errors.join(t('pairSep')) }))
   // 同一份宿主快照交给公共解析（校验每一卷的数据），不重复请求宿主
   const snapshot = { ...res.data, partial: false, errors: [] }
   const drives = await probeRealDiskDrives([], { system_list_volumes: () => snapshot } as unknown as HostOverride)
@@ -589,22 +530,43 @@ export async function getSystemTempDir(hostOverride?: HostOverride): Promise<str
   return temp && temp.exists === true && typeof temp.path === 'string' ? temp.path.trim() : ''
 }
 
+/** 分区容量先行结果：卷容量几十毫秒就能读到，目录扫描可能要几十秒，界面先显示容量，不让 0 B 冒充真实数据 */
+export interface DiskVolumeSummary {
+  drives: DiskDriveItem[]
+  totalCapacityBytes: number
+  totalUsedBytes: number
+  totalAvailableBytes: number
+}
+
 /**
  * 采集本机真实磁盘分区、10 大分类分布与热点大文件全景快照
+ * onVolumes：读到分区容量后立即回调一次（早于目录扫描完成）
  */
-export async function fetchDiskAnalysisSnapshot(hostOverride?: HostOverride): Promise<DiskAnalysisSnapshot> {
+export async function fetchDiskAnalysisSnapshot(
+  hostOverride?: HostOverride,
+  onVolumes?: (summary: DiskVolumeSummary) => void
+): Promise<DiskAnalysisSnapshot> {
   // 1. 探测真实磁盘分区 (C:/ ~ G:/)
   const { drives: rawDrives, errors: volumeErrors } = await probeDiskVolumesTolerant(hostOverride)
   const drives: DiskDriveItem[] = rawDrives.map(d => ({
     drive: d.drive,
     label: d.label || d.drive,
-    fileSystem: d.fileSystem || '未知',
+    fileSystem: d.fileSystem || t('volumeUnknownFs'),
     totalBytes: d.totalBytes,
     usedBytes: d.usedBytes,
     availableBytes: d.availableBytes,
     usagePercent: d.usagePercent,
     status: d.usagePercent >= 90 ? 'danger' : d.usagePercent >= 75 ? 'warning' : 'normal'
   }))
+  const capacityDrives = uniqueCapacityDrives(rawDrives)
+  const totalCapacityBytes = capacityDrives.reduce((s, d) => s + d.totalBytes, 0)
+  const totalUsedBytes = capacityDrives.reduce((s, d) => s + d.usedBytes, 0)
+  const totalAvailableBytes = capacityDrives.reduce((s, d) => s + d.availableBytes, 0)
+  try {
+    onVolumes?.({ drives, totalCapacityBytes, totalUsedBytes, totalAvailableBytes })
+  } catch {
+    // 界面回调出错不影响后续扫描
+  }
 
   // 2. 获取标准用户目录
   const [downloadsDir, documentsDir, desktopDir, videosDir, tempDir] = await Promise.all([
@@ -677,7 +639,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: HostOverride): Pr
   // 读不到容量的卷不在分区列表里，也不扫描；连同宿主给的原因列在“未能扫描的目录”中
   const failedScans: DiskScanFailure[] = volumeErrors.map(error => {
     const match = error.match(/^(.+?): (.+)$/)
-    return match ? { path: match[1]!, reason: `卷容量读取失败：${match[2]}` } : { path: '挂载卷', reason: error }
+    return match ? { path: match[1]!, reason: t('volumeCapFailedPrefix', { detail: match[2] }) } : { path: t('mountedVolumeLabel'), reason: error }
   })
   const volumeFailureCount = failedScans.length
 
@@ -697,7 +659,7 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: HostOverride): Pr
       if (outcome.status === 'rejected') failedScans.push({ path: realTargetDirs[scanIndex]!, reason: describeScanFailure(realTargetDirs[scanIndex]!, outcome.reason) })
     }
     if (realTargetDirs.length > 0 && failedScans.length - volumeFailureCount === realTargetDirs.length) {
-      throw new Error(`所有目录都未能扫描：${failedScans.map(f => `${f.path}：${f.reason}`).join('；')}`)
+      throw new Error(t('allDirsScanFailed', { detail: failedScans.map(f => `${f.path}${t('colonSep')}${f.reason}`).join(t('pairSep')) }))
     }
     for (const [scanIndex, outcome] of settled.entries()) {
       if (outcome.status !== 'fulfilled') continue
@@ -748,11 +710,6 @@ export async function fetchDiskAnalysisSnapshot(hostOverride?: HostOverride): Pr
   const extStats = computeExtStats(files)
   const groupStats = computeGroupStats(files)
 
-  const capacityDrives = uniqueCapacityDrives(rawDrives)
-  const totalCapacityBytes = capacityDrives.reduce((s, d) => s + d.totalBytes, 0)
-  const totalUsedBytes = capacityDrives.reduce((s, d) => s + d.usedBytes, 0)
-  const totalAvailableBytes = capacityDrives.reduce((s, d) => s + d.availableBytes, 0)
-
   return {
     drives,
     files,
@@ -775,10 +732,10 @@ export async function deleteDiskFileItem(
   hostOverride?: HostOverride
 ): Promise<{ ok: boolean; error?: string }> {
   if (!filePath || typeof filePath !== 'string') {
-    return { ok: false, error: '文件路径不能为空' }
+    return { ok: false, error: t('filePathEmpty') }
   }
   if (FORBIDDEN_TARGET_PATTERN.test(filePath.trim())) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: getForbiddenReason() }
   }
   const res = await trashRealItem(filePath.trim(), hostOverride)
   return res.ok ? res : { ok: false, error: describeHostPathError(res.error) }
@@ -792,11 +749,9 @@ export function describeHostPathError(error: string | undefined): string {
   const raw = String(error || '').trim()
   const permission = /PERMISSION_DENIED|未由当前窗口授权|权限不足|未授权/i.test(raw)
   const missing = !permission && /FILE_ERROR|FILE_NOT_FOUND|ENOENT|不存在|文件操作失败/i.test(raw)
-  if (!permission && !missing) return raw || '移除失败'
-  const hint = missing
-    ? '文件可能已被移动或删除，请重新扫描'
-    : '只能回收本次扫描到的普通文件（文件夹、链接与系统目录除外），授权可能已过期，请重新扫描后再试'
-  return /^[A-Z_]+$/.test(raw) || !raw ? hint : `${raw}（${hint}）`
+  if (!permission && !missing) return raw || t('removeFailed')
+  const hint = missing ? t('hintFileMoved') : t('hintScopeExpired')
+  return /^[A-Z_]+$/.test(raw) || !raw ? hint : t('permHintWrap', { raw, hint })
 }
 
 /**
@@ -816,7 +771,7 @@ export async function batchDeleteDiskFileItems(
     if (res.ok) {
       succeeded.push(rawPath)
     } else {
-      failed.push({ path: rawPath, error: res.error || '移除失败' })
+      failed.push({ path: rawPath, error: res.error || t('removeFailed') })
     }
   }
   return { succeeded, failed }
@@ -834,30 +789,33 @@ export function isMacPlatform(): boolean {
 }
 
 /** macOS 上与 Windows 用词或扩展名不同的分类说明 */
-const MAC_GROUP_DESCRIPTIONS: Partial<Record<OfficialFileTypeGroupId, string>> = {
-  6: '安装包与安装程序 (.pkg, .mpkg, .ipa, .apk；.dmg 磁盘镜像归入「压缩包与镜像」)',
-  8: '动态库、内核扩展、崩溃报告、运行日志与临时文件 (.dylib, .kext, .ips, .crash, .log, .tmp)'
+const MAC_GROUP_DESC_KEYS: Partial<Record<OfficialFileTypeGroupId, 'group6DescMac' | 'group8DescMac'>> = {
+  6: 'group6DescMac',
+  8: 'group8DescMac'
 }
 
 /** 按平台给出分类说明：macOS 不出现 .dll / .exe 这类 Windows 示例 */
 export function groupDescriptionFor(groupId: OfficialFileTypeGroupId, mac: boolean = isMacPlatform()): string {
-  const meta = getGroupMetaById(groupId)
-  return (mac && MAC_GROUP_DESCRIPTIONS[groupId]) || meta.description
+  const macKey = mac ? MAC_GROUP_DESC_KEYS[groupId] : undefined
+  if (macKey) return t(macKey)
+  return getGroupMetaById(groupId).description
 }
 
 /** 搜索框占位提示里的后缀示例按平台给 */
 export function searchPlaceholderFor(mac: boolean = isMacPlatform()): string {
-  return mac ? '搜索大文件、后缀 (.mp4/.dmg/.zip) 或路径...' : '搜索大文件、后缀 (.mp4/.iso/.zip/.dll) 或路径...'
+  return mac ? t('searchPlaceholderMac') : t('searchPlaceholderWin')
 }
 
-/** 回收站名称：Windows 为「回收站」，macOS 为「废纸篓」 */
-export function trashName(samplePath: string): string {
-  return String(samplePath || '').startsWith('/') ? '废纸篓' : '回收站'
+/** 回收站名称：Windows 为「回收站」，macOS 为「废纸篓」；没有路径可参考时（如列表为空）按当前系统判断 */
+export function trashName(samplePath: string, mac: boolean = isMacPlatform()): string {
+  const value = String(samplePath || '')
+  if (!value) return mac ? t('trashMac') : t('trashWin')
+  return value.startsWith('/') ? t('trashMac') : t('trashWin')
 }
 
 /** 系统文件管理器名称：Windows 路径为「资源管理器」，macOS 为「访达」 */
 export function fileManagerName(samplePath: string): string {
-  return /^[A-Za-z]:/.test(String(samplePath || '')) || String(samplePath || '').startsWith('\\\\') ? '资源管理器' : '访达'
+  return /^[A-Za-z]:/.test(String(samplePath || '')) || String(samplePath || '').startsWith('\\\\') ? t('fmWin') : t('fmMac')
 }
 
 /** 最后一个不授权分区根目录的客户端版本（之后的版本在 system_list_volumes 返回卷时只读登记卷根） */
@@ -870,20 +828,20 @@ export const DRIVE_ROOT_LAST_UNSUPPORTED_APP_VERSION = '1.1.8.6'
  */
 export async function openDriveRoot(drive: string, hostOverride?: HostOverride): Promise<{ ok: boolean; error?: string }> {
   const target = driveRoot(String(drive || ''))
-  if (!target) return { ok: false, error: '分区路径为空' }
+  if (!target) return { ok: false, error: t('drivePathEmpty') }
   const res = await callHostTransport('shell_open_path', { fullPath: target }, hostOverride)
   if (res.ok) return { ok: true }
   const raw = String(res.error || '').trim()
   if (/PERMISSION_DENIED|未由当前窗口授权|未授权/i.test(raw)) {
-    return { ok: false, error: `ZTools ${DRIVE_ROOT_LAST_UNSUPPORTED_APP_VERSION} 及更早版本不允许插件打开分区根目录，请升级 ZTools；已是更新的版本时请点「重新扫描」后再试（授权 30 分钟后过期）` }
+    return { ok: false, error: t('driveRootUnsupported', { version: DRIVE_ROOT_LAST_UNSUPPORTED_APP_VERSION }) }
   }
   if (/FILE_ERROR|FILE_NOT_FOUND|ENOENT|不存在|文件操作失败/i.test(raw)) {
-    return { ok: false, error: '分区可能已被推出或卸载，请重新扫描' }
+    return { ok: false, error: t('driveRootEjected') }
   }
   if (/METHOD_NOT_FOUND|METHOD_NOT_AVAILABLE|未知方法|未实现/.test(raw)) {
-    return { ok: false, error: '当前 ZTools 版本过低，请升级到最新版本后再试' }
+    return { ok: false, error: t('driveRootOldClient') }
   }
-  return { ok: false, error: raw || '打开分区失败' }
+  return { ok: false, error: raw || t('driveRootOpenFailed') }
 }
 
 /**

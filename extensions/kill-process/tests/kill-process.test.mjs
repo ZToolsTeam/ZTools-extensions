@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
 import * as mod from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 // 测试专用的进程样本，只在测试里使用
 const FIXTURE_PROCESSES = [

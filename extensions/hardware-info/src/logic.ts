@@ -1,5 +1,6 @@
 import { uniqueCapacityDrives, type RealDiskDriveInfo } from './volume-ipc.js'
 import { hostUpgradeError, isHostMethodMissing } from './host-compat.js'
+import { t } from './i18n.js'
 /**
  * 电脑硬件信息业务逻辑
  * 通过宿主通用系统接口读取 CPU 型号/线程/负载、物理内存、系统版本、磁盘容量、显示器与电源状态，
@@ -24,7 +25,7 @@ export interface HardwareSpecEntry {
 export interface ScenarioCompatibilityItem {
   id: string
   scenario: string
-  tier: '规格参考较高' | '规格参考一般' | '规格参考有限'
+  tier: string
   summary: string
   bottleneckHint: string
 }
@@ -134,11 +135,11 @@ function osVersionString(value: unknown): string | null {
 }
 
 function bytesOrFailed(bytes: number | null): string {
-  return bytes === null ? READ_FAILED : formatBytes(bytes)
+  return bytes === null ? t('readFailed') : formatBytes(bytes)
 }
 
 function percentOrFailed(percent: number | null): string {
-  return percent === null ? READ_FAILED : `${percent}%`
+  return percent === null ? t('readFailed') : `${percent}%`
 }
 
 /**
@@ -152,11 +153,12 @@ export function formatPowerStatus(
   batteryState: BatteryState = batteryPercent === null ? 'unknown' : 'present',
   powerSource: PowerSource = isCharging ? 'ac' : 'battery'
 ): string {
-  if (readFailed) return `电源状态${READ_FAILED}`
-  if (batteryState === 'unknown') return '电池状态未知'
-  if (batteryState === 'absent') return powerSource === 'ac' ? '无电池（交流供电）' : '无电池'
-  const sourceText = powerSource === 'ac' ? 'AC 交流供电' : powerSource === 'battery' ? '电池放电中' : '供电状态未知'
-  return `${batteryPercent === null ? '电量未知' : `电量 ${batteryPercent}%`} (${sourceText})`
+  if (readFailed) return t('powerReadFailed')
+  if (batteryState === 'unknown') return t('batteryUnknown')
+  if (batteryState === 'absent') return powerSource === 'ac' ? t('noBatteryAc') : t('noBattery')
+  const sourceText = powerSource === 'ac' ? t('sourceAc') : powerSource === 'battery' ? t('sourceBattery') : t('sourceUnknown')
+  const charge = batteryPercent === null ? t('chargeUnknown') : t('chargePercent', { percent: batteryPercent })
+  return t('powerSummary', { charge, source: sourceText })
 }
 
 /** 宿主返回的电源状态 → 电池三态与供电来源；新版宿主给 batteryState / powerSource / readError，旧版只有 percent 与 isCharging */
@@ -164,9 +166,9 @@ export function interpretBatteryStatus(res: { ok: boolean; data?: unknown; error
   batteryPercent: number | null; isCharging: boolean; batteryState: BatteryState; powerSource: PowerSource; readError: string | null
 } {
   const failed = (readError: string) => ({ batteryPercent: null, isCharging: false, batteryState: 'unknown' as const, powerSource: 'unknown' as const, readError })
-  if (!res.ok) return failed(res.error || '接口调用失败')
+  if (!res.ok) return failed(res.error || t('errRpcFailed'))
   const data = res.data && typeof res.data === 'object' ? res.data as Record<string, unknown> : null
-  if (!data) return failed('返回数据无效')
+  if (!data) return failed(t('errInvalidData'))
   if (typeof data.readError === 'string' && data.readError.trim()) return failed(data.readError.trim())
   const percent = usagePercent(data.percent)
   const exactPercent = typeof data.percent === 'number' && Number.isInteger(data.percent) ? percent : null
@@ -184,22 +186,22 @@ export function interpretBatteryStatus(res: { ok: boolean; data?: unknown; error
  */
 export async function readMountedVolumes(hostOverride?: unknown): Promise<{ drives: RealDiskDriveInfo[]; errors: string[]; failed: boolean }> {
   const res = await callHostTransport<Record<string, unknown>>('system_list_volumes', {}, hostOverride)
-  if (!res.ok) return { drives: [], errors: [isHostMethodMissing(res.error) ? hostUpgradeError('读取磁盘卷列表').message : res.error || '挂载卷列表读取失败'], failed: true }
+  if (!res.ok) return { drives: [], errors: [isHostMethodMissing(res.error) ? hostUpgradeError(t('featureReadVolumes')).message : res.error || t('errVolumesReadFailed')], failed: true }
   const data = res.data && typeof res.data === 'object' ? res.data : null
-  if (!data || !Array.isArray(data.volumes)) return { drives: [], errors: ['挂载卷列表格式无效'], failed: true }
+  if (!data || !Array.isArray(data.volumes)) return { drives: [], errors: [t('errVolumesFormatInvalid')], failed: true }
   const errors = Array.isArray(data.errors) ? data.errors.filter((e): e is string => typeof e === 'string' && !!e.trim()) : []
-  if (data.partial && errors.length === 0) errors.push('部分卷容量读取失败')
+  if (data.partial && errors.length === 0) errors.push(t('errPartialVolumesFailed'))
   const drives: RealDiskDriveInfo[] = []
   for (const value of data.volumes as unknown[]) {
     const v = value && typeof value === 'object' ? value as Record<string, unknown> : null
     const total = Number(v?.totalBytes), used = Number(v?.usedBytes), available = Number(v?.availableBytes)
     const valid = v && typeof v.path === 'string' && v.path && typeof v.totalBytes === 'number' && typeof v.usedBytes === 'number' && typeof v.availableBytes === 'number' &&
       Number.isFinite(total) && total > 0 && Number.isFinite(used) && used >= 0 && Number.isFinite(available) && available >= 0
-    if (!valid) { errors.push(`${typeof v?.path === 'string' && v.path ? v.path : '未知卷'}：容量数据无效`); continue }
+    if (!valid) { errors.push(t('errVolumeCapacityInvalid', { path: typeof v?.path === 'string' && v.path ? v.path : t('unknownVolume') })); continue }
     const path = v.path as string
-    drives.push({ drive: path.replace(/^([A-Za-z]:)[\\/]$/, '$1'), label: String(v.label || path), fileSystem: String(v.fileSystem || '未知'), capacityGroup: String(v.capacityGroup || path), totalBytes: total, usedBytes: used, availableBytes: available, usagePercent: Math.round(used / total * 100) })
+    drives.push({ drive: path.replace(/^([A-Za-z]:)[\\/]$/, '$1'), label: String(v.label || path), fileSystem: String(v.fileSystem || t('unknownLabel')), capacityGroup: String(v.capacityGroup || path), totalBytes: total, usedBytes: used, availableBytes: available, usagePercent: Math.round(used / total * 100) })
   }
-  if (drives.length === 0) return { drives, errors: errors.length > 0 ? errors : ['没有读取到已挂载卷'], failed: true }
+  if (drives.length === 0) return { drives, errors: errors.length > 0 ? errors : [t('errNoMountedVolumes')], failed: true }
   return { drives, errors, failed: false }
 }
 
@@ -226,8 +228,8 @@ export function describeOsVersionParts(
   snap: Pick<HardwareTelemetrySnapshot, 'platform' | 'osName' | 'osVersion' | 'kernelVersion' | 'osBuild'>
 ): string[] {
   const parts: string[] = []
-  if (snap.osVersion && snap.osVersion !== snap.kernelVersion) parts.push(`系统版本 ${snap.osVersion}`)
-  if (snap.kernelVersion) parts.push(`${isMacPlatform(snap) ? 'Darwin 内核' : '内核版本'} ${snap.kernelVersion}`)
+  if (snap.osVersion && snap.osVersion !== snap.kernelVersion) parts.push(t('osVersionPrefix', { version: snap.osVersion }))
+  if (snap.kernelVersion) parts.push(`${isMacPlatform(snap) ? t('darwinKernelPrefix') : t('kernelVersionPrefix')} ${snap.kernelVersion}`)
   if (snap.osBuild !== null) parts.push(`Build ${snap.osBuild}`)
   return parts
 }
@@ -236,11 +238,11 @@ export function describeOsVersionParts(
 export function formatOsLine(
   snap: Pick<HardwareTelemetrySnapshot, 'platform' | 'osName' | 'osVersion' | 'kernelVersion' | 'osBuild' | 'osArch'>
 ): string {
-  if (!snap.osName && !snap.osVersion) return `系统版本${READ_FAILED}`
+  if (!snap.osName && !snap.osVersion) return t('osReadFailed')
   const head = [snap.osName, snap.osVersion].filter(Boolean).join(' ')
   const extra: string[] = []
   if (snap.kernelVersion && snap.kernelVersion !== snap.osVersion) {
-    extra.push(`${isMacPlatform(snap) ? 'Darwin 内核' : '内核'} ${snap.kernelVersion}`)
+    extra.push(`${isMacPlatform(snap) ? t('darwinKernelPrefix') : t('kernelShortPrefix')} ${snap.kernelVersion}`)
   }
   if (snap.osBuild !== null) extra.push(`Build ${snap.osBuild}`)
   if (snap.osArch) extra.push(snap.osArch)
@@ -249,26 +251,37 @@ export function formatOsLine(
 
 /** 顶部单行状态摘要：读取失败的部分如实标注，全部失败时提示重试 */
 export function buildSummaryText(snap: HardwareTelemetrySnapshot | null): string {
-  if (!snap) return '正在读取硬件信息...'
+  if (!snap) return t('summaryLoading')
   const nothingRead =
     snap.cpuModel === null &&
     snap.logicalCpuCount === null &&
     snap.totalMemoryBytes === null &&
     snap.osName === null &&
     snap.driveCount === 0
-  if (nothingRead) return '硬件信息读取失败，可点击「刷新」重试'
+  if (nothingRead) return t('summaryAllFailed')
   const parts: string[] = []
-  // 不在摘要里放“余量”：紧挨着 CPU 负载容易被误读成另一种负载，余量只在报告里给出
   parts.push(
-    `CPU ${snap.logicalCpuCount === null ? `线程数${READ_FAILED}` : `${snap.logicalCpuCount} 线程`} (负载 ${percentOrFailed(snap.cpuUsagePercent)})`
+    t('summaryCpuPart', {
+      threads: snap.logicalCpuCount === null ? t('summaryThreadsFailed') : t('summaryThreadsShort', { count: snap.logicalCpuCount }),
+      load: percentOrFailed(snap.cpuUsagePercent)
+    })
   )
   parts.push(
-    `内存 ${bytesOrFailed(snap.usedMemoryBytes)} / ${bytesOrFailed(snap.totalMemoryBytes)} (${percentOrFailed(snap.memoryUsagePercent)})`
+    t('summaryMemPart', {
+      used: bytesOrFailed(snap.usedMemoryBytes),
+      total: bytesOrFailed(snap.totalMemoryBytes),
+      percent: percentOrFailed(snap.memoryUsagePercent)
+    })
   )
   parts.push(
     snap.driveCount > 0
-      ? `存储 ${storageText(snap, snap.totalDiskBytes)} (${snap.driveCount} 个卷，可用 ${storageText(snap, snap.availableDiskBytes)}${snap.diskPartial ? '，部分卷读取失败' : ''})`
-      : `磁盘容量${READ_FAILED}`
+      ? t('summaryDiskPart', {
+          total: storageText(snap, snap.totalDiskBytes),
+          count: snap.driveCount,
+          avail: storageText(snap, snap.availableDiskBytes),
+          partial: snap.diskPartial ? t('summaryPartialDiskNote') : ''
+        })
+      : t('summaryDiskFailed')
   )
   return parts.join(' · ')
 }
@@ -292,7 +305,7 @@ export function evaluateHardwareScenarios(
   const totalMemoryBytes = positiveNumber(isSnap ? logicalCpuCountOrSnap.totalMemoryBytes : totalMemoryBytesArg)
   if (logicalCpuCount === null || !Number.isInteger(logicalCpuCount) || totalMemoryBytes === null) return []
   const availableDiskBytes = nonNegativeNumber(isSnap
-    ? logicalCpuCountOrSnap.failures?.includes('磁盘容量') ? null : logicalCpuCountOrSnap.availableDiskBytes
+    ? (logicalCpuCountOrSnap.failures?.includes('磁盘容量') || logicalCpuCountOrSnap.failures?.includes(t('modDisk'))) ? null : logicalCpuCountOrSnap.availableDiskBytes
     : availableDiskBytesArg)
   const diskKnown = availableDiskBytes !== null
   const ramGb = totalMemoryBytes / (1024 * 1024 * 1024)
@@ -302,37 +315,37 @@ export function evaluateHardwareScenarios(
   return [
     {
       id: 'sc-office-dev',
-      scenario: '极客开发、多开容器与重度办公',
-      tier: ramGb >= 24 && cores >= 12 ? '规格参考较高' : ramGb >= 14 ? '规格参考一般' : '规格参考有限',
-      summary: `当前 ${cores} 逻辑线程、${formatBytes(totalMemoryBytes)} 物理内存；估算未包含编译耗时、容器资源配置与应用实际占用。`,
-      bottleneckHint: '请结合实际项目编译与多开时的 CPU、内存占用判断需求'
+      scenario: t('scDevTitle'),
+      tier: ramGb >= 24 && cores >= 12 ? t('tierHigh') : ramGb >= 14 ? t('tierMedium') : t('tierLow'),
+      summary: t('scDevSummary', { cores, mem: formatBytes(totalMemoryBytes) }),
+      bottleneckHint: t('scDevHint')
     },
     {
       id: 'sc-4k-media',
-      scenario: '4K 影音剪辑、渲染与创意设计',
-      tier: ramGb >= 30 && cores >= 16 ? '规格参考较高' : ramGb >= 15 && cores >= 8 ? '规格参考一般' : '规格参考有限',
+      scenario: t('scMediaTitle'),
+      tier: ramGb >= 30 && cores >= 16 ? t('tierHigh') : ramGb >= 15 && cores >= 8 ? t('tierMedium') : t('tierLow'),
       summary: diskKnown
-        ? `当前 ${cores} 逻辑线程，可用磁盘空间 ${formatStorageBytes(availableDiskBytes, decimalUnits)}；未测量转码速度、磁盘吞吐或硬件编解码能力。`
-        : `当前 ${cores} 逻辑线程；磁盘容量${READ_FAILED}，未评估素材存储空间或转码速度。`,
+        ? t('scMediaSummaryDisk', { cores, disk: formatStorageBytes(availableDiskBytes, decimalUnits) })
+        : t('scMediaSummaryNoDisk', { cores }),
       bottleneckHint: !diskKnown
-        ? `磁盘容量${READ_FAILED}，无法评估素材存储空间`
+        ? t('scMediaHintNoDisk')
         : freeDiskGb !== null && freeDiskGb < 50
-        ? '剩余磁盘空间偏紧，请核对素材与缓存所需空间'
-        : '请核对素材与缓存大小，并用实际项目验证编解码表现'
+        ? t('scMediaHintLowDisk')
+        : t('scMediaHintOk')
     },
     {
       id: 'sc-aaa-gaming',
-      scenario: '主流电竞与 3A 次世代游戏大作',
-      tier: ramGb >= 15 && cores >= 12 ? '规格参考一般' : '规格参考有限',
-      summary: `当前 ${cores} 逻辑线程、${formatBytes(totalMemoryBytes)} 物理内存；未读取图形处理器或显存，未验证游戏的系统支持。`,
-      bottleneckHint: '无法据此判断游戏兼容性、画质或帧率，请核对游戏官方要求'
+      scenario: t('scGameTitle'),
+      tier: ramGb >= 15 && cores >= 12 ? t('tierMedium') : t('tierLow'),
+      summary: t('scGameSummary', { cores, mem: formatBytes(totalMemoryBytes) }),
+      bottleneckHint: t('scGameHint')
     },
     {
       id: 'sc-local-llm',
-      scenario: '本地离线 AI 大模型推理',
-      tier: ramGb >= 30 ? '规格参考较高' : ramGb >= 15 ? '规格参考一般' : '规格参考有限',
-      summary: `本机物理内存 ${formatBytes(totalMemoryBytes)}；模型大小、量化方式、上下文与计算后端均未验证。`,
-      bottleneckHint: '无法据此保证模型能装入内存或推理速度，请按实际模型测量'
+      scenario: t('scLlmTitle'),
+      tier: ramGb >= 30 ? t('tierHigh') : ramGb >= 15 ? t('tierMedium') : t('tierLow'),
+      summary: t('scLlmSummary', { mem: formatBytes(totalMemoryBytes) }),
+      bottleneckHint: t('scLlmHint')
     }
   ]
 }
@@ -347,13 +360,13 @@ export function exportHardwareReport(
   snap: HardwareTelemetrySnapshot,
   format: 'markdown' | 'json' | 'txt' = 'markdown'
 ): string {
-  const cpuModel = snap.cpuModel ?? `型号${READ_FAILED}`
-  const threads = snap.logicalCpuCount === null ? `线程数${READ_FAILED}` : `${snap.logicalCpuCount} 逻辑线程`
+  const cpuModel = snap.cpuModel ?? t('cpuModelFailed')
+  const threads = snap.logicalCpuCount === null ? t('summaryThreadsFailed') : t('summaryThreadsCount', { count: snap.logicalCpuCount })
   const cpuLoad = percentOrFailed(snap.cpuUsagePercent)
-  const headroom = snap.loadHeadroomPercent === null ? '未评估' : `${snap.loadHeadroomPercent}%`
-  const displays = snap.displayCount === null ? `显示器信息${READ_FAILED}` : `${snap.displayCount} 台显示器`
+  const headroom = snap.loadHeadroomPercent === null ? t('notEvaluated') : `${snap.loadHeadroomPercent}%`
+  const displays = snap.displayCount === null ? t('displayInfoFailed') : t('displayCountText', { count: snap.displayCount })
   const power = formatPowerStatus(snap.batteryPercent, snap.isCharging, snap.powerReadFailed, snap.batteryState, snap.powerSource)
-  const diskReadFailed = snap.failures.includes('磁盘容量') || snap.driveCount === 0
+  const diskReadFailed = snap.failures.includes('磁盘容量') || snap.failures.includes(t('modDisk')) || snap.driveCount === 0
   const warnings = snap.warnings ?? []
   const disk = (bytes: number) => storageText(snap, bytes)
 
@@ -398,7 +411,7 @@ export function exportHardwareReport(
         },
         loadHeadroomPercent: snap.loadHeadroomPercent,
         assessment: { scenarios: 'spec-estimate', performanceMeasured: false,
-          loadHeadroom: '100 - max(cpuUsagePercent, memoryUsagePercent)', note: SCENARIO_ESTIMATE_NOTE },
+          loadHeadroom: '100 - max(cpuUsagePercent, memoryUsagePercent)', note: t('scenarioEstimateNote') },
         scenarios: snap.scenarios,
         readFailures: snap.failures,
         readWarnings: warnings
@@ -408,30 +421,30 @@ export function exportHardwareReport(
     )
   }
 
-  const failureLine = snap.failures.length > 0 ? `未能读取: ${snap.failures.join('、')}` : ''
-  const reasonLine = warnings.length > 0 ? `失败原因: ${warnings.join('；')}` : ''
-  const partialNote = snap.diskPartial ? '，不含读取失败的卷' : ''
+  const failureLine = snap.failures.length > 0 ? t('reportFailureLine', { failures: snap.failures.join(t('listSeparator')) }) : ''
+  const reasonLine = warnings.length > 0 ? t('reportReasonLine', { warnings: warnings.join(t('semiSeparator')) }) : ''
+  const partialNote = snap.diskPartial ? t('reportPartialNote') : ''
 
   if (format === 'txt') {
     const driveLines = snap.drives.length > 0
       ? snap.drives
-        .map(d => `  [${driveDisplayName(d)}] 总容量: ${disk(d.totalBytes)} | 已用: ${disk(d.usedBytes)} (${d.usagePercent}%) | 可用: ${disk(d.availableBytes)}`)
+        .map(d => t('txtDriveLine', { name: driveDisplayName(d), total: disk(d.totalBytes), used: disk(d.usedBytes), percent: d.usagePercent, avail: disk(d.availableBytes) }))
         .join('\n')
-      : `  磁盘容量${READ_FAILED}`
+      : t('txtDriveFailed')
     return [
       '====================================================',
-      '           ZTools 本机硬件配置与负载报告        ',
+      t('txtReportTitle'),
       '====================================================',
-      `生成时间: ${new Date().toLocaleString()}`,
-      `空闲余量: ${headroom}（CPU 与内存当前未占用比例的较小值，不代表硬件健康）`,
+      t('txtGeneratedAt', { time: new Date().toLocaleString() }),
+      t('txtHeadroom', { headroom }),
       ...(failureLine ? [failureLine] : []),
       ...(reasonLine ? [reasonLine] : []),
-      `处理器: ${cpuModel} (${threads}, 当前负载 ${cpuLoad})`,
-      `物理内存: 总计 ${bytesOrFailed(snap.totalMemoryBytes)} | 已用 ${bytesOrFailed(snap.usedMemoryBytes)} (${percentOrFailed(snap.memoryUsagePercent)}) | 可用 ${bytesOrFailed(snap.availableMemoryBytes)}`,
-      `操作系统: ${formatOsLine(snap)}`,
-      `显示与供电: ${snap.displayCount === null ? displays : `${snap.displayCount} 台显示器在线`} | ${power}`,
+      t('txtCpu', { model: cpuModel, threads, load: cpuLoad }),
+      t('txtMemory', { total: bytesOrFailed(snap.totalMemoryBytes), used: bytesOrFailed(snap.usedMemoryBytes), percent: percentOrFailed(snap.memoryUsagePercent), avail: bytesOrFailed(snap.availableMemoryBytes) }),
+      t('txtOs', { os: formatOsLine(snap) }),
+      t('txtDisplayPower', { displays: snap.displayCount === null ? displays : t('displayCountOnline', { count: snap.displayCount }), power }),
       '----------------------------------------------------',
-      `物理存储卷明细${snap.diskPartial ? '（部分卷读取失败，未列出）' : ''}:`,
+      t('txtDrivesHeader', { partial: snap.diskPartial ? t('txtDrivesPartialSuffix') : '' }),
       driveLines,
       '===================================================='
     ].join('\n')
@@ -439,37 +452,37 @@ export function exportHardwareReport(
 
   const driveMd = snap.drives.length > 0
     ? snap.drives
-      .map(d => `- **存储卷 ${driveDisplayName(d)}**: 总计 \`${disk(d.totalBytes)}\` · 已用 \`${disk(d.usedBytes)} (${d.usagePercent}%)\` · 剩余 \`${disk(d.availableBytes)}\``)
+      .map(d => t('mdDriveLine', { name: driveDisplayName(d), total: disk(d.totalBytes), used: disk(d.usedBytes), percent: d.usagePercent, avail: disk(d.availableBytes) }))
       .join('\n')
-    : `- 磁盘容量${READ_FAILED}`
+    : t('mdDriveFailed')
   const scenarioMd = snap.scenarios.length > 0
     ? snap.scenarios
-      .map(s => `- **${s.scenario}**: \`${s.tier}\` — ${s.summary} ${s.bottleneckHint}`)
+      .map(s => t('mdScenarioLine', { scenario: s.scenario, tier: s.tier, summary: s.summary, hint: s.bottleneckHint }))
       .join('\n')
-    : `- CPU 线程数或内存容量${READ_FAILED}，未评估`
+    : t('mdScenarioFailed')
 
-  return `# ZTools 硬件配置与规格估算报告
+  return `${t('mdReportHeader')}
 
-- **报告生成时间**: \`${new Date().toLocaleString()}\`
-- **空闲余量**: **${headroom}**（CPU 与内存当前未占用比例的较小值，不代表硬件健康）
+${t('mdGeneratedAt', { time: new Date().toLocaleString() })}
+${t('mdHeadroom', { headroom })}
 ${failureLine ? `- **${failureLine}**\n` : ''}${reasonLine ? `- ${reasonLine}\n` : ''}
 ---
 
-### 1. 核心计算与内存规格
-- **中央处理器**: \`${cpuModel}\` (\`${threads}\`, 瞬时负载 \`${cpuLoad}\`)
-- **物理内存**: 总容量 \`${bytesOrFailed(snap.totalMemoryBytes)}\` (已用 \`${bytesOrFailed(snap.usedMemoryBytes)} / ${percentOrFailed(snap.memoryUsagePercent)}\`, 可用 \`${bytesOrFailed(snap.availableMemoryBytes)}\`)
-- **操作系统与内核**: \`${formatOsLine(snap)}\`
-- **显示器与电源**: \`${displays}\` · \`${power}\`
+${t('mdSec1Header')}
+${t('mdCpuLine', { model: cpuModel, threads, load: cpuLoad })}
+${t('mdMemLine', { total: bytesOrFailed(snap.totalMemoryBytes), used: bytesOrFailed(snap.usedMemoryBytes), percent: percentOrFailed(snap.memoryUsagePercent), avail: bytesOrFailed(snap.availableMemoryBytes) })}
+${t('mdOsLine', { os: formatOsLine(snap) })}
+${t('mdDispPowerLine', { displays, power })}
 
 ---
 
-### 2. 已挂载卷容量（共享容器去重）${diskReadFailed ? `（${READ_FAILED}）` : ` (${snap.driveCount} 个挂载卷 · 共 ${disk(snap.totalDiskBytes)}${partialNote})`}
+${t('mdSec2Header', { suffix: diskReadFailed ? t('mdSec2FailedSuffix') : t('mdSec2CountSuffix', { count: snap.driveCount, total: disk(snap.totalDiskBytes), partial: partialNote }) })}
 ${driveMd}
 
 ---
 
-### 3. 四类场景规格估算
-${SCENARIO_ESTIMATE_NOTE}
+${t('mdSec3Header')}
+${t('scenarioEstimateNote')}
 
 ${scenarioMd}
 `
@@ -547,17 +560,17 @@ export async function fetchHardwareTelemetrySnapshot(
   const rawCpuModel = nonEmptyString(hw?.cpuModel)
   const cpuModel = rawCpuModel && rawCpuModel !== PLACEHOLDER_CPU_MODEL ? rawCpuModel : null
   const logicalCpuCount = positiveNumber(hw?.logicalCpuCount)
-  if (cpuModel === null || logicalCpuCount === null) { failures.push('处理器信息'); noteError('处理器信息', hwRes) }
+  if (cpuModel === null || logicalCpuCount === null) { failures.push(t('modCpuInfo')); noteError(t('modCpuInfo'), hwRes) }
 
   const cpuUsagePercent = cpuRes.ok ? usagePercent(cpuRes.data?.total) : null
-  if (cpuUsagePercent === null) { failures.push('CPU 负载'); noteError('CPU 负载', cpuRes) }
+  if (cpuUsagePercent === null) { failures.push(t('modCpuLoad')); noteError(t('modCpuLoad'), cpuRes) }
 
   const mem = memRes.ok && memRes.data && typeof memRes.data === 'object' ? memRes.data : null
   const totalMemoryBytes = positiveNumber(mem?.total) ?? positiveNumber(hw?.totalMemory)
   const usedMemoryBytes = nonNegativeNumber(mem?.used)
   const availableMemoryBytes = nonNegativeNumber(mem?.available)
   const memoryUsagePercent = usagePercent(mem?.percent)
-  if (usedMemoryBytes === null || availableMemoryBytes === null || memoryUsagePercent === null) { failures.push('内存占用'); noteError('内存占用', memRes) }
+  if (usedMemoryBytes === null || availableMemoryBytes === null || memoryUsagePercent === null) { failures.push(t('modMemory')); noteError(t('modMemory'), memRes) }
 
   const platform = nonEmptyString(sys?.platform) ?? nonEmptyString(hw?.platform)
   const osName = nonEmptyString(sys?.osName)
@@ -565,24 +578,23 @@ export async function fetchHardwareTelemetrySnapshot(
   const kernelVersion = nonEmptyString(sys?.kernelRelease) ?? nonEmptyString(sys?.windowsRelease)
   const osBuild = positiveNumber(sys?.osBuild)
   const osArch = nonEmptyString(sys?.osArch)
-  if (osName === null && osVersion === null) { failures.push('系统版本'); noteError('系统版本', sysRes) }
+  if (osName === null && osVersion === null) { failures.push(t('modOsVersion')); noteError(t('modOsVersion'), sysRes) }
 
   const battery = interpretBatteryStatus(batRes)
   const powerReadFailed = battery.readError !== null
   const { batteryPercent, isCharging, batteryState, powerSource } = battery
-  // 宿主的原因本身可能已带「电源状态」前缀（如「电源状态读取超时」），不重复写成「电源状态：电源状态读取超时」
-  if (powerReadFailed) { failures.push('电源状态'); warnings.push(`电源状态：${String(battery.readError).replace(/^电源状态[：:]?\s*/, '') || READ_FAILED}`) }
+  if (powerReadFailed) { failures.push(t('modPower')); warnings.push(t('warningEntry', { module: t('modPower'), error: String(battery.readError).replace(/^(电源状态|Power Status)[：:]?\s*/i, '') || t('readFailed') })) }
 
   const displays = dispRes.ok && Array.isArray(dispRes.data) ? dispRes.data : []
   const displayReadFailed = !(dispRes.ok && Array.isArray(dispRes.data))
-  if (displayReadFailed) { failures.push('显示器'); noteError('显示器', dispRes) }
+  if (displayReadFailed) { failures.push(t('modDisplay')); noteError(t('modDisplay'), dispRes) }
 
   // 任何电脑至少有一个卷：一个都没读到就是读取失败；读到一部分时保留读到的卷并标注「部分磁盘卷」
   const drives = volumes.drives
   const diskPartial = !volumes.failed && volumes.errors.length > 0
-  if (volumes.failed) failures.push('磁盘容量')
-  else if (diskPartial) failures.push(PARTIAL_DISK_FAILURE)
-  for (const error of volumes.errors) warnings.push(`磁盘容量：${error}`)
+  if (volumes.failed) failures.push(t('modDisk'))
+  else if (diskPartial) failures.push(t('modPartialDisk'))
+  for (const error of volumes.errors) warnings.push(t('warningEntry', { module: t('modDisk'), error }))
   const capacityDrives = uniqueCapacityDrives(drives)
   const totalDiskBytes = capacityDrives.reduce((s, d) => s + d.totalBytes, 0)
   const usedDiskBytes = capacityDrives.reduce((s, d) => s + d.usedBytes, 0)
@@ -598,10 +610,10 @@ export async function fetchHardwareTelemetrySnapshot(
       : null
 
   const osInfo = { platform, osName, osVersion, kernelVersion, osBuild, osArch }
-  const archText = osArch ? osArch.toUpperCase() : '未知'
+  const archText = osArch ? osArch.toUpperCase() : t('unknownLabel')
   const decimalStorage = isMacPlatform({ platform, osName })
   const disk = (bytes: number) => formatStorageBytes(bytes, decimalStorage)
-  const threadsText = logicalCpuCount === null ? `线程数${READ_FAILED}` : `${logicalCpuCount} 逻辑线程`
+  const threadsText = logicalCpuCount === null ? t('summaryThreadsFailed') : t('summaryThreadsCount', { count: logicalCpuCount })
   const versionParts = describeOsVersionParts(osInfo)
   const powerText = formatPowerStatus(batteryPercent, isCharging, powerReadFailed, batteryState, powerSource)
 
@@ -609,56 +621,56 @@ export async function fetchHardwareTelemetrySnapshot(
     {
       id: 'hw-cpu-spec',
       category: 'cpu',
-      title: cpuModel ?? `处理器型号${READ_FAILED}`,
-      subtitle: `${threadsText} · 运行架构 ${archText}`,
-      value: `负载 ${percentOrFailed(cpuUsagePercent)}`,
-      tag: logicalCpuCount === null ? '线程未知' : `${logicalCpuCount} 线程`,
-      detailMarkdown: `# 中央处理器
+      title: cpuModel ?? t('cpuTitleFailed'),
+      subtitle: t('cpuSubtitle', { threads: threadsText, arch: archText }),
+      value: t('cpuValue', { load: percentOrFailed(cpuUsagePercent) }),
+      tag: logicalCpuCount === null ? t('cpuTagUnknown') : t('summaryThreadsShort', { count: logicalCpuCount }),
+      detailMarkdown: `${t('cpuMdHeader')}
 
-**处理器型号**: \`${cpuModel ?? READ_FAILED}\`
+${t('cpuMdModel', { model: cpuModel ?? t('readFailed') })}
 
 ---
 
-### 核心规格与实时负载
-- **逻辑处理器数量**: \`${logicalCpuCount === null ? READ_FAILED : `${logicalCpuCount} 线程`}\`
-- **运行架构**: \`${archText}\`
-- **当前瞬时总利用率**: \`${percentOrFailed(cpuUsagePercent)}\`
+${t('cpuMdSecHeader')}
+${t('cpuMdCores', { value: logicalCpuCount === null ? t('readFailed') : t('summaryThreadsShort', { count: logicalCpuCount }) })}
+${t('cpuMdArch', { arch: archText })}
+${t('cpuMdUsage', { usage: percentOrFailed(cpuUsagePercent) })}
 
-> 以上数据来自本机硬件与系统负载的实时采样。`
+${t('cpuMdFooter')}`
     },
     {
       id: 'hw-mem-spec',
       category: 'memory',
-      title: totalMemoryBytes === null ? `物理内存容量${READ_FAILED}` : `物理内存总容量 ${formatBytes(totalMemoryBytes)}`,
-      subtitle: `已用 ${bytesOrFailed(usedMemoryBytes)} · 可用余量 ${bytesOrFailed(availableMemoryBytes)}`,
-      value: memoryUsagePercent === null ? `占用${READ_FAILED}` : `${memoryUsagePercent}% 已用`,
-      tag: totalMemoryBytes === null ? '容量未知' : formatBytes(totalMemoryBytes),
-      detailMarkdown: `# 物理内存
+      title: totalMemoryBytes === null ? t('memTitleFailed') : t('memTitleOk', { total: formatBytes(totalMemoryBytes) }),
+      subtitle: t('memSubtitle', { used: bytesOrFailed(usedMemoryBytes), avail: bytesOrFailed(availableMemoryBytes) }),
+      value: memoryUsagePercent === null ? t('memValueFailed') : t('memValueOk', { percent: memoryUsagePercent }),
+      tag: totalMemoryBytes === null ? t('memTagUnknown') : formatBytes(totalMemoryBytes),
+      detailMarkdown: `${t('memMdHeader')}
 
-**安装总物理内存**: \`${bytesOrFailed(totalMemoryBytes)}\`${totalMemoryBytes === null ? '' : ` (${totalMemoryBytes.toLocaleString()} Bytes)`}
+${t('memMdTotal', { total: bytesOrFailed(totalMemoryBytes) })}${totalMemoryBytes === null ? '' : ` (${totalMemoryBytes.toLocaleString()} Bytes)`}
 
 ---
 
-### 实时工作集分布
-- **当前已用物理内存**: \`${bytesOrFailed(usedMemoryBytes)}\` (${percentOrFailed(memoryUsagePercent)})
-- **当前空闲可用内存**: \`${bytesOrFailed(availableMemoryBytes)}\`
-- **当前占用状态**: \`${memoryUsagePercent === null ? '未知' : memoryUsagePercent > 85 ? '占用较高' : '占用未超过 85%'}\``
+${t('memMdSecHeader')}
+${t('memMdUsed', { used: bytesOrFailed(usedMemoryBytes), percent: percentOrFailed(memoryUsagePercent) })}
+${t('memMdAvail', { avail: bytesOrFailed(availableMemoryBytes) })}
+${t('memMdStatus', { status: memoryUsagePercent === null ? t('unknownLabel') : memoryUsagePercent > 85 ? t('memStatusHigh') : t('memStatusNormal') })}`
     },
     {
       id: 'hw-os-spec',
       category: 'system',
-      title: osName ? `${osName}${osArch ? ` (${osArch})` : ''}` : `操作系统${READ_FAILED}`,
-      subtitle: versionParts.length > 0 ? versionParts.join(' · ') : `系统版本${READ_FAILED}`,
-      value: osBuild !== null ? `Build ${osBuild}` : kernelVersion && kernelVersion !== osVersion ? `内核 ${kernelVersion}` : '',
-      tag: osVersion ?? '版本未知',
-      detailMarkdown: `# 操作系统与供电状态
+      title: osName ? `${osName}${osArch ? ` (${osArch})` : ''}` : t('osTitleFailed'),
+      subtitle: versionParts.length > 0 ? versionParts.join(' · ') : t('osReadFailed'),
+      value: osBuild !== null ? `Build ${osBuild}` : kernelVersion && kernelVersion !== osVersion ? `${t('kernelShortPrefix')} ${kernelVersion}` : '',
+      tag: osVersion ?? t('osTagUnknown'),
+      detailMarkdown: `${t('osMdHeader')}
 
-- **操作系统**: \`${osName ?? READ_FAILED}\`
-- **系统版本**: \`${osVersion ?? READ_FAILED}\`${kernelVersion && kernelVersion !== osVersion ? `
-- **${isMacPlatform(osInfo) ? 'Darwin 内核版本' : '内核版本'}**: \`${kernelVersion}\`` : ''}${osBuild !== null ? `
-- **系统 Build**: \`${osBuild}\`` : ''}
-- **运行架构**: \`${osArch ?? '未知'}\`
-- **电源/电池状态**: \`${powerText}\``
+${t('osMdOs', { os: osName ?? t('readFailed') })}
+${t('osMdVersion', { version: osVersion ?? t('readFailed') })}${kernelVersion && kernelVersion !== osVersion ? `
+${t('osMdKernel', { label: isMacPlatform(osInfo) ? t('osMdKernelLabelMac') : t('osMdKernelLabelOther'), kernel: kernelVersion })}` : ''}${osBuild !== null ? `
+${t('osMdBuild', { build: osBuild })}` : ''}
+${t('osMdArch', { arch: osArch ?? t('unknownLabel') })}
+${t('osMdPower', { power: powerText })}`
     }
   ]
 
@@ -666,52 +678,50 @@ export async function fetchHardwareTelemetrySnapshot(
     entries.push({
       id: `hw-drive-${d.drive}`,
       category: 'storage',
-      title: `存储卷 ${driveDisplayName(d)}`,
-      subtitle: `总容量 ${disk(d.totalBytes)} · 已用 ${disk(d.usedBytes)} · 剩余可用 ${disk(d.availableBytes)}`,
-      value: `已用 ${d.usagePercent}%`,
+      title: t('driveTitle', { name: driveDisplayName(d) }),
+      subtitle: t('driveSubtitle', { total: disk(d.totalBytes), used: disk(d.usedBytes), avail: disk(d.availableBytes) }),
+      value: t('driveValue', { percent: d.usagePercent }),
       tag: disk(d.totalBytes),
-      detailMarkdown: `# 存储卷 ${driveDisplayName(d)}
+      detailMarkdown: `${t('driveMdHeader', { name: driveDisplayName(d) })}
 
-- **挂载位置**: \`${d.drive}\`
-- **文件系统**: \`${d.fileSystem || '未知'}\`
-- **总容量**: \`${disk(d.totalBytes)}\`
-- **当前已用容量**: \`${disk(d.usedBytes)} (${d.usagePercent}%)\`
-- **剩余可用容量**: \`${disk(d.availableBytes)}\`
-- **空间状态**: \`${d.usagePercent > 85 ? '空间偏紧' : '占用未超过 85%'}\`${decimalStorage ? `
+${t('driveMdMount', { path: d.drive })}
+${t('driveMdFs', { fs: d.fileSystem || t('unknownLabel') })}
+${t('driveMdTotal', { total: disk(d.totalBytes) })}
+${t('driveMdUsed', { used: disk(d.usedBytes), percent: d.usagePercent })}
+${t('driveMdAvail', { avail: disk(d.availableBytes) })}
+${t('driveMdStatus', { status: d.usagePercent > 85 ? t('driveStatusTight') : t('driveStatusNormal') })}${decimalStorage ? `
 
-容量按 1 GB = 1000³ 字节显示，与访达一致。同一 APFS 容器内的卷共享容量，合计时只计一次。` : ''}`
+${t('driveMdMacNote')}` : ''}`
     })
   }
 
   displays.forEach((disp, index) => {
-    // 宿主拿不到的字段如实显示「未知」，不用 1920×1080 / 60Hz / 24-bit 之类的默认值冒充真实值
     const w = positiveNumber(disp.bounds?.width)
     const h = positiveNumber(disp.bounds?.height)
-    const resolution = w && h ? `${w} × ${h}` : '未知'
-    // 缩放比例读不到时写「未知」，不按 100% 冒充
+    const resolution = w && h ? `${w} × ${h}` : t('unknownLabel')
     const scaleValue = positiveNumber(disp.scaleFactor)
-    const scale = scaleValue === null ? '未知' : `${Math.round(scaleValue * 100)}%`
+    const scale = scaleValue === null ? t('unknownLabel') : `${Math.round(scaleValue * 100)}%`
     const hzValue = positiveNumber(disp.displayFrequency)
-    const hz = hzValue ? `${Math.round(hzValue)}Hz` : '未知'
+    const hz = hzValue ? `${Math.round(hzValue)}Hz` : t('unknownLabel')
     const depthValue = positiveNumber(disp.colorDepth)
-    const depth = depthValue ? `${depthValue}-bit` : '未知'
+    const depth = depthValue ? `${depthValue}-bit` : t('unknownLabel')
     const workW = positiveNumber(disp.workArea?.width)
     const workH = positiveNumber(disp.workArea?.height)
     entries.push({
       id: `hw-disp-${disp.id || index}`,
       category: 'display',
-      title: disp.label || `显示器 #${index + 1} (${resolution})`,
-      subtitle: `缩放比例 ${scale} · 刷新率 ${hz} · 色深 ${depth}`,
-      value: `${w && h ? `${w}×${h}` : '分辨率未知'}${hzValue ? ` @${Math.round(hzValue)}Hz` : ''}`,
-      tag: scaleValue === null ? '缩放未知' : `缩放 ${scale}`,
-      detailMarkdown: `# 显示器输出端点 #${index + 1}
+      title: disp.label || t('dispTitleDefault', { index: index + 1, res: resolution }),
+      subtitle: t('dispSubtitle', { scale, hz, depth }),
+      value: `${w && h ? `${w}×${h}` : t('dispResUnknown')}${hzValue ? ` @${Math.round(hzValue)}Hz` : ''}`,
+      tag: scaleValue === null ? t('dispTagUnknown') : t('dispTagOk', { scale }),
+      detailMarkdown: `${t('dispMdHeader', { index: index + 1 })}
 
-- **设备标识**: \`${disp.label || `Display #${disp.id || index + 1}`}\`
-- **逻辑分辨率**: \`${resolution}\`
-- **工作区尺寸**: \`${workW && workH ? `${workW} × ${workH}` : '未知'}\`
-- **系统缩放比例**: \`${scale}\`
-- **垂直刷新率**: \`${hzValue ? `${Math.round(hzValue)} Hz` : '未知'}\`
-- **色深**: \`${depth}\``
+${t('dispMdId', { id: disp.label || `Display #${disp.id || index + 1}` })}
+${t('dispMdRes', { res: resolution })}
+${t('dispMdWork', { work: workW && workH ? `${workW} × ${workH}` : t('unknownLabel') })}
+${t('dispMdScale', { scale })}
+${t('dispMdHz', { hz: hzValue ? `${Math.round(hzValue)} Hz` : t('unknownLabel') })}
+${t('dispMdDepth', { depth })}`
     })
   })
 
@@ -721,16 +731,15 @@ export async function fetchHardwareTelemetrySnapshot(
       category: 'benchmark',
       title: sc.scenario,
       subtitle: `${sc.summary}`,
-      // 档位只由线程数与内存容量的阈值决定，不给精确分数（分数会和档位互相矛盾，也没有实测依据）
-      value: '规格估算',
+      value: t('scValue'),
       tag: sc.tier,
       detailMarkdown: `# ${sc.scenario}
 
-${SCENARIO_ESTIMATE_NOTE}
+${t('scenarioEstimateNote')}
 
-- **规格参考**: **${sc.tier}**
-- **已知规格与限制**: ${sc.summary}
-- **待核对项**: ${sc.bottleneckHint}`
+${t('scMdTier', { tier: sc.tier })}
+${t('scMdKnown', { summary: sc.summary })}
+${t('scMdCheck', { hint: sc.bottleneckHint })}`
     })
   }
 

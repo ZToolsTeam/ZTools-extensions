@@ -1,9 +1,13 @@
 {
   "id": "git-helper",
   "name": "Git救命锦囊",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "大白话场景检索Git回滚自救命令、交互式规范提交(Conventional Commits)生成器与多语言.gitignore模板合成",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -61,5 +65,49 @@
         "node gitignore"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Git Rescue & Helper",
+      "description": "Search plain-language Git recovery commands, build Conventional Commits interactively, and compose multi-stack .gitignore templates.",
+      "keywords": [
+        "git",
+        "commit",
+        "gitignore",
+        "conventional commits",
+        "reset",
+        "revert"
+      ],
+      "features": {
+        "git-emergency": {
+          "explain": "Search Git recovery commands for undoing commits, recovering branches, and fixing mistakes",
+          "cmds": [
+            "git rescue",
+            "undo commit",
+            "git reset",
+            "git revert",
+            "git recovery"
+          ]
+        },
+        "git-commit-builder": {
+          "explain": "Interactively build structured Conventional Commits messages",
+          "cmds": [
+            "conventional commit",
+            "commit builder",
+            "cz",
+            "git commit"
+          ]
+        },
+        "gitignore-generator": {
+          "explain": "Generate .gitignore files by combining tech stacks and operating systems",
+          "cmds": [
+            "gitignore",
+            "generate gitignore",
+            "ignore file"
+          ]
+        }
+      }
+    }
+  }
 }

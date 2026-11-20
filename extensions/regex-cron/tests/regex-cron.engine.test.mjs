@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { runRegexMatch } from '../dist/regex-engine.js'
 import { runRegexInWorker } from '../dist/regex-worker.js'
 import { parseAndExplainCron, REGEX_PRESETS } from '../dist/regex-cron-service.js'
 import { BrowserWorker, activeWorkers, waitUntil } from './worker-harness.mjs'
 
+setRuntimeLocale('zh-CN')
 globalThis.Worker = BrowserWorker
 
 test('捕获组位置来自索引，重复子串、前瞻、未匹配组不靠字符串猜测', () => {

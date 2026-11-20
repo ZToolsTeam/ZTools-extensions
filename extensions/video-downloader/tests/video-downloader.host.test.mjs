@@ -1,7 +1,10 @@
 // 本插件业务逻辑的宿主集成测试：用宿主替身模拟客户端返回，覆盖成功与各类失败路径
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as videoDownloader from '../dist/logic.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const videoDownloader = await import('../dist/logic.js')
 
 function createRealHostStub(handlers = {}) {
   const calls = []
@@ -34,32 +37,47 @@ function createRealHostStub(handlers = {}) {
 const called = (host, channel) => host.calls.filter((c) => c.channel === channel)
 const preset1080 = videoDownloader.VIDEO_QUALITY_PRESETS.find((p) => p.id === 'q_1080p_mp4')
 
-test('video-downloader: 扫描「视频」「下载」文件夹并从剪贴板识别链接，不再读取磁盘空间', async () => {
+test('video-downloader: 挂载快照只读取视频路径与剪贴板链接，不扫描目录或读取磁盘空间', async () => {
   const host = createRealHostStub({
-    system_get_path: ({ name }) => `C:\\Users\\RealUser\\${name === 'videos' ? 'Videos' : name === 'downloads' ? 'Downloads' : name}`,
-    system_search_files: ({ query }) =>
-      String(query).includes('Videos')
-        ? {
-            files: [
-              { name: 'demo.mp4', path: 'C:\\Users\\RealUser\\Videos\\demo.mp4', is_dir: false, size: 8192000, mtime: 1710000000 },
-              { name: 'notes.txt', path: 'C:\\Users\\RealUser\\Videos\\notes.txt', is_dir: false, size: 100, mtime: 1710000000 }
-            ],
-            total_matches: 2
-          }
-        : { files: [], total_matches: 0 },
+    system_get_path: ({ name }) => (name === 'videos' ? 'C:\\Users\\RealUser\\Videos' : `C:\\Users\\RealUser\\${name}`),
     clipboard_read_text: () => '看看这个 https://www.bilibili.com/video/BV1xx411c7mD 很好看'
   })
 
   const snap = await videoDownloader.fetchVideoDownloaderSnapshot(host)
   assert.equal(snap.saveDir, 'C:\\Users\\RealUser\\Videos')
-  assert.equal(snap.videos.length, 1)
-  assert.equal(snap.videos[0].name, 'demo.mp4')
-  assert.equal(snap.videos[0].sourceDirLabel, '视频文件夹')
-  assert.equal(snap.totalSizeBytes, 8192000)
+  assert.deepEqual(snap.videos, [])
+  assert.equal(snap.totalSizeBytes, 0)
   assert.equal(snap.clipboardUrl, 'https://www.bilibili.com/video/BV1xx411c7mD')
   assert.equal(snap.detectedPlatform.id, 'bilibili')
   assert.equal('driveFreeBytes' in snap, false)
+  assert.equal(called(host, 'system_search_files').length, 0)
+  assert.equal(called(host, 'filesystem_get_directory_contents').length, 0)
+  assert.equal(called(host, 'system_list_common_folders').length, 0)
   assert.equal(called(host, 'system_get_disk_usage').length, 0)
+  // 只请求 videos 路径，不再批量请求无关系统目录
+  assert.deepEqual(called(host, 'system_get_path').map((c) => c.payload.name), ['videos'])
+})
+
+test('video-downloader: 导入规则对齐视频格式且对大小未知不填 0，下载完成条目正确构造', () => {
+  for (const ext of ['.mp4', '.mkv', '.mov', '.webm', '.flv', '.avi', '.m4v', '.ts']) {
+    assert.ok(videoDownloader.VIDEO_IMPORT_RULES.extensions.includes(ext), `应包含 ${ext}`)
+  }
+  const unknown = videoDownloader.toLocalMediaVideoItem({
+    path: 'D:\\Videos\\clip.mp4',
+    name: 'clip.mp4',
+    parentDir: 'D:\\Videos',
+    extension: '.mp4',
+    sizeBytes: null,
+    lastModifiedMs: null
+  })
+  assert.equal(unknown.sizeBytes, null)
+  assert.equal(unknown.sourceDirLabel, '手动导入')
+
+  const downloaded = videoDownloader.createDownloadedVideoItem('D:\\Videos\\out.webm', 2048)
+  assert.equal(downloaded.name, 'out.webm')
+  assert.equal(downloaded.ext, '.webm')
+  assert.equal(downloaded.sizeBytes, 2048)
+  assert.equal(downloaded.sourceDirLabel, '本次下载')
 })
 
 test('video-downloader: 剪贴板读取失败或没有链接时不编造平台和链接', async () => {

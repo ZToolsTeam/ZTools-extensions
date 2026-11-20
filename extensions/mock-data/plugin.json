@@ -1,9 +1,13 @@
 {
   "id": "mock-data",
   "name": "测试数据生成",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "一键生成符合国家校验位算法的虚拟测试用18位身份证号、手机号、统一社会信用代码、银行卡号及批量JSON测试数据",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -48,5 +52,40 @@
         "批量mock"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Mock Data Generator",
+      "description": "Generate checksum-valid synthetic test data including Chinese ID numbers, phone numbers, unified social credit codes, bank card numbers, and batch JSON user lists.",
+      "keywords": [
+        "mock",
+        "fake data",
+        "test data",
+        "json",
+        "generator",
+        "dummy"
+      ],
+      "features": {
+        "mock-quick": {
+          "explain": "Instantly generate and copy single synthetic test values (ID, phone, tax ID, bank card, name)",
+          "cmds": [
+            "mock data",
+            "fake data",
+            "test data",
+            "generate mock"
+          ]
+        },
+        "mock-batch-json": {
+          "explain": "Generate structured mock user JSON arrays for frontend tables and API testing",
+          "cmds": [
+            "mock json",
+            "batch mock",
+            "fake users json",
+            "test json"
+          ]
+        }
+      }
+    }
+  }
 }

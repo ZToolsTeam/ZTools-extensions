@@ -7,14 +7,16 @@ import React, {
   Form,
   useNavigation,
   useEffect,
+  useLocale,
   useMemo,
   useState
 } from '@ztools/declarative-ui'
 import {
-  REGEX_PRESETS,
+  getRegexPresets,
   parseAndExplainCron
 } from './regex-cron-service.js'
 import type { RegexCronMode, RegexPresetItem, RegexMatchResult } from './types.js'
+import { t } from './i18n.js'
 
 import { runRegexInWorker } from './regex-worker.js'
 
@@ -29,12 +31,18 @@ export interface RegexCronCommandProps {
 }
 
 /** 常用模板统一用五位 Linux 写法，与占位提示、详情说明一致；默认输入“每 15 分钟”已在首项展示，不重复列为模板 */
-export const CRON_TEMPLATES = [
-  { id: 'cron-daily-2am', expr: '0 2 * * *', title: '每天凌晨 02:00 执行备份' },
-  { id: 'cron-hourly', expr: '0 * * * *', title: '每小时整点执行一次' },
-  { id: 'cron-workday-930', expr: '30 9 * * 1-5', title: '每个工作日上午 09:30 推送日报' },
-  { id: 'cron-month-1st', expr: '0 0 1 * *', title: '每月 1 号零点生成月度账单' }
-]
+const CRON_TEMPLATE_DEFS = [
+  { id: 'cron-daily-2am', expr: '0 2 * * *', titleKey: 'tplDaily2am' },
+  { id: 'cron-hourly', expr: '0 * * * *', titleKey: 'tplHourly' },
+  { id: 'cron-workday-930', expr: '30 9 * * 1-5', titleKey: 'tplWorkday930' },
+  { id: 'cron-month-1st', expr: '0 0 1 * *', titleKey: 'tplMonth1st' }
+] as const
+
+export function getCronTemplates() {
+  return CRON_TEMPLATE_DEFS.map(tpl => ({ id: tpl.id, expr: tpl.expr, title: t(tpl.titleKey) }))
+}
+
+export const CRON_TEMPLATES = getCronTemplates()
 
 /** 用户输入只能作为代码原文显示：围栏比内容中最长的反引号串更长，内容里的 ``` 不会提前结束代码块 */
 export function fencedCode(content: string, language = 'text'): string {
@@ -55,7 +63,7 @@ export function emphasizeLiteral(text: string): string {
 
 /** 行内代码：换行显示为 \n，含反引号时加长定界符，空串明确标注 */
 export function inlineCode(text: string): string {
-  if (!text) return '（空匹配）'
+  if (!text) return t('emptyMatchLabel')
   const body = text.replace(/\r\n|\r|\n/g, '\\n')
   let size = 1
   for (const run of body.matchAll(/`+/g)) size = Math.max(size, run[0].length + 1)
@@ -65,16 +73,18 @@ export function inlineCode(text: string): string {
 }
 
 export function EditRegexText({ sample, onSave }: { sample: string; onSave: (value: string) => void }) {
+  useLocale()
   const [value, setValue] = useState(sample)
   const { pop } = useNavigation()
-  return <Form navigationTitle="编辑待测文本" actions={<ActionPanel>
-    <Action.SubmitForm title="开始匹配" onSubmit={() => { onSave(value); pop() }} />
+  return <Form navigationTitle={t('editSampleNavTitle')} actions={<ActionPanel>
+    <Action.SubmitForm title={t('startMatchSubmit')} onSubmit={() => { onSave(value); pop() }} />
   </ActionPanel>}>
-    <Form.TextArea id="sample" title="待测文本" placeholder="粘贴需要匹配的文本，支持多行" value={value} onChange={setValue} />
+    <Form.TextArea id="sample" title={t('sampleFieldTitle')} placeholder={t('sampleFieldPlaceholder')} value={value} onChange={setValue} />
   </Form>
 }
 
 export function RegexCronCommand(props: RegexCronCommandProps = {}) {
+  const locale = useLocale()
   const defaultMode: RegexCronMode =
     props.initialMode ??
     (props.featureCode === 'regex-tester'
@@ -109,19 +119,20 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
   const editSample = () => push(() => <EditRegexText sample={testSample} onSave={setTestSample} />)
 
   const filteredRegexList = useMemo(() => {
+    const presets = getRegexPresets()
     const q = searchText.trim().toLowerCase()
-    if (!q) return REGEX_PRESETS
-    return REGEX_PRESETS.filter(
+    if (!q) return presets
+    return presets.filter(
       (item) =>
         item.title.toLowerCase().includes(q) ||
         item.categoryLabel.toLowerCase().includes(q) ||
-        item.tags.some((t) => t.toLowerCase().includes(q)) ||
+        item.tags.some((tag) => tag.toLowerCase().includes(q)) ||
         item.description.toLowerCase().includes(q)
     )
-  }, [searchText])
+  }, [searchText, locale])
 
   const [cronRefresh, setCronRefresh] = useState(0)
-  const cronResult = useMemo(() => parseAndExplainCron(queries.cron), [queries.cron, currentMode, cronRefresh])
+  const cronResult = useMemo(() => parseAndExplainCron(queries.cron), [queries.cron, currentMode, cronRefresh, locale])
   const handleLoadIntoTester = (item: RegexPresetItem) => {
     setQueries(prev => ({ ...prev, tester: `/${item.pattern}/${item.recommendedFlags || ''}` }))
     setTestSample(item.validExamples[0] ?? '')
@@ -135,30 +146,30 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
       onSearchTextChange={setSearchText}
       searchBarPlaceholder={
         currentMode === 'cron'
-          ? '输入五位 Cron 表达式（如 30 9 * * 1-5），也支持六位 Spring 写法'
+          ? t('placeholderCron')
           : currentMode === 'tester'
-            ? '输入待测试正则表达式（如 /1[3-9]\\d{9}/g）...'
-            : '搜索常用中国本土正则（如：身份证、手机号、信用代码、新能源车牌）...'
+            ? t('placeholderTester')
+            : t('placeholderDict')
       }
       searchBarAccessory={
         <List.Dropdown
           value={currentMode}
           onChange={(v) => setCurrentMode(v as RegexCronMode)}
-          tooltip="切换工作模式"
+          tooltip={t('modeTooltip')}
         >
-          <List.Dropdown.Item title="中国常用正则字典" value="dict" icon={Icon.Document} />
-          <List.Dropdown.Item title="实时正则测试器" value="tester" icon={Icon.Play} />
-          <List.Dropdown.Item title="Cron 中文翻译与推算" value="cron" icon={Icon.Clock} />
+          <List.Dropdown.Item title={t('modeDict')} value="dict" icon={Icon.Document} />
+          <List.Dropdown.Item title={t('modeTester')} value="tester" icon={Icon.Play} />
+          <List.Dropdown.Item title={t('modeCron')} value="cron" icon={Icon.Clock} />
         </List.Dropdown>
       }
       isShowingDetail={true}
       filterBar={currentMode === 'cron' ? {
-        summaryText: cronResult.calculatedAt ? `计算起点 ${cronResult.calculatedAt}` : '支持五位 Linux 与六位 Spring 基础语法',
-        actions: [{ id: 'refresh-cron', title: '重新推算', onAction: () => setCronRefresh(value => value + 1) }]
+        summaryText: cronResult.calculatedAt ? t('cronSummaryAt', { at: cronResult.calculatedAt }) : t('cronSummaryDefault'),
+        actions: [{ id: 'refresh-cron', title: t('cronRefreshAction'), onAction: () => setCronRefresh(value => value + 1) }]
       } : undefined}
     >
       {currentMode === 'dict' && (
-        <List.Section title={`常用本土业务正则库（共 ${filteredRegexList.length} 项）`}>
+        <List.Section title={t('dictSectionTitle', { count: filteredRegexList.length })}>
           {filteredRegexList.map((item) => (
             <List.Item
               key={item.id}
@@ -172,23 +183,23 @@ export function RegexCronCommand(props: RegexCronCommandProps = {}) {
                   markdown={`### ${item.title}
 ${inlineCode(item.pattern)}
 
-#### 规则说明
+#### ${t('dictRuleHeading')}
 ${item.description}
 
-#### 合规通过用例
+#### ${t('dictValidHeading')}
 ${item.validExamples.map((ex) => `- \`${ex}\``).join('\n')}
 
-#### 拦截反例用例
-${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
+#### ${t('dictInvalidHeading')}
+${item.invalidExamples.map((ex) => `- \`${ex}\` ${t('dictInvalidNote')}`).join('\n')}
 `}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="业务分类" text={item.categoryLabel} />
-                      <List.Item.Detail.Metadata.Label title="适用范围" text={item.scope} />
+                      <List.Item.Detail.Metadata.Label title={t('metaCategory')} text={item.categoryLabel} />
+                      <List.Item.Detail.Metadata.Label title={t('metaScope')} text={item.scope} />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
-                        title="推荐修饰符"
-                        text={item.recommendedFlags || '无（默认精准匹配）'}
+                        title={t('metaFlags')}
+                        text={item.recommendedFlags || t('metaNoFlags')}
                       />
                     </List.Item.Detail.Metadata>
                   }
@@ -196,15 +207,15 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
               }
               actions={
                 <ActionPanel>
-                  <Action.CopyToClipboard title="复制正则表达式" content={item.pattern} />
+                  <Action.CopyToClipboard title={t('copyRegexAction')} content={item.pattern} />
                   <Action
-                    title="载入到实时正则测试器"
+                    title={t('loadIntoTesterAction')}
                     icon={Icon.Play}
                     shortcut={{ modifiers: ['cmd'], key: 't' }}
                     onAction={() => handleLoadIntoTester(item)}
                   />
                   <Action.CopyToClipboard
-                    title="复制带斜杠字面量"
+                    title={t('copySlashLiteralAction')}
                     content={`/${item.pattern}/${item.recommendedFlags || ''}`}
                     shortcut={{ modifiers: ['cmd'], key: 'c' }}
                   />
@@ -216,60 +227,64 @@ ${item.invalidExamples.map((ex) => `- \`${ex}\` *(不匹配)*`).join('\n')}
       )}
 
       {currentMode === 'tester' && (
-        <List.Section title="实时正则匹配与捕获组透视">
+        <List.Section title={t('testerSectionTitle')}>
           <List.Item
             id="tester-summary"
             icon={regexMatchResult?.isValidRegex ? Icon.CheckCircle : !activeTesterPattern.trim() ? Icon.Code : Icon.XMarkCircle}
             title={
               regexMatchResult?.isValidRegex
-                ? `${regexMatchResult.truncated ? '仅显示前' : '共命中'} ${regexMatchResult.totalMatches} 处匹配（耗时 ${regexMatchResult.elapsedMs}ms）`
-                : !activeTesterPattern.trim() ? '等待输入正则表达式' : regexMatchResult ? '正则匹配未完成' : '正在匹配…'
+                ? t('testerMatchedTitle', {
+                    prefix: regexMatchResult.truncated ? t('testerPrefixTruncated') : t('testerPrefixTotal'),
+                    count: regexMatchResult.totalMatches,
+                    ms: regexMatchResult.elapsedMs
+                  })
+                : !activeTesterPattern.trim() ? t('testerWaitingTitle') : regexMatchResult ? t('testerIncompleteTitle') : t('testerRunningTitle')
             }
             subtitle={activeTesterPattern}
             accessories={[
               regexMatchResult?.isValidRegex
-                ? { tag: '语法有效' }
-                : !activeTesterPattern.trim() ? { tag: '待输入' }
-                : regexMatchResult ? { tag: { value: '异常拦截', color: Color.Red } } : { tag: '计算中' }
+                ? { tag: t('tagValid') }
+                : !activeTesterPattern.trim() ? { tag: t('tagWaiting') }
+                : regexMatchResult ? { tag: { value: t('tagBlocked'), color: Color.Red } } : { tag: t('tagComputing') }
             ]}
             detail={
               <List.Item.Detail
                 markdown={
                   regexMatchResult?.isValidRegex
-                    ? `### 实时测试结果
+                    ? `### ${t('testerResultHeading')}
 ${fencedCode(`/${regexMatchResult.pattern}/${regexMatchResult.flags}`, 'regexp')}
 
-#### 待测样本原文
-${testSample ? fencedCode(testSample) : '*待测文本为空，按 Enter 编辑*'}
+#### ${t('testerSampleHeading')}
+${testSample ? fencedCode(testSample) : t('testerSampleEmpty')}
 
-#### 命中片段与捕获组清单 (${regexMatchResult.totalMatches} 项)
+#### ${t('testerMatchesHeading', { count: regexMatchResult.totalMatches })}
 ${
   regexMatchResult.matches.length === 0
-    ? '*当前样本未命中任何匹配项*'
+    ? t('testerNoMatches')
     : regexMatchResult.matches
         .map(
           (m) =>
-            `- **Match #${m.index + 1}**: ${inlineCode(m.text)} *(位置 [${m.start}, ${m.end}])*\n${
+            `- **Match #${m.index + 1}**: ${inlineCode(m.text)} *(${t('testerPosLabel')} [${m.start}, ${m.end}])*\n${
               m.groups.length > 0
-                ? m.groups.map((g) => `  - Group ${g.groupIndex}: ${g.start < 0 ? '未匹配' : `${inlineCode(g.value)} (位置 [${g.start}, ${g.end}])`}`).join('\n')
+                ? m.groups.map((g) => `  - Group ${g.groupIndex}: ${g.start < 0 ? t('testerUnmatchedGroup') : `${inlineCode(g.value)} (${t('testerPosLabel')} [${g.start}, ${g.end}])`}`).join('\n')
                 : ''
             }`
         )
         .join('\n')
 }
 `
-                    : `### 正则匹配
-${!activeTesterPattern.trim() ? '在搜索框输入正则，例如 `/\\d+/g`；按 Enter 编辑待测文本。' : regexMatchResult?.errorMessage ? fencedCode(regexMatchResult.errorMessage) : '正在处理…'}
+                    : `### ${t('testerErrorHeading')}
+${!activeTesterPattern.trim() ? t('testerEmptyGuide') : regexMatchResult?.errorMessage ? fencedCode(regexMatchResult.errorMessage) : t('testerProcessing')}
 `
                 }
               />
             }
             actions={
               <ActionPanel>
-                <Action title="编辑待测文本…" icon={Icon.Pencil} onAction={editSample} />
-                {activeTesterPattern && <Action.CopyToClipboard title="复制当前正则表达式" content={activeTesterPattern} />}
+                <Action title={t('editSampleAction')} icon={Icon.Pencil} onAction={editSample} />
+                {activeTesterPattern && <Action.CopyToClipboard title={t('copyCurrentRegexAction')} content={activeTesterPattern} />}
                 {regexMatchResult?.matches.some(m => m.text.length > 0) && <Action.CopyToClipboard
-                  title="复制全部命中结果"
+                  title={t('copyAllMatchesAction')}
                   content={regexMatchResult.matches.map((m) => m.text).join('\n')}
                 />}
               </ActionPanel>
@@ -279,7 +294,7 @@ ${!activeTesterPattern.trim() ? '在搜索框输入正则，例如 `/\\d+/g`；�
       )}
 
       {currentMode === 'cron' && (
-        <List.Section title="Cron 语义直译与未来 5 次触发时间推算">
+        <List.Section title={t('cronSectionTitle')}>
           <List.Item
             id="cron-live-result"
             icon={cronResult.isValid ? Icon.Clock : Icon.XMarkCircle}
@@ -287,62 +302,62 @@ ${!activeTesterPattern.trim() ? '在搜索框输入正则，例如 `/\\d+/g`；�
             subtitle={cronResult.expression}
             accessories={[
               cronResult.isValid
-                ? { tag: '解析成功' }
-                : { tag: { value: '表达式有误', color: Color.Red } }
+                ? { tag: t('tagCronValid') }
+                : { tag: { value: t('tagCronInvalid'), color: Color.Red } }
             ]}
             detail={
               <List.Item.Detail
                 markdown={
                   cronResult.isValid
-                    ? `### Cron 自然语言直译
+                    ? `### ${t('cronExplainHeading')}
 > ${emphasizeLiteral(cronResult.chineseSummary)}
 
-${cronResult.dialect}；使用本机时区，不支持 Quartz 编号及 L/W/# 扩展。
+${t('cronDialectNote', { dialect: cronResult.dialect })}
 
-#### 未来 5 次执行时间推算 (${cronResult.timeZone})
-| 批次 | 触发时间及偏移 | 距起算时刻 |
+#### ${t('cronNextRunsHeading', { tz: cronResult.timeZone })}
+| ${t('cronColRun')} | ${t('cronColTime')} | ${t('cronColRelative')} |
 | :--- | :--- | :--- |
 ${cronResult.nextRuns
-  .map((r, i) => `| 第 ${i + 1} 次 | \`${r.formattedTime} ${r.utcOffset}\` | ${r.relativeTime} |`)
+  .map((r, i) => `| ${t('cronRunIndex', { n: i + 1 })} | \`${r.formattedTime} ${r.utcOffset}\` | ${r.relativeTime} |`)
   .join('\n')}
 
-#### 槽位字段拆解
-| 槽位 | 当前值 | 语义说明 |
+#### ${t('cronSlotsHeading')}
+| ${t('cronColSlot')} | ${t('cronColValue')} | ${t('cronColMeaning')} |
 | :--- | :--- | :--- |
 ${cronResult.slots.map((s) => `| ${s.name} | \`${s.value}\` | ${s.meaning} |`).join('\n')}
 `
-                    : `### Cron 解析失败
-> **错误原因**：${cronResult.errorMessage}
+                    : `### ${t('cronFailedHeading')}
+${t('cronErrorLine', { label: t('cronErrorReasonLabel'), reason: cronResult.errorMessage ?? '' })}
 `
                 }
               />
             }
             actions={
               <ActionPanel>
-                <Action.CopyToClipboard title="复制 Cron 表达式" content={cronResult.expression} />
+                <Action.CopyToClipboard title={t('copyCronAction')} content={cronResult.expression} />
                 {cronResult.isValid && <Action.CopyToClipboard
-                  title="复制未来 5 次执行时间"
+                  title={t('copyNextRunsAction')}
                   content={cronResult.nextRuns.map((r) => `${r.formattedTime} ${r.utcOffset}`).join('\n')}
                 />}
               </ActionPanel>
             }
           />
-          {CRON_TEMPLATES.map((tpl) => (
+          {getCronTemplates().map((tpl) => (
             <List.Item
               key={tpl.id}
               id={tpl.id}
               icon={Icon.Calendar}
               title={tpl.title}
               subtitle={tpl.expr}
-              accessories={[{ text: '常用模板' }]}
+              accessories={[{ text: t('templateTag') }]}
               actions={
                 <ActionPanel>
                   <Action
-                    title="推算此 Cron 模板"
+                    title={t('runTemplateAction')}
                     icon={Icon.Play}
                     onAction={() => setSearchText(tpl.expr)}
                   />
-                  <Action.CopyToClipboard title="复制模板表达式" content={tpl.expr} />
+                  <Action.CopyToClipboard title={t('copyTemplateAction')} content={tpl.expr} />
                 </ActionPanel>
               }
             />

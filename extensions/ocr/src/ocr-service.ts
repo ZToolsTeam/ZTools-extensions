@@ -1,9 +1,22 @@
 /**
- * 文字识别：调用客户端的本机文字识别（macOS 系统 Vision / Windows 系统文字识别），不联网。
+ * 文字识别：调用客户端的本机文字识别（macOS 系统 Vision / Windows 内置 PP-OCRv5 模型，韩文用系统文字识别），不联网。
  * 不在客户端中运行时如实报错，不提供示例数据。
  */
 
+import { Clipboard } from '@ztools/declarative-ui'
+import { type FileImportRules, type FileImportTransport, adaptPreloadTransport } from './file-import.js'
+import { t } from './i18n.js'
+
 export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+
+/** 文件夹导入和拖入展开支持的图片扩展名与单次上限 */
+export const OCR_IMPORT_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff'] as const
+export const OCR_IMPORT_MAX_FILES = 100
+export const OCR_IMPORT_SUPPORTED_TEXT = 'PNG / JPG / WebP / BMP / GIF / TIFF'
+export const OCR_IMPORT_RULES: FileImportRules = {
+  extensions: OCR_IMPORT_EXTENSIONS,
+  maxFiles: OCR_IMPORT_MAX_FILES
+}
 
 export interface OcrLanguage {
   id: string
@@ -12,19 +25,40 @@ export interface OcrLanguage {
   engineCode: string
 }
 
-export const OCR_LANGUAGES: readonly OcrLanguage[] = [
-  { id: 'zh-hans', title: '简体中文', engineCode: 'zh-Hans-CN' },
-  { id: 'en', title: '英文', engineCode: 'en-US' },
-  { id: 'ja', title: '日文', engineCode: 'ja-JP' },
-  { id: 'ko', title: '韩文', engineCode: 'ko-KR' }
-]
+export function getOcrLanguages(): readonly OcrLanguage[] {
+  return [
+    { id: 'zh-hans', title: t('langZhHans'), engineCode: 'zh-Hans-CN' },
+    { id: 'en', title: t('langEn'), engineCode: 'en-US' },
+    { id: 'ja', title: t('langJa'), engineCode: 'ja-JP' },
+    { id: 'ko', title: t('langKo'), engineCode: 'ko-KR' }
+  ]
+}
+
+export const OCR_LANGUAGES: readonly OcrLanguage[] = getOcrLanguages()
 
 export function resolveLanguage(id: unknown): OcrLanguage {
-  return OCR_LANGUAGES.find(language => language.id === id) ?? OCR_LANGUAGES[0]
+  const langs = getOcrLanguages()
+  return langs.find(language => language.id === id) ?? langs[0]
 }
 
 /** 支持识别的图片扩展名（与客户端识别组件一致） */
 export const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'heic', 'tif', 'tiff', 'bmp', 'gif', 'webp'] as const
+
+export function isSupportedImagePath(filePath: string): boolean {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? ''
+  return (IMAGE_EXTENSIONS as readonly string[]).includes(ext)
+}
+
+/** 从宿主 plugin_files_dropped 事件载荷中提取支持识别的图片路径 */
+export function extractDroppedImagePaths(envelopeOrPayload: unknown): string[] {
+  if (!isRecord(envelopeOrPayload)) return []
+  const payload = isRecord(envelopeOrPayload.payload) ? envelopeOrPayload.payload : envelopeOrPayload
+  if (!Array.isArray(payload.files)) return []
+  return payload.files
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim())
+    .filter(isSupportedImagePath)
+}
 
 /** 一次识别的结果：成功带文字，失败带原因；用户取消框选时 canceled 为 true */
 export type OcrOutcome =
@@ -49,7 +83,7 @@ export function getClientTransport(): HostTransport | undefined {
   if (!methods) return undefined
   return async (method, params, timeoutMs) => {
     const call = methods[method]
-    if (typeof call !== 'function') throw new Error(`客户端不支持 ${method}`)
+    if (typeof call !== 'function') throw new Error(t('errMethodUnsupported', { method }))
     messageSeq = (messageSeq + 1) % 1_000_000
     return call({ messageId: `ocr_${Date.now()}_${messageSeq}`, params, timeoutMs })
   }
@@ -57,13 +91,18 @@ export function getClientTransport(): HostTransport | undefined {
 
 /** 取出宿主响应里的业务数据；宿主报错时抛出其错误信息 */
 export function unwrapHostResponse(raw: unknown): HostRecord {
-  if (!isRecord(raw)) throw new Error('客户端返回了无效结果')
+  if (!isRecord(raw)) throw new Error(t('errInvalidHostResult'))
   if (raw.success === false) {
     const error = raw.error
-    throw new Error(isRecord(error) ? String(error.message || error.code || '客户端调用失败') : String(error || '客户端调用失败'))
+    throw new Error(isRecord(error) ? String(error.message || error.code || t('errHostCallFailed')) : String(error || t('errHostCallFailed')))
   }
   const outer = isRecord(raw.data) ? raw.data : raw
   return isRecord(outer.data) ? outer.data : outer
+}
+
+/** 将现有 HostTransport 适配为 file-import.ts 使用的 FileImportTransport */
+export function createFileImportTransport(transport?: HostTransport): FileImportTransport {
+  return adaptPreloadTransport(transport, { notInClientMessage: t('notInClient') })
 }
 
 /** 识别服务返回 → 统一结果；识别出空白文字也算失败（没有识别到文字） */
@@ -71,9 +110,9 @@ export function toOutcome(result: HostRecord): OcrOutcome {
   const failed = result.ok === false || result.success === false
   const text = typeof result.text === 'string' ? result.text.trim() : ''
   if (!failed && text) return { ok: true, text }
-  if (result.canceled === true) return { ok: false, canceled: true, error: String(result.error || '已取消') }
-  if (!failed || result.empty === true) return { ok: false, empty: true, error: '没有识别到文字' }
-  return { ok: false, error: String(result.error || '识别失败') }
+  if (result.canceled === true) return { ok: false, canceled: true, error: String(result.error || t('errCanceled')) }
+  if (!failed || result.empty === true) return { ok: false, empty: true, error: t('errNoTextRecognized') }
+  return { ok: false, error: String(result.error || t('errRecognizeFailed')) }
 }
 
 /** 识别单张图片最多等 60 秒；框选要等用户操作，最多 3 分钟 */
@@ -85,7 +124,20 @@ async function invokeOcr(transport: HostTransport, params: HostRecord, timeoutMs
     const raw = await transport('image_ocr', params, timeoutMs)
     return toOutcome(unwrapHostResponse(raw))
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    const message = error instanceof Error ? error.message : String(error)
+    if ((message.includes('不支持 image_ocr') || message.includes('does not support image_ocr')) && params.action === 'recognizeImage' && typeof params.path === 'string') {
+      try {
+        const fallbackRaw = await transport(
+          'screen_recognize_text',
+          { imagePath: params.path, path: params.path, lang: params.lang },
+          timeoutMs
+        )
+        return toOutcome(unwrapHostResponse(fallbackRaw))
+      } catch (fallbackError) {
+        return { ok: false, error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError) }
+      }
+    }
+    return { ok: false, error: message }
   }
 }
 
@@ -93,7 +145,17 @@ export function recognizeImageFile(transport: HostTransport, path: string, langu
   return invokeOcr(transport, { action: 'recognizeImage', path, lang: language.engineCode }, RECOGNIZE_TIMEOUT_MS)
 }
 
-export function recognizeClipboardImage(transport: HostTransport, language: OcrLanguage): Promise<OcrOutcome> {
+export async function recognizeClipboardImage(transport: HostTransport, language: OcrLanguage): Promise<OcrOutcome> {
+  try {
+    const clipFiles = (await Clipboard.readFiles())
+      .map(item => item.trim())
+      .filter(isSupportedImagePath)
+    if (clipFiles.length > 0) {
+      return recognizeImageFile(transport, clipFiles[0]!, language)
+    }
+  } catch {
+    // 忽略读取剪贴板文件列表异常，继续尝试剪贴板位图识别
+  }
   return invokeOcr(transport, { action: 'recognizeClipboard', lang: language.engineCode }, RECOGNIZE_TIMEOUT_MS)
 }
 
@@ -105,9 +167,9 @@ export function recognizeScreenRegion(transport: HostTransport, language: OcrLan
 /** 选择图片：取消返回空数组；对话框打开失败抛错 */
 export async function pickImageFiles(transport: HostTransport): Promise<string[]> {
   const data = unwrapHostResponse(await transport('window_show_open_dialog', {
-    title: '选择要识别文字的图片',
+    title: t('pickImageTitle'),
     properties: ['openFile', 'multiSelections'],
-    filters: `图片|${IMAGE_EXTENSIONS.map(ext => `*.${ext}`).join(';')}`
+    filters: `${t('pickImageFilter')}|${IMAGE_EXTENSIONS.map(ext => `*.${ext}`).join(';')}`
   }, 300_000))
   if (data.canceled === true) return []
   if (typeof data.filePath === 'string' && data.filePath) return [data.filePath]
@@ -117,7 +179,7 @@ export async function pickImageFiles(transport: HostTransport): Promise<string[]
       .filter(Boolean)
     if (paths.length > 0) return paths
   }
-  throw new Error('文件选择结果无效')
+  throw new Error(t('errInvalidFilePick'))
 }
 
 /** 发送系统通知；失败不影响识别结果（文字已在剪贴板） */

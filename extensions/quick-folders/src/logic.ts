@@ -1,3 +1,5 @@
+import { t } from './i18n.js'
+
 export interface FolderItem {
   id: string
   name: string
@@ -7,6 +9,35 @@ export interface FolderItem {
   /** 额外搜索关键词（英文目录名等），不显示在标题里 */
   keywords?: string[]
   shortcut?: string
+}
+
+type I18nKey = Parameters<typeof t>[0]
+
+function makeFolderItem(spec: {
+  id: string
+  nameKey?: I18nKey
+  nameParams?: Record<string, string | number>
+  fixedName?: string
+  path: string
+  category: 'personal' | 'system' | 'temp'
+  descKey: I18nKey
+  keywords?: string[]
+  shortcut?: string
+}): FolderItem {
+  const { id, nameKey, nameParams, fixedName, path, category, descKey, keywords, shortcut } = spec
+  return {
+    id,
+    path,
+    category,
+    ...(keywords ? { keywords } : {}),
+    ...(shortcut ? { shortcut } : {}),
+    get name() {
+      return nameKey ? t(nameKey, nameParams) : (fixedName ?? '')
+    },
+    get description() {
+      return t(descKey)
+    }
+  }
 }
 
 /**
@@ -33,83 +64,90 @@ export function getDefaultFolders(envOverrides?: Record<string, string>): Folder
   const temp = envOverrides?.TEMP || `${localAppData}\\Temp`
 
   return [
-    {
+    makeFolderItem({
       id: 'desktop',
-      name: '桌面', keywords: ['Desktop'],
+      nameKey: 'folderDesktopName',
+      keywords: ['Desktop'],
       path: `${userProfile}\\Desktop`,
       category: 'personal',
-      description: '个人桌面文件与工作区'
-    },
-    {
+      descKey: 'folderDesktopDesc'
+    }),
+    makeFolderItem({
       id: 'downloads',
-      name: '下载', keywords: ['Downloads'],
+      nameKey: 'folderDownloadsName',
+      keywords: ['Downloads'],
       path: `${userProfile}\\Downloads`,
       category: 'personal',
-      description: '浏览器与网络文件默认下载目录'
-    },
-    {
+      descKey: 'folderDownloadsDesc'
+    }),
+    makeFolderItem({
       id: 'documents',
-      name: '文档', keywords: ['Documents'],
+      nameKey: 'folderDocumentsName',
+      keywords: ['Documents'],
       path: `${userProfile}\\Documents`,
       category: 'personal',
-      description: '个人文档、工程与应用数据'
-    },
-    {
+      descKey: 'folderDocumentsDesc'
+    }),
+    makeFolderItem({
       id: 'pictures',
-      name: '图片', keywords: ['Pictures'],
+      nameKey: 'folderPicturesName',
+      keywords: ['Pictures'],
       path: `${userProfile}\\Pictures`,
       category: 'personal',
-      description: '照片与屏幕截图保存目录'
-    },
-    {
+      descKey: 'folderPicturesDesc'
+    }),
+    makeFolderItem({
       id: 'userprofile',
-      name: '用户主目录', keywords: ['Home'],
+      nameKey: 'folderHomeName',
+      keywords: ['Home'],
       path: userProfile,
       category: 'personal',
-      description: '当前系统登录用户根目录'
-    },
-    {
+      descKey: 'folderHomeDesc'
+    }),
+    makeFolderItem({
       id: 'appdata-roaming',
-      name: 'AppData Roaming',
+      fixedName: 'AppData Roaming',
       path: appData,
       category: 'system',
-      description: '应用程序漫游配置与核心数据'
-    },
-    {
+      descKey: 'folderAppDataRoamingDesc'
+    }),
+    makeFolderItem({
       id: 'appdata-local',
-      name: 'AppData Local',
+      fixedName: 'AppData Local',
       path: localAppData,
       category: 'system',
-      description: '应用程序本地缓存与运行时数据'
-    },
-    {
+      descKey: 'folderAppDataLocalDesc'
+    }),
+    makeFolderItem({
       id: 'temp',
-      name: '临时文件夹', keywords: ['Temp'],
+      nameKey: 'folderTempName',
+      keywords: ['Temp'],
       path: temp,
       category: 'temp',
-      description: '系统与应用临时文件存放目录'
-    },
-    {
+      descKey: 'folderTempDesc'
+    }),
+    makeFolderItem({
       id: 'system-drive',
-      name: '系统盘 (C:)',
+      nameKey: 'folderSystemDriveName',
+      nameParams: { drive: 'C:' },
       path: 'C:\\',
       category: 'system',
-      description: 'Windows 系统安装驱动器'
-    },
-    {
+      descKey: 'folderSystemDriveDesc'
+    }),
+    makeFolderItem({
       id: 'windows-dir',
-      name: 'Windows 系统目录',
+      nameKey: 'folderWindowsDirName',
       path: windir,
       category: 'system',
-      description: '操作系统核心文件目录'
-    },
-    {
+      descKey: 'folderWindowsDirDesc'
+    }),
+    makeFolderItem({
       id: 'system32',
-      name: 'System32',
+      fixedName: 'System32',
       path: `${windir}\\System32`,
       category: 'system',
-      description: '系统 64 位核心动态库与命令行工具'
-    }
+      descKey: 'folderSystem32Desc'
+    })
   ]
 }
 
@@ -150,13 +188,13 @@ export function buildFolders(paths: HostFolderPaths): FolderItem[] {
   const pick = (value: string, child: string) => String(value || '').trim() || joinPath(home, child, windows)
 
   const personal: FolderItem[] = [
-    { id: 'desktop', name: '桌面', keywords: ['Desktop'], path: pick(paths.desktop, 'Desktop'), category: 'personal', description: '个人桌面文件与工作区' },
-    { id: 'downloads', name: '下载', keywords: ['Downloads'], path: pick(paths.downloads, 'Downloads'), category: 'personal', description: '浏览器与网络文件默认下载目录' },
-    { id: 'documents', name: '文档', keywords: ['Documents'], path: pick(paths.documents, 'Documents'), category: 'personal', description: '个人文档、工程与应用数据' },
-    { id: 'pictures', name: '图片', keywords: ['Pictures'], path: pick(paths.pictures, 'Pictures'), category: 'personal', description: '照片与屏幕截图保存目录' },
-    { id: 'videos', name: windows ? '视频' : '影片', keywords: [windows ? 'Videos' : 'Movies'], path: pick(paths.videos, windows ? 'Videos' : 'Movies'), category: 'personal', description: '视频与录屏文件' },
-    { id: 'music', name: '音乐', keywords: ['Music'], path: pick(paths.music, 'Music'), category: 'personal', description: '音乐与音频文件' },
-    { id: 'userprofile', name: '用户主目录', keywords: ['Home'], path: home, category: 'personal', description: '当前系统登录用户根目录' }
+    makeFolderItem({ id: 'desktop', nameKey: 'folderDesktopName', keywords: ['Desktop'], path: pick(paths.desktop, 'Desktop'), category: 'personal', descKey: 'folderDesktopDesc' }),
+    makeFolderItem({ id: 'downloads', nameKey: 'folderDownloadsName', keywords: ['Downloads'], path: pick(paths.downloads, 'Downloads'), category: 'personal', descKey: 'folderDownloadsDesc' }),
+    makeFolderItem({ id: 'documents', nameKey: 'folderDocumentsName', keywords: ['Documents'], path: pick(paths.documents, 'Documents'), category: 'personal', descKey: 'folderDocumentsDesc' }),
+    makeFolderItem({ id: 'pictures', nameKey: 'folderPicturesName', keywords: ['Pictures'], path: pick(paths.pictures, 'Pictures'), category: 'personal', descKey: 'folderPicturesDesc' }),
+    makeFolderItem({ id: 'videos', nameKey: windows ? 'folderVideosName' : 'folderMoviesName', keywords: [windows ? 'Videos' : 'Movies'], path: pick(paths.videos, windows ? 'Videos' : 'Movies'), category: 'personal', descKey: 'folderVideosDesc' }),
+    makeFolderItem({ id: 'music', nameKey: 'folderMusicName', keywords: ['Music'], path: pick(paths.music, 'Music'), category: 'personal', descKey: 'folderMusicDesc' }),
+    makeFolderItem({ id: 'userprofile', nameKey: 'folderHomeName', keywords: ['Home'], path: home, category: 'personal', descKey: 'folderHomeDesc' })
   ]
 
   if (windows) {
@@ -164,20 +202,20 @@ export function buildFolders(paths: HostFolderPaths): FolderItem[] {
     const localAppData = joinPath(home, 'AppData\\Local', true)
     return [
       ...personal,
-      { id: 'appdata-roaming', name: 'AppData Roaming', path: pick(paths.appData, 'AppData\\Roaming'), category: 'system', description: '应用程序漫游配置与核心数据' },
-      { id: 'appdata-local', name: 'AppData Local', path: localAppData, category: 'system', description: '应用程序本地缓存与运行时数据' },
-      { id: 'system-drive', name: `系统盘 (${drive})`, path: `${drive}\\`, category: 'system', description: 'Windows 系统安装驱动器' },
-      { id: 'temp', name: '临时文件夹', keywords: ['Temp'], path: systemTempPath(home, true), category: 'temp', description: '系统与应用临时文件存放目录' }
+      makeFolderItem({ id: 'appdata-roaming', fixedName: 'AppData Roaming', path: pick(paths.appData, 'AppData\\Roaming'), category: 'system', descKey: 'folderAppDataRoamingDesc' }),
+      makeFolderItem({ id: 'appdata-local', fixedName: 'AppData Local', path: localAppData, category: 'system', descKey: 'folderAppDataLocalDesc' }),
+      makeFolderItem({ id: 'system-drive', nameKey: 'folderSystemDriveName', nameParams: { drive }, path: `${drive}\\`, category: 'system', descKey: 'folderSystemDriveDesc' }),
+      makeFolderItem({ id: 'temp', nameKey: 'folderTempName', keywords: ['Temp'], path: systemTempPath(home, true), category: 'temp', descKey: 'folderTempDesc' })
     ]
   }
 
   return [
     ...personal,
-    { id: 'applications', name: '应用程序', keywords: ['Applications'], path: '/Applications', category: 'system', description: '系统安装的应用程序' },
-    { id: 'app-support', name: 'Application Support', path: pick(paths.appData, 'Library/Application Support'), category: 'system', description: '应用程序配置与数据' },
-    { id: 'library', name: '资源库', keywords: ['Library'], path: joinPath(home, 'Library', false), category: 'system', description: '当前用户的偏好设置、缓存与日志' },
-    { id: 'caches', name: '缓存', keywords: ['Caches'], path: joinPath(home, 'Library/Caches', false), category: 'temp', description: '应用程序缓存文件' },
-    { id: 'temp', name: '临时文件夹', keywords: ['Temp'], path: systemTempPath(home, false), category: 'temp', description: '系统与应用临时文件存放目录' }
+    makeFolderItem({ id: 'applications', nameKey: 'folderApplicationsName', keywords: ['Applications'], path: '/Applications', category: 'system', descKey: 'folderApplicationsDesc' }),
+    makeFolderItem({ id: 'app-support', fixedName: 'Application Support', path: pick(paths.appData, 'Library/Application Support'), category: 'system', descKey: 'folderAppSupportDesc' }),
+    makeFolderItem({ id: 'library', nameKey: 'folderLibraryName', keywords: ['Library'], path: joinPath(home, 'Library', false), category: 'system', descKey: 'folderLibraryDesc' }),
+    makeFolderItem({ id: 'caches', nameKey: 'folderCachesName', keywords: ['Caches'], path: joinPath(home, 'Library/Caches', false), category: 'temp', descKey: 'folderCachesDesc' }),
+    makeFolderItem({ id: 'temp', nameKey: 'folderTempName', keywords: ['Temp'], path: systemTempPath(home, false), category: 'temp', descKey: 'folderTempDesc' })
   ]
 }
 
@@ -188,7 +226,14 @@ export interface HostCommonFolder {
   exists: boolean
 }
 
-type FolderTemplate = Omit<FolderItem, 'id' | 'path'> & { itemId: string }
+interface FolderTemplate {
+  itemId: string
+  nameKey?: I18nKey
+  fixedName?: string
+  keywords?: string[]
+  category: 'personal' | 'system' | 'temp'
+  descKey: I18nKey
+}
 
 /**
  * 宿主目录 id → 本插件列表项（名称、分类、说明）。顺序即列表顺序；宿主返回而这里没有的 id 不显示。
@@ -196,30 +241,30 @@ type FolderTemplate = Omit<FolderItem, 'id' | 'path'> & { itemId: string }
  */
 function folderTemplates(windows: boolean): Array<[string, FolderTemplate]> {
   const personal: Array<[string, FolderTemplate]> = [
-    ['desktop', { itemId: 'desktop', name: '桌面', keywords: ['Desktop'], category: 'personal', description: '个人桌面文件与工作区' }],
-    ['downloads', { itemId: 'downloads', name: '下载', keywords: ['Downloads'], category: 'personal', description: '浏览器与网络文件默认下载目录' }],
-    ['documents', { itemId: 'documents', name: '文档', keywords: ['Documents'], category: 'personal', description: '个人文档、工程与应用数据' }],
-    ['pictures', { itemId: 'pictures', name: '图片', keywords: ['Pictures'], category: 'personal', description: '照片与屏幕截图保存目录' }],
-    ['videos', { itemId: 'videos', name: windows ? '视频' : '影片', keywords: [windows ? 'Videos' : 'Movies'], category: 'personal', description: '视频与录屏文件' }],
-    ['music', { itemId: 'music', name: '音乐', keywords: ['Music'], category: 'personal', description: '音乐与音频文件' }],
-    ['home', { itemId: 'userprofile', name: '用户主目录', keywords: ['Home'], category: 'personal', description: '当前系统登录用户根目录' }]
+    ['desktop', { itemId: 'desktop', nameKey: 'folderDesktopName', keywords: ['Desktop'], category: 'personal', descKey: 'folderDesktopDesc' }],
+    ['downloads', { itemId: 'downloads', nameKey: 'folderDownloadsName', keywords: ['Downloads'], category: 'personal', descKey: 'folderDownloadsDesc' }],
+    ['documents', { itemId: 'documents', nameKey: 'folderDocumentsName', keywords: ['Documents'], category: 'personal', descKey: 'folderDocumentsDesc' }],
+    ['pictures', { itemId: 'pictures', nameKey: 'folderPicturesName', keywords: ['Pictures'], category: 'personal', descKey: 'folderPicturesDesc' }],
+    ['videos', { itemId: 'videos', nameKey: windows ? 'folderVideosName' : 'folderMoviesName', keywords: [windows ? 'Videos' : 'Movies'], category: 'personal', descKey: 'folderVideosDesc' }],
+    ['music', { itemId: 'music', nameKey: 'folderMusicName', keywords: ['Music'], category: 'personal', descKey: 'folderMusicDesc' }],
+    ['home', { itemId: 'userprofile', nameKey: 'folderHomeName', keywords: ['Home'], category: 'personal', descKey: 'folderHomeDesc' }]
   ]
-  const temp: [string, FolderTemplate] = ['temp', { itemId: 'temp', name: '临时文件夹', keywords: ['Temp'], category: 'temp', description: '系统与应用临时文件存放目录' }]
+  const temp: [string, FolderTemplate] = ['temp', { itemId: 'temp', nameKey: 'folderTempName', keywords: ['Temp'], category: 'temp', descKey: 'folderTempDesc' }]
   if (windows) {
     return [
       ...personal,
-      ['appData', { itemId: 'appdata-roaming', name: 'AppData Roaming', category: 'system', description: '应用程序漫游配置与核心数据' }],
-      ['localAppData', { itemId: 'appdata-local', name: 'AppData Local', category: 'system', description: '应用程序本地缓存与运行时数据' }],
-      ['systemDrive', { itemId: 'system-drive', name: '系统盘', category: 'system', description: 'Windows 系统安装驱动器' }],
+      ['appData', { itemId: 'appdata-roaming', fixedName: 'AppData Roaming', category: 'system', descKey: 'folderAppDataRoamingDesc' }],
+      ['localAppData', { itemId: 'appdata-local', fixedName: 'AppData Local', category: 'system', descKey: 'folderAppDataLocalDesc' }],
+      ['systemDrive', { itemId: 'system-drive', nameKey: 'folderSystemDrivePlain', category: 'system', descKey: 'folderSystemDriveDesc' }],
       temp
     ]
   }
   return [
     ...personal,
-    ['applications', { itemId: 'applications', name: '应用程序', keywords: ['Applications'], category: 'system', description: '系统安装的应用程序' }],
-    ['appData', { itemId: 'app-support', name: 'Application Support', category: 'system', description: '应用程序配置与数据' }],
-    ['library', { itemId: 'library', name: '资源库', keywords: ['Library'], category: 'system', description: '当前用户的偏好设置、缓存与日志' }],
-    ['libraryCaches', { itemId: 'caches', name: '缓存', keywords: ['Caches'], category: 'temp', description: '应用程序缓存文件' }],
+    ['applications', { itemId: 'applications', nameKey: 'folderApplicationsName', keywords: ['Applications'], category: 'system', descKey: 'folderApplicationsDesc' }],
+    ['appData', { itemId: 'app-support', fixedName: 'Application Support', category: 'system', descKey: 'folderAppSupportDesc' }],
+    ['library', { itemId: 'library', nameKey: 'folderLibraryName', keywords: ['Library'], category: 'system', descKey: 'folderLibraryDesc' }],
+    ['libraryCaches', { itemId: 'caches', nameKey: 'folderCachesName', keywords: ['Caches'], category: 'temp', descKey: 'folderCachesDesc' }],
     temp
   ]
 }
@@ -247,8 +292,32 @@ export function buildFoldersFromHost(folders: unknown): FolderItem[] | null {
     const entry = byId.get(hostId)
     if (!entry || !entry.exists) continue
     const { itemId, ...rest } = tpl
-    const name = hostId === 'systemDrive' ? `系统盘 (${entry.path.replace(/[\\/]+$/, '')})` : rest.name
-    out.push({ ...rest, id: itemId, name, path: entry.path })
+    if (hostId === 'systemDrive') {
+      const drive = entry.path.replace(/[\\/]+$/, '')
+      out.push(
+        makeFolderItem({
+          id: itemId,
+          nameKey: 'folderSystemDriveName',
+          nameParams: { drive },
+          path: entry.path,
+          category: rest.category,
+          descKey: rest.descKey,
+          keywords: rest.keywords
+        })
+      )
+    } else {
+      out.push(
+        makeFolderItem({
+          id: itemId,
+          nameKey: rest.nameKey,
+          fixedName: rest.fixedName,
+          path: entry.path,
+          category: rest.category,
+          descKey: rest.descKey,
+          keywords: rest.keywords
+        })
+      )
+    }
   }
   return out
 }

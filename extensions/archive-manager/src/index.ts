@@ -11,25 +11,48 @@ import {
   showToast,
   Toast,
   confirmAlert,
-  FilterBar
+  FilterBar,
+  useLocale
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   ArchiveCandidateItem,
   ArchiveEntryItem,
   ARCHIVE_CATEGORY_GROUPS,
+  ARCHIVE_IMPORT_RULES,
+  ARCHIVE_SUPPORTED_TEXT,
   NOT_IN_CLIENT_MESSAGE,
+  createArchiveImportTransport,
   describeExtractTarget,
   formatBytes,
-  fetchRealArchiveCandidates,
+  getArchiveCategoryGroups,
+  getCategoryLabel,
   inspectArchiveEntries,
   extractArchiveEntries,
   invokeNativeCapability,
   openArchiveLocation,
   summarizeExtractResult,
   summarizeVerifyResult,
+  toArchiveCandidateItem,
   trashArchiveFile
 } from './logic.js'
+import {
+  FileImportResult,
+  NormalizedFileInput,
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  pathKey,
+  pickFiles,
+  pickFolder,
+  summarizeImport
+} from './file-import.js'
 import { isRealElectronHost } from './native-ipc.js'
+import { isDeclarativeFileInputSupported } from './host-compat.js'
 
 export * from './logic.js'
 
@@ -43,6 +66,11 @@ interface ArchiveMeta {
   singleRootFolderName: string | null
 }
 
+interface ImportScanProgress {
+  visitedDirs: number
+  matchedFiles: number
+}
+
 const EMPTY_META: ArchiveMeta = {
   archiveSizeBytes: 0,
   totalUncompressedBytes: 0,
@@ -52,6 +80,11 @@ const EMPTY_META: ArchiveMeta = {
   hasSingleRootFolder: false,
   singleRootFolderName: null
 }
+
+const SHORTCUT_OPEN_FILES = { modifiers: ['ctrl'] as ('ctrl')[], key: 'o' }
+const SHORTCUT_OPEN_FOLDER = { modifiers: ['ctrl', 'shift'] as ('ctrl' | 'shift')[], key: 'o' }
+const SHORTCUT_REMOVE_ITEM = { modifiers: ['ctrl'] as ('ctrl')[], key: 'backspace' }
+const SHORTCUT_CLEAR_ALL = { modifiers: ['ctrl', 'shift'] as ('ctrl' | 'shift')[], key: 'backspace' }
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -67,23 +100,42 @@ function readLaunchFeature(): string {
 }
 
 export function ArchiveManagerCommand() {
+  useLocale()
+  const categoryGroups = getArchiveCategoryGroups()
   const initialCategory = readLaunchFeature() === 'archive-docs' ? '办公文档' : 'ALL'
   const isRealHost = isRealElectronHost()
+  const transport = createArchiveImportTransport()
   const [searchText, setSearchText] = useState('')
   const [archives, setArchives] = useState<ArchiveCandidateItem[]>([])
-  const [hasScanned, setHasScanned] = useState(false)
   const [selectedArchivePath, setSelectedArchivePath] = useState<string>('')
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory)
   const [entries, setEntries] = useState<ArchiveEntryItem[]>([])
   const [inspectError, setInspectError] = useState('')
-  const [scanError, setScanError] = useState('')
   const [checkedEntryIds, setCheckedEntryIds] = useState<string[]>([])
   const [archiveMeta, setArchiveMeta] = useState<ArchiveMeta>(EMPTY_META)
   const [isLoading, setIsLoading] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<ImportScanProgress | null>(null)
+  const [isExtracting, setIsExtracting] = useState(false)
 
-  // 切换压缩包时只采用最后一次读取的结果，避免慢的旧结果把别的压缩包内容显示在当前压缩包下
+  // 切换压缩包与清空/移除时只采用最后一次读取的结果，避免慢结果回写已移除的包
   const inspectSeqRef = useRef(0)
+  const importSeqRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
   const extractingRef = useRef(false)
+  const archivesRef = useRef<ArchiveCandidateItem[]>(archives)
+  archivesRef.current = archives
+  const selectedArchivePathRef = useRef<string>(selectedArchivePath)
+  selectedArchivePathRef.current = selectedArchivePath
+
+  function resetInspectionState() {
+    inspectSeqRef.current += 1
+    setIsLoading(false)
+    setEntries([])
+    setCheckedEntryIds([])
+    setArchiveMeta(EMPTY_META)
+    setInspectError('')
+  }
 
   async function loadArchiveInspection(targetPath: string, showIndicator = false) {
     if (!targetPath) return
@@ -97,10 +149,12 @@ export function ArchiveManagerCommand() {
     try {
       const res = await inspectArchiveEntries(targetPath)
       if (seq !== inspectSeqRef.current) return
+      if (pathKey(selectedArchivePathRef.current) !== pathKey(targetPath)) return
+      if (!archivesRef.current.some((a) => pathKey(a.path) === pathKey(targetPath))) return
       if (!res.ok) {
-        const reason = res.error || '文件可能已损坏或不是 ZIP 格式'
+        const reason = res.error || t('corruptOrNotZip')
         setInspectError(reason)
-        await showToast({ style: Toast.Style.Failure, title: '读取压缩包失败', message: reason })
+        await showToast({ style: Toast.Style.Failure, title: t('readArchiveFailedTitle'), message: reason })
         return
       }
       setEntries(res.entries)
@@ -116,61 +170,224 @@ export function ArchiveManagerCommand() {
       if (showIndicator) {
         await showToast({
           style: Toast.Style.Success,
-          title: '已读取压缩包目录',
-          message: `${res.entries.length} 个文件 · 解压后 ${formatBytes(res.totalUncompressedBytes)}`
+          title: t('readArchiveOkTitle'),
+          message: t('readArchiveOkMsg', { count: res.entries.length, size: formatBytes(res.totalUncompressedBytes) })
         })
       }
     } catch (err) {
       if (seq !== inspectSeqRef.current) return
-      setInspectError(errorText(err))
-      await showToast({ style: Toast.Style.Failure, title: '读取压缩包失败', message: errorText(err) })
+      const msg = errorText(err)
+      setInspectError(msg)
+      await showToast({ style: Toast.Style.Failure, title: t('readArchiveFailedTitle'), message: msg })
     } finally {
       if (seq === inspectSeqRef.current) setIsLoading(false)
     }
   }
 
-  async function refreshArchivesList(showIndicator = false) {
-    setIsLoading(true)
-    try {
-      const scanned = await fetchRealArchiveCandidates()
-      setArchives(scanned)
-      setScanError(scanned.error || '')
-      if (scanned.error) await showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: scanned.error })
-      setHasScanned(true)
-      const activePath =
-        selectedArchivePath && scanned.some((a) => a.path === selectedArchivePath)
-          ? selectedArchivePath
-          : scanned[0]?.path || ''
-      setSelectedArchivePath(activePath)
-      if (activePath) {
-        await loadArchiveInspection(activePath, showIndicator && !scanned.error)
-      } else {
-        inspectSeqRef.current++
-        setEntries([])
-        setCheckedEntryIds([])
-        setArchiveMeta(EMPTY_META)
-        setInspectError('')
-        if (showIndicator && !scanned.error) {
-          await showToast({ style: Toast.Style.Failure, title: '没有找到 ZIP 压缩包', message: '只扫描下载、桌面、文档目录' })
-        }
-      }
-    } catch (err) {
-      setScanError(errorText(err))
-      setHasScanned(true)
-      await showToast({ style: Toast.Style.Failure, title: '扫描压缩包失败', message: errorText(err) })
-    } finally {
-      setIsLoading(false)
+  function applyImportedArchives(result: FileImportResult) {
+    const incoming = result.files.map(toArchiveCandidateItem)
+    const { merged, added, duplicates } = mergeByPath(archivesRef.current, incoming, (item) => item.path)
+    const hadSelection = Boolean(selectedArchivePathRef.current)
+
+    if (added.length > 0) {
+      archivesRef.current = merged
+      setArchives(merged)
+    }
+
+    const summary = summarizeImport(result, { added: added.length, duplicates }, ARCHIVE_SUPPORTED_TEXT)
+    if (summary) {
+      void showToast({
+        style: summary.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: summary.title,
+        message: summary.message
+      })
+    }
+
+    // 导入前没有选中任何压缩包时，自动选中新导入的第 1 个并读取包内条目
+    if (!hadSelection && added.length > 0) {
+      const firstPath = added[0]!.path
+      selectedArchivePathRef.current = firstPath
+      setSelectedArchivePath(firstPath)
+      void loadArchiveInspection(firstPath, false)
     }
   }
 
+  async function executeArchiveImport(
+    runner: (signal: AbortSignal, onProgress: (p: ImportScanProgress) => void) => Promise<FileImportResult>
+  ) {
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    const batchSeq = ++importSeqRef.current
+    setIsImporting(true)
+    setImportProgress(null)
+    try {
+      const result = await runner(controller.signal, (p) => {
+        if (batchSeq === importSeqRef.current) setImportProgress(p)
+      })
+      if (batchSeq !== importSeqRef.current) return
+      applyImportedArchives(result)
+    } catch (err) {
+      if (batchSeq !== importSeqRef.current) return
+      await showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: friendlyFileError(err) })
+    } finally {
+      if (batchSeq === importSeqRef.current) {
+        importAbortRef.current = null
+        setIsImporting(false)
+        setImportProgress(null)
+      }
+    }
+  }
+
+  function handlePickFiles() {
+    void executeArchiveImport(() =>
+      pickFiles(transport, ARCHIVE_IMPORT_RULES, {
+        title: t('pickFilesTitle'),
+        filterName: t('pickFilesFilterName')
+      })
+    )
+  }
+
+  function handlePickFolder() {
+    void executeArchiveImport(async (signal, onProgress) => {
+      const picked = await pickFolder(transport, { title: t('pickFolderTitle') })
+      if (picked.canceled) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      if (picked.error || !picked.folderPath) {
+        return {
+          files: [],
+          ignored: 0,
+          truncated: false,
+          failedDirs: [],
+          canceled: false,
+          error: picked.error || t('noFolderSelected')
+        }
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const ok = await confirmAlert({
+          title: t('confirmRootTitle', { path: picked.folderPath }),
+          message: t('confirmRootMsg'),
+          primaryAction: { title: t('confirmRootAction'), style: 'default' }
+        })
+        if (!ok) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      }
+      return collectFolderFiles(transport, picked.folderPath, ARCHIVE_IMPORT_RULES, { signal, onProgress })
+    })
+  }
+
+  function handleFileInput(input: NormalizedFileInput) {
+    void executeArchiveImport((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, ARCHIVE_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    )
+  }
+
+  const handleFileInputRef = useRef(handleFileInput)
+  handleFileInputRef.current = handleFileInput
+
   useEffect(() => {
-    if (isRealHost) refreshArchivesList(false)
+    let removeDropListener: (() => void) | undefined
+    if (!isDeclarativeFileInputSupported()) {
+      const w = typeof window !== 'undefined' ? (window as unknown as Record<string, unknown>) : null
+      const eventsApi = (
+        w?.ztools as
+          | {
+              events?: {
+                on?: (ev: string, cb: (payload: unknown) => void) => unknown
+                off?: (ev: string, cb: (payload: unknown) => void) => void
+              }
+            }
+          | undefined
+      )?.events
+      if (eventsApi && typeof eventsApi.on === 'function') {
+        const onDrop = (envelope: unknown) => {
+          const input = normalizeFileInput(envelope)
+          if (input.paths.length > 0) handleFileInputRef.current(input)
+        }
+        const dispose = eventsApi.on('plugin_files_dropped', onDrop)
+        removeDropListener = () => {
+          if (typeof dispose === 'function') {
+            ;(dispose as () => void)()
+          } else if (typeof eventsApi.off === 'function') {
+            eventsApi.off('plugin_files_dropped', onDrop)
+          }
+        }
+      }
+    }
+
+    return () => {
+      importSeqRef.current += 1
+      inspectSeqRef.current += 1
+      importAbortRef.current?.abort()
+      removeDropListener?.()
+    }
   }, [])
 
+  const fileInputProps = createImportInputProps(
+    (input) => handleFileInputRef.current(input),
+    {
+      dropTitle: t('dropTitle'),
+      dropSubtitle: t('dropSubtitle')
+    }
+  )
+
   async function handleSelectArchive(nextPath: string) {
+    if (!nextPath) return
+    selectedArchivePathRef.current = nextPath
     setSelectedArchivePath(nextPath)
     setSelectedCategory('ALL')
     await loadArchiveInspection(nextPath, true)
+  }
+
+  function removeArchiveCandidate(targetPath: string) {
+    const key = pathKey(targetPath)
+    const idx = archivesRef.current.findIndex((a) => pathKey(a.path) === key)
+    if (idx < 0) return
+    const nextArchives = archivesRef.current.filter((_, i) => i !== idx)
+    archivesRef.current = nextArchives
+    setArchives(nextArchives)
+
+    if (pathKey(selectedArchivePathRef.current) !== key) return
+    if (nextArchives.length === 0) {
+      selectedArchivePathRef.current = ''
+      setSelectedArchivePath('')
+      resetInspectionState()
+      return
+    }
+    const nextArchive = nextArchives[Math.min(idx, nextArchives.length - 1)]!
+    selectedArchivePathRef.current = nextArchive.path
+    setSelectedArchivePath(nextArchive.path)
+    setSelectedCategory('ALL')
+    void loadArchiveInspection(nextArchive.path, false)
+  }
+
+  function handleRemoveCurrentArchive() {
+    if (extractingRef.current) {
+      void showToast({ style: Toast.Style.Failure, title: t('removeBusy') })
+      return
+    }
+    const current = selectedArchivePathRef.current
+    if (!current) return
+    removeArchiveCandidate(current)
+  }
+
+  function handleClearList() {
+    if (extractingRef.current) {
+      void showToast({ style: Toast.Style.Failure, title: t('clearBusy') })
+      return
+    }
+    importSeqRef.current += 1
+    importAbortRef.current?.abort()
+    importAbortRef.current = null
+    setIsImporting(false)
+    setImportProgress(null)
+    archivesRef.current = []
+    setArchives([])
+    selectedArchivePathRef.current = ''
+    setSelectedArchivePath('')
+    resetInspectionState()
   }
 
   const checkedSet = new Set(checkedEntryIds)
@@ -181,21 +398,22 @@ export function ArchiveManagerCommand() {
     if (archiveMeta.isEncrypted) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '暂不支持解压加密的压缩包',
-        message: '这个压缩包含加密条目，客户端目前不能解压'
+        title: t('encryptedTitle'),
+        message: t('encryptedMsg')
       })
       return false
     }
     const target = describeExtractTarget(selectedArchivePath, archiveMeta, selective)
     return confirmAlert({
-      title: selective ? `提取 ${count} 个文件？` : '解压全部文件？',
-      message: `解压到：${target}\n目标位置已有同名文件会被覆盖。`,
-      primaryAction: { title: selective ? '提取' : '解压' }
+      title: selective ? t('confirmExtractSelectedTitle', { count }) : t('confirmExtractAllTitle'),
+      message: t('confirmExtractMsg', { target }),
+      primaryAction: { title: selective ? t('confirmExtractBtn') : t('confirmExtractAllBtn') }
     })
   }
 
   async function runExtract(options: { entryNames?: string[]; smartUnwrap: boolean }, progressTitle: string) {
     extractingRef.current = true
+    setIsExtracting(true)
     let progressToast: { hide: () => Promise<void> } | null = null
     try {
       progressToast = await showToast({
@@ -213,9 +431,10 @@ export function ArchiveManagerCommand() {
       })
     } catch (err) {
       await progressToast?.hide()
-      await showToast({ style: Toast.Style.Failure, title: '解压失败', message: errorText(err) })
+      await showToast({ style: Toast.Style.Failure, title: t('extractFailedTitle'), message: errorText(err) })
     } finally {
       extractingRef.current = false
+      setIsExtracting(false)
     }
   }
 
@@ -224,13 +443,13 @@ export function ArchiveManagerCommand() {
     if (!selectedArchivePath || inspectError || entries.length === 0) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '没有可解压的压缩包',
-        message: inspectError ? `读取压缩包失败：${inspectError}` : '请先选择一个能读取的 ZIP 压缩包'
+        title: t('noArchiveToExtractTitle'),
+        message: inspectError ? t('noArchiveReadErrorMsg', { error: inspectError }) : t('noArchiveHintMsg')
       })
       return
     }
     if (!(await confirmExtract(false, entries.length))) return
-    await runExtract({ smartUnwrap: true }, '正在解压…')
+    await runExtract({ smartUnwrap: true }, t('extractingProgress'))
   }
 
   async function handleExtractSelectedEntries(targetEntries: ArchiveEntryItem[]) {
@@ -239,15 +458,15 @@ export function ArchiveManagerCommand() {
     if (safeTargets.length === 0) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '没有可提取的文件',
-        message: '所选条目为空，或路径含 ../ 等越界写法'
+        title: t('noEntriesToExtractTitle'),
+        message: t('noEntriesToExtractMsg')
       })
       return
     }
     if (!(await confirmExtract(true, safeTargets.length))) return
     await runExtract(
       { entryNames: safeTargets.map((e) => e.entryName), smartUnwrap: false },
-      `正在提取 ${safeTargets.length} 个文件…`
+      t('extractingSelectedProgress', { count: safeTargets.length })
     )
   }
 
@@ -257,14 +476,14 @@ export function ArchiveManagerCommand() {
     try {
       res = await invokeNativeCapability('VerifyArchive', { archivePath: selectedArchivePath })
     } catch (err) {
-      await showToast({ style: Toast.Style.Failure, title: '校验失败', message: errorText(err) })
+      await showToast({ style: Toast.Style.Failure, title: t('verifyFailedTitle'), message: errorText(err) })
       return
     }
     if (!res.ok) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '校验失败',
-        message: res.error || '压缩包可能已损坏或不是 ZIP 格式'
+        title: t('verifyFailedTitle'),
+        message: res.error || t('verifyFailedDefaultMsg')
       })
       return
     }
@@ -280,42 +499,47 @@ export function ArchiveManagerCommand() {
     if (!selectedArchivePath) return
     const ok = await openArchiveLocation(selectedArchivePath)
     if (!ok) {
-      await showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: selectedArchivePath })
+      await showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: selectedArchivePath })
     }
   }
 
   async function handleTrashArchive() {
-    if (!selectedArchivePath) return
+    const targetPath = selectedArchivePath
+    if (!targetPath) return
+    if (extractingRef.current) {
+      await showToast({ style: Toast.Style.Failure, title: t('trashBusy') })
+      return
+    }
     const ok = await confirmAlert({
-      title: '将原压缩包移入回收站？',
-      message: `${selectedArchivePath}\n可以从回收站恢复。`,
-      primaryAction: { title: '移入回收站', style: 'destructive' }
+      title: t('confirmTrashTitle'),
+      message: t('confirmTrashMsg', { path: targetPath }),
+      primaryAction: { title: t('confirmTrashAction'), style: 'destructive' }
     })
     if (!ok) return
-    const tr = await trashArchiveFile(selectedArchivePath)
+    const tr = await trashArchiveFile(targetPath)
     if (tr.ok) {
-      await showToast({ style: Toast.Style.Success, title: '已将压缩包移入回收站' })
-      await refreshArchivesList(false)
+      await showToast({ style: Toast.Style.Success, title: t('trashSuccessTitle') })
+      removeArchiveCandidate(targetPath)
     } else {
       await showToast({
         style: Toast.Style.Failure,
-        title: '移入回收站失败',
-        message: tr.error || '压缩包可能正被占用'
+        title: t('trashFailedTitle'),
+        message: tr.error || t('trashInUseMsg')
       })
     }
   }
 
   if (!isRealHost) {
     return List({
-      searchBarPlaceholder: '搜索包内文件名或路径',
+      searchBarPlaceholder: t('searchPlaceholderShort'),
       children: [
         List.Section({
-          title: '压缩包',
+          title: t('sectionArchives'),
           children: [
             List.Item({
               id: 'archive-client-required',
-              title: NOT_IN_CLIENT_MESSAGE,
-              subtitle: '读取和解压压缩包由 Windows 版 ZTools 客户端完成',
+              title: t('notInClient'),
+              subtitle: t('clientRequiredSub'),
               icon: { source: Icon.Info }
             })
           ]
@@ -324,8 +548,38 @@ export function ArchiveManagerCommand() {
     })
   }
 
+  const pickFilesAction = () =>
+    Action({
+      title: t('actionPickFilesEllipsis'),
+      icon: Icon.Plus,
+      shortcut: SHORTCUT_OPEN_FILES,
+      onAction: handlePickFiles
+    })
+  const pickFolderAction = () =>
+    Action({
+      title: t('actionPickFolderEllipsis'),
+      icon: Icon.Folder,
+      shortcut: SHORTCUT_OPEN_FOLDER,
+      onAction: handlePickFolder
+    })
+  const removeArchiveAction = () =>
+    Action({
+      title: t('actionRemove'),
+      icon: Icon.Minus,
+      shortcut: SHORTCUT_REMOVE_ITEM,
+      onAction: handleRemoveCurrentArchive
+    })
+  const clearListAction = () =>
+    Action({
+      title: t('actionClearList'),
+      icon: Icon.Trash,
+      style: Action.Style.Destructive,
+      shortcut: SHORTCUT_CLEAR_ALL,
+      onAction: handleClearList
+    })
+
   const categoryCounts = new Map<string, { count: number; bytes: number }>()
-  for (const grp of ARCHIVE_CATEGORY_GROUPS) {
+  for (const grp of categoryGroups) {
     categoryCounts.set(grp.id, { count: 0, bytes: 0 })
   }
   for (const e of entries) {
@@ -352,29 +606,41 @@ export function ArchiveManagerCommand() {
 
   const maxEntryBytes = Math.max(1, filteredEntries[0]?.uncompressedSize || 1)
   const hasChecked = checkedEntries.length > 0
+  const safeFilteredEntries = filteredEntries.filter((item) => !item.hasPathTraversalRisk)
+  const allSafeChecked = safeFilteredEntries.length > 0 && safeFilteredEntries.every((item) => checkedSet.has(item.id))
+
+  const toggleAllAction = () =>
+    Action({
+      title: allSafeChecked ? t('actionDeselectAll') : t('actionSelectAll'),
+      icon: Icon.CheckCircle,
+      shortcut: { modifiers: ['ctrl'], key: 'a' },
+      onAction: () => {
+        setCheckedEntryIds(allSafeChecked ? [] : safeFilteredEntries.map((item) => item.id))
+      }
+    })
 
   const rightSubListItems = filteredEntries.map((entry) => {
     const isChecked = checkedSet.has(entry.id)
     const volRatio = Math.max(8, Math.min(100, Math.round((entry.uncompressedSize / maxEntryBytes) * 100)))
-    const panelChildren = [
+    const panelChildren: Array<ReturnType<typeof Action> | ReturnType<typeof ActionPanel.Section>> = [
       hasChecked
         ? Action({
-            title: `提取已勾选的 ${checkedEntries.length} 个文件`,
+            title: t('actionExtractSelected', { count: checkedEntries.length }),
             icon: Icon.Download,
             onAction: () => handleExtractSelectedEntries(checkedEntries)
           })
         : Action({
-            title: '解压全部',
+            title: t('actionExtractAll'),
             icon: Icon.Download,
             onAction: handleExtractAll
           }),
       Action({
-        title: '在资源管理器中定位压缩包',
+        title: t('actionRevealArchive'),
         icon: Icon.Folder,
         onAction: handleRevealArchive
       }),
       Action({
-        title: `只提取这个文件（${entry.name}）`,
+        title: t('actionExtractSingle', { name: entry.name }),
         icon: Icon.Document,
         shortcut: { modifiers: ['ctrl'], key: 's' },
         onAction: () => handleExtractSelectedEntries([entry])
@@ -383,7 +649,7 @@ export function ArchiveManagerCommand() {
     if (hasChecked) {
       panelChildren.push(
         Action({
-          title: '解压全部',
+          title: t('actionExtractAll'),
           icon: Icon.Download,
           shortcut: { modifiers: ['ctrl'], key: 'e' },
           onAction: handleExtractAll
@@ -392,13 +658,13 @@ export function ArchiveManagerCommand() {
     }
     panelChildren.push(
       Action({
-        title: '校验压缩包（目录、越界路径与 SHA-256）',
+        title: t('actionVerifyArchive'),
         icon: Icon.CheckCircle,
         shortcut: { modifiers: ['ctrl'], key: 't' },
         onAction: handleVerifyArchive
       }),
       Action({
-        title: '复制包内路径与 CRC32',
+        title: t('actionCopyPathCrc'),
         icon: Icon.CopyClipboard,
         shortcut: { modifiers: ['ctrl', 'shift'], key: 'c' },
         onAction: async () => {
@@ -406,31 +672,28 @@ export function ArchiveManagerCommand() {
           try {
             await Clipboard.copy(info)
           } catch (err) {
-            await showToast({ style: Toast.Style.Failure, title: '复制失败', message: errorText(err) })
+            await showToast({ style: Toast.Style.Failure, title: t('copyFailedTitle'), message: errorText(err) })
             return
           }
-          await showToast({ style: Toast.Style.Success, title: '已复制包内路径', message: info })
+          await showToast({ style: Toast.Style.Success, title: t('copiedPathTitle'), message: info })
         }
       }),
       Action({
-        title:
-          filteredEntries.length > 0 && filteredEntries.every((item) => checkedSet.has(item.id))
-            ? '取消全选'
-            : '全选当前列表',
-        icon: Icon.CheckCircle,
-        shortcut: { modifiers: ['ctrl'], key: 'a' },
-        onAction: () => {
-          const safeItems = filteredEntries.filter((item) => !item.hasPathTraversalRisk)
-          const allChecked = safeItems.length > 0 && safeItems.every((item) => checkedSet.has(item.id))
-          setCheckedEntryIds(allChecked ? [] : safeItems.map((item) => item.id))
-        }
-      }),
-      Action({
-        title: '将原压缩包移入回收站',
+        title: t('actionTrashArchive'),
         icon: Icon.Trash,
         style: Action.Style.Destructive,
         shortcut: { modifiers: [], key: 'delete' },
         onAction: handleTrashArchive
+      }),
+      ActionPanel.Section({
+        title: t('sectionList'),
+        children: [
+          ...(isExtracting ? [] : [removeArchiveAction()]),
+          pickFilesAction(),
+          pickFolderAction(),
+          toggleAllAction(),
+          clearListAction()
+        ]
       })
     )
 
@@ -455,74 +718,83 @@ export function ArchiveManagerCommand() {
       accessories: [
         { progress: { value: volRatio } },
         entry.hasPathTraversalRisk
-          ? { tag: { value: '越界路径，不提取', color: Color.Red } }
-          : { tag: { value: `${entry.category} -${entry.compressionRatio}%` } },
+          ? { tag: { value: t('tagUnsafePath'), color: Color.Red } }
+          : { tag: { value: `${getCategoryLabel(entry.category)} -${entry.compressionRatio}%` } },
         { text: formatBytes(entry.uncompressedSize) }
       ],
       actions: ActionPanel({ title: entry.name, children: panelChildren })
     })
   })
 
+  const currentArchive = archives.find((a) => pathKey(a.path) === pathKey(selectedArchivePath))
   const currentArchiveName =
-    archives.find((a) => a.path === selectedArchivePath)?.name ||
-    selectedArchivePath.split(/[\\/]/).pop() ||
-    '未选择压缩包'
+    currentArchive?.name || selectedArchivePath.split(/[\\/]/).pop() || t('noArchiveSelected')
+  const displayArchiveSizeBytes =
+    archiveMeta.archiveSizeBytes > 0 ? archiveMeta.archiveSizeBytes : currentArchive?.sizeBytes ?? null
 
-  const summaryText = !hasScanned
-    ? '正在扫描下载、桌面、文档目录中的 ZIP 压缩包…'
+  const summaryText = isImporting
+    ? t('summaryImporting', { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
     : archives.length === 0
-      ? '下载、桌面、文档目录中没有找到 ZIP 压缩包，或无法读取这些目录'
+      ? t('summaryEmpty')
       : inspectError
-        ? `${currentArchiveName} · 读取失败：${inspectError}`
-        : `${currentArchiveName} (${formatBytes(archiveMeta.archiveSizeBytes)}) · ${entries.length} 个文件 · 解压后 ${formatBytes(archiveMeta.totalUncompressedBytes)}${hasChecked ? ` · 已勾选 ${checkedEntries.length} 个` : ''}`
+        ? t('summaryInspectError', { name: currentArchiveName, error: inspectError })
+        : t('summaryNormal', {
+            name: currentArchiveName,
+            size: formatBytes(displayArchiveSizeBytes),
+            count: entries.length,
+            uncomp: formatBytes(archiveMeta.totalUncompressedBytes),
+            checked: hasChecked ? t('summaryCheckedPart', { count: checkedEntries.length }) : ''
+          })
 
-  const emptyText = !hasScanned
-    ? '正在扫描…'
+  const emptyText = isImporting
+    ? t('emptyImporting')
     : archives.length === 0
-      ? '没有找到 ZIP 压缩包，或无法读取下载、桌面、文档目录'
+      ? t('emptyNoArchives')
       : inspectError
-        ? `读取压缩包失败：${inspectError}`
-        : '当前分类下没有匹配的文件'
+        ? t('emptyInspectError', { error: inspectError })
+        : isLoading
+          ? t('emptyLoading')
+          : entries.length === 0
+            ? t('emptyNoFiles')
+            : t('emptyNoMatch')
 
   const diagnosticItems =
     entries.length > 0
       ? [
           List.Item({
             id: 'diag-root-mode',
-            title: '解压位置',
-            subtitle: archiveMeta.hasSingleRootFolder
-              ? '包内只有一个顶层文件夹：解压到压缩包所在目录'
-              : '解压到压缩包旁的同名文件夹',
+            title: t('diagRootTitle'),
+            subtitle: archiveMeta.hasSingleRootFolder ? t('diagRootSingleSub') : t('diagRootFolderSub'),
             icon: { source: Icon.Folder, tintColor: Color.SecondaryText },
-            accessories: [{ tag: { value: archiveMeta.hasSingleRootFolder ? '单个顶层文件夹' : '同名文件夹' } }],
+            accessories: [{ tag: { value: archiveMeta.hasSingleRootFolder ? t('diagRootSingleTag') : t('diagRootFolderTag') } }],
             actions: ActionPanel({
-              title: '解压位置',
-              children: [Action({ title: '解压全部', icon: Icon.Download, onAction: handleExtractAll })]
+              title: t('diagRootTitle'),
+              children: [Action({ title: t('actionExtractAll'), icon: Icon.Download, onAction: handleExtractAll })]
             })
           }),
           List.Item({
             id: 'diag-security',
-            title: '越界路径与加密检查',
+            title: t('diagSecurityTitle'),
             subtitle:
               archiveMeta.traversalRiskCount > 0
-                ? `${archiveMeta.traversalRiskCount} 个条目含 ../ 或绝对路径，不会被提取`
+                ? t('diagSecurityRiskSub', { count: archiveMeta.traversalRiskCount })
                 : archiveMeta.isEncrypted
-                  ? '没有越界路径；含加密条目，暂不支持解压'
-                  : '没有越界路径',
+                  ? t('diagSecurityEncSub')
+                  : t('diagSecuritySafeSub'),
             icon: {
               source: archiveMeta.traversalRiskCount > 0 ? Icon.ExclamationMark : Icon.CheckCircle,
               tintColor: archiveMeta.traversalRiskCount > 0 ? Color.Red : Color.SecondaryText
             },
             accessories: [
               archiveMeta.traversalRiskCount > 0
-                ? { tag: { value: `${archiveMeta.traversalRiskCount} 个越界`, color: Color.Red } }
-                : { tag: { value: archiveMeta.isEncrypted ? '含加密条目' : '无越界' } }
+                ? { tag: { value: t('diagSecurityRiskTag', { count: archiveMeta.traversalRiskCount }), color: Color.Red } }
+                : { tag: { value: archiveMeta.isEncrypted ? t('diagSecurityEncTag') : t('diagSecuritySafeTag') } }
             ],
             actions: ActionPanel({
-              title: '校验',
+              title: t('diagVerifyPanelTitle'),
               children: [
                 Action({
-                  title: '校验压缩包（目录、越界路径与 SHA-256）',
+                  title: t('actionVerifyArchive'),
                   icon: Icon.CheckCircle,
                   onAction: handleVerifyArchive
                 })
@@ -532,15 +804,34 @@ export function ArchiveManagerCommand() {
         ]
       : []
 
+  const listActions = ActionPanel({
+    children: [
+      pickFilesAction(),
+      pickFolderAction(),
+      ...(archives.length > 0
+        ? [
+            ActionPanel.Section({
+              title: t('sectionList'),
+              children: [...(selectedArchivePath && !isExtracting ? [removeArchiveAction()] : []), clearListAction()]
+            })
+          ]
+        : [])
+    ]
+  })
+
   return List({
-    searchBarPlaceholder: '搜索包内文件名、后缀或路径',
+    ...fileInputProps,
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    isLoading,
+    isLoading: isImporting || isLoading || isExtracting,
+    actions: listActions,
     searchBarAccessory: List.Dropdown({
-      tooltip: '切换压缩包 (.zip)',
+      tooltip: t('dropdownTooltip'),
       value: selectedArchivePath,
-      onChange: (val) => handleSelectArchive(val),
+      onChange: (val) => {
+        if (val) void handleSelectArchive(val)
+      },
       children: archives.map((arc) =>
         List.Dropdown.Item({
           title: `${arc.name} (${formatBytes(arc.sizeBytes)})`,
@@ -549,27 +840,29 @@ export function ArchiveManagerCommand() {
       )
     }),
     filterBar: FilterBar({
-      summaryText: scanError ? `${scanError} · ${summaryText}` : summaryText,
+      summaryText,
       actions: [
         {
-          id: 'verify-archive-btn',
-          label: '校验',
+          id: 'pick-files',
+          label: t('btnPickFiles'),
+          title: t('btnPickFiles'),
           style: 'secondary',
-          onAction: handleVerifyArchive
+          onAction: handlePickFiles
         },
         {
-          id: 'rescan-archives-btn',
-          label: '重新扫描',
+          id: 'pick-folder',
+          label: t('btnPickFolder'),
+          title: t('btnPickFolder'),
           style: 'secondary',
-          onAction: () => refreshArchivesList(true)
+          onAction: handlePickFolder
         }
       ]
     }),
     subList: {
       title: hasChecked
-        ? `包内文件（已勾选 ${checkedEntries.length} 个，按 ↵ 提取所选文件）`
-        : '包内文件（按解压后大小排列，按 ↵ 解压全部，或勾选后只提取所选文件）',
-      subtitle: `${filteredEntries.length} 个 · 解压后共 ${formatBytes(archiveMeta.totalUncompressedBytes)}`,
+        ? t('subListTitleChecked', { count: checkedEntries.length })
+        : t('subListTitleDefault'),
+      subtitle: t('subListSubtitle', { count: filteredEntries.length, size: formatBytes(archiveMeta.totalUncompressedBytes) }),
       checkable: filteredEntries.length > 0,
       checked:
         filteredEntries.length > 0 && filteredEntries.every((e) => checkedSet.has(e.id))
@@ -586,8 +879,8 @@ export function ArchiveManagerCommand() {
     },
     children: [
       List.Section({
-        title: '按文件类型筛选',
-        children: ARCHIVE_CATEGORY_GROUPS.map((grp) => {
+        title: t('sectionFilterByCategory'),
+        children: categoryGroups.map((grp) => {
           const stat = categoryCounts.get(grp.id) || { count: 0, bytes: 0 }
           const isSelected = selectedCategory === grp.id
           return List.Item({
@@ -598,26 +891,49 @@ export function ArchiveManagerCommand() {
               source: isSelected ? Icon.CheckCircle : Icon.Folder,
               tintColor: Color.SecondaryText
             },
-            accessories: [{ text: `${stat.count} 项` }],
+            accessories: [{ text: t('itemCountText', { count: stat.count }) }],
             actions: ActionPanel({
               title: grp.name,
               children: [
                 Action({
-                  title: `筛选查看「${grp.name}」`,
+                  title: t('actionFilterCategory', { name: grp.name }),
                   icon: Icon.Filter,
                   onAction: () => setSelectedCategory(grp.id)
                 }),
                 Action({
-                  title: '解压全部',
+                  title: t('actionExtractAll'),
                   icon: Icon.Download,
                   onAction: handleExtractAll
-                })
+                }),
+                ...(archives.length > 0 && selectedArchivePath
+                  ? [
+                      Action({
+                        title: t('actionVerifyArchive'),
+                        icon: Icon.CheckCircle,
+                        shortcut: { modifiers: ['ctrl'], key: 't' },
+                        onAction: handleVerifyArchive
+                      })
+                    ]
+                  : []),
+                ...(archives.length > 0
+                  ? [
+                      ActionPanel.Section({
+                        title: t('sectionList'),
+                        children: [
+                          ...(isExtracting ? [] : [removeArchiveAction()]),
+                          pickFilesAction(),
+                          pickFolderAction(),
+                          clearListAction()
+                        ]
+                      })
+                    ]
+                  : [])
               ]
             })
           })
         })
       }),
-      ...(diagnosticItems.length > 0 ? [List.Section({ title: '解压前检查', children: diagnosticItems })] : [])
+      ...(diagnosticItems.length > 0 ? [List.Section({ title: t('sectionPreCheck'), children: diagnosticItems })] : [])
     ]
   })
 }

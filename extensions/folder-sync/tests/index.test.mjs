@@ -135,3 +135,24 @@ test('镜像模式只在 macOS 显示，Windows 不提供宿主不支持的选�
     if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor); else delete globalThis.navigator
   }
 })
+test('Ctrl+V 粘贴文件夹：支持单目录依次填充源与目标、按 targetFieldId 定向填充及双目录同时粘贴', async () => {
+  const view = await open()
+  const fieldVal = id => view.tree().props.workbenchPanel.fields.find(f => f.id === id).value
+  await view.pasteFiles(['/paste/src-one'])
+  assert.equal(fieldVal('source'), '/paste/src-one')
+  assert.equal(fieldVal('target'), '未选择')
+
+  await view.pasteFiles(['/paste/dst-one'])
+  assert.equal(fieldVal('source'), '/paste/src-one')
+  assert.equal(fieldVal('target'), '/paste/dst-one')
+
+  await view.pasteFiles(['/paste/dst-override'], { targetFieldId: 'target' })
+  assert.equal(fieldVal('target'), '/paste/dst-override')
+
+  await view.pasteFiles(['/paste/src-override'], { targetFieldId: 'source' })
+  assert.equal(fieldVal('source'), '/paste/src-override')
+
+  await view.pasteFiles(['/paste/batch-src', '/paste/batch-dst'])
+  assert.equal(fieldVal('source'), '/paste/batch-src')
+  assert.equal(fieldVal('target'), '/paste/batch-dst')
+})

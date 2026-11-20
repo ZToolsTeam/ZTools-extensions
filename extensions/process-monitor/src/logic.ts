@@ -1,4 +1,5 @@
 import { terminateProcess as hostTerminateProcess, isZToolsHostError } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   callHostTransport,
   formatBytes,
@@ -98,6 +99,7 @@ export const DLL_PLUGIN_NAME = 'ProcessMonitorPlugin'
 
 /** 不在 ZTools 客户端里运行（拿不到宿主通道）时的提示；此时不显示任何示例进程 */
 export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export const getNotInClientMessage = (): string => t('notInClient')
 
 // Windows 内核与会话管理进程：结束后会蓝屏或会话崩溃
 export const WINDOWS_CRITICAL_PROCESS_NAMES = [
@@ -147,6 +149,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp(
   'i'
 )
 export const FORBIDDEN_REASON = '系统内核与会话管理关键进程受保护：结束后会导致系统崩溃或当前用户被注销，已拦截'
+export const getForbiddenReason = (): string => t('forbiddenReason')
 
 function includesName(list: string[], name: string): boolean {
   const lower = String(name || '').toLowerCase()
@@ -173,52 +176,47 @@ export function isMacSystemPath(pathStr: string): boolean {
   return MACOS_SYSTEM_PATH_PATTERN.test(pathStr) && !MACOS_SYSTEM_APPS_PATTERN.test(pathStr)
 }
 
-const PRESET_ITEMS: CapabilityActionItem[] = [
-  {
-    id: 'proc-list-all',
-    title: '获取全量活动进程快照 (按内存与 CPU 排序)',
-    subtitle: '展示进程 PID、工作集内存、命令行参数与数字签名状态',
-    tag: '进程快照',
-    method: 'GetProcessList',
-    params: {
-      includeCommandLine: true
-    }
-  },
-  {
-    id: 'proc-sys-info',
-    title: '查看系统全局 CPU / 物理内存 / 句柄负载摘要',
-    subtitle: '监控系统提交内存峰值、线程总数与内核分页池占用',
-    tag: '系统负载',
-    method: 'GetSystemInfo',
-    params: {}
-  },
-  {
-    id: 'proc-services',
-    title: '穿透查询宿主进程 (svchost) 承载的底层服务',
-    subtitle: '定位高占用 svchost.exe 实例背后关联的具体 Windows 服务名',
-    tag: '服务穿透',
-    method: 'GetServicesByPID',
-    params: {
-      pid: 1044
-    }
-  },
-  {
-    id: 'proc-terminate',
-    title: '强制终止无响应/挂死的应用进程',
-    subtitle: '调用 Win32 TerminateProcess 立即回收卡死应用资源',
-    tag: '强制结束',
-    method: 'TerminateProcessByPID',
-    params: {
-      pid: 28888
-    }
-  }
-]
-
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return PRESET_ITEMS.map((item) => ({
-    ...item,
-    params: { ...item.params }
-  }))
+  return [
+    {
+      id: 'proc-list-all',
+      title: t('preset1Title'),
+      subtitle: t('preset1Sub'),
+      tag: t('preset1Tag'),
+      method: 'GetProcessList',
+      params: {
+        includeCommandLine: true
+      }
+    },
+    {
+      id: 'proc-sys-info',
+      title: t('preset2Title'),
+      subtitle: t('preset2Sub'),
+      tag: t('preset2Tag'),
+      method: 'GetSystemInfo',
+      params: {}
+    },
+    {
+      id: 'proc-services',
+      title: t('preset3Title'),
+      subtitle: t('preset3Sub'),
+      tag: t('preset3Tag'),
+      method: 'GetServicesByPID',
+      params: {
+        pid: 1044
+      }
+    },
+    {
+      id: 'proc-terminate',
+      title: t('preset4Title'),
+      subtitle: t('preset4Sub'),
+      tag: t('preset4Tag'),
+      method: 'TerminateProcessByPID',
+      params: {
+        pid: 28888
+      }
+    }
+  ]
 }
 
 export function filterCapabilityItems(items: CapabilityActionItem[], query: string): CapabilityActionItem[] {
@@ -237,7 +235,19 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 }
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
-  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, FORBIDDEN_REASON)
+  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, getForbiddenReason())
+}
+
+/**
+ * 宿主明确回复「当前操作系统不支持 dllplugin_call」（macOS 客户端）后，本次运行不再请求原生组件，
+ * 直接走 process_list 等兼容通道；否则每次刷新都会在控制台留一遍同样的报错。
+ */
+let dllCallUnsupported = false
+const PLATFORM_UNSUPPORTED_PATTERN = /不支持方法:\s*dllplugin_call|PLATFORM_NOT_SUPPORTED/i
+
+/** 仅供测试：重置「宿主不支持原生组件」的记忆 */
+export function resetNativeCapabilitySupport(): void {
+  dllCallUnsupported = false
 }
 
 export async function invokeNativeCapability(
@@ -247,9 +257,15 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('paramValidationFailed'))
+  }
+  if (dllCallUnsupported && !hostBridge) {
+    return { ok: false, pluginName: DLL_PLUGIN_NAME, method, error: '当前系统不支持原生组件', fromFallback: true }
   }
   const result = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
+  if (!result.ok && !hostBridge && PLATFORM_UNSUPPORTED_PATTERN.test(String(result.error || result.message || ''))) {
+    dllCallUnsupported = true
+  }
   // 沿用公共接口的调用回执，仅保留本插件既有的空数据语义。
   return { ...result, data: result.data ?? undefined }
 }
@@ -343,8 +359,8 @@ export async function fetchProcesses(host?: unknown): Promise<ProcessItem[]> {
     }
   }
 
-  if (host || isRealElectronHost()) throw new Error('无法读取进程列表')
-  throw new Error(NOT_IN_CLIENT_MESSAGE)
+  if (host || isRealElectronHost()) throw new Error(t('cannotReadProcessList'))
+  throw new Error(getNotInClientMessage())
 }
 
 export async function fetchSystemInfo(host?: unknown): Promise<SystemInfoData> {
@@ -410,8 +426,8 @@ export async function fetchSystemInfo(host?: unknown): Promise<SystemInfoData> {
     }
   }
 
-  if (host || isRealElectronHost()) throw new Error('无法读取系统负载，请检查宿主能力后重试')
-  throw new Error(NOT_IN_CLIENT_MESSAGE)
+  if (host || isRealElectronHost()) throw new Error(t('cannotReadSystemLoad'))
+  throw new Error(getNotInClientMessage())
 }
 
 /**
@@ -549,11 +565,19 @@ export interface TerminateOutcome {
   alreadyExited?: boolean
 }
 
-const PROTECTED_REASON_TEXT: Record<string, string> = {
-  system: '这是系统关键进程，宿主已拦截',
-  'host-self': '这是 ZTools 自身的进程，结束后 ZTools 会退出',
-  'host-ancestor': '这是启动 ZTools 的上级进程，结束后 ZTools 会一起退出',
-  'host-child': '这是 ZTools 的内部进程（渲染、GPU 或后台服务），不能结束'
+const getProtectedReasonText = (reason: string): string => {
+  switch (reason) {
+    case 'system':
+      return t('protectedSystem')
+    case 'host-self':
+      return t('protectedHostSelf')
+    case 'host-ancestor':
+      return t('protectedHostAncestor')
+    case 'host-child':
+      return t('protectedHostChild')
+    default:
+      return t('errProtectedFallback')
+  }
 }
 
 /** 把宿主结束进程的错误码换成用户能看懂的原因；未知错误按宿主原文提示 */
@@ -563,26 +587,31 @@ export function describeTerminateError(err: unknown): { code: string; message: s
   const raw = err instanceof Error ? err.message : String(err)
   switch (code) {
     case 'PROCESS_PROTECTED':
-      return { code, message: PROTECTED_REASON_TEXT[String(details?.reason)] || '该进程受保护，不能结束' }
+      return { code, message: getProtectedReasonText(String(details?.reason)) }
     case 'PROCESS_NOT_FOUND':
-      return { code, message: '进程已经退出' }
+      return { code, message: t('errNotFound') }
     case 'PROCESS_ACCESS_DENIED':
-      return { code, message: '没有权限结束该进程：它可能属于系统或其他用户，需要管理员权限' }
+      return { code, message: t('errAccessDenied') }
     case 'PROCESS_IDENTITY_MISMATCH':
-      return { code, message: '该 PID 已不是列表里的进程（可能已退出并被复用），为避免误杀未执行，请刷新后重试' }
+      return { code, message: t('errIdentityMismatch') }
     case 'PROCESS_TERMINATE_TIMEOUT': {
-      if (details?.reason === 'graceful-rejected') return { code, message: '程序拒绝正常关闭（例如控制台程序或正在等待保存）' }
+      if (details?.reason === 'graceful-rejected') return { code, message: t('errGracefulRejected') }
       const still = Array.isArray(details?.stillRunning) ? (details!.stillRunning as unknown[]).filter((p) => Number.isInteger(p)) : []
-      return { code, message: `进程没有在限定时间内退出${still.length ? `（仍在运行：PID ${still.join(', ')}）` : ''}` }
+      return {
+        code,
+        message: t('errTerminateTimeout', {
+          still: still.length ? t('stillRunningSuffix', { pids: still.join(', ') }) : ''
+        })
+      }
     }
     case 'PLUGIN_PERMISSION_REQUIRED':
-      return { code, message: '插件没有声明结束进程权限，请更新插件' }
+      return { code, message: t('errPermRequired') }
     case 'PLUGIN_IDENTITY_REQUIRED':
-      return { code, message: '无法确认插件身份，请关闭后重新打开插件再试' }
+      return { code, message: t('errIdentityRequired') }
     case 'HOST_FEATURE_UNAVAILABLE':
-      return { code, message: '当前 ZTools 版本不支持结束其他程序的进程，请升级 ZTools' }
+      return { code, message: t('errHostUnavailable') }
     default:
-      return { code, message: raw || '终止进程失败' }
+      return { code, message: raw || t('terminateFailedFallback') }
   }
 }
 
@@ -609,11 +638,11 @@ export async function terminateProcess(
       : modeOrHost
 
   if (!Number.isInteger(pid) || pid < 0) {
-    return { ok: false, error: 'INVALID_PID: 进程 PID 无效' }
+    return { ok: false, error: t('errInvalidPid') }
   }
 
   if (getTerminationRisk(pid, name) === 'forbidden' || FORBIDDEN_TARGET_PATTERN.test(String(name || ''))) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: getForbiddenReason() }
   }
 
   if (!host) {
@@ -645,7 +674,7 @@ export async function terminateProcess(
 
 /** 旧宿主兼容：Windows DLL TerminateProcessByPID，失败再试 process_kill（只能结束本窗口启动的子进程） */
 async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTerminateMode, host?: unknown): Promise<TerminateOutcome> {
-  const upgradeHint = '当前 ZTools 版本不支持结束其他程序的进程，请升级 ZTools'
+  const upgradeHint = t('errHostUnavailable')
   try {
     const res = await invokeNativeCapability(
       'TerminateProcessByPID',
@@ -666,7 +695,7 @@ async function legacyTerminateProcess(pid: number, name: string, mode: ProcessTe
       if (killRes.ok) {
         return { ok: true, mode }
       }
-      return { ok: false, mode, error: res.error || '终止进程失败' }
+      return { ok: false, mode, error: res.error || t('terminateFailedFallback') }
     }
   } catch (err: unknown) {
     return { ok: false, mode, error: err instanceof Error ? err.message : String(err) }
@@ -818,20 +847,20 @@ export function describeProcessProfile(
     if (text) fields.push({ title, text })
   }
   if (detail) {
-    add('数字签名', detail.signerName)
-    add('发布者', detail.companyName)
-    add('产品名称', detail.productName)
+    add(t('profileSigner'), detail.signerName)
+    add(t('profilePublisher'), detail.companyName)
+    add(t('profileProduct'), detail.productName)
     if (detail.fileDescription && detail.fileDescription.trim() !== proc.name) {
-      add('文件描述', detail.fileDescription)
+      add(t('profileDesc'), detail.fileDescription)
     }
-    add('文件版本', detail.fileVersion)
+    add(t('profileVersion'), detail.fileVersion)
   }
   for (const svc of Array.isArray(services) ? services : []) {
     const id = String(svc?.serviceName || svc?.name || '').trim()
     if (!id) continue
     const display = String(svc?.displayName || '').trim()
     const status = String(svc?.status ?? '').trim()
-    add(`托管服务 ${id}`, [display && display !== id ? display : '', status].filter(Boolean).join(' · ') || id)
+    add(t('profileService', { id }), [display && display !== id ? display : '', status].filter(Boolean).join(' · ') || id)
   }
   return fields
 }
@@ -854,19 +883,19 @@ export function isOccupyingPort(row: Pick<ProcessPort, 'state'>): boolean {
 async function callPortsTransportRaw(host?: unknown): Promise<unknown> {
   const h = host as Record<string, unknown> | undefined
   if (h && typeof h.process_list_ports === 'function') return (h.process_list_ports as (p: unknown) => unknown)({})
-  if (typeof window === 'undefined') throw new Error('无法读取端口占用')
+  if (typeof window === 'undefined') throw new Error(t('errReadPorts'))
   const w = window as unknown as { __ztoolsElectron?: { transport?: { methods?: Record<string, unknown> } }; ztools?: { transport?: { methods?: Record<string, unknown> } } }
   const fn = (w.__ztoolsElectron?.transport?.methods || w.ztools?.transport?.methods)?.process_list_ports
-  if (typeof fn !== 'function') throw new Error('当前 ZTools 版本不支持端口查询，请升级 ZTools')
+  if (typeof fn !== 'function') throw new Error(t('errUpgradeForPorts'))
   return (fn as (req: unknown) => unknown)({ messageId: `process_list_ports_${Date.now()}`, params: {} })
 }
 
 function transportErrorText(value: unknown): string {
   if (value && typeof value === 'object') {
     const e = value as Record<string, unknown>
-    return String(e.message || e.code || '无法读取端口占用')
+    return String(e.message || e.code || t('errReadPorts'))
   }
-  return String(value || '无法读取端口占用')
+  return String(value || t('errReadPorts'))
 }
 
 export async function fetchProcessPortSnapshot(host?: unknown): Promise<ProcessPortSnapshot> {
@@ -883,7 +912,7 @@ export async function fetchProcessPortSnapshot(host?: unknown): Promise<ProcessP
     if (Array.isArray(record.data)) rows = record.data
     else layer = record.data
   }
-  if (!rows) throw new Error('无法读取端口占用')
+  if (!rows) throw new Error(t('errReadPorts'))
   return {
     partial,
     rows: rows.flatMap((value: unknown) => {

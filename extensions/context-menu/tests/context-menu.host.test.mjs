@@ -2,7 +2,9 @@
 // 宿主替身按真实链路返回：内置处理器结果 → dllplugin_call 路由（无 data 时补一层 data）→ IPC 外层 { success, data }
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
+const {
   fetchContextMenuEntries,
   toggleContextMenuEntry,
   switchWin11ClassicMenu,
@@ -11,7 +13,7 @@ import {
   buildSummaryText,
   win11ModeLabel,
   HOST_SCAN_LIMIT_PER_LOCATION
-} from '../dist/logic.js'
+} = await import('../dist/logic.js')
 
 const HKCU_FILE = 'HKEY_CURRENT_USER\\Software\\Classes\\*\\shell'
 const HKLM_DIR = 'HKEY_LOCAL_MACHINE\\Software\\Classes\\Directory\\shell'

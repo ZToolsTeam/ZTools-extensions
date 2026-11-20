@@ -4,14 +4,17 @@ import { DetailProps, DetailMetadataProps, DetailMetadataLabelProps, DetailMetad
  */
 export declare function Detail(props?: DetailProps, ...children: any[]): ViewDescriptor<DetailProps>;
 export declare namespace Detail {
-    var Metadata: {
-        (props?: DetailMetadataProps, ...children: any[]): ViewDescriptor<DetailMetadataProps>;
-        Label(props: DetailMetadataLabelProps): ViewDescriptor<DetailMetadataLabelProps>;
-        TagList: {
-            (props: DetailMetadataTagListProps, ...children: any[]): ViewDescriptor<DetailMetadataTagListProps>;
-            Item(props: DetailMetadataTagListItemProps): ViewDescriptor<DetailMetadataTagListItemProps>;
-        };
-        Separator(): ViewDescriptor;
-        Link(props: DetailMetadataLinkProps): ViewDescriptor<DetailMetadataLinkProps>;
-    };
+    export { MetadataComponent as Metadata };
 }
+declare const MetadataComponent: {
+    (props?: DetailMetadataProps, ...children: any[]): ViewDescriptor<DetailMetadataProps>;
+    Label: (props: DetailMetadataLabelProps) => ViewDescriptor<DetailMetadataLabelProps>;
+    TagList: typeof TagListComponent;
+    Separator: () => ViewDescriptor;
+    Link: (props: DetailMetadataLinkProps) => ViewDescriptor<DetailMetadataLinkProps>;
+};
+declare const TagListComponent: {
+    (props: DetailMetadataTagListProps, ...children: any[]): ViewDescriptor<DetailMetadataTagListProps>;
+    Item: (props: DetailMetadataTagListItemProps) => ViewDescriptor<DetailMetadataTagListItemProps>;
+};
+export {};

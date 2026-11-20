@@ -9,8 +9,8 @@ test.beforeEach(() => host.reset())
 
 test('首次打开没有示例数据，显示空状态', async () => {
   const view = await mount(TodoCommand)
-  assert.equal(view.items().length, 1)
-  assert.equal(view.items()[0].props.title, '还没有待办')
+  assert.equal(view.items().length, 0, '空状态不是可选中的条目')
+  assert.equal(view.emptyView().props.title, '还没有待办')
   assert.ok(!view.text().includes('全面落地纯声明式'))
 })
 
@@ -57,7 +57,8 @@ test('[故障注入] 存储读取失败时提示，并保持可用的空列表',
   host.faults.storageRead = new Error('数据库被占用')
   const view = await mount(TodoCommand)
   assert.ok(host.toasts.some((t) => /读取待办失败/.test(String(t.title))))
-  assert.equal(view.items()[0].props.id, 'empty-item')
+  assert.equal(view.items().length, 0)
+  assert.equal(view.emptyView().props.title, '读取待办失败，已暂停修改')
 })
 
 test('[数据损坏] 存储里的脏数据被过滤，不导致崩溃', () => {
@@ -77,8 +78,9 @@ test('[边界] 空标题拒绝；搜索与筛选组合', () => {
 })
 
 // 宿主在搜索词变化后选中第一项，回车执行它的第一个动作
+// 与客户端一致：有条目时回车执行首条的首个动作；列表为空时回退到 List 级动作
 async function pressEnter(view) {
-  const first = view.items()[0]
+  const first = view.items()[0] || null
   const primary = view.actions(first)[0]
   await view.run(first, primary.props.title)
   return { first, primary }
@@ -127,8 +129,8 @@ test('[边界] 只输入空格：不展示待办、回车不改动任何数据',
   for (const blank of ['   ', '\t', ' 　 ']) {
     await view.search(blank)
     const shown = view.items()
-    assert.deepEqual(shown.map((i) => i.props.id), ['empty-item'])
-    assert.equal(shown[0].props.title, '请输入待办内容')
+    assert.deepEqual(shown, [])
+    assert.equal(view.emptyView().props.title, '请输入待办内容')
     const { primary } = await pressEnter(view)
     assert.equal(primary.props.title, '新建待办事项', '主动作只打开表单，不写数据')
     host.pushed.length = 0

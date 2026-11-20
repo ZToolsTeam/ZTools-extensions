@@ -3,6 +3,7 @@ import type {
   CountdownItem,
   EnrichedCountdownItem
 } from './types.js'
+import { t } from './i18n.js'
 
 export const FOCUS_DURATION_MS = 25 * 60 * 1000
 export const SHORT_BREAK_DURATION_MS = 5 * 60 * 1000
@@ -28,23 +29,23 @@ export function validateCountdownInput(input: {
   error?: string
 } {
   if (!input || typeof input.title !== 'string' || !input.title.trim() || input.title.trim().length > 200) {
-    return { valid: false, error: 'INVALID_TITLE: 倒数日标题不能为空' }
+    return { valid: false, error: t('errTitleRequired') }
   }
-  if (input.category !== undefined && !['work', 'finance', 'life'].includes(input.category)) return { valid: false, error: '日程分类无效' }
+  if (input.category !== undefined && !['work', 'finance', 'life'].includes(input.category)) return { valid: false, error: t('errInvalidCategory') }
   const dateStr = typeof input.targetDate === 'string' ? input.targetDate.trim() : ''
   const match = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/)
   if (!match) {
-    return { valid: false, error: 'INVALID_DATE: 日期格式必须为 YYYY-MM-DD' }
+    return { valid: false, error: t('errDateFormat') }
   }
   const y = Number(match[1])
   const m = Number(match[2])
   const d = Number(match[3])
   if (y < 1900 || y > 9999 || m < 1 || m > 12) {
-    return { valid: false, error: 'INVALID_DATE: 月份必须在 01 ~ 12 之间' }
+    return { valid: false, error: t('errMonthRange') }
   }
   const maxDay = getDaysInYearMonth(y, m)
   if (d < 1 || d > maxDay) {
-    return { valid: false, error: `INVALID_DATE: ${y}-${m} 不存在第 ${d} 日` }
+    return { valid: false, error: t('errInvalidDay', { year: y, month: m, day: d }) }
   }
   return { valid: true }
 }
@@ -68,7 +69,7 @@ export function calculateDaysLeft(
 
   const refObj = typeof referenceDate === 'string' ? new Date(`${referenceDate}T00:00:00Z`) : referenceDate
   if (Number.isNaN(refObj.getTime())) {
-    throw new Error('INVALID_REFERENCE_DATE: 基准时间无效')
+    throw new Error(t('errInvalidRefDate'))
   }
 
   const stringDate = typeof referenceDate === 'string'
@@ -108,12 +109,12 @@ export function calculateDaysLeft(
   const resolvedDate = `${finalY}-${String(finalM).padStart(2, '0')}-${String(finalD).padStart(2, '0')}`
 
   if (diffDays === 0) {
-    return { days: 0, text: '就是今天', resolvedDate }
+    return { days: 0, text: t('daysLeftToday'), resolvedDate }
   }
   if (diffDays > 0) {
-    return { days: diffDays, text: `还有 ${diffDays} 天`, resolvedDate }
+    return { days: diffDays, text: t('daysLeftFuture', { days: diffDays }), resolvedDate }
   }
-  return { days: diffDays, text: `已过去 ${Math.abs(diffDays)} 天`, resolvedDate }
+  return { days: diffDays, text: t('daysLeftPast', { days: Math.abs(diffDays) }), resolvedDate }
 }
 
 export function enrichAndSortCountdowns(
@@ -127,7 +128,7 @@ export function enrichAndSortCountdowns(
       daysLeft: calc.days,
       daysLeftText: calc.text,
       targetDateFormatted: item.isRecurring
-        ? `每月 ${item.targetDate.slice(8)} 日 (下次: ${calc.resolvedDate})`
+        ? t('recurringDateFormatted', { day: item.targetDate.slice(8), resolvedDate: calc.resolvedDate })
         : calc.resolvedDate
     }
   })

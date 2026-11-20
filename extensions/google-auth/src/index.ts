@@ -4,11 +4,11 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   showToast,
   Toast,
   Clipboard,
   useNavigation,
+  useLocale,
   useState,
   useEffect,
   useRef,
@@ -33,11 +33,13 @@ import {
   type OTPAlgorithm
 } from "./logic.js";
 import { updateStorageItem } from "./host-compat.js";
+import { t } from "./i18n.js";
 
 /**
  * 添加 2FA 账号表单视图
  */
 export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAccount) => Promise<boolean> }) {
+  useLocale();
   const { pop } = useNavigation();
   const [name, setName] = useState("");
   const [issuer, setIssuer] = useState("");
@@ -62,7 +64,7 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
         setDigits(String(parsed.digits));
         setPeriod(String(parsed.period));
         setAlgorithm(parsed.algorithm);
-        showToast(Toast.Style.Success, "成功解析 otpauth:// 链接配置");
+        showToast(Toast.Style.Success, t("toastOtpauthParsed"));
       } catch (err) {
         setSecretError(errorText(err));
       }
@@ -78,14 +80,14 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
     const accountAlgo = (values.algorithm || algorithm) as OTPAlgorithm;
 
     if (!accountName || !accountName.trim()) {
-      setError("请输入账号标签或名称");
-      await showToast(Toast.Style.Failure, "请输入账号名称");
+      setError(t("errEnterAccountName"));
+      await showToast(Toast.Style.Failure, t("toastEnterAccountName"));
       return;
     }
 
     if (!accountSecret || !accountSecret.trim()) {
-      setSecretError("请输入 Base32 密钥");
-      await showToast(Toast.Style.Failure, "请输入密钥");
+      setSecretError(t("errEnterSecret"));
+      await showToast(Toast.Style.Failure, t("toastEnterSecret"));
       return;
     }
 
@@ -105,26 +107,26 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
       });
 
       if (!(await onCreated(newAccount))) return;
-      await showToast(Toast.Style.Success, `已成功添加账号 ${newAccount.name}`);
+      await showToast(Toast.Style.Success, t("toastAccountAdded", { name: newAccount.name }));
       pop();
     } catch (err) {
       // 账号名称已在上面校验，这里的错误都来自密钥或链接
       setSecretError(errorText(err));
-      await showToast(Toast.Style.Failure, "添加失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastAddFailed"), errorText(err));
     }
   };
 
   return Form(
     {
-      navigationTitle: "添加 2FA 动态口令账号",
-      actions: ActionPanel({ title: "表单操作" }, [
+      navigationTitle: t("formNavTitle"),
+      actions: ActionPanel({ title: t("formActionsTitle") }, [
         Action.SubmitForm({
-          title: "保存账号",
+          title: t("saveAccountAction"),
           icon: Icon.Check,
           onSubmit: handleSubmit
         }),
         Action({
-          title: "返回列表",
+          title: t("backToListAction"),
           icon: Icon.ArrowLeft,
           onAction: () => pop()
         })
@@ -133,8 +135,8 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
     [
       Form.TextField({
         id: "name",
-        title: "账号名称/邮箱",
-        placeholder: "例如 octocat@github.com 或 admin",
+        title: t("fieldNameTitle"),
+        placeholder: t("fieldNamePlaceholder"),
         value: name,
         error,
         onChange: (val) => {
@@ -144,15 +146,15 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
       }),
       Form.TextField({
         id: "issuer",
-        title: "服务商/签发者",
-        placeholder: "例如 GitHub, Google, AWS, Cloudflare",
+        title: t("fieldIssuerTitle"),
+        placeholder: t("fieldIssuerPlaceholder"),
         value: issuer,
         onChange: (val) => setIssuer(val)
       }),
       Form.TextField({
         id: "secret",
-        title: "Base32 密钥或 URL",
-        placeholder: "输入密钥 (如 JBSWY3DPEHPK3PXP) 或粘贴 otpauth:// 链接",
+        title: t("fieldSecretTitle"),
+        placeholder: t("fieldSecretPlaceholder"),
         value: secret,
         error: secretError,
         onChange: handleSecretChange
@@ -160,39 +162,39 @@ export function CreateAccountForm({ onCreated }: { onCreated: (account: AuthAcco
       Form.Dropdown(
         {
           id: "digits",
-          title: "口令位数",
+          title: t("fieldDigitsTitle"),
           value: digits,
           onChange: (val) => setDigits(val)
         },
         [
-          Form.Dropdown.Item({ title: "6 位口令 (标准推荐)", value: "6" }),
+          Form.Dropdown.Item({ title: t("digits6Title"), value: "6" }),
           // 链接里给出的非常用值（如 7 位）也要能选中，否则下拉框会显示成别的值
-          ...(digits !== "6" && digits !== "8" ? [Form.Dropdown.Item({ title: `${digits} 位口令（来自链接）`, value: digits })] : []),
-          Form.Dropdown.Item({ title: "8 位口令", value: "8" })
+          ...(digits !== "6" && digits !== "8" ? [Form.Dropdown.Item({ title: t("digitsCustomTitle", { digits }), value: digits })] : []),
+          Form.Dropdown.Item({ title: t("digits8Title"), value: "8" })
         ]
       ),
       Form.Dropdown(
         {
           id: "period",
-          title: "刷新周期",
+          title: t("fieldPeriodTitle"),
           value: period,
           onChange: (val) => setPeriod(val)
         },
         [
-          Form.Dropdown.Item({ title: "30 秒 (标准 RFC 6238)", value: "30" }),
-          Form.Dropdown.Item({ title: "60 秒", value: "60" }),
-          ...(period !== "30" && period !== "60" ? [Form.Dropdown.Item({ title: `${period} 秒（来自链接）`, value: period })] : [])
+          Form.Dropdown.Item({ title: t("period30Title"), value: "30" }),
+          Form.Dropdown.Item({ title: t("period60Title"), value: "60" }),
+          ...(period !== "30" && period !== "60" ? [Form.Dropdown.Item({ title: t("periodCustomTitle", { period }), value: period })] : [])
         ]
       ),
       Form.Dropdown(
         {
           id: "algorithm",
-          title: "哈希加密算法",
+          title: t("fieldAlgoTitle"),
           value: algorithm,
           onChange: (val) => setAlgorithm(val as OTPAlgorithm)
         },
         [
-          Form.Dropdown.Item({ title: "SHA1 (兼容绝大多数平台)", value: "SHA1" }),
+          Form.Dropdown.Item({ title: t("algoSha1Title"), value: "SHA1" }),
           Form.Dropdown.Item({ title: "SHA256", value: "SHA256" }),
           Form.Dropdown.Item({ title: "SHA512", value: "SHA512" })
         ]
@@ -233,16 +235,16 @@ async function migrateAccounts(): Promise<{ raw: unknown; warning?: string }> {
       await SecureStorage.setItem(corruptBackupKey(result.legacyValue), result.legacyValue);
     }
     raw = await updateStorageItem(SecureStorage, ACCOUNTS_STORAGE_KEY, current => {
-      if (!Array.isArray(current)) throw new Error("加密存储已变化，请重新读取后重试迁移");
+      if (!Array.isArray(current)) throw new Error(t("errSecureStorageChanged"));
       return mergeLegacyAccounts(current, legacy.accounts).merged;
     });
   } catch (err) {
-    return { raw: result.value, warning: `旧版明文中的账号未能合并到加密存储：${errorText(err)}。明文已保留，下次打开会重试` };
+    return { raw: result.value, warning: t("warnLegacyMergeFailed", { error: errorText(err) }) };
   }
   try {
     await SecureStorage.discardLocalStorage(ACCOUNTS_STORAGE_KEY);
   } catch (err) {
-    return { raw, warning: `旧版明文数据未能删除：${errorText(err)}。下次打开会重试` };
+    return { raw, warning: t("warnLegacyDeleteFailed", { error: errorText(err) }) };
   }
   return { raw };
 }
@@ -279,11 +281,12 @@ async function migrateCorruptBackups(): Promise<number> {
  * 2FA 动态口令验证器主入口
  */
 export default function GoogleAuthCommand() {
+  useLocale();
   const [accounts, setAccountsState] = useState<AuthAccount[]>([]);
   const [load, setLoadState] = useState<LoadState>({ status: "loading" });
   const [reloadSeq, setReloadSeq] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
   const { push } = useNavigation();
   // 表单回调与异步流程读取最新值，不依赖打开表单那一刻捕获的旧闭包
   const accountsRef = useRef<AuthAccount[]>([]);
@@ -315,19 +318,19 @@ export default function GoogleAuthCommand() {
       } catch (err) {
         if (cancelled) return;
         setAccounts([]);
-        setLoad({ status: "error", message: `${reason}；读取旧数据也失败：${errorText(err)}` });
-        await showToast(Toast.Style.Failure, "读取已保存的账号失败", "为避免覆盖原有数据，已暂停添加与删除");
+        setLoad({ status: "error", message: t("errLoadLegacyToo", { reason, error: errorText(err) }) });
+        await showToast(Toast.Style.Failure, t("toastReadFailed"), t("toastReadFailedDesc"));
         return;
       }
       if (cancelled) return;
       setAccounts(inspectStoredAccounts(raw).accounts);
       if (retryable) {
         setLoad({ status: "error", message: reason });
-        await showToast(Toast.Style.Failure, "读取已保存的账号失败", "为避免覆盖原有数据，已暂停添加与删除");
+        await showToast(Toast.Style.Failure, t("toastReadFailed"), t("toastReadFailedDesc"));
         return;
       }
       setLoad({ status: "readonly", reason });
-      await showToast(Toast.Style.Failure, "为保护密钥已暂停保存", reason);
+      await showToast(Toast.Style.Failure, t("toastReadonlyTitle"), reason);
     };
 
     (async () => {
@@ -337,7 +340,7 @@ export default function GoogleAuthCommand() {
         status = await SecureStorage.status();
       } catch (err) {
         if (cancelled) return;
-        await loadReadOnly(`无法确认系统加密存储状态：${errorText(err)}`, true);
+        await loadReadOnly(t("errCheckSecStatus", { error: errorText(err) }), true);
         return;
       }
       if (cancelled) return;
@@ -351,14 +354,14 @@ export default function GoogleAuthCommand() {
         migrated = await migrateAccounts();
       } catch (err) {
         if (cancelled) return;
-        await loadReadOnly(`读取加密存储失败：${errorText(err)}`, true);
+        await loadReadOnly(t("errReadSecFailed", { error: errorText(err) }), true);
         return;
       }
       const failedBackups = await migrateCorruptBackups();
       if (cancelled) return;
-      if (migrated.warning) await showToast(Toast.Style.Failure, "旧数据迁移未完成", migrated.warning);
+      if (migrated.warning) await showToast(Toast.Style.Failure, t("toastLegacyMigrationIncomplete"), migrated.warning);
       if (failedBackups > 0) {
-        await showToast(Toast.Style.Failure, "损坏数据的备份未能迁移到加密存储", "仍以明文保留，下次打开会重试");
+        await showToast(Toast.Style.Failure, t("toastBackupMigrationFailed"), t("toastBackupMigrationFailedDesc"));
       }
       if (cancelled) return;
 
@@ -380,15 +383,15 @@ export default function GoogleAuthCommand() {
       }
       if (cancelled) return;
       setAccounts(inspected.accounts);
-      const backupNote = backupKey ? `原始数据已备份为 ${backupKey}` : "原始数据未能备份，修改前会再次确认";
+      const backupNote = backupKey ? t("backupNoteSaved", { key: backupKey }) : t("backupNoteFailed");
       if (inspected.corrupt) {
         setLoad({ status: "damaged", corrupt: true, dropped: 0, backupKey });
-        await showToast(Toast.Style.Failure, "已保存的账号数据无法读取", backupNote);
+        await showToast(Toast.Style.Failure, t("toastCorruptAccounts"), backupNote);
       } else {
         // 部分条目损坏：备份成功后照常使用其余账号；备份失败则写入前需要确认
         allowDamagedSnapshot.current = Boolean(backupKey);
         setLoad(backupKey ? { status: "ready" } : { status: "damaged", corrupt: false, dropped: inspected.dropped });
-        await showToast(Toast.Style.Failure, `有 ${inspected.dropped} 条已保存的账号数据损坏，已跳过`, backupNote);
+        await showToast(Toast.Style.Failure, t("toastDroppedAccounts", { count: inspected.dropped }), backupNote);
       }
     })();
     return () => {
@@ -413,24 +416,24 @@ export default function GoogleAuthCommand() {
     const current = loadRef.current;
     if (current.status === "ready") return true;
     if (current.status === "loading") {
-      await showToast(Toast.Style.Failure, "正在读取已保存的账号，请稍候再试");
+      await showToast(Toast.Style.Failure, t("toastLoadingWait"));
       return false;
     }
     if (current.status === "error") {
-      await showToast(Toast.Style.Failure, "读取已保存的账号失败，暂不能修改", "请先重新读取，以免覆盖原有数据");
+      await showToast(Toast.Style.Failure, t("toastLoadErrorNoWrite"), t("toastLoadErrorNoWriteDesc"));
       return false;
     }
     if (current.status === "readonly") {
-      await showToast(Toast.Style.Failure, "为保护密钥已暂停保存", current.reason);
+      await showToast(Toast.Style.Failure, t("toastReadonlyTitle"), current.reason);
       return false;
     }
     const confirmed = await confirmAlert({
-      title: current.corrupt ? "替换无法读取的账号数据？" : "丢弃已损坏的账号条目？",
+      title: current.corrupt ? t("confirmReplaceCorruptTitle") : t("confirmDiscardDamagedTitle"),
       message: current.backupKey
-        ? `原始数据已备份为「${current.backupKey}」。继续后将用新的账号列表替换它。`
-        : "原始数据未能备份，继续后无法读取的部分将永久丢失。",
-      primaryAction: { title: "继续", style: "destructive" },
-      dismissAction: { title: "取消" }
+        ? t("confirmBackupSavedMsg", { key: current.backupKey })
+        : t("confirmBackupLostMsg"),
+      primaryAction: { title: t("confirmContinue"), style: "destructive" },
+      dismissAction: { title: t("confirmCancel") }
     });
     // 确认期间状态变了（例如用户触发了重新读取），以新状态为准，本次不写
     if (!confirmed || loadRef.current !== current) return false;
@@ -442,7 +445,7 @@ export default function GoogleAuthCommand() {
   // 先写入存储再更新界面：写入失败时界面保持原样，避免用户以为已保存
   const persist = async (mutate: (current: AuthAccount[]) => AuthAccount[]): Promise<boolean> => {
     if (loadRef.current.status !== "ready") {
-      await showToast(Toast.Style.Failure, "保存失败", "已保存的账号尚未成功读取，为避免覆盖已暂停写入");
+      await showToast(Toast.Style.Failure, t("toastSaveFailed"), t("toastSaveNotReadyDesc"));
       return false;
     }
     try {
@@ -450,7 +453,7 @@ export default function GoogleAuthCommand() {
         const inspected = inspectStoredAccounts(raw);
         if ((inspected.corrupt || inspected.dropped > 0) &&
             !(allowDamagedSnapshot.current && JSON.stringify(raw) === damagedSnapshot.current)) {
-          throw new Error("已保存的账号已变化或损坏，请重新读取后再操作");
+          throw new Error(t("errAccountsChangedOrDamaged"));
         }
         return mutate(inspected.accounts);
       });
@@ -459,7 +462,7 @@ export default function GoogleAuthCommand() {
       setAccounts(next);
       return true;
     } catch (err) {
-      await showToast(Toast.Style.Failure, "保存失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastSaveFailed"), errorText(err));
       return false;
     }
   };
@@ -482,11 +485,11 @@ export default function GoogleAuthCommand() {
     try {
       text = String((await Clipboard.readText()) ?? "").trim();
     } catch (err) {
-      await showToast(Toast.Style.Failure, "读取剪贴板失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastReadClipboardFailed"), errorText(err));
       return;
     }
     if (!text.toLowerCase().startsWith("otpauth://")) {
-      await showToast(Toast.Style.Failure, "剪贴板里没有 otpauth:// 链接", "请先复制二维码里的 otpauth:// 链接，或改用手动添加");
+      await showToast(Toast.Style.Failure, t("toastNoOtpauthInClipboard"), t("toastNoOtpauthDesc"));
       return;
     }
     let account: AuthAccount;
@@ -501,23 +504,23 @@ export default function GoogleAuthCommand() {
         algorithm: parsed.algorithm
       });
     } catch (err) {
-      await showToast(Toast.Style.Failure, "无法解析剪贴板里的链接", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastParseClipboardFailed"), errorText(err));
       return;
     }
     if (await persist(current => [account, ...current])) {
-      await showToast(Toast.Style.Success, `已添加账号 ${account.name}`);
+      await showToast(Toast.Style.Success, t("toastAccountAddedSimple", { name: account.name }));
     }
   };
 
   const addAction = () =>
     Action({
-      title: "添加 2FA 账号",
+      title: t("addAccountAction"),
       icon: Icon.Plus,
       onAction: handleOpenAddForm
     });
   const importAction = () =>
     Action({
-      title: "从剪贴板导入 otpauth 链接",
+      title: t("importClipboardAction"),
       icon: Icon.CopyClipboard,
       onAction: handleImportFromClipboard
     });
@@ -525,14 +528,14 @@ export default function GoogleAuthCommand() {
   const handleDeleteAccount = async (id: string, name: string) => {
     if (!(await ensureWritable())) return;
     const confirmed = await confirmAlert({
-      title: `删除账号「${name}」？`,
-      message: "删除后密钥无法找回。请先确认该账号已在其他验证器中备份，或已关闭两步验证。",
-      primaryAction: { title: "删除", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("confirmDeleteTitle", { name }),
+      message: t("confirmDeleteMsg"),
+      primaryAction: { title: t("confirmDeleteAction"), style: "destructive" },
+      dismissAction: { title: t("confirmCancel") }
     });
     if (!confirmed) return;
     if (await persist(current => current.filter((acc) => acc.id !== id))) {
-      await showToast(Toast.Style.Success, `已删除账号 ${name}`);
+      await showToast(Toast.Style.Success, t("toastDeletedAccount", { name }));
     }
   };
 
@@ -542,39 +545,43 @@ export default function GoogleAuthCommand() {
     try {
       code = generateTOTP(account.secret, { period: account.period, digits: account.digits, algorithm: account.algorithm });
     } catch (err) {
-      await showToast(Toast.Style.Failure, "无法生成口令", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastGenCodeFailed"), errorText(err));
       return;
     }
     try {
       await Clipboard.copy(code);
     } catch (err) {
-      await showToast(Toast.Style.Failure, "复制失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastCopyFailed"), errorText(err));
       return;
     }
-    await showToast(Toast.Style.Success, `已复制 ${account.name} 的动态口令`, `${getRemainingSeconds(account.period)} 秒后刷新`);
+    await showToast(
+      Toast.Style.Success,
+      t("toastCopiedCode", { name: account.name }),
+      t("toastRefreshInSec", { sec: getRemainingSeconds(account.period) })
+    );
   };
 
   // 密钥一旦进入剪贴板，可能被剪贴板历史或其他程序记录，复制前确认
   const handleCopySecret = async (account: AuthAccount) => {
     const confirmed = await confirmAlert({
-      title: `复制「${account.name}」的密钥？`,
-      message: "拿到密钥就能生成这个账号的全部口令。密钥会以明文进入剪贴板，可能被剪贴板历史记录，用完请清空剪贴板。",
-      primaryAction: { title: "复制密钥" },
-      dismissAction: { title: "取消" }
+      title: t("confirmCopySecretTitle", { name: account.name }),
+      message: t("confirmCopySecretMsg"),
+      primaryAction: { title: t("confirmCopySecretAction") },
+      dismissAction: { title: t("confirmCancel") }
     });
     if (!confirmed) return;
     try {
       await Clipboard.copy(account.secret);
     } catch (err) {
-      await showToast(Toast.Style.Failure, "复制失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("toastCopyFailed"), errorText(err));
       return;
     }
-    await showToast(Toast.Style.Success, "已复制密钥", "用完请清空剪贴板");
+    await showToast(Toast.Style.Success, t("toastCopiedSecret"), t("toastClearClipboardHint"));
   };
 
   const reloadAction = () =>
     Action({
-      title: "重新读取已保存的账号",
+      title: t("reloadAction"),
       icon: Icon.Repeat,
       onAction: handleReload
     });
@@ -584,39 +591,41 @@ export default function GoogleAuthCommand() {
     if (load.status === "loading") {
       return List.Item({
         id: "empty-auth",
-        title: "正在读取已保存的账号…",
-        subtitle: "首次使用系统加密存储可能较慢，如出现系统授权弹窗请允许",
+        title: t("emptyLoadingTitle"),
+        subtitle: t("emptyLoadingSubtitle"),
         icon: Icon.Document
       });
     }
     if (load.status === "error") {
       return List.Item({
         id: "empty-auth",
-        title: "读取已保存的账号失败",
-        subtitle: `为避免覆盖原有数据，已暂停添加与删除：${load.message}`,
+        title: t("emptyErrorTitle"),
+        subtitle: t("emptyErrorSubtitle", { message: load.message }),
         icon: Icon.Document,
-        actions: ActionPanel({ title: "操作" }, [reloadAction()])
+        actions: ActionPanel({ title: t("actionsPanelTitle") }, [reloadAction()])
       });
     }
     if (load.status === "readonly" && accounts.length === 0) {
       return List.Item({
         id: "empty-auth",
-        title: "系统加密存储不可用，暂不能添加账号",
+        title: t("emptyReadonlyTitle"),
         subtitle: load.reason,
         icon: Icon.Document,
-        actions: ActionPanel({ title: "操作" }, [reloadAction()])
+        actions: ActionPanel({ title: t("actionsPanelTitle") }, [reloadAction()])
       });
     }
     if (load.status === "damaged" && accounts.length === 0) {
       return List.Item({
         id: "empty-auth",
-        title: "已保存的账号数据无法读取",
-        subtitle: load.backupKey ? `原始数据已备份为 ${load.backupKey}，未做任何覆盖` : "原始数据未能备份，未做任何覆盖",
+        title: t("emptyDamagedTitle"),
+        subtitle: load.backupKey
+          ? t("emptyDamagedSubtitleSaved", { key: load.backupKey })
+          : t("emptyDamagedSubtitleUnsaved"),
         icon: Icon.Document,
-        actions: ActionPanel({ title: "操作" }, [
+        actions: ActionPanel({ title: t("actionsPanelTitle") }, [
           reloadAction(),
           Action({
-            title: "放弃损坏数据并添加账号",
+            title: t("discardAndAddAction"),
             icon: Icon.Plus,
             onAction: handleOpenAddForm
           })
@@ -625,33 +634,36 @@ export default function GoogleAuthCommand() {
     }
     return List.Item({
       id: "empty-auth",
-      title: accounts.length === 0 ? "还没有 2FA 账号" : "未找到匹配的 2FA 账号",
-      subtitle: accounts.length === 0 ? "按回车添加第一个账号，或从剪贴板导入 otpauth:// 链接" : "换个关键词，或按回车添加新账号",
+      title: accounts.length === 0 ? t("emptyNoAccountsTitle") : t("emptyNoMatchTitle"),
+      subtitle: accounts.length === 0 ? t("emptyNoAccountsSub") : t("emptyNoMatchSub"),
       icon: Icon.Document,
-      actions: ActionPanel({ title: "操作" }, [addAction(), importAction()])
+      actions: ActionPanel({ title: t("actionsPanelTitle") }, [addAction(), importAction()])
     });
   };
 
   return List(
     {
-      navigationTitle: "2FA 动态口令验证器",
-      searchBarPlaceholder: "搜索 2FA 账号名称或服务提供商...",
+      navigationTitle: t("navTitle"),
+      searchBarPlaceholder: t("searchPlaceholder"),
       searchText: searchQuery,
       onSearchTextChange: (val) => setSearchQuery(val),
-      actions: ActionPanel({ title: "全局操作" }, [
+      actions: ActionPanel({ title: t("globalActionsTitle") }, [
         addAction(),
         importAction(),
         Action({
-          title: "手动刷新口令",
+          title: t("refreshTokensAction"),
           icon: Icon.Repeat,
-          onAction: () => setTick((t) => t + 1)
+          onAction: () => setTick((prev) => prev + 1)
         })
       ])
     },
     [
       List.Section(
         {
-          title: load.status === "readonly" ? `已配置账号 (${filtered.length}) · 只读：${load.reason}` : `已配置账号 (${filtered.length})`
+          title:
+            load.status === "readonly"
+              ? t("sectionTitleReadonly", { count: filtered.length, reason: load.reason })
+              : t("sectionTitleNormal", { count: filtered.length })
         },
         filtered.length > 0
           ? filtered.map((account) => {
@@ -665,9 +677,9 @@ export default function GoogleAuthCommand() {
                   algorithm: account.algorithm
                 });
               } catch (err) {
-                tokenError = errorText(err) || "密钥无效";
+                tokenError = errorText(err) || t("invalidSecretLabel");
               }
-              const displayToken = tokenError ? "密钥无效" : formatToken(token);
+              const displayToken = tokenError ? t("invalidSecretLabel") : formatToken(token);
 
               return List.Item({
                 id: account.id,
@@ -676,35 +688,35 @@ export default function GoogleAuthCommand() {
                 icon: Icon.Shield,
                 accessories: [
                   {
-                    text: `${remaining} 秒后刷新`
+                    text: t("refreshInSecAccessory", { sec: remaining })
                   },
                   {
-                    text: `${account.algorithm} • ${account.digits}位`
+                    text: t("algoDigitsAccessory", { algo: account.algorithm, digits: account.digits })
                   }
                 ],
-                actions: ActionPanel({ title: `${account.name} 动作` }, [
+                actions: ActionPanel({ title: t("itemActionsTitle", { name: account.name }) }, [
                   // 密钥无效时没有口令可复制，不提供复制动作，避免复制空内容还提示成功
                   ...(tokenError
                     ? []
                     : [
                         Action({
-                          title: "复制动态口令",
+                          title: t("copyTokenAction"),
                           icon: Icon.CopyClipboard,
                           onAction: () => handleCopyCode(account)
                         })
                       ]),
                   Action({
-                    title: "添加新账号",
+                    title: t("addNewAccountAction"),
                     icon: Icon.Plus,
                     onAction: handleOpenAddForm
                   }),
                   Action({
-                    title: "复制 Base32 密钥",
+                    title: t("copySecretAction"),
                     icon: Icon.Key,
                     onAction: () => handleCopySecret(account)
                   }),
                   Action({
-                    title: "删除该账号",
+                    title: t("deleteAccountAction"),
                     icon: Icon.Trash,
                     onAction: () => handleDeleteAccount(account.id, account.name)
                   })

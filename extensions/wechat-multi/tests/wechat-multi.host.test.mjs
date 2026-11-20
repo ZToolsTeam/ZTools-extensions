@@ -2,12 +2,15 @@
 // 覆盖：只显示客户端返回的进程；读取 / 启动失败如实报错；客户端成功但没有新进程时不报成功；不在客户端里运行时不显示示例数据
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
   HOST_REQUIRED_MESSAGE,
   fetchWeChatMultiSnapshot,
   launchWechatAgain,
   filterWechatInstances
-} from '../dist/logic.js'
+} = await import('../dist/logic.js')
 
 const statusHost = (status) => ({
   dllplugin_call: async ({ plugin, func }) => {

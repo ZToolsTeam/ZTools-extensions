@@ -6,6 +6,7 @@ type DynamicBridge = ReturnType<typeof JSON.parse>
  */
 
 import { terminateProcess as hostTerminateProcess } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   callHostTransport,
   isRealElectronHost,
@@ -14,7 +15,10 @@ import {
 
 export { formatBytes } from './native-ipc.js'
 
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export const NOT_IN_CLIENT_MESSAGE = t('notInClientMessage')
+export function getNotInClientMessage(): string {
+  return t('notInClientMessage')
+}
 
 export type RemoteIpScope = 'public' | 'lan' | 'loopback' | 'listening'
 
@@ -59,7 +63,10 @@ export interface FlowGuardSnapshot {
 }
 
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('^(?:System|svchost\\.exe|lsass\\.exe|dns\\.exe|csrss\\.exe|services\\.exe)$', 'i')
-export const FORBIDDEN_REASON = '系统核心网络服务进程受保护，不能结束'
+export const FORBIDDEN_REASON = t('forbiddenReason')
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
 
 /**
  * 识别远端地址所属网络域（公网外联 / 局域网 / 本机回环 / 监听）
@@ -159,7 +166,7 @@ async function loadProcessInfo(hostOverride?: DynamicBridge): Promise<Map<number
  */
 export async function fetchFlowGuardSnapshot(hostOverride?: DynamicBridge): Promise<FlowGuardSnapshot> {
   if (!hostOverride && !isRealElectronHost()) {
-    return emptySnapshot(NOT_IN_CLIENT_MESSAGE)
+    return emptySnapshot(getNotInClientMessage())
   }
 
   const [portsRes, procMap] = await Promise.all([
@@ -168,7 +175,7 @@ export async function fetchFlowGuardSnapshot(hostOverride?: DynamicBridge): Prom
   ])
 
   if (!portsRes.ok || !Array.isArray(portsRes.data)) {
-    return emptySnapshot(`读取连接列表失败：${portsRes.ok ? '客户端返回的数据无效' : portsRes.error || '未知错误'}`)
+    return emptySnapshot(t('errLoadPortsFailed', { detail: portsRes.ok ? t('errInvalidHostData') : portsRes.error || t('errUnknown') }))
   }
 
   const rawPorts = portsRes.data
@@ -263,19 +270,19 @@ export async function fetchFlowGuardSnapshot(hostOverride?: DynamicBridge): Prom
 function describeTerminateFailure(code: string, rawMessage: string): string {
   switch (code) {
     case 'PROCESS_PROTECTED':
-      return rawMessage || '该进程受保护，不能结束'
+      return rawMessage || t('errProcessProtected')
     case 'PROCESS_ACCESS_DENIED':
-      return '没有权限结束该进程：它可能属于系统或其他用户，需要以管理员身份运行 ZTools'
+      return t('errProcessAccessDenied')
     case 'PROCESS_IDENTITY_MISMATCH':
-      return '该 PID 已不是列表里的进程（可能已退出并被复用），为避免误结束未执行，请刷新后重试'
+      return t('errProcessIdentityMismatch')
     case 'PROCESS_TERMINATE_TIMEOUT':
-      return '进程没有在限定时间内退出'
+      return t('errProcessTerminateTimeout')
     case 'PLUGIN_PERMISSION_REQUIRED':
-      return '插件没有获得结束进程的权限，请更新插件'
+      return t('errPluginPermRequired')
     case 'PLUGIN_IDENTITY_REQUIRED':
-      return '无法确认插件身份，请关闭后重新打开插件再试'
+      return t('errPluginIdentityRequired')
     default:
-      return rawMessage || '结束进程失败'
+      return rawMessage || t('errTerminateFailed')
   }
 }
 
@@ -288,11 +295,11 @@ async function legacyTerminate(pid: number, hostOverride?: DynamicBridge): Promi
   )
   if (!res.ok) {
     const notInClient = res.error === 'NO_WINDOW_ENV' || String(res.error || '').startsWith('METHOD_NOT_AVAILABLE')
-    return { ok: false, error: notInClient ? NOT_IN_CLIENT_MESSAGE : res.error || '调用客户端失败' }
+    return { ok: false, error: notInClient ? getNotInClientMessage() : res.error || t('errCallClientFailed') }
   }
   if (res.data?.error) return { ok: false, error: String(res.data.error) }
   if (res.data?.terminated === true) return { ok: true }
-  return { ok: false, error: '客户端没有确认进程已结束，请刷新列表查看' }
+  return { ok: false, error: t('errTerminateUnconfirmed') }
 }
 
 /**
@@ -311,7 +318,7 @@ export async function terminateNetworkProcess(
     FORBIDDEN_TARGET_PATTERN.test(processName) ||
     FORBIDDEN_TARGET_PATTERN.test(`${cleanName}.exe`)
   ) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: getForbiddenReason() }
   }
 
   if (typeof hostTerminateProcess === 'function') {

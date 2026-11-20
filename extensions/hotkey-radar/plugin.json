@@ -1,15 +1,15 @@
 {
   "id": "hotkey-radar",
   "name": "热键侦测",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "检测全局快捷键注册情况，离线查询系统与常用软件快捷键；Mac 区分 ⌘ 与 ⌃，不推测占用进程",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system",
     "clipboard"
@@ -54,5 +54,39 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Hotkey Radar & Cheatsheet",
+      "description": "Detect registered global hotkeys and browse offline shortcut cheatsheets for OS and popular apps (distinguishes Command and Control on macOS without guessing owning processes).",
+      "keywords": [
+        "hotkey",
+        "shortcut",
+        "conflict",
+        "cheatsheet",
+        "keybindings"
+      ],
+      "features": {
+        "hotkey-conflict-radar": {
+          "explain": "Detect registered global hotkeys to troubleshoot shortcut conflicts",
+          "cmds": [
+            "hotkey",
+            "hotkey conflict",
+            "shortcut conflict",
+            "hotkey radar"
+          ]
+        },
+        "hotkey-cheatsheet": {
+          "explain": "Browse offline shortcut cheatsheets for Windows/macOS, VS Code, Excel, Photoshop, and browsers",
+          "cmds": [
+            "cheatsheet",
+            "shortcuts",
+            "vscode shortcuts",
+            "excel shortcuts"
+          ]
+        }
+      }
+    }
+  }
 }

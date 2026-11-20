@@ -255,3 +255,27 @@ test('[边界] 预览 Markdown：含空白或反引号的值退回围栏代码�
   assert.equal(codeBlockMarkdown('x\n`````\ny').split('\n')[0], '``````')
   assert.equal(parseFence(codeBlockMarkdown(undefined)), '')
 })
+
+test('文件粘贴哈希：Ctrl+V 粘贴文件时读取真实字节计算哈希，绝不将路径字符串当作文本内容计算', async () => {
+  const filePath = '/Users/me/release-package.bin'
+  const rawBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x42])
+  const expectedSha256 = crypto.createHash('sha256').update(rawBytes).digest('hex')
+  const expectedMd5 = crypto.createHash('md5').update(rawBytes).digest('hex')
+  const pathTextSha256 = crypto.createHash('sha256').update(filePath, 'utf8').digest('hex')
+
+  host.ipc.filesystem_read_file = async (params) => {
+    assert.equal(params.path, filePath)
+    assert.equal(params.encoding, 'base64')
+    return { content: rawBytes.toString('base64') }
+  }
+
+  const view = await mount(CryptoToolCommand)
+  await view.pasteFiles([filePath])
+  const shaItem = view.item('file-sha256')
+  assert.equal(shaItem.props.title, expectedSha256)
+  assert.notEqual(shaItem.props.title, pathTextSha256)
+  assert.match(shaItem.props.subtitle, /release-package\.bin/)
+  assert.match(shaItem.props.detail.props.markdown, /\/Users\/me\/release-package\.bin/)
+  assert.equal(view.item('file-md5-lower').props.title, expectedMd5)
+  view.unmount()
+})

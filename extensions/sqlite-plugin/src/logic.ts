@@ -1,40 +1,72 @@
 /**
- * SQLite 查看器：在 %APPDATA% 与 %LOCALAPPDATA% 下查找 SQLite 数据库文件，只读查看表结构与记录，
+ * SQLite 查看器：打开用户选择或拖入的 SQLite 数据库文件，只读查看表结构与记录，
  * 把勾选的记录导出为 JSON / CSV / SQL INSERT 文本复制到剪贴板。
  *
+ * - 不在启动时扫描本机目录：数据库候选列表完全由用户导入（选择文件、选择文件夹、拖入或粘贴）维护
  * - 只读：不执行任何写入或整理（VACUUM 等）语句，不修改数据库文件
  * - 表与列信息、记录都来自客户端读取的数据库文件，读不到时如实报错，不显示示例数据
  * - 每张表最多读取前 PREVIEW_LIMIT 行
  */
 
+import { t } from "./i18n.js";
 import {
-  formatBytes,
-  getRealSystemPath,
+  formatBytes as formatByteCount,
   callHostTransport,
   isRealElectronHost,
-  scanRealDirectoryTree,
   showRealItemInFolder,
   type NativeInvocationResult
 } from "./native-ipc.js";
+import {
+  pathKey,
+  type FileImportRules,
+  type FileImportTransport,
+  type ImportedFile
+} from "./file-import.js";
 
-export { formatBytes };
 export type { NativeInvocationResult };
 
 type DynamicBridge = ReturnType<typeof JSON.parse>;
 
 export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
-export const NO_DATABASE_MESSAGE = "没有在 %APPDATA% 与 %LOCALAPPDATA% 中找到 SQLite 数据库文件";
+export const getNotInClientMessage = (): string => t("notInClient");
 /** 每张表最多读取的行数（与客户端预览第一张表的行数一致） */
 export const PREVIEW_LIMIT = 50;
-/** 下拉框里最多列出的数据库文件数 */
-export const MAX_DATABASES = 12;
-const DB_EXT = /\.(?:db|sqlite|sqlite3)$/i;
+/** 可导入的数据库扩展名（与客户端 SqlitePlugin 能打开的格式一致） */
+export const SQLITE_EXTENSIONS = [".db", ".sqlite", ".sqlite3", ".db3"] as const;
+/** 导入提示里的格式说明 */
+export const SQLITE_SUPPORTED_TEXT = ".db / .sqlite / .sqlite3 / .db3";
+export const FORBIDDEN_SQLITE_PATH_PATTERN = new RegExp("\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./", "i");
+
+/** SQLite 导入规则：递归 5 层、最多 500 个文件，跳过系统受保护目录 */
+export const SQLITE_IMPORT_RULES: FileImportRules = {
+  extensions: SQLITE_EXTENSIONS,
+  forbiddenPath: FORBIDDEN_SQLITE_PATH_PATTERN
+};
+
+export function createSqliteImportTransport(hostBridge?: DynamicBridge): FileImportTransport {
+  return (method, params) => callHostTransport(method, params, hostBridge);
+}
+
+export function toSqliteDatabaseFile(file: ImportedFile): SqliteDatabaseFile {
+  return {
+    id: `db:${pathKey(file.path)}`,
+    name: file.name,
+    path: file.path,
+    sizeBytes: file.sizeBytes
+  };
+}
 
 export interface SqliteDatabaseFile {
   id: string;
   name: string;
   path: string;
-  sizeBytes: number;
+  /** 字节数；宿主没有返回时为 null（显示“大小未识别”，不填默认值） */
+  sizeBytes: number | null;
+}
+
+/** 显示文件大小；未知时如实显示“大小未识别” */
+export function formatBytes(bytes: number | null | undefined): string {
+  return typeof bytes === "number" && Number.isFinite(bytes) && bytes >= 0 ? formatByteCount(bytes) : t("sizeUnknown");
 }
 
 export interface SqliteColumnMeta {
@@ -135,7 +167,7 @@ function mapColumns(raw: unknown): SqliteColumnMeta[] {
 }
 
 function summarizeColumns(columns: SqliteColumnMeta[]): string {
-  if (columns.length === 0) return "未读取到列信息";
+  if (columns.length === 0) return t("noColumnInfo");
   return columns.map((c) => `${c.name}${c.type ? ` ${c.type}` : ""}${c.pk ? " PK" : ""}`).join(", ");
 }
 
@@ -152,7 +184,7 @@ export function mapRowRecords(tableName: string, rawRows: unknown): SqliteRowRec
               .slice(0, 3)
               .map(([k, v]) => `${k}=${cellText(v).slice(0, 40)}`)
               .join(" · ")
-          : "（空行）";
+          : t("emptyRowTitle");
       const preview = JSON.stringify(data, (_k, v) => jsonSafe(v)) || "{}";
       return {
         id: `${tableName}#${idx}`,
@@ -169,71 +201,41 @@ function hasClientHost(hostBridge?: DynamicBridge): boolean {
   return Boolean(hostBridge) || isRealElectronHost();
 }
 
-async function findDatabaseFiles(
-  hostBridge?: DynamicBridge
-): Promise<{ databases: SqliteDatabaseFile[]; error?: string }> {
-  const [appData, home] = await Promise.all([
-    getRealSystemPath("appData", hostBridge),
-    getRealSystemPath("home", hostBridge)
-  ]);
-  const roots = [appData, home ? `${home.replace(/[\\/]+$/, "")}\\AppData\\Local` : ""].filter(Boolean);
-  if (roots.length === 0) {
-    return { databases: [], error: "无法获取 %APPDATA% 路径，没有查找数据库文件" };
-  }
-  const scans = await Promise.all(
-    roots.map((root) => scanRealDirectoryTree(root, { maxFiles: 20, filterExt: DB_EXT }, hostBridge))
-  );
-  const seen = new Set<string>();
-  const databases: SqliteDatabaseFile[] = [];
-  for (const entry of scans.flatMap((s) => s.files)) {
-    if (!entry || entry.isDirectory || !(entry.sizeBytes > 0) || !DB_EXT.test(entry.name)) continue;
-    const key = entry.path.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    databases.push({
-      id: `db_${databases.length}`,
-      name: entry.name,
-      path: entry.path,
-      sizeBytes: entry.sizeBytes
-    });
-    if (databases.length >= MAX_DATABASES) break;
-  }
-  return { databases };
-}
-
 export async function fetchSqliteWorkspace(
   activeDbPath?: string,
   hostBridge?: DynamicBridge
 ): Promise<SqliteWorkspaceSnapshot> {
   if (!hasClientHost(hostBridge)) {
-    return createEmptySqliteWorkspace(NOT_IN_CLIENT_MESSAGE);
+    return createEmptySqliteWorkspace(getNotInClientMessage());
   }
-  let databases: SqliteDatabaseFile[] = [];
+  const targetDbPath = (activeDbPath || "").trim();
+  if (!targetDbPath) {
+    return createEmptySqliteWorkspace();
+  }
   try {
-    const found = await findDatabaseFiles(hostBridge);
-    databases = found.databases;
-    const targetDbPath = (activeDbPath || "").trim() || databases[0]?.path || "";
-    if (!targetDbPath) {
-      return { ...createEmptySqliteWorkspace(found.error || NO_DATABASE_MESSAGE), databases };
-    }
-
     const inspectRes = await callHostTransport<DynamicBridge>(
       "dllplugin_call",
       { plugin: "SqlitePlugin", func: "inspectWorkspace", params: { dbPath: targetDbPath } },
       hostBridge
     );
     if (!inspectRes.ok || !inspectRes.data || !Array.isArray(inspectRes.data.tables)) {
-      const reason = inspectRes.error || "客户端没有返回表结构";
+      const reason = inspectRes.error || t("hostNoTables");
       return {
-        ...createEmptySqliteWorkspace(`读取 ${baseName(targetDbPath)} 失败：${reason}`),
-        databases,
+        ...createEmptySqliteWorkspace(t("readDbFailed", { name: baseName(targetDbPath), reason })),
         activeDbPath: targetDbPath
       };
     }
 
-    if (!databases.some(db => db.path === targetDbPath)) {
-      databases.push({ id: "selected", name: baseName(targetDbPath), path: targetDbPath, sizeBytes: Math.max(0, Number(inspectRes.data.sizeBytes) || 0) });
-    }
+    const rawSize = Number(inspectRes.data.sizeBytes);
+    const sizeBytes =
+      typeof inspectRes.data.sizeBytes === "number" && Number.isFinite(rawSize) && rawSize >= 0 ? rawSize : null;
+    const dbItem: SqliteDatabaseFile = {
+      id: `db:${pathKey(targetDbPath)}`,
+      name: baseName(targetDbPath),
+      path: targetDbPath,
+      sizeBytes
+    };
+
     const tables: SqliteTableMeta[] = (inspectRes.data.tables as DynamicBridge[])
       .map((t) => {
         const tableName = String(t?.name ?? t?.tableName ?? "");
@@ -253,7 +255,7 @@ export async function fetchSqliteWorkspace(
     const rows = rowsTableName ? mapRowRecords(rowsTableName, inspectRes.data.rows) : [];
 
     return {
-      databases,
+      databases: [dbItem],
       activeDbPath: targetDbPath,
       tables,
       rowsTableName,
@@ -261,7 +263,10 @@ export async function fetchSqliteWorkspace(
       updatedAt: new Date().toLocaleTimeString()
     };
   } catch (err) {
-    return { ...createEmptySqliteWorkspace(`读取 SQLite 数据库失败：${errorText(err)}`), databases };
+    return {
+      ...createEmptySqliteWorkspace(t("readSqliteFailed", { reason: errorText(err) })),
+      activeDbPath: targetDbPath
+    };
   }
 }
 
@@ -272,7 +277,7 @@ export async function fetchTableRows(
   hostBridge?: DynamicBridge
 ): Promise<SqliteRowsResult> {
   if (!dbPath || !tableName) {
-    return { ok: false, rows: [], error: "没有选择数据库或数据表" };
+    return { ok: false, rows: [], error: t("noDbOrTableSelected") };
   }
   const res = await callHostTransport<DynamicBridge>(
     "dllplugin_call",
@@ -280,7 +285,7 @@ export async function fetchTableRows(
     hostBridge
   );
   if (!res.ok || !res.data || !Array.isArray(res.data.rows)) {
-    return { ok: false, rows: [], error: res.error || "客户端没有返回记录" };
+    return { ok: false, rows: [], error: res.error || t("hostNoRows") };
   }
   return { ok: true, rows: mapRowRecords(tableName, res.data.rows) };
 }
@@ -358,19 +363,19 @@ export async function exportTableRecords(
   table?: SqliteTableMeta
 ): Promise<{ ok: boolean; exportedText: string; message: string }> {
   if (!records || records.length === 0) {
-    return { ok: false, exportedText: "", message: "当前没有可导出的记录" };
+    return { ok: false, exportedText: "", message: t("noExportableRows") };
   }
   const exportedText = formatExportText(records, format, table);
   const label = format === "sql_insert" ? "SQL INSERT" : format.toUpperCase();
   try {
     await copy(exportedText);
   } catch (err) {
-    return { ok: false, exportedText, message: `复制到剪贴板失败：${errorText(err)}` };
+    return { ok: false, exportedText, message: t("copyFailed", { reason: errorText(err) }) };
   }
   return {
     ok: true,
     exportedText,
-    message: `已将 ${records.length} 行导出为 ${label} 并复制到剪贴板`
+    message: t("exportedRowsMsg", { count: records.length, format: label })
   };
 }
 

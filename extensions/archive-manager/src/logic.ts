@@ -7,15 +7,24 @@
  */
 
 import {
-  formatBytes,
-  getRealSystemPath,
+  callHostTransport,
+  formatBytes as formatByteCount,
   invokeDllPluginCapability,
-  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
+import {
+  pathKey,
+  type FileImportRules,
+  type FileImportTransport,
+  type ImportedFile
+} from './file-import.js'
+import { t } from './i18n.js'
 
-export { formatBytes } from './native-ipc.js'
+/** 显示文件大小；宿主未返回时如实显示“大小未识别” */
+export function formatBytes(bytes: number | null | undefined): string {
+  return typeof bytes === 'number' && Number.isFinite(bytes) && bytes >= 0 ? formatByteCount(bytes) : t('sizeUnknown')
+}
 
 export interface ArchiveCandidateItem {
   id: string
@@ -23,8 +32,9 @@ export interface ArchiveCandidateItem {
   path: string
   parentDir: string
   extension: string
-  sizeBytes: number
-  mtime: number
+  /** 字节数；宿主没有返回时为 null（界面显示“大小未识别”） */
+  sizeBytes: number | null
+  mtime: number | null
 }
 
 export interface ArchiveEntryItem {
@@ -71,18 +81,41 @@ export interface NativeInvocationResult {
 }
 
 export const DLL_PLUGIN_NAME = 'ArchiveManagerPlugin'
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export const NOT_IN_CLIENT_MESSAGE = t('notInClient')
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./', 'i')
-export const FORBIDDEN_REASON = '归档提取目标路径不可指向系统受保护目录或包含路径穿越 (Zip Slip)'
+export const FORBIDDEN_REASON = t('forbiddenReason')
 
-export const ARCHIVE_CATEGORY_GROUPS: Array<{ id: string; name: string }> = [
-  { id: 'ALL', name: '全部包内文件' },
-  { id: '办公文档', name: '办公文档 (.pdf/.docx/.xlsx)' },
-  { id: '图片与媒体', name: '图片与媒体 (.png/.jpg/.mp4)' },
-  { id: '源码与配置', name: '源码与配置 (.ts/.json/.sql)' },
-  { id: '可执行程序', name: '可执行程序 (.exe/.msi)' },
-  { id: '其他文件', name: '其他文件' }
-]
+export function getArchiveCategoryGroups(): Array<{ id: string; name: string }> {
+  return [
+    { id: 'ALL', name: t('catAll') },
+    { id: '办公文档', name: t('catDocs') },
+    { id: '图片与媒体', name: t('catMedia') },
+    { id: '源码与配置', name: t('catCode') },
+    { id: '可执行程序', name: t('catExec') },
+    { id: '其他文件', name: t('catOther') }
+  ]
+}
+
+export function getCategoryLabel(category: string): string {
+  switch (category) {
+    case '文件夹':
+      return t('catLabelFolder')
+    case '办公文档':
+      return t('catLabelDocs')
+    case '图片与媒体':
+      return t('catLabelMedia')
+    case '源码与配置':
+      return t('catLabelCode')
+    case '可执行程序':
+      return t('catLabelExec')
+    case '其他文件':
+      return t('catLabelOther')
+    default:
+      return category
+  }
+}
+
+export const ARCHIVE_CATEGORY_GROUPS: Array<{ id: string; name: string }> = getArchiveCategoryGroups()
 
 /**
  * 校验包内相对路径是否存在 Zip Slip (`../` 或绝对路径) 越界风险
@@ -141,23 +174,23 @@ export function validateInvocationPayload(
   params: unknown
 ): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errInvalidMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errInvalidMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errInvalidParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if ((key === 'targetDir' || key === 'outputDir' || key === 'outputPath') && FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: t('errSecurityIntercepted', { reason: t('forbiddenReason') }) }
       }
     }
   }
@@ -171,7 +204,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errValidationFailed'))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -184,49 +217,29 @@ export async function invokeNativeCapability(
   }
 }
 
-const ARCHIVE_EXT_REGEX = /\.(?:zip)$/i
+export const ARCHIVE_EXTENSIONS = ['.zip'] as const
+export const ARCHIVE_SUPPORTED_TEXT = '.zip'
 
-export async function fetchRealArchiveCandidates(hostOverride?: unknown): Promise<ArchiveCandidateItem[] & { error?: string }> {
-  const scanner = createDirectoryScanner(hostOverride)
-  const [downloadsDir, desktopDir, documentsDir] = await Promise.all([
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride),
-    getRealSystemPath('documents', hostOverride)
-  ])
+/** ZIP 导入规则：递归最多 5 层、500 个文件，跳过系统核心与路径穿越目录 */
+export const ARCHIVE_IMPORT_RULES: FileImportRules = {
+  extensions: ARCHIVE_EXTENSIONS,
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+}
 
-  const scannedDirs = [downloadsDir, desktopDir, documentsDir].filter(Boolean)
-  const candidates: ArchiveCandidateItem[] = []
-  const seen = new Set<string>()
+export function createArchiveImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
 
-  for (const dir of scannedDirs) {
-    const scan = await scanner.scan(dir, {
-      maxDepth: 2,
-      maxFiles: 200,
-      collectTopN: 40,
-      filterExt: ARCHIVE_EXT_REGEX,
-      hostOverride
-    })
-    for (const f of scan.files) {
-      if (f.sizeBytes <= 0) continue
-      if (!ARCHIVE_EXT_REGEX.test(f.name)) continue
-      const norm = f.path.toLowerCase()
-      if (seen.has(norm)) continue
-      seen.add(norm)
-      const dot = f.name.lastIndexOf('.')
-      candidates.push({
-        id: `arc-${candidates.length}-${f.path}`,
-        name: f.name,
-        path: f.path,
-        parentDir: dir,
-        extension: dot > 0 ? f.name.slice(dot).toLowerCase() : '.zip',
-        sizeBytes: f.sizeBytes,
-        mtime: f.mtime
-      })
-    }
+export function toArchiveCandidateItem(file: ImportedFile): ArchiveCandidateItem {
+  return {
+    id: `arc:${pathKey(file.path)}`,
+    name: file.name,
+    path: file.path,
+    parentDir: file.parentDir,
+    extension: file.extension || '.zip',
+    sizeBytes: file.sizeBytes,
+    mtime: file.lastModifiedMs
   }
-
-  candidates.sort((a, b) => b.mtime - a.mtime || b.sizeBytes - a.sizeBytes)
-  return Object.assign(candidates, { error: scanner.error })
 }
 
 export async function inspectArchiveEntries(
@@ -250,7 +263,7 @@ export async function inspectArchiveEntries(
       hasSingleRootFolder: false,
       singleRootFolderName: null,
       entries: [],
-      error: '压缩包路径不能为空'
+      error: t('errArchivePathEmpty')
     }
   }
 
@@ -276,7 +289,7 @@ export async function inspectArchiveEntries(
       hasSingleRootFolder: false,
       singleRootFolderName: null,
       entries: [],
-      error: res.error || '透视压缩包失败'
+      error: res.error || t('errInspectFailed')
     }
   }
 
@@ -356,7 +369,7 @@ export async function extractArchiveEntries(
       extractedCount: 0,
       extractedFiles: [],
       blockedEntries: options.entryNames.filter((n) => isUnsafeEntryPath(n)),
-      error: `ZIP_SLIP_BLOCKED: ${FORBIDDEN_REASON}`
+      error: `ZIP_SLIP_BLOCKED: ${t('forbiddenReason')}`
     }
   }
 
@@ -378,7 +391,7 @@ export async function extractArchiveEntries(
       extractedCount: 0,
       extractedFiles: [],
       blockedEntries: [],
-      error: res.error || '解压提取失败'
+      error: res.error || t('errExtractFailed')
     }
   }
 
@@ -401,7 +414,7 @@ export async function trashArchiveFile(
   hostOverride?: unknown
 ): Promise<{ ok: boolean; error?: string }> {
   if (!archivePath || FORBIDDEN_TARGET_PATTERN.test(archivePath)) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: t('forbiddenReason') }
   }
   return trashRealItem(archivePath, hostOverride)
 }
@@ -451,23 +464,27 @@ export function summarizeVerifyResult(data: unknown): VerifySummary {
   const record = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>
   const sha = typeof record.sha256 === 'string' ? record.sha256 : ''
   if (!/^[0-9a-f]{64}$/i.test(sha)) {
-    return { ok: false, title: '校验结果无法识别', message: '客户端没有返回压缩包的 SHA-256' }
+    return { ok: false, title: t('verifyInvalidTitle'), message: t('verifyInvalidMsg') }
   }
   const risk = Math.max(0, Number(record.traversalRiskCount ?? 0) || 0)
   const fileCount = Math.max(0, Number(record.fileCount ?? 0) || 0)
   const encrypted = Boolean(record.isEncrypted)
-  const shaText = `SHA-256：${sha.slice(0, 16)}…`
+  const shaText = t('verifyShaText', { prefix: sha.slice(0, 16) })
   if (risk > 0) {
     return {
       ok: false,
-      title: `发现 ${risk} 个越界条目`,
-      message: `含 ../ 或绝对路径的条目不会被提取 · ${shaText}`
+      title: t('verifyRiskTitle', { count: risk }),
+      message: t('verifyRiskMsg', { sha: shaText })
     }
   }
   return {
     ok: true,
-    title: '已读取压缩包目录，没有越界路径',
-    message: `${fileCount} 个文件${encrypted ? ' · 含加密条目，暂不支持解压' : ''} · ${shaText} · 未逐个校验文件 CRC32`
+    title: t('verifyOkTitle'),
+    message: t('verifyOkMsg', {
+      count: fileCount,
+      enc: encrypted ? t('verifyEncryptedPart') : '',
+      sha: shaText
+    })
   }
 }
 
@@ -478,18 +495,21 @@ export function summarizeExtractResult(res: {
   targetDir?: string
   error?: string
 }): VerifySummary {
-  if (!res.ok) return { ok: false, title: '解压失败', message: res.error || '客户端没有说明原因' }
+  if (!res.ok) return { ok: false, title: t('extractFailedTitle'), message: res.error || t('extractFailedDefaultMsg') }
   if (res.extractedCount <= 0) {
     return {
       ok: false,
-      title: '没有解压出任何文件',
-      message: res.blockedEntries.length > 0 ? `${res.blockedEntries.length} 个越界条目被拒绝` : '所选条目可能已不在压缩包里'
+      title: t('extractEmptyTitle'),
+      message:
+        res.blockedEntries.length > 0
+          ? t('extractBlockedMsg', { count: res.blockedEntries.length })
+          : t('extractMissingMsg')
     }
   }
-  const blocked = res.blockedEntries.length > 0 ? ` · ${res.blockedEntries.length} 个越界条目未提取` : ''
+  const blocked = res.blockedEntries.length > 0 ? t('extractBlockedSuffix', { count: res.blockedEntries.length }) : ''
   return {
     ok: true,
-    title: `已解压 ${res.extractedCount} 个文件${blocked}`,
+    title: t('extractOkTitle', { count: res.extractedCount, blocked }),
     message: res.targetDir || ''
   }
 }

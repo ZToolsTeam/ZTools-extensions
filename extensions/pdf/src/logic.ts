@@ -1,7 +1,7 @@
 /**
  * PDF 工具箱业务逻辑层
  *
- * - 扫描本机「文档 / 下载 / 桌面」目录（两级以内）下的 PDF
+ * - 用户通过「选择文件」「选择文件夹」或拖入导入 PDF（不在启动时扫描任何本机目录）
  * - 调用客户端的 PDF 处理接口，把 PDF 中可读取的文字导出为 TXT / HTML
  * - 输出文件写在 PDF 所在目录，写之前先确认同名文件不存在，已存在时自动加序号，绝不覆盖
  *
@@ -12,12 +12,17 @@
 import {
   callHostTransport,
   formatBytes,
-  getRealSystemPath,
   invokeDllPluginCapability,
   openRealPath,
-  scanRealDirectoryTree,
   showRealItemInFolder
 } from './native-ipc.js'
+import {
+  friendlyFileError,
+  type FileImportRules,
+  type FileImportTransport,
+  type ImportedFile
+} from './file-import.js'
+import { t } from './i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -61,7 +66,8 @@ export interface RealPdfDocItem {
   parentDir: string
   extension: string
   docType: 'pdf' | 'word' | 'excel' | 'ppt' | 'image' | 'other'
-  sizeBytes: number
+  /** 字节数；宿主没有返回时为 null（界面显示“大小未识别”） */
+  sizeBytes: number | null
 }
 
 /** 客户端内置 PDF 处理接口的插件名（客户端按插件 id 路由） */
@@ -80,169 +86,175 @@ export const UNAVAILABLE_FEATURES_NOTE = '格式互转、合并、拆分、压�
 export const TEXT_EXTRACTION_LIMIT_NOTE =
   '只能读取未压缩的简单文字，结果可能不完整；扫描件、压缩或特殊字体编码的 PDF 会提示无法提取'
 
-export const PDF_TOOLBOX_MODES: CapabilityActionItem[] = [
-  // 当前可用：文字导出
-  {
-    id: 'pdf-to-txt',
-    title: 'PDF 文字导出为 TXT',
-    subtitle: '提取 PDF 中可读取的文字，保存为 UTF-8 纯文本文件',
-    tag: '导出 TXT',
-    category: 'pdf_to_other',
-    method: 'PdfToTxt',
-    inputType: 'pdf',
-    outputExt: '.txt',
-    supported: true,
-    extractsText: true,
-    params: {}
-  },
-  {
-    id: 'pdf-to-html',
-    title: 'PDF 文字导出为 HTML',
-    subtitle: '提取 PDF 中可读取的文字，保存为纯文本网页（不保留版式与图片）',
-    tag: '导出 HTML',
-    category: 'pdf_to_other',
-    method: 'PdfToHtml',
-    inputType: 'pdf',
-    outputExt: '.html',
-    supported: true,
-    extractsText: true,
-    params: {}
-  },
-  // 暂不可用：客户端缺少对应组件
-  {
-    id: 'pdf-to-word',
-    title: 'PDF 转 Word (.docx)',
-    subtitle: REASON_OFFICE,
-    tag: 'PDF转Word',
-    category: 'pdf_to_other',
-    method: 'PdfToWord',
-    inputType: 'pdf',
-    outputExt: '.docx',
-    supported: false,
-    unsupportedReason: REASON_OFFICE,
-    params: {}
-  },
-  {
-    id: 'pdf-to-excel',
-    title: 'PDF 转 Excel (.xlsx)',
-    subtitle: REASON_OFFICE,
-    tag: 'PDF转Excel',
-    category: 'pdf_to_other',
-    method: 'PdfToExcel',
-    inputType: 'pdf',
-    outputExt: '.xlsx',
-    supported: false,
-    unsupportedReason: REASON_OFFICE,
-    params: {}
-  },
-  {
-    id: 'pdf-to-ppt',
-    title: 'PDF 转 PPT (.pptx)',
-    subtitle: REASON_OFFICE,
-    tag: 'PDF转PPT',
-    category: 'pdf_to_other',
-    method: 'PdfToPpt',
-    inputType: 'pdf',
-    outputExt: '.pptx',
-    supported: false,
-    unsupportedReason: REASON_OFFICE,
-    params: {}
-  },
-  {
-    id: 'pdf-to-image',
-    title: 'PDF 逐页导出为图片',
-    subtitle: REASON_RENDER,
-    tag: 'PDF转图片',
-    category: 'pdf_to_other',
-    method: 'PdfToImage',
-    inputType: 'pdf',
-    outputExt: '.png',
-    supported: false,
-    unsupportedReason: REASON_RENDER,
-    params: {}
-  },
-  {
-    id: 'word-to-pdf',
-    title: 'Word 转 PDF',
-    subtitle: REASON_OFFICE,
-    tag: 'Word转PDF',
-    category: 'other_to_pdf',
-    method: 'WordToPdf',
-    inputType: 'word',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_OFFICE,
-    params: {}
-  },
-  {
-    id: 'excel-to-pdf',
-    title: 'Excel 转 PDF',
-    subtitle: REASON_OFFICE,
-    tag: 'Excel转PDF',
-    category: 'other_to_pdf',
-    method: 'ExcelToPdf',
-    inputType: 'excel',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_OFFICE,
-    params: {}
-  },
-  {
-    id: 'image-to-pdf',
-    title: '图片合并为 PDF',
-    subtitle: REASON_IMAGE,
-    tag: '图片转PDF',
-    category: 'other_to_pdf',
-    method: 'ImageToPdf',
-    inputType: 'image',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_IMAGE,
-    params: {}
-  },
-  {
-    id: 'pdf-merge',
-    title: '多份 PDF 合并',
-    subtitle: REASON_REBUILD,
-    tag: 'PDF合并',
-    category: 'pdf_ops',
-    method: 'MergePdf',
-    inputType: 'pdf',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_REBUILD,
-    params: {}
-  },
-  {
-    id: 'pdf-split',
-    title: 'PDF 按页拆分',
-    subtitle: REASON_REBUILD,
-    tag: 'PDF拆分',
-    category: 'pdf_ops',
-    method: 'SplitPdf',
-    inputType: 'pdf',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_REBUILD,
-    params: {}
-  },
-  {
-    id: 'pdf-compress',
-    title: 'PDF 压缩',
-    subtitle: REASON_REBUILD,
-    tag: 'PDF压缩',
-    category: 'pdf_ops',
-    method: 'CompressPdf',
-    inputType: 'pdf',
-    outputExt: '.pdf',
-    supported: false,
-    unsupportedReason: REASON_REBUILD,
-    params: {}
-  }
-]
+export function getPdfToolboxModes(): CapabilityActionItem[] {
+  const reasonOffice = t('reasonOffice')
+  const reasonRender = t('reasonRender')
+  const reasonImage = t('reasonImage')
+  const reasonRebuild = t('reasonRebuild')
+  return [
+    {
+      id: 'pdf-to-txt',
+      title: t('toolPdfToTxtTitle'),
+      subtitle: t('toolPdfToTxtSub'),
+      tag: t('toolPdfToTxtTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToTxt',
+      inputType: 'pdf',
+      outputExt: '.txt',
+      supported: true,
+      extractsText: true,
+      params: {}
+    },
+    {
+      id: 'pdf-to-html',
+      title: t('toolPdfToHtmlTitle'),
+      subtitle: t('toolPdfToHtmlSub'),
+      tag: t('toolPdfToHtmlTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToHtml',
+      inputType: 'pdf',
+      outputExt: '.html',
+      supported: true,
+      extractsText: true,
+      params: {}
+    },
+    {
+      id: 'pdf-to-word',
+      title: t('toolPdfToWordTitle'),
+      subtitle: reasonOffice,
+      tag: t('toolPdfToWordTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToWord',
+      inputType: 'pdf',
+      outputExt: '.docx',
+      supported: false,
+      unsupportedReason: reasonOffice,
+      params: {}
+    },
+    {
+      id: 'pdf-to-excel',
+      title: t('toolPdfToExcelTitle'),
+      subtitle: reasonOffice,
+      tag: t('toolPdfToExcelTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToExcel',
+      inputType: 'pdf',
+      outputExt: '.xlsx',
+      supported: false,
+      unsupportedReason: reasonOffice,
+      params: {}
+    },
+    {
+      id: 'pdf-to-ppt',
+      title: t('toolPdfToPptTitle'),
+      subtitle: reasonOffice,
+      tag: t('toolPdfToPptTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToPpt',
+      inputType: 'pdf',
+      outputExt: '.pptx',
+      supported: false,
+      unsupportedReason: reasonOffice,
+      params: {}
+    },
+    {
+      id: 'pdf-to-image',
+      title: t('toolPdfToImageTitle'),
+      subtitle: reasonRender,
+      tag: t('toolPdfToImageTag'),
+      category: 'pdf_to_other',
+      method: 'PdfToImage',
+      inputType: 'pdf',
+      outputExt: '.png',
+      supported: false,
+      unsupportedReason: reasonRender,
+      params: {}
+    },
+    {
+      id: 'word-to-pdf',
+      title: t('toolWordToPdfTitle'),
+      subtitle: reasonOffice,
+      tag: t('toolWordToPdfTag'),
+      category: 'other_to_pdf',
+      method: 'WordToPdf',
+      inputType: 'word',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonOffice,
+      params: {}
+    },
+    {
+      id: 'excel-to-pdf',
+      title: t('toolExcelToPdfTitle'),
+      subtitle: reasonOffice,
+      tag: t('toolExcelToPdfTag'),
+      category: 'other_to_pdf',
+      method: 'ExcelToPdf',
+      inputType: 'excel',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonOffice,
+      params: {}
+    },
+    {
+      id: 'image-to-pdf',
+      title: t('toolImageToPdfTitle'),
+      subtitle: reasonImage,
+      tag: t('toolImageToPdfTag'),
+      category: 'other_to_pdf',
+      method: 'ImageToPdf',
+      inputType: 'image',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonImage,
+      params: {}
+    },
+    {
+      id: 'pdf-merge',
+      title: t('toolPdfMergeTitle'),
+      subtitle: reasonRebuild,
+      tag: t('toolPdfMergeTag'),
+      category: 'pdf_ops',
+      method: 'MergePdf',
+      inputType: 'pdf',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonRebuild,
+      params: {}
+    },
+    {
+      id: 'pdf-split',
+      title: t('toolPdfSplitTitle'),
+      subtitle: reasonRebuild,
+      tag: t('toolPdfSplitTag'),
+      category: 'pdf_ops',
+      method: 'SplitPdf',
+      inputType: 'pdf',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonRebuild,
+      params: {}
+    },
+    {
+      id: 'pdf-compress',
+      title: t('toolPdfCompressTitle'),
+      subtitle: reasonRebuild,
+      tag: t('toolPdfCompressTag'),
+      category: 'pdf_ops',
+      method: 'CompressPdf',
+      inputType: 'pdf',
+      outputExt: '.pdf',
+      supported: false,
+      unsupportedReason: reasonRebuild,
+      params: {}
+    }
+  ]
+}
+
+export const PDF_TOOLBOX_MODES: CapabilityActionItem[] = getPdfToolboxModes()
 
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return PDF_TOOLBOX_MODES.map(item => ({
+  return getPdfToolboxModes().map(item => ({
     ...item,
     params: { ...item.params }
   }))
@@ -270,27 +282,27 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errInvalidMethod') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errInvalidMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errInvalidParams') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: `SECURITY_INTERCEPTED: ${t('forbiddenReason')}` }
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: t('errParamOutOfRange', { key }) }
       }
     }
   }
@@ -309,17 +321,17 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errParamValidationFailed'))
   }
 
   const trimmedMethod = method.trim()
-  const tool = PDF_TOOLBOX_MODES.find(item => item.method === trimmedMethod)
+  const tool = getPdfToolboxModes().find(item => item.method === trimmedMethod)
   if (!tool) {
     return {
       ok: false,
       pluginName: HOST_PLUGIN_NAME,
       method: trimmedMethod,
-      error: `UNSUPPORTED_METHOD: 本插件没有 ${trimmedMethod} 功能`,
+      error: t('errUnsupportedMethod', { method: trimmedMethod }),
       fromFallback: false
     }
   }
@@ -328,7 +340,7 @@ export async function invokeNativeCapability(
       ok: false,
       pluginName: HOST_PLUGIN_NAME,
       method: trimmedMethod,
-      error: `UNSUPPORTED: ${tool.tag}暂不可用：${tool.unsupportedReason || '客户端缺少对应组件'}`,
+      error: t('errUnsupportedTool', { tag: tool.tag, reason: tool.unsupportedReason || t('errMissingHostComponent') }),
       fromFallback: false
     }
   }
@@ -349,34 +361,57 @@ function classifyDocType(ext: string): RealPdfDocItem['docType'] {
   if (ext === '.docx' || ext === '.doc') return 'word'
   if (ext === '.xlsx' || ext === '.xls') return 'excel'
   if (ext === '.pptx' || ext === '.ppt') return 'ppt'
-  if (ext === '.png' || ext === '.jpg' || ext === '.jpeg') return 'image'
+  if (ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp') return 'image'
   return 'other'
 }
 
 const INPUT_TYPE_EXTENSIONS: Record<PdfInputType, string[]> = {
-  pdf: ['pdf'],
-  word: ['docx', 'doc'],
-  excel: ['xlsx', 'xls'],
-  ppt: ['pptx', 'ppt'],
-  image: ['png', 'jpg', 'jpeg']
+  pdf: ['.pdf'],
+  word: ['.docx', '.doc'],
+  excel: ['.xlsx', '.xls'],
+  ppt: ['.pptx', '.ppt'],
+  image: ['.png', '.jpg', '.jpeg']
 }
 
-/** 只扫描可用工具需要的文件类型，避免列出无法处理的文件 */
-function buildScanExtRegex(): RegExp {
+/** 只放行当前已开放的工具真正能处理的输入格式（目前只有文字导出，即 PDF） */
+function buildImportExtensions(): string[] {
   const exts = new Set<string>()
   for (const tool of PDF_TOOLBOX_MODES) {
     if (!tool.supported) continue
     for (const ext of INPUT_TYPE_EXTENSIONS[tool.inputType]) exts.add(ext)
   }
-  return new RegExp(`\\.(?:${[...exts].join('|')})$`, 'i')
+  return [...exts]
 }
 
-export const SCAN_EXT_REGEX = buildScanExtRegex()
+/** 导入允许的扩展名（小写带点） */
+export const INPUT_PDF_EXTENSIONS: readonly string[] = buildImportExtensions()
 
-export type PdfWorkspaceSnapshot = RealPdfDocItem[] & {
-  scannedDirs: string[]
-  files: RealPdfDocItem[]
-  items: RealPdfDocItem[]
+/** 导入规则：递归 5 层、最多 500 个文件；系统核心目录与目录穿越路径一律跳过 */
+export const PDF_IMPORT_RULES: FileImportRules = {
+  extensions: INPUT_PDF_EXTENSIONS,
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+}
+
+/** 界面上说明支持的格式 */
+export const PDF_IMPORT_SUPPORTED_TEXT = INPUT_PDF_EXTENSIONS.map(ext => ext.slice(1).toUpperCase()).join(' / ')
+
+/** 把宿主调用包装成 file-import 需要的形式 */
+export function createPdfImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
+
+/** 把导入结果转成列表条目 */
+export function toPdfDocItem(file: ImportedFile): RealPdfDocItem {
+  const ext = file.extension.toLowerCase()
+  return {
+    id: `pdf:${file.path.toLowerCase()}`,
+    name: file.name,
+    path: file.path,
+    parentDir: file.parentDir,
+    extension: ext,
+    docType: classifyDocType(ext),
+    sizeBytes: file.sizeBytes
+  }
 }
 
 interface SplitPath {
@@ -404,64 +439,6 @@ export function splitFilePath(fullPath: string): SplitPath | null {
   }
 }
 
-export async function fetchRealPdfWorkspace(hostOverride?: unknown): Promise<PdfWorkspaceSnapshot> {
-  const [documentsDir, downloadsDir, desktopDir] = await Promise.all([
-    getRealSystemPath('documents', hostOverride),
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride)
-  ])
-
-  const scannedDirs = [documentsDir, downloadsDir, desktopDir].filter(Boolean)
-  if (scannedDirs.length === 0) {
-    throw new Error('SYSTEM_PATHS_UNAVAILABLE: 无法获取文档、下载、桌面目录的路径')
-  }
-  const files: RealPdfDocItem[] = []
-  const seenPaths = new Set<string>()
-
-  for (const dir of scannedDirs) {
-    const scanRes = await scanRealDirectoryTree(dir, {
-      maxDepth: 2,
-      maxFiles: 250,
-      collectTopN: 40,
-      filterExt: SCAN_EXT_REGEX,
-      hostOverride
-    })
-    for (const f of scanRes.files) {
-      if (f.sizeBytes <= 0) continue
-      if (!SCAN_EXT_REGEX.test(f.name)) continue
-      const normPath = f.path.toLowerCase()
-      if (seenPaths.has(normPath)) continue
-      const parts = splitFilePath(f.path)
-      if (!parts) continue
-      seenPaths.add(normPath)
-      const ext = parts.ext.toLowerCase()
-      files.push({
-        id: `pdf:${normPath}`,
-        name: f.name,
-        path: f.path,
-        parentDir: parts.dir,
-        extension: ext,
-        docType: classifyDocType(ext),
-        sizeBytes: f.sizeBytes
-      })
-    }
-  }
-
-  files.sort((a, b) => {
-    if (a.docType === 'pdf' && b.docType !== 'pdf') return -1
-    if (a.docType !== 'pdf' && b.docType === 'pdf') return 1
-    return b.sizeBytes - a.sizeBytes
-  })
-
-  return Object.assign([...files], {
-    scannedDirs,
-    files,
-    items: files
-  })
-}
-
-export const scanLocalPdfQueue = fetchRealPdfWorkspace
-
 /** 同名文件已存在时最多尝试的序号 */
 export const MAX_OUTPUT_NAME_ATTEMPTS = 50
 
@@ -479,7 +456,7 @@ export async function checkFileExists(
 ): Promise<{ ok: true; exists: boolean } | { ok: false; error: string }> {
   const res = await callHostTransport<unknown>('filesystem_file_exists', { path: fullPath }, hostOverride)
   if (!res.ok) {
-    return { ok: false, error: res.error || '查询文件是否存在失败' }
+    return { ok: false, error: friendlyFileError(res.error || t('errCheckExistsFailed')) }
   }
   const data = res.data
   if (typeof data === 'boolean') return { ok: true, exists: data }
@@ -487,7 +464,7 @@ export async function checkFileExists(
   if (typeof exists === 'boolean') {
     return { ok: true, exists }
   }
-  return { ok: false, error: 'MALFORMED_EXISTS_RESPONSE: 客户端没有返回文件是否存在' }
+  return { ok: false, error: t('errMalformedExists') }
 }
 
 /**
@@ -502,13 +479,13 @@ export async function resolveAvailableOutputPath(
   for (let i = 0; i < MAX_OUTPUT_NAME_ATTEMPTS; i++) {
     const candidate = buildOutputCandidate(inputPath, outputExt, i)
     if (!candidate) {
-      return { ok: false, error: `INVALID_INPUT_PATH: 无法从 ${inputPath} 推导输出位置` }
+      return { ok: false, error: t('errInvalidInputPath', { path: inputPath }) }
     }
     const exists = await checkFileExists(candidate, hostOverride)
     if (!exists.ok) {
       return {
         ok: false,
-        error: `OUTPUT_CHECK_FAILED: 无法确认 ${candidate} 是否已存在（${exists.error}），为避免覆盖已停止导出`
+        error: t('errOutputCheckFailed', { path: candidate, error: exists.error })
       }
     }
     if (!exists.exists) return { ok: true, path: candidate }
@@ -516,7 +493,7 @@ export async function resolveAvailableOutputPath(
   const parts = splitFilePath(inputPath)
   return {
     ok: false,
-    error: `OUTPUT_NAME_EXHAUSTED: ${parts?.dir ?? ''} 中已有 ${MAX_OUTPUT_NAME_ATTEMPTS} 个同名的 ${outputExt} 文件，请先整理后再导出`
+    error: t('errOutputNameExhausted', { dir: parts?.dir ?? '', max: MAX_OUTPUT_NAME_ATTEMPTS, ext: outputExt })
   }
 }
 
@@ -573,10 +550,10 @@ async function runOneFile(
       hostOverride
     )
   } catch (err) {
-    return { file, ok: false, error: errorText(err) }
+    return { file, ok: false, error: friendlyFileError(err) }
   }
   if (!res.ok) {
-    return { file, ok: false, error: res.error || 'PDF 处理失败，客户端没有返回原因' }
+    return { file, ok: false, error: friendlyFileError(res.error || t('errPdfProcessNoReason')) }
   }
 
   const data = (res.data && typeof res.data === 'object' ? res.data : {}) as Record<string, unknown>
@@ -585,21 +562,21 @@ async function runOneFile(
     return {
       file,
       ok: false,
-      error: 'HOST_NO_OUTPUT: 客户端报告成功但没有返回输出文件路径，无法确认已导出'
+      error: t('errHostNoOutput')
     }
   }
 
   if (tool.extractsText && typeof data.text === 'string') {
     const quality = assessExtractedText(data.text)
     if (quality.chars === 0) {
-      return { file, ok: false, outputPath, error: `没有提取到可读文字，输出文件 ${outputPath} 为空白内容` }
+      return { file, ok: false, outputPath, error: t('errNoReadableText', { path: outputPath }) }
     }
     if (quality.garbled) {
       return {
         file,
         ok: false,
         outputPath,
-        error: `输出文件 ${outputPath} 内容疑似乱码（PDF 字体编码无法解析），请不要使用该文件`
+        error: t('errGarbledText', { path: outputPath })
       }
     }
     return { file, ok: true, outputPath, chars: quality.chars }
@@ -616,7 +593,7 @@ export async function runPdfTool(
   files: RealPdfDocItem[],
   hostOverride?: unknown
 ): Promise<PdfBatchResult> {
-  const tool = PDF_TOOLBOX_MODES.find(item => item.id === toolId)
+  const tool = getPdfToolboxModes().find(item => item.id === toolId)
   const result: PdfBatchResult = {
     toolId,
     toolTag: tool?.tag ?? toolId,
@@ -625,11 +602,11 @@ export async function runPdfTool(
     skipped: []
   }
   if (!tool) {
-    result.error = `UNKNOWN_TOOL: 没有 ${toolId} 这个工具`
+    result.error = t('errUnknownTool', { toolId })
     return result
   }
   if (!tool.supported) {
-    result.error = `${tool.tag}暂不可用：${tool.unsupportedReason || '客户端缺少对应组件'}`
+    result.error = t('errToolUnavailable', { tag: tool.tag, reason: tool.unsupportedReason || t('errMissingHostComponent') })
     return result
   }
 
@@ -654,35 +631,35 @@ export interface BatchSummary {
 /** 把批处理结果整理成一条提示：只要有失败就按失败提示，并给出第一条失败原因 */
 export function describeBatchResult(result: PdfBatchResult): BatchSummary {
   if (result.error) {
-    return { ok: false, title: `${result.toolTag}未执行`, message: result.error }
+    return { ok: false, title: t('batchNotExecuted', { tag: result.toolTag }), message: result.error }
   }
   const okCount = result.succeeded.length
   const failCount = result.failed.length
-  const skipNote = result.skipped.length > 0 ? `；${result.skipped.length} 个不是 PDF，已跳过` : ''
+  const skipNote = result.skipped.length > 0 ? t('batchSkippedNote', { count: result.skipped.length }) : ''
   const firstFail = result.failed[0]
-  const failText = firstFail ? `${firstFail.file.name}：${firstFail.error || '失败'}` : ''
+  const failText = firstFail ? t('batchFailItem', { name: firstFail.file.name, error: firstFail.error || t('wordFail') }) : ''
 
   if (okCount === 0 && failCount === 0) {
     return {
       ok: false,
-      title: '没有可处理的文件',
-      message: result.skipped.length > 0 ? `所选 ${result.skipped.length} 个文件都不是 PDF` : '请先勾选要导出的 PDF'
+      title: t('batchNoFilesTitle'),
+      message: result.skipped.length > 0 ? t('batchAllSkippedMsg', { count: result.skipped.length }) : t('batchSelectPdfFirst')
     }
   }
   if (failCount === 0) {
     const only = result.succeeded[0]
     return {
       ok: true,
-      title: `已导出 ${okCount} 个文件`,
-      message: `${okCount === 1 && only?.outputPath ? only.outputPath : '输出在各 PDF 所在目录'}${skipNote}`
+      title: t('batchExportedTitle', { count: okCount }),
+      message: `${okCount === 1 && only?.outputPath ? only.outputPath : t('batchExportedDirMsg')}${skipNote}`
     }
   }
   if (okCount === 0) {
-    return { ok: false, title: `导出失败（${failCount} 个）`, message: `${failText}${skipNote}` }
+    return { ok: false, title: t('batchFailedTitle', { count: failCount }), message: `${failText}${skipNote}` }
   }
   return {
     ok: false,
-    title: `${okCount} 个已导出，${failCount} 个失败`,
+    title: t('batchPartialTitle', { ok: okCount, fail: failCount }),
     message: `${failText}${skipNote}`
   }
 }

@@ -6,18 +6,20 @@ import React, {
   List,
   Toast,
   showToast,
+  useLocale,
   useMemo,
   useState,
   useNavigation
 } from '@ztools/declarative-ui'
 import {
-  DEFAULT_HOSTS_PROFILES,
   applyCombinedHosts,
   buildCombinedHostsContent,
   flushDnsCache,
+  getDefaultHostsProfiles,
   parseHostsContent,
   readSystemHosts
 } from './hosts-service.js'
+import { t } from './i18n.js'
 import type { HostsProfile } from './types.js'
 
 export * from './types.js'
@@ -30,6 +32,7 @@ export function HostsProfileForm({
   initialProfile?: HostsProfile
   onSave: (profile: HostsProfile) => void
 }) {
+  useLocale()
   const { pop } = useNavigation()
   const [name, setName] = useState(initialProfile?.name ?? '')
   const [rawContent, setRawContent] = useState(
@@ -38,7 +41,7 @@ export function HostsProfileForm({
 
   const handleSubmit = async () => {
     if (!name.trim()) {
-      await showToast({ style: Toast.Style.Failure, title: '方案名称不能为空' })
+      await showToast({ style: Toast.Style.Failure, title: t('errProfileNameEmpty') })
       return
     }
     const rules = parseHostsContent(rawContent)
@@ -54,32 +57,32 @@ export function HostsProfileForm({
       rulesCount: validCount,
       invalidCount,
       updatedAt: Date.now(),
-      updatedAtFormatted: '刚刚更新'
+      updatedAtFormatted: t('justUpdated')
     })
-    await showToast({ style: Toast.Style.Success, title: `已保存方案: ${name.trim()}` })
+    await showToast({ style: Toast.Style.Success, title: t('toastProfileSaved', { name: name.trim() }) })
     pop()
   }
 
   return (
     <Form
-      navigationTitle={initialProfile ? '编辑 Hosts 方案' : '新建 Hosts 环境方案'}
+      navigationTitle={initialProfile ? t('winFormNavEdit') : t('winFormNavNew')}
       actions={
         <ActionPanel>
-          <Action.SubmitForm title="保存方案" icon={Icon.CheckCircle} onSubmit={handleSubmit} />
+          <Action.SubmitForm title={t('winSaveProfileAction')} icon={Icon.CheckCircle} onSubmit={handleSubmit} />
         </ActionPanel>
       }
     >
       <Form.TextField
         id="name"
-        title="方案名称"
-        placeholder="如：测试环境集群 A"
+        title={t('winFieldNameTitle')}
+        placeholder={t('winFieldNamePlaceholder')}
         value={name}
         onChange={setName}
       />
       <Form.TextArea
         id="rawContent"
-        title="Hosts 映射规则"
-        placeholder="每行一条：IP 域名 # 备注"
+        title={t('winFieldContentTitle')}
+        placeholder={t('winFieldContentPlaceholder')}
         value={rawContent}
         onChange={setRawContent}
       />
@@ -94,13 +97,26 @@ export interface HostsSwitcherCommandProps {
 }
 
 export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
+  const locale = useLocale()
   const { push } = useNavigation()
   const [profiles, setProfiles] = useState<HostsProfile[]>(
-    props.initialProfiles ?? DEFAULT_HOSTS_PROFILES
+    () => props.initialProfiles ?? getDefaultHostsProfiles()
   )
   const [filterStatus, setFilterStatus] = useState<'all' | 'enabled' | 'disabled'>('all')
   const [searchText, setSearchText] = useState<string>('')
   const [isLoading, setIsLoading] = useState<boolean>(false)
+
+  React.useEffect(() => {
+    if (!props.initialProfiles) {
+      const defaults = getDefaultHostsProfiles()
+      setProfiles((prev) =>
+        prev.map((p) => {
+          const def = defaults.find((d) => d.id === p.id)
+          return def && p.id !== 'hosts-system' ? { ...p, name: def.name } : def && p.id === 'hosts-system' ? { ...p, name: def.name } : p
+        })
+      )
+    }
+  }, [locale])
 
   React.useEffect(() => {
     if (!props.initialProfiles) {
@@ -160,7 +176,7 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
         setProfiles(previous)
         await showToast({
           style: Toast.Style.Failure,
-          title: '写入系统 Hosts 受阻',
+          title: t('toastWriteBlocked'),
           message: res.error
         })
         return
@@ -170,13 +186,13 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
         const detail = res.warnings.map((w) => w.replace(/^hosts 已写入，但/, '')).join('；')
         await showToast({
           style: Toast.Style.Success,
-          title: `已写入 (${merged.activeRulesCount} 条映射)，但${detail}`
+          title: t('toastWrittenWithWarnings', { count: merged.activeRulesCount, detail })
         })
         return
       }
       await showToast({
         style: Toast.Style.Success,
-        title: `已生效 (${merged.activeRulesCount} 条映射) 并刷新 DNS`
+        title: t('toastAppliedAndFlushed', { count: merged.activeRulesCount })
       })
     } finally {
       setIsLoading(false)
@@ -190,14 +206,14 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
       if (!res.success) {
         await showToast({
           style: Toast.Style.Failure,
-          title: '刷新 DNS 缓存失败',
+          title: t('errFlushDnsFailed'),
           message: res.error
         })
         return
       }
       await showToast({
         style: Toast.Style.Success,
-        title: '本地 DNS 缓存已成功刷新'
+        title: t('toastFlushDnsSuccess')
       })
     } finally {
       setIsLoading(false)
@@ -227,7 +243,7 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
 
   const handleDeleteProfile = async (id: string) => {
     setProfiles((prev) => prev.filter((p) => p.id !== id))
-    await showToast({ style: Toast.Style.Success, title: '已删除该 Hosts 方案' })
+    await showToast({ style: Toast.Style.Success, title: t('toastProfileDeleted') })
   }
 
   return (
@@ -236,23 +252,23 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
       isShowingDetail={true}
       searchText={searchText}
       onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索方案名、规则 IP 或域名 (如: 127.0.0.1、staging.example.com) ..."
+      searchBarPlaceholder={t('winSearchPlaceholder')}
       searchBarAccessory={
         <List.Dropdown
           value={filterStatus}
           onChange={(v: string) => setFilterStatus(v as 'all' | 'enabled' | 'disabled')}
-          tooltip="按启用状态筛选"
+          tooltip={t('winFilterTooltip')}
         >
-          <List.Dropdown.Item title="全部方案" value="all" icon={Icon.List} />
-          <List.Dropdown.Item title="仅查看已启用" value="enabled" icon={Icon.CheckCircle} />
-          <List.Dropdown.Item title="仅查看已禁用" value="disabled" icon={Icon.Circle} />
+          <List.Dropdown.Item title={t('winFilterAll')} value="all" icon={Icon.List} />
+          <List.Dropdown.Item title={t('winFilterEnabled')} value="enabled" icon={Icon.CheckCircle} />
+          <List.Dropdown.Item title={t('winFilterDisabled')} value="disabled" icon={Icon.Circle} />
         </List.Dropdown>
       }
       filterBar={{
-        summaryText: `共 ${profiles.length} 个方案（已激活 ${activeCount} 个）`,
+        summaryText: t('winSummaryText', { total: profiles.length, active: activeCount }),
         actions: [
-          { id: 'new-profile', title: '新建方案', onAction: handleOpenCreateForm },
-          { id: 'flush-dns', title: '刷新 DNS', onAction: handleFlushDns }
+          { id: 'new-profile', title: t('winBarNewProfile'), onAction: handleOpenCreateForm },
+          { id: 'flush-dns', title: t('winBarFlushDns'), onAction: handleFlushDns }
         ]
       }}
     >
@@ -261,29 +277,29 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
           key={profile.id}
           id={profile.id}
           title={profile.name}
-          subtitle={`${profile.rulesCount} 条规则`}
+          subtitle={t('winRulesCount', { count: profile.rulesCount })}
           icon={profile.isEnabled ? Icon.CheckCircle : Icon.Circle}
           accessories={[
-            ...(profile.isSystem ? [{ tag: '系统源文件' }] : []),
-            { text: profile.isEnabled ? '已启用' : '未激活' }
+            ...(profile.isSystem ? [{ tag: t('winTagSystemSource') }] : []),
+            { text: profile.isEnabled ? t('winStatusEnabled') : t('winStatusInactive') }
           ]}
           detail={
             <List.Item.Detail
               markdown={`\`\`\`ini\n${profile.rawContent}\n\`\`\``}
               metadata={
                 <List.Item.Detail.Metadata>
-                  <List.Item.Detail.Metadata.Label title="方案名称" text={profile.name} />
+                  <List.Item.Detail.Metadata.Label title={t('winMetaName')} text={profile.name} />
                   <List.Item.Detail.Metadata.Label
-                    title="生效状态"
-                    text={profile.isEnabled ? '正在生效中' : '已停用'}
+                    title={t('winMetaStatus')}
+                    text={profile.isEnabled ? t('winMetaStatusActive') : t('winMetaStatusDisabled')}
                   />
                   <List.Item.Detail.Metadata.Label
-                    title="规则数量"
-                    text={`${profile.rulesCount} 条有效映射`}
+                    title={t('winMetaRulesCount')}
+                    text={t('winMetaRulesText', { count: profile.rulesCount })}
                   />
                   <List.Item.Detail.Metadata.Separator />
                   <List.Item.Detail.Metadata.Label
-                    title="最后更新"
+                    title={t('winMetaLastUpdated')}
                     text={profile.updatedAtFormatted}
                   />
                 </List.Item.Detail.Metadata>
@@ -293,31 +309,31 @@ export function HostsSwitcherCommand(props: HostsSwitcherCommandProps = {}) {
           actions={
             <ActionPanel>
               <Action
-                title={profile.isEnabled ? '禁用此方案' : '启用此方案'}
+                title={profile.isEnabled ? t('winActionDisable') : t('winActionEnable')}
                 icon={profile.isEnabled ? Icon.XMarkCircle : Icon.CheckCircle}
                 onAction={() => handleToggleProfile(profile.id)}
               />
               <Action
-                title="编辑方案内容"
+                title={t('winActionEdit')}
                 icon={Icon.Pencil}
-                shortcut={{ modifiers: ['cmd'], key: 'e' }}
+                shortcut={{ modifiers: ['ctrl'], key: 'e' }}
                 onAction={() => handleEditProfile(profile)}
               />
               <Action
-                title="立即刷新 DNS 缓存"
+                title={t('winActionFlushDns')}
                 icon={Icon.ArrowClockwise}
-                shortcut={{ modifiers: ['cmd'], key: 'r' }}
+                shortcut={{ modifiers: ['ctrl'], key: 'r' }}
                 onAction={handleFlushDns}
               />
               <Action
-                title="新建环境方案"
+                title={t('winActionNew')}
                 icon={Icon.Plus}
-                shortcut={{ modifiers: ['cmd'], key: 'n' }}
+                shortcut={{ modifiers: ['ctrl'], key: 'n' }}
                 onAction={handleOpenCreateForm}
               />
               {!profile.isSystem ? (
                 <Action
-                  title="删除此方案"
+                  title={t('winActionDelete')}
                   icon={Icon.Trash}
                   style={Action.Style.Destructive}
                   shortcut={{ modifiers: ['ctrl'], key: 'backspace' }}

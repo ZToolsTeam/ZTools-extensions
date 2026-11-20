@@ -1,7 +1,7 @@
 /**
  * 批量视频转换：业务逻辑层
  *
- * - 扫描本机 视频 / 下载 / 桌面 目录下的视频文件（每个目录最多列出体积最大的 40 个）
+ * - 视频由用户通过选择文件、选择文件夹或拖入导入（不自动扫描本机目录）
  * - 三类任务：转换视频格式（MP4 / MKV / MOV / WebM）、转 GIF、提取音频（MP3 / M4A / WAV）
  * - 逐个文件调用宿主媒体处理接口：宿主用本机已安装的 ffmpeg，按输出文件扩展名使用 ffmpeg 默认参数编码，
  *   不接受画质、分辨率、码率等参数，单个文件最多运行 60 秒
@@ -13,11 +13,18 @@
 import {
   callHostTransport,
   formatBytes,
-  getRealSystemPath,
   invokeDllPluginCapability,
-  nextMessageId,
-  scanRealDirectoryTree
+  nextMessageId
 } from './native-ipc.js'
+import {
+  collectFolderFiles,
+  friendlyFileError,
+  isVolumeRoot,
+  pickFiles,
+  pickFolder
+} from './file-import.js'
+import type { FileImportOptions, FileImportResult, FileImportRules, FileImportTransport, ImportedFile } from './file-import.js'
+import { t } from './i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -68,7 +75,8 @@ export interface RealVideoFileItem {
   /** 文件实际所在目录 */
   parentDir: string
   extension: string
-  sizeBytes: number
+  /** 文件大小；读不到时为 null（界面显示「大小未识别」） */
+  sizeBytes: number | null
   result?: VideoProcessOutcome
 }
 
@@ -80,56 +88,59 @@ export interface VideoProcessSettings {
 
 export const DLL_PLUGIN_NAME = 'BatchVideoPlugin'
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./', 'i')
-export const FORBIDDEN_REASON = '视频处理路径不可指向系统受保护目录或包含路径穿越'
+export const FORBIDDEN_REASON = t('forbiddenReason')
 /** 宿主对单个文件运行 ffmpeg 的时限（秒），超时后宿主中止 ffmpeg 并删除未完成的输出 */
 export const HOST_FFMPEG_LIMIT_SECONDS = 60
 /** 等待宿主返回处理结果的时限：在宿主 ffmpeg 时限之外留出检测 ffmpeg、写盘与回传的时间 */
 export const TRANSCODE_IPC_TIMEOUT_MS = 75_000
 /** 输出文件名后缀：<原文件名>_ztools.<扩展名> */
 export const OUTPUT_SUFFIX = '_ztools'
-/** 每个扫描目录最多列出的视频数（按体积从大到小） */
-export const SCAN_TOP_N_PER_DIR = 40
 const MAX_PLAIN_NAME_ATTEMPTS = 20
 const MAX_TAGGED_NAME_ATTEMPTS = 50
 
-export const VIDEO_TASKS: VideoTask[] = [
-  {
-    id: 'convert-video',
-    title: '转换视频格式',
-    subtitle: '重新编码为所选格式，编码器、画质和分辨率由 ffmpeg 按格式默认决定',
-    tag: '格式转换',
-    method: 'BatchConvertFormat',
-    formats: [
-      { value: 'mp4', label: 'MP4' },
-      { value: 'mkv', label: 'MKV' },
-      { value: 'mov', label: 'MOV' },
-      { value: 'webm', label: 'WebM' }
-    ]
-  },
-  {
-    id: 'to-gif',
-    title: '转为 GIF 动图',
-    subtitle: '按原分辨率和帧率转为 GIF（ffmpeg 默认设置），较长或高分辨率的视频生成的 GIF 体积很大',
-    tag: '转 GIF',
-    method: 'BatchConvertToGif',
-    formats: [{ value: 'gif', label: 'GIF' }]
-  },
-  {
-    id: 'extract-audio',
-    title: '提取音频',
-    subtitle: '去掉画面，只保留音轨并编码为所选格式（ffmpeg 默认设置）',
-    tag: '提取音频',
-    method: 'BatchExtractAudio',
-    formats: [
-      { value: 'mp3', label: 'MP3' },
-      { value: 'm4a', label: 'M4A' },
-      { value: 'wav', label: 'WAV（未压缩）' }
-    ]
-  }
-]
+export function getVideoTasks(): VideoTask[] {
+  return [
+    {
+      id: 'convert-video',
+      title: t('taskConvertTitle'),
+      subtitle: t('taskConvertSub'),
+      tag: t('taskConvertTag'),
+      method: 'BatchConvertFormat',
+      formats: [
+        { value: 'mp4', label: 'MP4' },
+        { value: 'mkv', label: 'MKV' },
+        { value: 'mov', label: 'MOV' },
+        { value: 'webm', label: 'WebM' }
+      ]
+    },
+    {
+      id: 'to-gif',
+      title: t('taskGifTitle'),
+      subtitle: t('taskGifSub'),
+      tag: t('taskGifTag'),
+      method: 'BatchConvertToGif',
+      formats: [{ value: 'gif', label: 'GIF' }]
+    },
+    {
+      id: 'extract-audio',
+      title: t('taskAudioTitle'),
+      subtitle: t('taskAudioSub'),
+      tag: t('taskAudioTag'),
+      method: 'BatchExtractAudio',
+      formats: [
+        { value: 'mp3', label: 'MP3' },
+        { value: 'm4a', label: 'M4A' },
+        { value: 'wav', label: t('formatWavUncompressed') }
+      ]
+    }
+  ]
+}
+
+export const VIDEO_TASKS: VideoTask[] = getVideoTasks()
 
 export function getVideoTask(id: string): VideoTask {
-  return VIDEO_TASKS.find(task => task.id === id) || VIDEO_TASKS[0]!
+  const tasks = getVideoTasks()
+  return tasks.find(task => task.id === id) || tasks[0]!
 }
 
 /** 任务支持该输出格式时返回规范化的扩展名，否则返回 null */
@@ -147,20 +158,20 @@ function errorText(err: unknown): string {
 }
 
 function checkStringParam(key: string, val: string): string | null {
-  if (val.length > 4096) return `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制`
-  if (FORBIDDEN_TARGET_PATTERN.test(val)) return `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}`
+  if (val.length > 4096) return t('errParamTooLong', { key })
+  if (FORBIDDEN_TARGET_PATTERN.test(val)) return t('errSecurityIntercepted', { reason: t('forbiddenReason') })
   return null
 }
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errInvalidMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errInvalidMethodFormat') }
   }
   if (!isRecord(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errInvalidParamsObject') }
   }
 
   for (const [key, val] of Object.entries(params)) {
@@ -175,7 +186,7 @@ export function validateInvocationPayload(method: string, params: unknown): { va
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: t('errParamOutOfRange', { key }) }
       }
     }
   }
@@ -216,7 +227,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errValidationFailed'))
   }
   const bridge = hostBridge ?? createLongRunningBridge()
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, bridge)
@@ -329,7 +340,7 @@ export async function chooseOutputPath(
     if (state === 'exists') continue
     return take(candidate)
   }
-  throw new Error('无法为输出文件生成不重复的文件名，已跳过该文件以免覆盖已有文件')
+  throw new Error(t('errCannotGenUniqueName'))
 }
 
 /** 把宿主错误整理成一句可读的提示：识别超时与缺少 ffmpeg，其余取错误输出的最后两行 */
@@ -337,15 +348,19 @@ export function summarizeHostError(raw: unknown): string {
   const text = String(raw ?? '')
     .replace(/^(?:DLL_ERROR|NATIVE_CALL_FAILED):\s*/, '')
     .trim()
-  if (!text) return '宿主视频处理返回失败'
+  if (!text) return t('errHostReturnFailed')
   if (/命令执行超时|调用超时|REQUEST_TIMEOUT|Call timeout/i.test(text)) {
-    return `处理时间超过宿主限制（单个文件 ${HOST_FFMPEG_LIMIT_SECONDS} 秒）被中止，可复制 ffmpeg 命令在终端中运行`
+    return t('errHostTimeout', { seconds: HOST_FFMPEG_LIMIT_SECONDS })
   }
   if (/未检测到\s*ffmpeg/i.test(text)) {
-    return '本机未检测到 ffmpeg：请先安装 ffmpeg，并确认在命令行中可以直接运行 ffmpeg'
+    return t('errFfmpegMissing')
   }
   if (/HOST_UNAVAILABLE|NO_WINDOW_ENV|METHOD_NOT_AVAILABLE/.test(text)) {
-    return '未连接 ZTools 客户端，无法处理视频'
+    return t('errHostDisconnected')
+  }
+  const translated = friendlyFileError(text)
+  if (translated !== text) {
+    return translated
   }
   const lines = text
     .split(/\r?\n/)
@@ -361,17 +376,17 @@ export function parseHostVideoResult(data: unknown): VideoProcessOutcome {
   const errors = Array.isArray(payload.errors) ? payload.errors : []
   if (errors.length > 0) {
     const first = isRecord(errors[0]) ? errors[0] : {}
-    return { status: 'failed', error: summarizeHostError(first.error || first.message || '宿主报告处理失败') }
+    return { status: 'failed', error: summarizeHostError(first.error || first.message || t('errHostFailed')) }
   }
   const results = Array.isArray(payload.results) ? payload.results : []
   const r = results[0]
   if (!isRecord(r)) {
-    return { status: 'failed', error: '宿主未返回处理结果，无法确认是否已生成输出文件' }
+    return { status: 'failed', error: t('errHostNoResult') }
   }
   const outputPath = typeof r.outputPath === 'string' ? r.outputPath.trim() : ''
   const outputBytes = Number(r.outputBytes ?? r.sizeBytes)
   if (!outputPath || !Number.isFinite(outputBytes) || outputBytes <= 0) {
-    return { status: 'failed', error: '宿主返回的结果缺少输出文件路径或大小' }
+    return { status: 'failed', error: t('errHostMissingOutput') }
   }
   return { status: 'done', outputPath, outputBytes }
 }
@@ -387,7 +402,7 @@ export async function processVideoFile(
   const task = getVideoTask(settings.taskId)
   const ext = resolveOutputFormat(task, settings.format)
   if (!ext) {
-    return { status: 'failed', error: `「${task.title}」不支持输出格式 ${settings.format || '（未选择）'}` }
+    return { status: 'failed', error: t('errUnsupportedFormat', { title: task.title, format: settings.format || t('formatUnselected') }) }
   }
   try {
     const outputPath = await chooseOutputPath(file.path, ext, reserved, batchTag, hostOverride)
@@ -405,14 +420,16 @@ export async function processVideoFile(
   }
 }
 
-/** 逐个处理；每个文件完成后回调一次，单个失败不影响其余文件；shouldStop 返回 true 时不再开始下一个 */
+/** 逐个处理；每个文件完成后回调一次，单个失败不影响其余文件；shouldSkip/shouldStop 命中时不再调用宿主 */
 export async function processVideoBatch(
   files: Array<Pick<RealVideoFileItem, 'id' | 'path'>>,
   settings: VideoProcessSettings,
   options: {
     hostOverride?: unknown
     batchTag?: string
+    onStart?: (id: string) => void
     onItem?: (id: string, outcome: VideoProcessOutcome) => void
+    shouldSkip?: (id: string) => boolean
     shouldStop?: () => boolean
   } = {}
 ): Promise<Map<string, VideoProcessOutcome>> {
@@ -421,6 +438,8 @@ export async function processVideoBatch(
   const outcomes = new Map<string, VideoProcessOutcome>()
   for (const file of files) {
     if (options.shouldStop?.()) break
+    if (options.shouldSkip?.(file.id)) continue
+    options.onStart?.(file.id)
     const outcome = await processVideoFile(file, settings, reserved, batchTag, options.hostOverride)
     outcomes.set(file.id, outcome)
     options.onItem?.(file.id, outcome)
@@ -457,76 +476,92 @@ export function buildFfmpegCommand(sourcePath: string, ext: string): string {
 }
 
 export function describeOutcomeTag(result: VideoProcessOutcome | undefined): string {
-  if (!result) return '未处理'
-  if (result.status === 'done') return `已输出 ${formatBytes(result.outputBytes)}`
-  return '失败'
+  if (!result) return t('tagPending')
+  if (result.status === 'done') return t('tagDone', { size: formatBytes(result.outputBytes) })
+  return t('tagFailed')
 }
 
 export function describeOutcomeSubtitle(file: Pick<RealVideoFileItem, 'parentDir' | 'result'>): string {
   const result = file.result
   if (!result) return file.parentDir
-  if (result.status === 'done') return `输出：${fileNameOf(result.outputPath)}`
-  return `失败：${result.error}`
+  if (result.status === 'done') return t('subOutput', { name: fileNameOf(result.outputPath) })
+  return t('subFailed', { error: result.error })
 }
 
-export const VIDEO_EXT_REGEX = /\.(?:mp4|mkv|mov|avi|flv|webm|wmv|ts|m4v|gif)$/i
-/** 本插件生成的输出文件（*_ztools、*_ztools_2、*_ztools_<时间>、*_ztools_<时间>_2），扫描时不再列入队列 */
-const DERIVED_OUTPUT_REGEX = /_ztools(?:_\d+){0,2}\.[a-z0-9]+$/i
+export const INPUT_VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.webm', '.wmv', '.ts', '.m4v'] as const
+export const VIDEO_IMPORT_SUPPORTED_TEXT = 'MP4 / MKV / MOV / AVI / FLV / WebM / WMV / TS / M4V'
+/** 本插件生成的输出文件（*_ztools、*_ztools_2、*_ztools_<时间>、*_ztools_<时间>_2），导入时不再列入队列 */
+export const DERIVED_OUTPUT_REGEX = /_ztools(?:_\d+){0,2}\.[a-z0-9]+$/i
 
-export interface VideoWorkspaceSnapshot {
-  scannedDirs: string[]
-  files: RealVideoFileItem[]
+/** 是否为本插件生成的派生输出文件 */
+export function isDerivedOutputName(name: string): boolean {
+  return DERIVED_OUTPUT_REGEX.test(String(name || ''))
 }
 
-export function makeVideoItem(id: string, filePath: string, sizeBytes: number): RealVideoFileItem {
+/** 视频导入规则：排除本插件生成的输出文件与系统核心路径 */
+export const VIDEO_IMPORT_RULES: FileImportRules = {
+  extensions: INPUT_VIDEO_EXTENSIONS,
+  excludeFile: name => isDerivedOutputName(name),
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+}
+
+export function createVideoImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
+
+let videoItemSeq = 0
+
+export function makeVideoItem(
+  id: string,
+  filePath: string,
+  sizeBytes: number | null,
+  parentDirOverride?: string
+): RealVideoFileItem {
   const { dir, fileName, ext } = splitPath(filePath)
   return {
     id,
     name: fileName,
     path: filePath,
-    parentDir: dir,
+    parentDir: parentDirOverride ?? dir,
     extension: ext,
-    sizeBytes
+    sizeBytes: typeof sizeBytes === 'number' && Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : null
   }
 }
 
-/**
- * 扫描本机 视频 / 下载 / 桌面 目录下的视频文件（每个目录最多取体积最大的 40 个），按体积从大到小排列。
- * 只收录扩展名是视频格式且大小大于 0 的文件，不用其他文件充数；本插件生成的输出文件不列入。
- */
-export async function fetchRealVideoWorkspace(hostOverride?: unknown): Promise<VideoWorkspaceSnapshot> {
-  const [videosDir, downloadsDir, desktopDir] = await Promise.all([
-    getRealSystemPath('videos', hostOverride),
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride)
-  ])
+export function toVideoItem(file: ImportedFile): RealVideoFileItem {
+  videoItemSeq += 1
+  return makeVideoItem(`vid-${videoItemSeq}-${file.path}`, file.path, file.sizeBytes, file.parentDir)
+}
 
-  const scannedDirs = [videosDir, downloadsDir, desktopDir].filter(Boolean)
-  const files: RealVideoFileItem[] = []
-  const seenPaths = new Set<string>()
+/** 弹出文件选择框选择视频文件（使用共享导入模块生成合规字符串过滤串） */
+export async function selectVideoFiles(hostOverride?: unknown): Promise<FileImportResult> {
+  return pickFiles(createVideoImportTransport(hostOverride), VIDEO_IMPORT_RULES, {
+    title: t('pickFilesTitle'),
+    filterName: t('pickFilesFilterName')
+  })
+}
 
-  for (const dir of scannedDirs) {
-    const videoScan = await scanRealDirectoryTree(dir, {
-      maxFiles: 200,
-      collectTopN: SCAN_TOP_N_PER_DIR,
-      filterExt: VIDEO_EXT_REGEX,
-      hostOverride
-    })
-    for (const f of videoScan.files) {
-      if (f.isDir || f.sizeBytes <= 0) continue
-      if (!VIDEO_EXT_REGEX.test(f.name) || DERIVED_OUTPUT_REGEX.test(f.name)) continue
-      const normPath = f.path.replace(/\//g, '\\').toLowerCase()
-      if (seenPaths.has(normPath)) continue
-      seenPaths.add(normPath)
-      files.push(makeVideoItem(`vid-${files.length}-${f.path}`, f.path, f.sizeBytes))
+/** 选择文件夹并收集其中符合规则的视频文件（选中整盘时先请用户确认） */
+export async function pickVideoFolderWithConfirm(
+  transport: FileImportTransport,
+  confirmVolumeRoot: (folderPath: string) => Promise<boolean>,
+  options: FileImportOptions = {}
+): Promise<FileImportResult> {
+  const picked = await pickFolder(transport, { title: t('pickFolderTitle') })
+  if (options.signal?.aborted || picked.canceled) {
+    return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+  }
+  if (picked.error || !picked.folderPath) {
+    return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: picked.error || t('noFolderSelected') }
+  }
+  if (isVolumeRoot(picked.folderPath)) {
+    const confirmed = await confirmVolumeRoot(picked.folderPath)
+    if (options.signal?.aborted || !confirmed) {
+      return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
     }
   }
-
-  files.sort((a, b) => b.sizeBytes - a.sizeBytes)
-  return { scannedDirs, files }
+  return collectFolderFiles(transport, picked.folderPath, VIDEO_IMPORT_RULES, options)
 }
-
-export const scanLocalVideoQueue = fetchRealVideoWorkspace
 
 /** 在资源管理器中显示文件（只定位，不会用默认程序打开文件）；宿主拒绝时返回 false */
 export async function showFileInFolder(fullPath: string, hostOverride?: unknown): Promise<boolean> {

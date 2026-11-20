@@ -9,6 +9,7 @@
  * 录制文件保存在系统视频文件夹下的 ZTools_Recordings 目录，列表只展示这个目录里的录制文件。
  */
 
+import { t } from './i18n.js'
 import { callHostTransport, formatBytes, getRealSystemPath, openRealPath, showRealItemInFolder } from './native-ipc.js'
 
 export { formatBytes }
@@ -27,9 +28,20 @@ export const RECORD_FORMAT_OPTIONS: ReadonlyArray<{ value: RecordFormat; label: 
   { value: 'gif', label: 'GIF 动图' }
 ]
 
+export function getRecordFormatOptions(): ReadonlyArray<{ value: RecordFormat; label: string }> {
+  return [
+    { value: 'mp4', label: t('formatMp4') },
+    { value: 'gif', label: t('formatGif') }
+  ]
+}
+
 /** 录制能力的固定限制（由客户端录制实现决定），界面上如实展示 */
 export const RECORD_LIMITATION_NOTE =
   '录制整个桌面（所有显示器）的画面，不录制声音。需要本机已安装 ffmpeg，并能在命令行中直接运行。'
+
+export function getRecordLimitationNote(): string {
+  return t('limitationNote')
+}
 
 /** 录制文件保存目录名（位于系统视频文件夹下） */
 export const RECORDINGS_FOLDER_NAME = 'ZTools_Recordings'
@@ -173,7 +185,7 @@ function pad2(n: number): string {
 
 /** 本地时间 "YYYY-MM-DD HH:mm"；时间未知时返回 "时间未知" */
 export function formatRecordTime(ms: number | null): string {
-  if (ms === null || !Number.isFinite(ms)) return '时间未知'
+  if (ms === null || !Number.isFinite(ms)) return t('timeUnknown')
   const d = new Date(ms)
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
@@ -197,14 +209,14 @@ function asRecord(value: unknown): HostRecord | null {
  */
 async function callRecordHost(func: string, params: Record<string, unknown>, hostOverride?: unknown): Promise<HostCallResult> {
   const res = await callHostTransport<unknown>('dllplugin_call', { plugin: RECORD_HOST_PLUGIN, func, params }, hostOverride)
-  if (!res.ok) return { ok: false, error: res.error || `录制接口 ${func} 调用失败` }
+  if (!res.ok) return { ok: false, error: res.error || t('hostCallFailed', { func }) }
   const data = asRecord(res.data)
   if (!data) {
-    return { ok: false, error: `录制接口 ${func} 返回了无法识别的结果` }
+    return { ok: false, error: t('hostInvalidResult', { func }) }
   }
   const hasError = typeof data.error === 'string' && data.error.length > 0
   if (data.ok === false || data.success === false || (hasError && data.ok !== true && data.success !== true)) {
-    return { ok: false, error: String(data.error || data.message || `录制接口 ${func} 返回失败`) }
+    return { ok: false, error: String(data.error || data.message || t('hostReturnedFailure', { func })) }
   }
   return { ok: true, data }
 }
@@ -231,7 +243,7 @@ export async function getRecordingStatus(hostOverride?: unknown): Promise<Record
   const res = await callRecordHost('status', {}, hostOverride)
   if (!res.ok) return { ok: false, recording: false, sessions: [], error: res.error }
   if (typeof res.data.recording !== 'boolean') {
-    return { ok: false, recording: false, sessions: [], error: '客户端没有返回录制状态' }
+    return { ok: false, recording: false, sessions: [], error: t('hostNoRecordingStatus') }
   }
   const sessions = parseSessions(res.data.sessions)
   if (!res.data.recording) {
@@ -272,17 +284,17 @@ export async function listRecordingFiles(
   hostOverride?: unknown
 ): Promise<RecordingListResult> {
   const dir = String(saveDir || '').trim()
-  if (!dir) return { files: [], partial: false, missing: false, error: '未能获取系统视频文件夹路径' }
+  if (!dir) return { files: [], partial: false, missing: false, error: t('noVideosFolder') }
 
   const exists = await recordingsDirExists(String(videosDir || '').trim(), hostOverride)
   if (exists === false) return { files: [], partial: false, missing: true }
 
   const res = await callHostTransport<unknown>('system_search_files', { query: `dir:${dir}`, limit: RECORDING_SCAN_LIMIT }, hostOverride)
-  if (!res.ok) return { files: [], partial: false, missing: false, error: res.error || '读取保存目录失败' }
+  if (!res.ok) return { files: [], partial: false, missing: false, error: res.error || t('readSaveDirFailed') }
   const data = asRecord(res.data)
   const rawFiles = data?.files
   if (!data || !Array.isArray(rawFiles)) {
-    return { files: [], partial: false, missing: false, error: '客户端返回的目录内容无法识别' }
+    return { files: [], partial: false, missing: false, error: t('unrecognizedDirContent') }
   }
 
   const dirKey = comparablePath(dir)
@@ -352,7 +364,7 @@ export async function fetchRecordWorkspace(hostOverride?: unknown): Promise<Reco
     ...(listing.error ? { listError: listing.error } : {}),
     isRecording: status.ok ? status.recording : null,
     sessions: status.sessions,
-    ...(status.ok ? {} : { statusError: status.error || '查询录制状态失败' })
+    ...(status.ok ? {} : { statusError: status.error || t('queryStatusFailed') })
   }
 }
 
@@ -364,19 +376,19 @@ export async function startScreenRecording(config: RecordSessionConfig, hostOver
   const fps = config?.fps
   const format = config?.format
   if (!RECORD_FPS_OPTIONS.some(o => o.value === fps) || !RECORD_FORMAT_OPTIONS.some(o => o.value === format)) {
-    return failStart('录制参数无效', 'INVALID_RECORD_CONFIG')
+    return failStart(t('invalidRecordConfig'), 'INVALID_RECORD_CONFIG')
   }
-  if (recordOpInFlight) return failStart('上一个录制操作还没有完成', 'RECORD_BUSY')
+  if (recordOpInFlight) return failStart(t('recordBusy'), 'RECORD_BUSY')
   recordOpInFlight = true
   const saveDir = String(config.saveDir || '').trim()
   try {
     // 已有录制在进行时不再启动第二个（客户端允许多个会话并存，停止时只会停掉其中一个）
     const status = await getRecordingStatus(hostOverride)
     if (!status.ok) {
-      return failStart(`无法确认当前录制状态：${status.error}`, status.error || 'RECORD_STATUS_UNKNOWN', saveDir)
+      return failStart(t('cannotConfirmStatus', { error: status.error || '' }), status.error || 'RECORD_STATUS_UNKNOWN', saveDir)
     }
     if (status.recording) {
-      return failStart('已有录制正在进行，请先停止', 'RECORD_ALREADY_RUNNING', saveDir, status.sessions[0]?.id || '')
+      return failStart(t('alreadyRecording'), 'RECORD_ALREADY_RUNNING', saveDir, status.sessions[0]?.id || '')
     }
 
     const params: Record<string, unknown> = {
@@ -394,7 +406,7 @@ export async function startScreenRecording(config: RecordSessionConfig, hostOver
     return {
       ok: true,
       sessionId,
-      message: `已开始录制（${fps} FPS，${format.toUpperCase()}）`,
+      message: t('recordingStarted', { fps, format: format.toUpperCase() }),
       saveDir: (outputPath && parentDirOf(outputPath)) || saveDir,
       ...(outputPath ? { outputPath } : {})
     }
@@ -407,7 +419,7 @@ export async function startScreenRecording(config: RecordSessionConfig, hostOver
 }
 
 export async function stopScreenRecording(hostOverride?: unknown): Promise<RecordStopResult> {
-  if (recordOpInFlight) return { ok: false, message: '上一个录制操作还没有完成', error: 'RECORD_BUSY' }
+  if (recordOpInFlight) return { ok: false, message: t('recordBusy'), error: 'RECORD_BUSY' }
   recordOpInFlight = true
   try {
     const params: Record<string, unknown> = activeSessionId ? { sessionId: activeSessionId } : {}
@@ -420,7 +432,7 @@ export async function stopScreenRecording(hostOverride?: unknown): Promise<Recor
     const duration = Number(res.data.durationMs)
     return {
       ok: true,
-      message: '录制已保存',
+      message: t('recordingSaved'),
       ...(outputPath ? { outputPath } : {}),
       ...(Number.isFinite(size) && size >= 0 ? { sizeBytes: size } : {}),
       ...(Number.isFinite(duration) && duration >= 0 ? { durationMs: duration } : {})

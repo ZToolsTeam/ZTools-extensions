@@ -1,6 +1,8 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import * as logic from '../dist/logic.js'
 import {
   fetchHardwareTelemetrySnapshot,

@@ -20,10 +20,12 @@ import {
   showToast,
   Toast,
   confirmAlert,
-  useNavigation
+  useNavigation,
+  useLocale
 } from "@ztools/declarative-ui";
 import { useState, useEffect, useMemo, useRef } from "@ztools/declarative-ui";
 import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+import { t } from "./i18n.js";
 
 export type CalendarFilterScope = "all" | "upcoming" | "meetings" | "today" | "past";
 
@@ -60,7 +62,7 @@ export interface CalendarEventItem {
   readonly isAllDay?: boolean;
 }
 
-export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+export const NOT_IN_CLIENT_MESSAGE = t("notInClient");
 
 // 本次会话里经宿主新建 / 删除后的日程缓存（不含任何示例数据）
 let memoryCalendarEvents: CalendarEventItem[] = [];
@@ -69,7 +71,10 @@ let memoryCalendarEvents: CalendarEventItem[] = [];
 // 日期与时间
 // ---------------------------------------------------------------------------
 
-const WEEKDAYS = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+function getWeekday(dayIndex: number): string {
+  const keys = ["weekday0", "weekday1", "weekday2", "weekday3", "weekday4", "weekday5", "weekday6"] as const;
+  return t(keys[dayIndex] ?? "weekday0");
+}
 const DAY_MS = 24 * 3600 * 1000;
 
 function pad2(n: number): string {
@@ -101,22 +106,32 @@ export function formatDateKey(ms: number): string {
 export function formatDayLabel(ms: number, now = Date.now()): string {
   const d = new Date(ms);
   const sameYear = d.getFullYear() === new Date(now).getFullYear();
-  const date = `${sameYear ? "" : `${d.getFullYear()}年`}${d.getMonth() + 1}月${d.getDate()}日 ${WEEKDAYS[d.getDay()]}`;
+  const date = t("dateFormat", {
+    year: sameYear ? "" : t("yearSuffix", { y: d.getFullYear() }),
+    month: d.getMonth() + 1,
+    day: d.getDate(),
+    weekday: getWeekday(d.getDay())
+  });
   const diffDays = Math.round((startOfDay(ms) - startOfDay(now)) / DAY_MS);
-  if (diffDays === 0) return `今天 · ${date}`;
-  if (diffDays === 1) return `明天 · ${date}`;
-  if (diffDays === -1) return `昨天 · ${date}`;
+  if (diffDays === 0) return t("todayLabel", { date });
+  if (diffDays === 1) return t("tomorrowLabel", { date });
+  if (diffDays === -1) return t("yesterdayLabel", { date });
   return date;
 }
 
 /** 列表行右侧的时间段：同一天只显示时分，跨天时结束时间带日期 */
 export function formatEventRange(evt: CalendarEventItem): string {
-  if (evt.isAllDay) return "全天";
+  if (evt.isAllDay) return t("allDay");
   if (typeof evt.startAt === "number" && typeof evt.endAt === "number") {
     const sameDay = formatDateKey(evt.startAt) === formatDateKey(evt.endAt);
     if (sameDay) return `${formatClock(evt.startAt)} - ${formatClock(evt.endAt)}`;
     const end = new Date(evt.endAt);
-    return `${formatClock(evt.startAt)} - ${end.getMonth() + 1}月${end.getDate()}日 ${formatClock(evt.endAt)}`;
+    return t("rangeCrossDay", {
+      start: formatClock(evt.startAt),
+      month: end.getMonth() + 1,
+      day: end.getDate(),
+      end: formatClock(evt.endAt)
+    });
   }
   return `${evt.startTime} - ${evt.endTime}`;
 }
@@ -125,8 +140,8 @@ export function formatEventRange(evt: CalendarEventItem): string {
 export function formatEventWhen(evt: CalendarEventItem): string {
   if (typeof evt.startAt !== "number") return formatEventRange(evt);
   const start = new Date(evt.startAt);
-  const day = `${formatDateKey(evt.startAt)} ${WEEKDAYS[start.getDay()]}`;
-  if (evt.isAllDay) return `${day} 全天`;
+  const day = `${formatDateKey(evt.startAt)} ${getWeekday(start.getDay())}`;
+  if (evt.isAllDay) return t("whenAllDay", { day });
   if (typeof evt.endAt === "number" && formatDateKey(evt.startAt) !== formatDateKey(evt.endAt)) {
     return `${day} ${formatClock(evt.startAt)} - ${formatDateKey(evt.endAt)} ${formatClock(evt.endAt)}`;
   }
@@ -184,33 +199,33 @@ export function parseEventTimes(input: {
   const resolve = (field: "startTime" | "endTime", label: string): number | null => {
     const text = (input[field] || "").trim();
     if (!text) {
-      errors[field] = `请填写${label}`;
+      errors[field] = t("errRequiredField", { label });
       return null;
     }
     const withDate = text.match(DATE_TIME_RE);
     const day = withDate ? parseDate(withDate[1]) : baseDate;
     const clock = parseClock(withDate ? withDate[2] : text);
     if (!clock || (withDate && !day)) {
-      errors[field] = `${label}格式应为 HH:MM（00:00 - 23:59），例如 09:30`;
+      errors[field] = t("errClockFormat", { label });
       return null;
     }
     if (!day) {
-      errors.date = dateText ? "日期格式应为 YYYY-MM-DD，例如 2026-10-25" : "请填写日期";
+      errors.date = dateText ? t("errDateFormat") : t("errDateRequired");
       return null;
     }
     const at = new Date(day.y, day.m - 1, day.d, clock.h, clock.min, 0, 0);
     // 夏令时开始那天被跳过的时刻（如 02:30）会被系统顺延一小时，不能悄悄存成别的时间
     if (at.getDate() !== day.d || at.getHours() !== clock.h || at.getMinutes() !== clock.min) {
-      errors[field] = `${label}在本机时区因夏令时调整不存在，请换一个时间`;
+      errors[field] = t("errDstMissingTime", { label });
       return null;
     }
     return at.getTime();
   };
 
-  const startAt = resolve("startTime", "开始时间");
-  const endAt = resolve("endTime", "结束时间");
+  const startAt = resolve("startTime", t("labelStartTime"));
+  const endAt = resolve("endTime", t("labelEndTime"));
   if (startAt !== null && endAt !== null && endAt <= startAt) {
-    errors.endTime = "结束时间必须晚于开始时间（跨天日程请写结束日期，例如 2026-10-23 01:00）";
+    errors.endTime = t("errEndBeforeStart");
   }
   if (Object.keys(errors).length > 0 || startAt === null || endAt === null) {
     return { ok: false, errors };
@@ -225,12 +240,12 @@ export function parseEventTimes(input: {
 export function normalizeConferenceUrl(raw?: string): { url?: string; error?: string } {
   const text = (raw || "").trim();
   if (!text) return {};
-  const invalid = "会议链接必须是 http:// 或 https:// 开头的网址，例如 https://vc.feishu.cn/j/123456";
+  const invalid = t("errConfUrlInvalid");
   if (/\s/.test(text)) return { error: invalid };
   const schemeMatch = text.match(/^([a-z][a-z0-9+.-]*):(?!\d)/i);
   const candidate = schemeMatch ? text : `https://${text}`;
   if (schemeMatch && !/^https?$/i.test(schemeMatch[1])) {
-    return { error: `不支持「${schemeMatch[1]}:」链接，请填写会议的网页链接（http:// 或 https:// 开头）` };
+    return { error: t("errConfUrlScheme", { scheme: schemeMatch[1] }) };
   }
   let parsed: URL;
   try {
@@ -239,7 +254,7 @@ export function normalizeConferenceUrl(raw?: string): { url?: string; error?: st
     return { error: invalid };
   }
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { error: invalid };
-  if (parsed.username || parsed.password) return { error: "会议链接不能包含用户名或密码" };
+  if (parsed.username || parsed.password) return { error: t("errConfUrlAuth") };
   if (!parsed.hostname || (!parsed.hostname.includes(".") && parsed.hostname !== "localhost")) {
     return { error: invalid };
   }
@@ -255,7 +270,7 @@ export function validateEventForm(values: {
   conferenceUrl?: string;
 }): EventFormErrors {
   const errors: EventFormErrors = {};
-  if (!(values.title || "").trim()) errors.title = "请填写日程主题";
+  if (!(values.title || "").trim()) errors.title = t("errTitleRequired");
   const times = parseEventTimes(values);
   if (!times.ok) Object.assign(errors, times.errors);
   const url = normalizeConferenceUrl(values.conferenceUrl);
@@ -266,7 +281,7 @@ export function validateEventForm(values: {
 /** 去掉错误信息前的错误码前缀，只给用户看原因 */
 function readableError(err: unknown): string {
   const text = err instanceof Error ? err.message : String(err ?? "");
-  return text.replace(/^[A-Z][A-Z0-9_]+:\s*/, "") || "未知错误";
+  return text.replace(/^[A-Z][A-Z0-9_]+:\s*/, "") || t("errUnknown");
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +451,7 @@ export async function fetchCalendarPage(
         ? listedEvents
         : null;
     if (!res.ok || !rawList) {
-      throw new Error(`LOAD_EVENTS_FAILED: ${res.ok ? "宿主返回的日程格式无法识别" : res.error || "宿主读取日程失败"}`);
+      throw new Error(`LOAD_EVENTS_FAILED: ${res.ok ? t("errHostFormatUnrecognized") : res.error || t("errHostLoadFailed")}`);
     }
     const events: CalendarEventItem[] = rawList.map(mapHostEvent);
     let total = events.length;
@@ -454,7 +469,7 @@ export async function fetchCalendarPage(
     return { events, total, searchedOnHost: !useUpcoming && Boolean(search.trim()) };
   }
   // 日程保存在客户端的本机数据库里，没有客户端时不能显示示例日程冒充
-  throw new Error(`NOT_IN_CLIENT: ${NOT_IN_CLIENT_MESSAGE}`);
+  throw new Error(`NOT_IN_CLIENT: ${t("notInClient")}`);
 }
 
 export async function fetchCalendarEvents(
@@ -480,11 +495,11 @@ export async function createCalendarEvent(
 ): Promise<CalendarEventItem> {
   const cleanTitle = (input.title || "").trim();
   if (!cleanTitle) {
-    throw new Error("EVENT_TITLE_REQUIRED: 日程标题不能为空");
+    throw new Error(t("errEventTitleRequired"));
   }
   const times = parseEventTimes(input);
   if (!times.ok) {
-    const first = Object.values(times.errors)[0] || "时间无效";
+    const first = Object.values(times.errors)[0] || t("errInvalidTimeFallback");
     throw Object.assign(new Error(`INVALID_EVENT_TIME: ${first}`), { fieldErrors: times.errors });
   }
   const link = normalizeConferenceUrl(input.conferenceUrl);
@@ -536,11 +551,11 @@ export async function createCalendarEvent(
       return merged;
     }
     // 宿主没存进去就如实报错，不能当作创建成功（否则关掉插件日程就没了）
-    throw new Error(`CREATE_EVENT_FAILED: ${res.error || "宿主没有返回日程 ID"}`);
+    throw new Error(`CREATE_EVENT_FAILED: ${res.error || t("errCreateNoId")}`);
   }
 
   // 没有客户端时无处保存，不能只存在内存里提示「已创建」
-  throw new Error(`NOT_IN_CLIENT: ${NOT_IN_CLIENT_MESSAGE}`);
+  throw new Error(`NOT_IN_CLIENT: ${t("notInClient")}`);
 }
 
 export async function deleteCalendarEvent(id: string, hostOverride?: unknown): Promise<boolean> {
@@ -565,10 +580,10 @@ export async function exportCalendarIcs(
 ): Promise<string> {
   if (hostOverride || isRealElectronHost()) {
     const res = await callHostTransport<unknown>("calendar_export_ics", { eventIds: events.map((e) => e.id) }, hostOverride);
-    if (!res.ok) throw new Error(`EXPORT_ICS_FAILED: ${res.error || "宿主导出失败"}`);
+    if (!res.ok) throw new Error(`EXPORT_ICS_FAILED: ${res.error || t("errExportFailed")}`);
     const ics = typeof res.data === "string" ? res.data : hostField(res.data, "ics");
     if (typeof ics !== "string" || !ics.includes("BEGIN:VCALENDAR")) {
-      throw new Error("EXPORT_ICS_FAILED: 宿主返回的不是 ICS 日历内容");
+      throw new Error(t("errExportNotIcs"));
     }
     return ics;
   }
@@ -585,15 +600,15 @@ export async function exportCalendarIcsToFile(
   hostOverride?: unknown
 ): Promise<IcsFileExportResult> {
   if (!hostOverride && !isRealElectronHost()) {
-    throw new Error("NOT_SUPPORTED: 当前环境不能保存文件，请改用「复制 ICS 文本」");
+    throw new Error(t("errExportNotSupported"));
   }
   const ics = await exportCalendarIcs(events, hostOverride);
   const picked = await callHostTransport<{ filePath?: unknown; canceled?: unknown }>(
     "window_show_save_dialog",
-    { title: "导出 ICS 日历文件", defaultName: defaultIcsFileName(events), filters: "iCalendar 日历|ics" },
+    { title: t("saveIcsTitle"), defaultName: defaultIcsFileName(events), filters: t("saveIcsFilter") },
     hostOverride
   );
-  if (!picked.ok) throw new Error(`SAVE_DIALOG_FAILED: ${picked.error || "无法打开保存窗口"}`);
+  if (!picked.ok) throw new Error(`SAVE_DIALOG_FAILED: ${picked.error || t("errSaveDialogFailed")}`);
   const pickedPath = picked.data?.filePath;
   const filePath = typeof pickedPath === "string" ? pickedPath : "";
   if (picked.data?.canceled || !filePath) return { status: "canceled" };
@@ -602,7 +617,7 @@ export async function exportCalendarIcsToFile(
     { path: filePath, content: ics, encoding: "utf8" },
     hostOverride
   );
-  if (!written.ok) throw new Error(`WRITE_FILE_FAILED: ${written.error || "写入文件失败"}`);
+  if (!written.ok) throw new Error(`WRITE_FILE_FAILED: ${written.error || t("errWriteFileFailed")}`);
   return { status: "saved", filePath, count: countIcsEvents(ics) };
 }
 
@@ -611,6 +626,7 @@ export async function exportCalendarIcsToFile(
 // ---------------------------------------------------------------------------
 
 export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: CalendarEventItem) => void }) {
+  useLocale();
   const [title, setTitle] = useState("");
   const [date, setDate] = useState(() => formatDateKey(Date.now()));
   const [startTime, setStartTime] = useState("15:00");
@@ -644,7 +660,7 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
     setErrors(found);
     const firstError = Object.values(found)[0];
     if (firstError) {
-      await showToast(Toast.Style.Failure, "请先修正标红的字段", firstError);
+      await showToast(Toast.Style.Failure, t("formFixRedFields"), firstError);
       return;
     }
     savingRef.current = true;
@@ -661,13 +677,13 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
         notes
       });
       onCreated?.(created);
-      await showToast(Toast.Style.Success, `已创建日程: ${created.title}`, formatEventWhen(created));
+      await showToast(Toast.Style.Success, t("toastCreatedTitle", { title: created.title }), formatEventWhen(created));
       if (alive.current) pop();
     } catch (err: unknown) {
       if (!alive.current) return;
       const fieldErrors = err != null ? (err as { fieldErrors?: EventFormErrors }).fieldErrors : undefined;
       if (fieldErrors) setErrors(fieldErrors);
-      await showToast(Toast.Style.Failure, "创建日程失败", readableError(err));
+      await showToast(Toast.Style.Failure, t("toastCreateFailed"), readableError(err));
     } finally {
       savingRef.current = false;
       if (alive.current) setSaving(false);
@@ -676,18 +692,18 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
 
   return (
     <Form
-      navigationTitle="新建日程事件"
+      navigationTitle={t("formNavTitle")}
       isLoading={saving}
       actions={
         <ActionPanel>
-          <Action title="保存日程" icon={Icon.Check} onAction={handleSubmit} />
+          <Action title={t("actionSaveEvent")} icon={Icon.Check} onAction={handleSubmit} />
         </ActionPanel>
       }
     >
       <Form.TextField
         id="title"
-        title="日程主题"
-        placeholder="例如: 产品周会 / 架构评审"
+        title={t("fieldTitleLabel")}
+        placeholder={t("fieldTitlePlaceholder")}
         value={title}
         error={errors.title}
         onChange={(v: string) => {
@@ -697,9 +713,9 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
       />
       <Form.TextField
         id="date"
-        title="日期"
+        title={t("fieldDateLabel")}
         placeholder="YYYY-MM-DD"
-        info="格式 YYYY-MM-DD，默认今天"
+        info={t("fieldDateInfo")}
         value={date}
         error={errors.date}
         onChange={(v: string) => {
@@ -709,7 +725,7 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
       />
       <Form.TextField
         id="startTime"
-        title="开始时间"
+        title={t("fieldStartTimeLabel")}
         placeholder="15:00"
         value={startTime}
         error={errors.startTime}
@@ -720,9 +736,9 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
       />
       <Form.TextField
         id="endTime"
-        title="结束时间"
+        title={t("fieldEndTimeLabel")}
         placeholder="16:00"
-        info="跨天日程写结束日期，例如 2026-10-23 01:00"
+        info={t("fieldEndTimeInfo")}
         value={endTime}
         error={errors.endTime}
         onChange={(v: string) => {
@@ -730,23 +746,23 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
           clearErrors(...timeFields);
         }}
       />
-      <Form.Dropdown id="calendarName" title="所属日历" value={calendarName} onChange={setCalendarName}>
-        <Form.Dropdown.Item value="Work" title="工作" />
-        <Form.Dropdown.Item value="Engineering" title="工程研发" />
-        <Form.Dropdown.Item value="Personal" title="个人生活" />
+      <Form.Dropdown id="calendarName" title={t("fieldCalendarLabel")} value={calendarName} onChange={setCalendarName}>
+        <Form.Dropdown.Item value="Work" title={t("calWork")} />
+        <Form.Dropdown.Item value="Engineering" title={t("calEngineering")} />
+        <Form.Dropdown.Item value="Personal" title={t("calPersonal")} />
       </Form.Dropdown>
       <Form.TextField
         id="location"
-        title="地点 / 会议室"
-        placeholder="例如: 飞书会议 / 3F 会议室"
+        title={t("fieldLocationLabel")}
+        placeholder={t("fieldLocationPlaceholder")}
         value={location}
         onChange={setLocation}
       />
       <Form.TextField
         id="conferenceUrl"
-        title="在线会议链接 (可选)"
+        title={t("fieldConfUrlLabel")}
         placeholder="https://vc.feishu.cn/j/..."
-        info="只支持 http:// 或 https:// 网址，没写协议时自动补 https://"
+        info={t("fieldConfUrlInfo")}
         value={conferenceUrl}
         error={errors.conferenceUrl}
         onChange={(v: string) => {
@@ -756,8 +772,8 @@ export function CreateCalendarEventForm({ onCreated }: { onCreated?: (evt: Calen
       />
       <Form.TextArea
         id="notes"
-        title="议程与备注"
-        placeholder="填写会议议程或准备事项..."
+        title={t("fieldNotesLabel")}
+        placeholder={t("fieldNotesPlaceholder")}
         value={notes}
         onChange={setNotes}
       />
@@ -778,7 +794,7 @@ export function groupEventsByDay(events: readonly CalendarEventItem[], now = Dat
     const key = typeof evt.startAt === "number" ? formatDateKey(evt.startAt) : "unknown";
     let section = sections.length > 0 && sections[sections.length - 1].key === key ? sections[sections.length - 1] : undefined;
     if (!section) {
-      section = { key, title: typeof evt.startAt === "number" ? formatDayLabel(evt.startAt, now) : "日程安排", events: [] };
+      section = { key, title: typeof evt.startAt === "number" ? formatDayLabel(evt.startAt, now) : t("sectionScheduleFallback"), events: [] };
       sections.push(section);
     }
     section.events.push(evt);
@@ -787,6 +803,7 @@ export function groupEventsByDay(events: readonly CalendarEventItem[], now = Dat
 }
 
 export function CalendarCommand() {
+  useLocale();
   const realHost = isRealElectronHost();
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [total, setTotal] = useState<number>(0);
@@ -822,7 +839,7 @@ export function CalendarCommand() {
           const reason = readableError(err);
           setLoadError(reason);
           setIsLoading(false);
-          void showToast(Toast.Style.Failure, "读取日程失败", reason);
+          void showToast(Toast.Style.Failure, t("toastLoadFailed"), reason);
         });
     }, hostSearch ? 250 : 0);
     return () => {
@@ -862,20 +879,20 @@ export function CalendarCommand() {
 
   const handleDelete = async (evt: CalendarEventItem) => {
     const confirmed = await confirmAlert({
-      title: `删除日程「${evt.title}」？`,
-      message: `${formatEventWhen(evt)}。删除后无法恢复。`,
-      primaryAction: { title: "删除", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("confirmDeleteTitle", { title: evt.title }),
+      message: t("confirmDeleteMsg", { when: formatEventWhen(evt) }),
+      primaryAction: { title: t("actionDelete"), style: "destructive" },
+      dismissAction: { title: t("actionCancel") }
     });
     if (!confirmed) return;
     const ok = await deleteCalendarEvent(evt.id);
     if (!ok) {
-      await showToast(Toast.Style.Failure, "删除日程失败", evt.title);
+      await showToast(Toast.Style.Failure, t("toastDeleteFailed"), evt.title);
       return;
     }
     setEvents((prev) => prev.filter((item) => item.id !== evt.id));
     setTotal((prev) => Math.max(0, prev - 1));
-    await showToast(Toast.Style.Success, `已删除日程: ${evt.title}`);
+    await showToast(Toast.Style.Success, t("toastDeleted", { title: evt.title }));
   };
 
   // 新建后按当前范围与搜索词重新读取：本地插入会把一周后的日程塞进「即将开始」、把不匹配的日程塞进搜索结果
@@ -883,29 +900,29 @@ export function CalendarCommand() {
 
   const handleExportFile = async (list: readonly CalendarEventItem[]) => {
     if (list.length === 0) {
-      await showToast(Toast.Style.Failure, "没有可导出的日程", "当前列表为空");
+      await showToast(Toast.Style.Failure, t("noExportableTitle"), t("emptyListMsg"));
       return;
     }
     try {
       const result = await exportCalendarIcsToFile(list);
       if (result.status === "canceled") return;
-      await showToast(Toast.Style.Success, `已导出 ${result.count} 个日程到 ICS 文件`, result.filePath);
+      await showToast(Toast.Style.Success, t("toastExportedTitle", { count: result.count }), result.filePath);
     } catch (err) {
-      await showToast(Toast.Style.Failure, "导出 ICS 文件失败", readableError(err));
+      await showToast(Toast.Style.Failure, t("toastExportFailedTitle"), readableError(err));
     }
   };
 
   const handleCopyIcs = async (list: readonly CalendarEventItem[]) => {
     if (list.length === 0) {
-      await showToast(Toast.Style.Failure, "没有可复制的日程", "当前列表为空");
+      await showToast(Toast.Style.Failure, t("noCopyableTitle"), t("emptyListMsg"));
       return;
     }
     try {
       const ics = await exportCalendarIcs(list);
       await Clipboard.copy(ics);
-      await showToast(Toast.Style.Success, "已复制 ICS 日历文本", `包含 ${countIcsEvents(ics)} 个日程事件`);
+      await showToast(Toast.Style.Success, t("toastCopiedIcsTitle"), t("toastCopiedIcsMsg", { count: countIcsEvents(ics) }));
     } catch (err) {
-      await showToast(Toast.Style.Failure, "复制 ICS 文本失败", readableError(err));
+      await showToast(Toast.Style.Failure, t("toastCopyIcsFailed"), readableError(err));
     }
   };
 
@@ -913,13 +930,13 @@ export function CalendarCommand() {
     const summary = buildEventSummary(evt);
     try {
       await Clipboard.copy(summary);
-      await showToast(Toast.Style.Success, "已复制日程摘要", summary);
+      await showToast(Toast.Style.Success, t("toastCopiedSummary"), summary);
     } catch (err) {
-      await showToast(Toast.Style.Failure, "复制日程摘要失败", readableError(err));
+      await showToast(Toast.Style.Failure, t("toastCopySummaryFailed"), readableError(err));
     }
   };
 
-  const truncatedHint = total > events.length ? ` · 仅显示前 ${events.length} 条（共 ${total} 条）` : "";
+  const truncatedHint = total > events.length ? t("truncatedHint", { shown: events.length, total }) : "";
 
   const activeEvent = useMemo(
     () => displayedEvents.find((e) => e.id === selectedId) || displayedEvents[0] || null,
@@ -940,12 +957,12 @@ export function CalendarCommand() {
 
   if (!realHost) {
     return (
-      <List searchBarPlaceholder="搜索日程">
-        <List.Section title="日程">
+      <List searchBarPlaceholder={t("searchPlaceholderShort")}>
+        <List.Section title={t("sectionSchedule")}>
           <List.Item
             id="calendar-client-required"
-            title={NOT_IN_CLIENT_MESSAGE}
-            subtitle="日程保存在 ZTools 客户端的本机数据库里"
+            title={t("notInClient")}
+            subtitle={t("clientRequiredSub")}
             icon={Icon.Info}
           />
         </List.Section>
@@ -955,36 +972,42 @@ export function CalendarCommand() {
 
   const summaryText = loadError
     ? events.length > 0
-      ? `读取日程失败：${loadError} · 下方是上次读取的结果，可在动作面板选「重新读取日程」`
-      : `读取日程失败：${loadError} · 按 Enter 重试`
+      ? t("summaryLoadErrKeep", { error: loadError })
+      : t("summaryLoadErrEmpty", { error: loadError })
     : nextMeeting
-      ? `日程安排 • 共 ${events.length} 场日程 (视频会议 ${events.filter((e) => Boolean(e.conferenceUrl)).length} 场) | 下一场: ${nextMeeting.title} (${typeof nextMeeting.startAt === "number" ? `${formatDayLabel(nextMeeting.startAt).split(" · ")[0]} ` : ""}${nextMeeting.startTime})${truncatedHint}`
-      : `日程安排 • 当前共 ${events.length} 场日程${truncatedHint}`;
+      ? t("summaryWithNext", {
+          total: events.length,
+          meetings: events.filter((e) => Boolean(e.conferenceUrl)).length,
+          title: nextMeeting.title,
+          when: `${typeof nextMeeting.startAt === "number" ? `${formatDayLabel(nextMeeting.startAt).split(" · ")[0]} ` : ""}${nextMeeting.startTime}`,
+          truncated: truncatedHint
+        })
+      : t("summaryNoNext", { total: events.length, truncated: truncatedHint });
 
   const createForm = <CreateCalendarEventForm onCreated={handleCreated} />;
 
   /** 与选中日程无关的全局动作，放在动作面板靠后 */
   const globalActions = (
-    <ActionPanel.Section title="全部日程">
+    <ActionPanel.Section title={t("sectionAllEvents")}>
       <Action.Push
-        title="新建日程事件..."
+        title={t("actionNewEvent")}
         icon={Icon.Plus}
         shortcut={{ modifiers: ["ctrl"], key: "n" }}
         target={createForm}
       />
       <Action
-        title="导出当前列表为 ICS 文件..."
+        title={t("actionExportListIcs")}
         icon={Icon.Download}
         shortcut={{ modifiers: ["ctrl"], key: "e" }}
         onAction={() => handleExportFile(displayedEvents)}
       />
       <Action
-        title="复制当前列表的 ICS 文本"
+        title={t("actionCopyListIcs")}
         icon={Icon.CopyClipboard}
         onAction={() => handleCopyIcs(displayedEvents)}
       />
       <Action
-        title="重新读取日程"
+        title={t("actionReload")}
         icon={Icon.RotateClockwise}
         onAction={reload}
       />
@@ -994,22 +1017,22 @@ export function CalendarCommand() {
   const renderEventActions = (evt: CalendarEventItem) => {
     const itemActions = [
       evt.conferenceUrl ? (
-        <Action.OpenInBrowser key="join" title="加入视频会议" url={evt.conferenceUrl} />
+        <Action.OpenInBrowser key="join" title={t("actionJoinMeeting")} url={evt.conferenceUrl} />
       ) : null,
       evt.conferenceUrl ? (
-        <Action.CopyToClipboard key="copy-link" title="复制会议链接" icon={Icon.Link} content={evt.conferenceUrl} />
+        <Action.CopyToClipboard key="copy-link" title={t("actionCopyMeetingLink")} icon={Icon.Link} content={evt.conferenceUrl} />
       ) : null,
       <Action
         key="copy-summary"
-        title="复制日程摘要"
+        title={t("actionCopySummary")}
         icon={Icon.CopyClipboard}
         shortcut={{ modifiers: ["ctrl"], key: "c" }}
         onAction={() => copySummary(evt)}
       />,
-      <Action key="export-one" title="导出此日程为 ICS 文件..." icon={Icon.Download} onAction={() => handleExportFile([evt])} />,
+      <Action key="export-one" title={t("actionExportOneIcs")} icon={Icon.Download} onAction={() => handleExportFile([evt])} />,
       <Action
         key="delete"
-        title="删除此日程..."
+        title={t("actionDeleteOne")}
         icon={Icon.Trash}
         style={Action.Style.Destructive}
         shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}
@@ -1018,7 +1041,7 @@ export function CalendarCommand() {
     ].filter(Boolean);
     return (
       <ActionPanel title={evt.title}>
-        <ActionPanel.Section title="此日程">{itemActions}</ActionPanel.Section>
+        <ActionPanel.Section title={t("sectionThisEvent")}>{itemActions}</ActionPanel.Section>
         {globalActions}
       </ActionPanel>
     );
@@ -1036,7 +1059,7 @@ export function CalendarCommand() {
         subtitle={evt.location}
         icon={evt.conferenceUrl ? Icon.Video : Icon.Calendar}
         accessories={[
-          ...(ended ? [{ tag: "已结束" }] : []),
+          ...(ended ? [{ tag: t("tagEnded") }] : []),
           { text: evt.calendarName },
           { text: range }
         ]}
@@ -1044,28 +1067,28 @@ export function CalendarCommand() {
           <List.Item.Detail
             markdown={[
               `# ${evt.title}`,
-              `> **时间**: \`${when}\`${ended ? " （已结束）" : ""} &nbsp;|&nbsp; **日历**: \`${evt.calendarName}\``,
+              `> **${t("mdTime")}**: \`${when}\`${ended ? t("mdEndedSuffix") : ""} &nbsp;|&nbsp; **${t("mdCalendar")}**: \`${evt.calendarName}\``,
               `---`,
-              `- **地点 / 会议室**: ${evt.location || "未指定"}`,
-              evt.conferenceUrl ? `- **在线会议直达**: [${evt.conferenceUrl}](${evt.conferenceUrl})` : "",
+              `- **${t("mdLocation")}**: ${evt.location || t("mdUnspecified")}`,
+              evt.conferenceUrl ? `- **${t("mdOnlineMeeting")}**: [${evt.conferenceUrl}](${evt.conferenceUrl})` : "",
               evt.invalidConferenceUrl
-                ? `- **会议链接（不是 http/https 网址，无法直接打开）**: \`${evt.invalidConferenceUrl.replace(/`/g, "'")}\``
+                ? `- **${t("mdInvalidMeetingUrl")}**: \`${evt.invalidConferenceUrl.replace(/`/g, "'")}\``
                 : "",
-              evt.notes ? `### 议程与备注\n${evt.notes}` : "",
+              evt.notes ? `### ${t("mdNotesTitle")}\n${evt.notes}` : "",
               evt.attendees.length > 0
-                ? `### 参会人 (${evt.attendees.length})\n` + evt.attendees.map((a) => `- \`${a}\``).join("\n")
+                ? `### ${t("mdAttendeesTitle", { count: evt.attendees.length })}\n` + evt.attendees.map((a) => `- \`${a}\``).join("\n")
                 : ""
             ]
               .filter(Boolean)
               .join("\n\n")}
             metadata={
               <List.Item.Detail.Metadata>
-                <List.Item.Detail.Metadata.Label title="时间段" text={when} icon={Icon.Clock} />
-                <List.Item.Detail.Metadata.Label title="日历分组" text={evt.calendarName} icon={Icon.Calendar} />
-                <List.Item.Detail.Metadata.Label title="地点" text={evt.location || "-"} icon={Icon.Globe} />
+                <List.Item.Detail.Metadata.Label title={t("metaTimeSpan")} text={when} icon={Icon.Clock} />
+                <List.Item.Detail.Metadata.Label title={t("metaCalendar")} text={evt.calendarName} icon={Icon.Calendar} />
+                <List.Item.Detail.Metadata.Label title={t("metaLocation")} text={evt.location || "-"} icon={Icon.Globe} />
                 {evt.conferenceUrl && (
-                  <List.Item.Detail.Metadata.TagList title="会议状态">
-                    <List.Item.Detail.Metadata.TagList.Item text="可一键入会"  />
+                  <List.Item.Detail.Metadata.TagList title={t("metaMeetingStatus")}>
+                    <List.Item.Detail.Metadata.TagList.Item text={t("metaCanJoin")} />
                   </List.Item.Detail.Metadata.TagList>
                 )}
               </List.Item.Detail.Metadata>
@@ -1081,7 +1104,7 @@ export function CalendarCommand() {
     <List
       isLoading={isLoading}
       isShowingDetail={true}
-      searchBarPlaceholder="搜索日程标题、地点、日历或备注..."
+      searchBarPlaceholder={t("searchPlaceholder")}
       onSearchTextChange={setSearchText}
       onSelectionChange={setSelectedId}
       filterBar={{
@@ -1089,38 +1112,38 @@ export function CalendarCommand() {
         actions: [
           {
             id: "export-all-ics",
-            label: "导出当前列表 (.ics)",
-            title: "导出当前列表 (.ics)",
+            label: t("btnExportIcs"),
+            title: t("btnExportIcs"),
             style: "secondary",
             onAction: () => handleExportFile(displayedEvents)
           },
         ]
       }}
       searchBarAccessory={
-        <List.Dropdown tooltip="筛选日程范围" value={scope} onChange={(val) => setScope(val as CalendarFilterScope)}>
-          <List.Dropdown.Item title="全部日程 · 今天起" value="all" icon={Icon.Calendar} />
-          <List.Dropdown.Item title="即将开始" value="upcoming" icon={Icon.Clock} />
-          <List.Dropdown.Item title="含视频会议链接" value="meetings" icon={Icon.Video} />
-          <List.Dropdown.Item title="历史日程" value="past" icon={Icon.Clock} />
+        <List.Dropdown tooltip={t("dropdownTooltip")} value={scope} onChange={(val) => setScope(val as CalendarFilterScope)}>
+          <List.Dropdown.Item title={t("scopeAll")} value="all" icon={Icon.Calendar} />
+          <List.Dropdown.Item title={t("scopeUpcoming")} value="upcoming" icon={Icon.Clock} />
+          <List.Dropdown.Item title={t("scopeMeetings")} value="meetings" icon={Icon.Video} />
+          <List.Dropdown.Item title={t("scopePast")} value="past" icon={Icon.Clock} />
         </List.Dropdown>
       }
     >
       {displayedEvents.length === 0 ? (
-        <List.Section title="日程安排 · 0 场">
+        <List.Section title={t("emptySectionTitle")}>
           {loadError ? (
             <List.Item
               id="calendar-load-error"
-              title="读取日程失败，按 Enter 重试"
+              title={t("loadErrorTitle")}
               subtitle={loadError}
               icon={Icon.ExclamationMark}
               detail={
-                <List.Item.Detail markdown={`# 读取日程失败\n\n${loadError}\n\n按 \`Enter\` 重新读取。日程仍保存在本机，没有被删除。`} />
+                <List.Item.Detail markdown={t("loadErrorMd", { error: loadError })} />
               }
               actions={
-                <ActionPanel title="日程管理">
-                  <Action title="重新读取日程" icon={Icon.RotateClockwise} onAction={reload} />
+                <ActionPanel title={t("panelManageTitle")}>
+                  <Action title={t("actionReload")} icon={Icon.RotateClockwise} onAction={reload} />
                   <Action.Push
-                    title="新建日程事件..."
+                    title={t("actionNewEvent")}
                     icon={Icon.Plus}
                     shortcut={{ modifiers: ["ctrl"], key: "n" }}
                     target={createForm}
@@ -1131,18 +1154,18 @@ export function CalendarCommand() {
           ) : (
             <List.Item
               id="calendar-empty-create"
-              title="新建日程事件..."
-              subtitle="当前没有日程，按 Enter 新建日程"
+              title={t("actionNewEvent")}
+              subtitle={t("emptyCreateSub")}
               icon={Icon.Plus}
               detail={
                 <List.Item.Detail
-                  markdown={`# 暂无日程事件\n\n按 \`Enter\` 新建日程，可附上视频会议链接。`}
+                  markdown={t("emptyCreateMd")}
                 />
               }
               actions={
-                <ActionPanel title="日程管理">
+                <ActionPanel title={t("panelManageTitle")}>
                   <Action.Push
-                    title="新建日程事件..."
+                    title={t("actionNewEvent")}
                     icon={Icon.Plus}
                     shortcut={{ modifiers: ["ctrl"], key: "n" }}
                     target={createForm}
@@ -1154,7 +1177,7 @@ export function CalendarCommand() {
         </List.Section>
       ) : (
         sections.map((section) => (
-          <List.Section key={section.key} title={`${section.title} · ${section.events.length} 场`}>
+          <List.Section key={section.key} title={t("daySectionTitle", { title: section.title, count: section.events.length })}>
             {section.events.map(renderEventItem)}
           </List.Section>
         ))

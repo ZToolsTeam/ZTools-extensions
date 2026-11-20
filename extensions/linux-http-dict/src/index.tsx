@@ -4,6 +4,7 @@ import React, {
   Color,
   Icon,
   List,
+  useLocale,
   useMemo,
   useState
 } from '@ztools/declarative-ui'
@@ -13,6 +14,7 @@ import {
   searchHttpStatus,
   searchLinuxCommands
 } from './dict-service.js'
+import { t } from './i18n.js'
 import type { DictCategory } from './types'
 
 export * from './types.js'
@@ -33,12 +35,13 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
         ? 'port'
         : 'linux')
 
+  const locale = useLocale()
   const [category, setCategory] = useState<DictCategory>(defaultCategory)
   const [searchText, setSearchText] = useState<string>(props.initialSearchText ?? '')
 
-  const filteredCommands = useMemo(() => searchLinuxCommands(searchText), [searchText])
-  const filteredHttpStatus = useMemo(() => searchHttpStatus(searchText), [searchText])
-  const filteredPorts = useMemo(() => searchCommonPorts(searchText), [searchText])
+  const filteredCommands = useMemo(() => searchLinuxCommands(searchText), [searchText, locale])
+  const filteredHttpStatus = useMemo(() => searchHttpStatus(searchText), [searchText, locale])
+  const filteredPorts = useMemo(() => searchCommonPorts(searchText), [searchText, locale])
 
   return (
     <List
@@ -46,10 +49,10 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
       onSearchTextChange={setSearchText}
       searchBarPlaceholder={
         category === 'linux'
-          ? '搜索 Linux 命令或中文场景（如：tar、解压、端口占用、查找文件、awk）...'
+          ? t('searchLinuxPlaceholder')
           : category === 'http'
-            ? '输入 HTTP 状态码或故障现象（如：502、504、499、403、网关超时）...'
-            : '输入端口号或服务名称（如：6379、3306、redis、mysql、nacos）...'
+            ? t('searchHttpPlaceholder')
+            : t('searchPortPlaceholder')
       }
       searchBarAccessory={
         <List.Dropdown
@@ -58,17 +61,17 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
             setCategory(v as DictCategory)
             setSearchText('')
           }}
-          tooltip="切换速查字典类别"
+          tooltip={t('dropdownTooltip')}
         >
-          <List.Dropdown.Item title="Linux 高频命令实例" value="linux" icon={Icon.Terminal} />
-          <List.Dropdown.Item title="HTTP 状态码与排障" value="http" icon={Icon.Globe} />
-          <List.Dropdown.Item title="知名服务默认端口" value="port" icon={Icon.Wifi} />
+          <List.Dropdown.Item title={t('modeLinuxTitle')} value="linux" icon={Icon.Terminal} />
+          <List.Dropdown.Item title={t('modeHttpTitle')} value="http" icon={Icon.Globe} />
+          <List.Dropdown.Item title={t('modePortTitle')} value="port" icon={Icon.Wifi} />
         </List.Dropdown>
       }
       isShowingDetail={true}
     >
       {category === 'linux' && (
-        <List.Section title={`Linux 高频实战命令库（共 ${filteredCommands.length} 项）`}>
+        <List.Section title={t('secLinuxTitle', { count: filteredCommands.length })}>
           {filteredCommands.map((item) => (
             <List.Item
               key={item.id}
@@ -79,7 +82,7 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
               accessories={[{ tag: item.groupLabel }]}
               detail={
                 <List.Item.Detail
-                  markdown={`#### 生产高频场景实例
+                  markdown={`${t('linuxExamplesHeader')}
 ${item.examples
   .map(
     (ex) => `##### ${ex.title}
@@ -90,17 +93,15 @@ ${ex.note ? `*${ex.note}*` : ''}`
   )
   .join('\n\n')}
 
-#### 常用核心参数说明
-| 参数选项 | 作用说明 |
-| :--- | :--- |
+${t('linuxParamsHeader')}
 ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
 `}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="高频评级" text={item.stars} />
+                      <List.Item.Detail.Metadata.Label title={t('metaStarsTitle')} text={item.stars} />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
-                        title="软件包名"
+                        title={t('metaPackageTitle')}
                         text={item.package || item.name}
                       />
                     </List.Item.Detail.Metadata>
@@ -110,11 +111,11 @@ ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
               actions={
                 <ActionPanel>
                   <Action.CopyToClipboard
-                    title="复制首选推荐命令"
+                    title={t('actionCopyPrimaryCmd')}
                     content={item.examples[0]?.cmd || item.name}
                   />
                   <Action.CopyToClipboard
-                    title="复制全部示例命令"
+                    title={t('actionCopyAllExamples')}
                     content={item.examples.map((e) => `# ${e.title}\n${e.cmd}`).join('\n\n')}
                     shortcut={{ modifiers: ['cmd', 'shift'], key: 'c' }}
                   />
@@ -126,7 +127,7 @@ ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
       )}
 
       {category === 'http' && (
-        <List.Section title={`HTTP 状态码排障指南（共 ${filteredHttpStatus.length} 项）`}>
+        <List.Section title={t('secHttpTitle', { count: filteredHttpStatus.length })}>
           {filteredHttpStatus.map((item) => (
             <List.Item
               key={String(item.code)}
@@ -136,29 +137,29 @@ ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
               subtitle={item.meaning}
               accessories={[
                 item.code >= 500
-                  ? { tag: { value: '服务端错误', color: Color.Red } }
+                  ? { tag: { value: t('httpTag5xx'), color: Color.Red } }
                   : item.code >= 400
-                    ? { tag: '客户端/网关异常' }
-                    : { tag: '正常/重定向' }
+                    ? { tag: t('httpTag4xx') }
+                    : { tag: t('httpTagOther') }
               ]}
               detail={
                 <List.Item.Detail
-                  markdown={`#### 常见原因
+                  markdown={`${t('httpCausesHeader')}
 ${item.causes.map((c) => `- ${c}`).join('\n')}
 
-#### 排障自查清单
-${item.troubleshooting.map((t, i) => `${i + 1}. **${t.step}**：${t.action}`).join('\n')}
+${t('httpStepsHeader')}
+${item.troubleshooting.map((stepItem, i) => `${i + 1}. **${stepItem.step}**: ${stepItem.action}`).join('\n')}
 
-#### 架构设计提示
+${t('httpArchHeader')}
 ${item.architectureNotes}
 `}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="标准依据" text={item.rfc} />
+                      <List.Item.Detail.Metadata.Label title={t('metaRfcTitle')} text={item.rfc} />
                       <List.Item.Detail.Metadata.Separator />
                       <List.Item.Detail.Metadata.Label
-                        title="安全重试建议"
-                        text={item.isRetryable ? '支持幂等退避重试' : '不可盲目重试（需修参数/查单）'}
+                        title={t('metaRetryTitle')}
+                        text={item.isRetryable ? t('retrySafeText') : t('retryUnsafeText')}
                       />
                     </List.Item.Detail.Metadata>
                   }
@@ -167,11 +168,11 @@ ${item.architectureNotes}
               actions={
                 <ActionPanel>
                   <Action.CopyToClipboard
-                    title="复制排障指南摘要"
-                    content={`HTTP ${item.code} ${item.phrase}: ${item.meaning}\n${item.troubleshooting.map((t) => `- ${t.step}: ${t.action}`).join('\n')}`}
+                    title={t('actionCopyHttpSummary')}
+                    content={`HTTP ${item.code} ${item.phrase}: ${item.meaning}\n${item.troubleshooting.map((stepItem) => `- ${stepItem.step}: ${stepItem.action}`).join('\n')}`}
                   />
                   <Action.CopyToClipboard
-                    title="仅复制状态码数字"
+                    title={t('actionCopyHttpCode')}
                     content={String(item.code)}
                   />
                 </ActionPanel>
@@ -182,30 +183,30 @@ ${item.architectureNotes}
       )}
 
       {category === 'port' && (
-        <List.Section title={`知名网络端口与安全组基线（共 ${filteredPorts.length} 项）`}>
+        <List.Section title={t('secPortTitle', { count: filteredPorts.length })}>
           {filteredPorts.map((item) => (
             <List.Item
               key={String(item.port)}
               id={String(item.port)}
               icon={Icon.Wifi}
-              title={`端口 ${item.port} — ${item.service}`}
+              title={t('portTitlePrefix', { port: item.port, service: item.service })}
               subtitle={item.description}
               accessories={[{ tag: `${item.protocol} · ${item.category}` }]}
               detail={
                 <List.Item.Detail
-                  markdown={`#### 防火墙与安全组加固建议
+                  markdown={`${t('portSecurityHeader')}
 > ${item.securityNotice}
 
-#### 查看端口占用
-Linux：
+${t('portCheckHeader')}
+Linux:
 \`\`\`bash
 ${portCheckCommands(item).linux}
 \`\`\`
-macOS：
+macOS:
 \`\`\`bash
 ${portCheckCommands(item).macos}
 \`\`\`
-Windows：
+Windows:
 \`\`\`bat
 ${portCheckCommands(item).windows}
 \`\`\`
@@ -214,17 +215,17 @@ ${portCheckCommands(item).windows}
               }
               actions={
                 <ActionPanel>
-                  <Action.CopyToClipboard title="复制端口号" content={String(item.port)} />
+                  <Action.CopyToClipboard title={t('actionCopyPort')} content={String(item.port)} />
                   <Action.CopyToClipboard
-                    title="复制 Linux 端口排查命令"
+                    title={t('actionCopyLinuxPort')}
                     content={portCheckCommands(item).linux}
                   />
                   <Action.CopyToClipboard
-                    title="复制 macOS 端口排查命令"
+                    title={t('actionCopyMacPort')}
                     content={portCheckCommands(item).macos}
                   />
                   <Action.CopyToClipboard
-                    title="复制 Windows 端口排查命令"
+                    title={t('actionCopyWinPort')}
                     content={portCheckCommands(item).windows}
                   />
                 </ActionPanel>

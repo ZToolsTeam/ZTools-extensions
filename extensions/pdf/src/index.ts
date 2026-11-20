@@ -3,81 +3,243 @@ import {
   ActionPanel,
   Action,
   Icon,
+  useLocale,
   useState,
   useEffect,
   useRef,
   showToast,
   Toast,
-  FilterBar
+  FilterBar,
+  confirmAlert,
+  KeyboardShortcut
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
+  PDF_IMPORT_RULES,
+  PDF_IMPORT_SUPPORTED_TEXT,
   PdfBatchResult,
   PdfTaskOutcome,
   RealPdfDocItem,
-  TEXT_EXTRACTION_LIMIT_NOTE,
-  UNAVAILABLE_FEATURES_NOTE,
+  createPdfImportTransport,
   describeBatchResult,
-  fetchRealPdfWorkspace,
   formatBytes,
   getAvailableTools,
   openPdfDocument,
   openPdfFileLocation,
-  runPdfTool
+  runPdfTool,
+  toPdfDocItem
 } from './logic.js'
+import { isRealElectronHost } from './native-ipc.js'
+import { isDeclarativeFileInputSupported } from './host-compat.js'
+import {
+  FileImportResult,
+  NormalizedFileInput,
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  pickFiles,
+  pickFolder,
+  summarizeImport
+} from './file-import.js'
 
 export * from './logic.js'
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+function sizeText(bytes: number | null): string {
+  return bytes === null ? t('sizeUnknown') : formatBytes(bytes)
 }
 
+interface ImportProgress {
+  visitedDirs: number
+  matchedFiles: number
+}
+
+type ImportTask = (
+  signal: AbortSignal,
+  onProgress: (progress: ImportProgress) => void
+) => Promise<FileImportResult>
+
+const SHORTCUT_PICK_FILES: KeyboardShortcut = { modifiers: ['ctrl'], key: 'o' }
+const SHORTCUT_PICK_FOLDER: KeyboardShortcut = { modifiers: ['ctrl', 'shift'], key: 'o' }
+const SHORTCUT_REMOVE: KeyboardShortcut = { modifiers: ['ctrl'], key: 'backspace' }
+const SHORTCUT_CLEAR: KeyboardShortcut = { modifiers: ['ctrl', 'shift'], key: 'backspace' }
+const SHORTCUT_TOGGLE_ALL: KeyboardShortcut = { modifiers: ['ctrl'], key: 'a' }
+
 export function PdfCommand() {
+  useLocale()
   const tools = getAvailableTools()
+  const transport = createPdfImportTransport()
   const [searchText, setSearchText] = useState('')
   const [activeToolId, setActiveToolId] = useState<string>(tools[0]?.id ?? '')
   const [files, setFiles] = useState<RealPdfDocItem[]>([])
   const [checkedIds, setCheckedIds] = useState<string[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<ImportProgress | null>(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [scanError, setScanError] = useState('')
+  const [runningIds, setRunningIds] = useState<string[]>([])
   const [lastResult, setLastResult] = useState<PdfBatchResult | null>(null)
   // 防止上一批还没写完时再次触发（状态更新前的连续回车）
   const busyRef = useRef(false)
+  const mountedRef = useRef(true)
+  // 导入批次号：清空列表、卸载或开始新导入时递增，过期批次的结果直接丢弃
+  const importSeqRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
+  // 合并导入结果时需要同步拿到最新列表（setState 回调里不能弹提示）
+  const filesRef = useRef<RealPdfDocItem[]>([])
+  filesRef.current = files
 
-  async function refreshWorkspace(showIndicator = false) {
-    setIsLoading(true)
-    try {
-      const ws = await fetchRealPdfWorkspace()
-      const ids = new Set(ws.files.map(f => f.id))
-      setFiles(ws.files)
-      setCheckedIds(prev => prev.filter(id => ids.has(id)))
-      setScanError('')
-      if (showIndicator) {
-        showToast({
-          style: Toast.Style.Success,
-          title: '扫描完成',
-          message: `找到 ${ws.files.length} 个 PDF`
-        })
+  useEffect(() => {
+    mountedRef.current = true
+    let dispose: unknown = null
+    let eventsApi:
+      | {
+          on?: (ev: string, cb: (payload: unknown) => void) => unknown
+          off?: (ev: string, cb: (payload: unknown) => void) => void
+        }
+      | undefined
+    const handleLegacyDrop = (raw: unknown) => {
+      const input = normalizeFileInput(raw)
+      if (input.paths.length > 0) handleFileInput(input)
+    }
+
+    if (!isDeclarativeFileInputSupported()) {
+      const w = typeof window !== 'undefined' ? (window as unknown as Record<string, unknown>) : null
+      eventsApi = (w?.ztools as { events?: typeof eventsApi } | undefined)?.events
+      if (eventsApi && typeof eventsApi.on === 'function') {
+        dispose = eventsApi.on('plugin_files_dropped', handleLegacyDrop)
       }
-    } catch (err) {
-      const message = errorText(err)
-      setFiles([])
-      setCheckedIds([])
-      setScanError(message)
-      showToast({ style: Toast.Style.Failure, title: '扫描 PDF 失败', message })
-    } finally {
-      setIsLoading(false)
+    }
+
+    return () => {
+      mountedRef.current = false
+      importSeqRef.current += 1
+      importAbortRef.current?.abort()
+      if (typeof dispose === 'function') {
+        ;(dispose as () => void)()
+      } else if (eventsApi && typeof eventsApi.off === 'function') {
+        eventsApi.off('plugin_files_dropped', handleLegacyDrop)
+      }
+    }
+  }, [])
+
+  /** 所有导入入口共用：合并去重、默认勾选新文件、给出提示 */
+  function applyImportResult(result: FileImportResult) {
+    const incoming = result.files.map(toPdfDocItem)
+    const { merged, added, duplicates } = mergeByPath(filesRef.current, incoming, f => f.path)
+    if (added.length > 0) {
+      filesRef.current = merged
+      setFiles(merged)
+      setCheckedIds(prev => Array.from(new Set([...prev, ...added.map(f => f.id)])))
+    }
+    const summary = summarizeImport(result, { added: added.length, duplicates }, PDF_IMPORT_SUPPORTED_TEXT)
+    if (summary) {
+      showToast({
+        style: summary.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: summary.title,
+        message: summary.message
+      })
     }
   }
 
-  useEffect(() => {
-    refreshWorkspace(false)
-  }, [])
+  async function runImport(task: ImportTask) {
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    const seq = ++importSeqRef.current
+    setIsImporting(true)
+    setImportProgress(null)
+    try {
+      const result = await task(controller.signal, progress => {
+        if (mountedRef.current && seq === importSeqRef.current) setImportProgress(progress)
+      })
+      if (!mountedRef.current || seq !== importSeqRef.current || controller.signal.aborted) return
+      applyImportResult(result)
+    } catch (err) {
+      if (!mountedRef.current || seq !== importSeqRef.current) return
+      showToast({ style: Toast.Style.Failure, title: t('toastImportFailed'), message: friendlyFileError(err) })
+    } finally {
+      if (mountedRef.current && seq === importSeqRef.current) {
+        importAbortRef.current = null
+        setIsImporting(false)
+        setImportProgress(null)
+      }
+    }
+  }
 
-  const activeTool = tools.find(t => t.id === activeToolId) ?? tools[0]
+  function handlePickFiles() {
+    void runImport(() => pickFiles(transport, PDF_IMPORT_RULES, { title: t('pickFilesTitle'), filterName: t('pickFilesFilter') }))
+  }
+
+  function handlePickFolder() {
+    void runImport(async (signal, onProgress) => {
+      const picked = await pickFolder(transport, { title: t('pickFolderTitle') })
+      if (picked.canceled || signal.aborted) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      if (picked.error || !picked.folderPath) {
+        return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: picked.error || t('errNoFolderPicked') }
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const confirmed = await confirmAlert({
+          title: t('confirmVolumeTitle', { path: picked.folderPath }),
+          message: t('confirmVolumeMessage'),
+          primaryAction: { title: t('confirmVolumePrimary'), style: 'default' }
+        })
+        if (!confirmed || signal.aborted) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      }
+      return collectFolderFiles(transport, picked.folderPath, PDF_IMPORT_RULES, { signal, onProgress })
+    })
+  }
+
+  function handleFileInput(input: NormalizedFileInput) {
+    void runImport((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, PDF_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    )
+  }
+
+  function handleRemove(file: RealPdfDocItem) {
+    if (runningIds.includes(file.id)) {
+      showToast({ style: Toast.Style.Failure, title: t('toastRunningRemove') })
+      return
+    }
+    const next = filesRef.current.filter(f => f.id !== file.id)
+    filesRef.current = next
+    setFiles(next)
+    setCheckedIds(prev => prev.filter(id => id !== file.id))
+  }
+
+  function handleClear() {
+    if (busyRef.current) {
+      showToast({ style: Toast.Style.Failure, title: t('toastBusyClear') })
+      return
+    }
+    // 让进行中的导入作废，结果不再加入列表
+    importSeqRef.current += 1
+    importAbortRef.current?.abort()
+    importAbortRef.current = null
+    setIsImporting(false)
+    setImportProgress(null)
+    filesRef.current = []
+    setFiles([])
+    setCheckedIds([])
+    setLastResult(null)
+  }
+
+  const fileInputProps = createImportInputProps(handleFileInput, {
+    dropTitle: t('dropTitle'),
+    dropSubtitle: t('dropSubtitle')
+  })
+
+  const activeTool = tools.find(item => item.id === activeToolId) ?? tools[0]
   const queueFiles = activeTool ? files.filter(f => f.docType === activeTool.inputType) : []
   const selectedFiles = queueFiles.filter(f => checkedIds.includes(f.id))
-  const selectedBytes = selectedFiles.reduce((s, f) => s + f.sizeBytes, 0)
+  const selectedBytes = selectedFiles.reduce((s, f) => s + (f.sizeBytes ?? 0), 0)
+  const selectedUnknown = selectedFiles.some(f => f.sizeBytes === null)
   const q = searchText.trim().toLowerCase()
   const visibleFiles = queueFiles.filter(
     f => !q || f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q)
@@ -87,24 +249,27 @@ export function PdfCommand() {
     outcomeById.set(o.file.id, o)
   }
   const lastOutputPath = lastResult?.succeeded[lastResult.succeeded.length - 1]?.outputPath ?? ''
+  const allVisibleChecked = visibleFiles.length > 0 && visibleFiles.every(f => checkedIds.includes(f.id))
 
   async function handleRun(targets: RealPdfDocItem[]) {
     if (!activeTool) {
-      showToast({ style: Toast.Style.Failure, title: '没有可用的工具' })
+      showToast({ style: Toast.Style.Failure, title: t('toastNoToolAvailable') })
       return
     }
     if (busyRef.current) {
-      showToast({ style: Toast.Style.Failure, title: '上一批还在导出，请稍候' })
+      showToast({ style: Toast.Style.Failure, title: t('toastBatchBusy') })
       return
     }
     if (targets.length === 0) {
-      showToast({ style: Toast.Style.Failure, title: '请先勾选要导出的 PDF' })
+      showToast({ style: Toast.Style.Failure, title: t('batchSelectPdfFirst') })
       return
     }
     busyRef.current = true
     setIsRunning(true)
+    setRunningIds(targets.map(f => f.id))
     try {
       const result = await runPdfTool(activeTool.id, targets)
+      if (!mountedRef.current) return
       setLastResult(result)
       const summary = describeBatchResult(result)
       showToast({
@@ -113,40 +278,58 @@ export function PdfCommand() {
         message: summary.message
       })
     } catch (err) {
-      showToast({ style: Toast.Style.Failure, title: `${activeTool.tag}失败`, message: errorText(err) })
+      if (!mountedRef.current) return
+      showToast({ style: Toast.Style.Failure, title: t('toastToolFailed', { tag: activeTool.tag }), message: friendlyFileError(err) })
     } finally {
       busyRef.current = false
-      setIsRunning(false)
+      if (mountedRef.current) {
+        setIsRunning(false)
+        setRunningIds([])
+      }
     }
   }
 
   async function handleOpen(path: string, mode: 'open' | 'reveal') {
     const ok = mode === 'open' ? await openPdfDocument(path) : await openPdfFileLocation(path)
+    if (!mountedRef.current) return
     if (!ok) {
       showToast({
         style: Toast.Style.Failure,
-        title: mode === 'open' ? '无法打开文件' : '无法在文件夹中显示',
+        title: mode === 'open' ? t('toastOpenFailed') : t('toastRevealFailed'),
         message: path
       })
     }
   }
 
-  const maxDocBytes = Math.max(1, ...visibleFiles.map(f => f.sizeBytes))
+  function toggleAllVisible() {
+    const visibleIds = visibleFiles.map(f => f.id)
+    setCheckedIds(prev =>
+      allVisibleChecked ? prev.filter(id => !visibleIds.includes(id)) : Array.from(new Set([...prev, ...visibleIds]))
+    )
+  }
+
+  const pickFilesAction = () =>
+    Action({ title: t('actionPickFilesEllipsis'), icon: Icon.Plus, shortcut: SHORTCUT_PICK_FILES, onAction: handlePickFiles })
+  const pickFolderAction = () =>
+    Action({ title: t('actionPickFolderEllipsis'), icon: Icon.Folder, shortcut: SHORTCUT_PICK_FOLDER, onAction: handlePickFolder })
+
+  const maxDocBytes = Math.max(1, ...visibleFiles.map(f => f.sizeBytes ?? 0))
   const queueItems = visibleFiles.map(f => {
     const isChecked = checkedIds.includes(f.id)
     const outcome = outcomeById.get(f.id)
-    const volRatio = Math.max(2, Math.min(100, Math.round((f.sizeBytes / maxDocBytes) * 100)))
+    const volRatio = Math.max(2, Math.min(100, Math.round(((f.sizeBytes ?? 0) / maxDocBytes) * 100)))
     const runChecked = selectedFiles.length > 0
+    const isProcessing = runningIds.includes(f.id)
     const actions = [
       Action({
-        title: runChecked ? `导出已勾选的 ${selectedFiles.length} 个 PDF` : '导出当前 PDF',
+        title: runChecked ? t('actionExportChecked', { count: selectedFiles.length }) : t('actionExportCurrent'),
         icon: Icon.Play,
         onAction: () => handleRun(runChecked ? selectedFiles : [f])
       }),
       ...(runChecked
         ? [
             Action({
-              title: '仅导出当前 PDF',
+              title: t('actionExportOnlyCurrent'),
               icon: Icon.Document,
               onAction: () => handleRun([f])
             })
@@ -155,21 +338,51 @@ export function PdfCommand() {
       ...(lastOutputPath
         ? [
             Action({
-              title: '在文件夹中显示上次输出',
+              title: t('actionRevealLastOutput'),
               icon: Icon.Folder,
               onAction: () => handleOpen(lastOutputPath, 'reveal')
             })
           ]
         : []),
       Action({
-        title: '用默认程序打开 PDF',
+        title: t('actionOpenPdf'),
         icon: Icon.Eye,
         onAction: () => handleOpen(f.path, 'open')
       }),
       Action({
-        title: '在文件夹中显示 PDF',
+        title: t('actionRevealPdf'),
         icon: Icon.Folder,
         onAction: () => handleOpen(f.path, 'reveal')
+      }),
+      ActionPanel.Section({
+        title: t('sectionList'),
+        children: [
+          ...(isProcessing
+            ? []
+            : [
+                Action({
+                  title: t('actionRemoveFromList'),
+                  icon: Icon.Minus,
+                  shortcut: SHORTCUT_REMOVE,
+                  onAction: () => handleRemove(f)
+                })
+              ]),
+          pickFilesAction(),
+          pickFolderAction(),
+          Action({
+            title: allVisibleChecked ? t('actionUnselectAll') : t('actionSelectAll'),
+            icon: Icon.CheckCircle,
+            shortcut: SHORTCUT_TOGGLE_ALL,
+            onAction: toggleAllVisible
+          }),
+          Action({
+            title: t('actionClearList'),
+            icon: Icon.Trash,
+            style: Action.Style.Destructive,
+            shortcut: SHORTCUT_CLEAR,
+            onAction: handleClear
+          })
+        ]
       })
     ]
 
@@ -185,8 +398,8 @@ export function PdfCommand() {
       icon: { source: Icon.Document },
       accessories: [
         { progress: { value: volRatio } },
-        ...(outcome ? [{ tag: { value: outcome.ok ? '已导出' : '导出失败' } }] : []),
-        { text: formatBytes(f.sizeBytes) }
+        ...(outcome ? [{ tag: { value: outcome.ok ? t('tagExported') : t('tagExportFailed') } }] : []),
+        { text: sizeText(f.sizeBytes) }
       ],
       actions: ActionPanel({ title: f.name, children: actions })
     })
@@ -195,24 +408,34 @@ export function PdfCommand() {
   const lastSummary = lastResult
     ? lastResult.error
       ? lastResult.error
-      : `成功 ${lastResult.succeeded.length} 个 · 失败 ${lastResult.failed.length} 个`
+      : t('lastSummaryStats', { ok: lastResult.succeeded.length, fail: lastResult.failed.length })
     : ''
-  const summaryText = scanError
-    ? `扫描失败：${scanError}`
-    : `已选 ${selectedFiles.length}/${queueFiles.length} 个 PDF（${formatBytes(selectedBytes)}）· 来自文档、下载、桌面目录（两级以内）`
-  const emptyText = scanError
-    ? `扫描失败：${scanError}`
-    : q
-      ? '没有匹配的 PDF'
-      : '文档、下载、桌面目录（两级以内）里没有找到 PDF'
+  const inClient = isRealElectronHost()
+  const selectedBytesText = `${formatBytes(selectedBytes)}${selectedUnknown ? t('selectedUnknownSuffix') : ''}`
+  const summaryText = isImporting
+    ? t('summaryImporting', { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
+    : files.length === 0
+      ? inClient
+        ? t('summaryEmptyClient')
+        : t('outsideClient')
+      : t('summarySelected', { selected: selectedFiles.length, total: queueFiles.length, size: selectedBytesText })
+  const emptyText = !inClient
+    ? t('outsideClient')
+    : q && files.length > 0
+      ? t('emptyNoMatch')
+      : t('summaryEmptyClient')
 
   return List({
-    searchBarPlaceholder: '搜索 PDF 文件名或路径',
+    ...fileInputProps,
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    isLoading: isLoading || isRunning,
+    isLoading: isImporting || isRunning,
+    actions: ActionPanel({
+      children: [pickFilesAction(), pickFolderAction()]
+    }),
     searchBarAccessory: List.Dropdown({
-      tooltip: '选择导出格式',
+      tooltip: t('formatTooltip'),
       value: activeTool?.id ?? '',
       onChange: val => setActiveToolId(val),
       children: tools.map(m =>
@@ -226,63 +449,65 @@ export function PdfCommand() {
       summaryText,
       actions: [
         {
-          id: 'rescan-pdf',
-          label: '重新扫描',
-          title: '重新扫描',
+          id: 'pick-files',
+          label: t('btnPickFiles'),
+          title: t('btnPickFiles'),
           style: 'secondary',
-          onAction: () => refreshWorkspace(true)
+          onAction: handlePickFiles
+        },
+        {
+          id: 'pick-folder',
+          label: t('btnPickFolder'),
+          title: t('btnPickFolder'),
+          style: 'secondary',
+          onAction: handlePickFolder
         }
       ]
     }),
     workbenchPanel: {
-      title: '导出设置',
+      title: t('panelTitle'),
       subtitle: activeTool?.title ?? '',
       fields: [
         {
           id: 'wb-format',
-          label: '输出格式',
+          label: t('fieldFormatLabel'),
           type: 'info',
-          value: activeTool?.outputExt === '.html' ? 'HTML 纯文本网页' : 'TXT 纯文本（UTF-8）'
+          value: activeTool?.outputExt === '.html' ? t('fieldFormatHtml') : t('fieldFormatTxt')
         },
         {
           id: 'wb-outdir',
-          label: '输出位置',
+          label: t('fieldOutdirLabel'),
           type: 'info',
-          value: 'PDF 所在目录；同名文件已存在时自动加序号，不覆盖'
+          value: t('fieldOutdirValue')
         },
         {
           id: 'wb-limit',
-          label: '提取限制',
+          label: t('fieldLimitLabel'),
           type: 'info',
-          value: TEXT_EXTRACTION_LIMIT_NOTE
+          value: t('textExtractionLimitNote')
         },
         {
           id: 'wb-unavailable',
-          label: '暂不可用',
+          label: t('fieldUnavailableLabel'),
           type: 'info',
-          value: UNAVAILABLE_FEATURES_NOTE
+          value: t('unavailableFeaturesNote')
         }
       ],
       previewCard: {
-        title: '导出结果',
+        title: t('previewTitle'),
         badge: activeTool?.tag ?? '',
-        subtitle: isRunning ? '正在导出…' : lastSummary || '尚未导出',
+        subtitle: isRunning ? t('previewRunning') : lastSummary || t('previewIdle'),
         metrics: [
-          { label: '已选文件', value: `${selectedFiles.length} / ${queueFiles.length}` },
-          { label: '已选体积', value: formatBytes(selectedBytes) }
+          { label: t('metricSelectedFiles'), value: `${selectedFiles.length} / ${queueFiles.length}` },
+          { label: t('metricSelectedSize'), value: selectedBytesText }
         ]
       }
     },
     subList: {
-      title: '待导出的 PDF（勾选后按 ↵ 开始）',
-      subtitle: `${visibleFiles.length} 个`,
+      title: t('subListTitle'),
+      subtitle: t('subListSubtitle', { count: visibleFiles.length }),
       checkable: visibleFiles.length > 0,
-      checked:
-        visibleFiles.length > 0 && visibleFiles.every(f => checkedIds.includes(f.id))
-          ? true
-          : visibleFiles.some(f => checkedIds.includes(f.id))
-            ? 'indeterminate'
-            : false,
+      checked: allVisibleChecked ? true : visibleFiles.some(f => checkedIds.includes(f.id)) ? 'indeterminate' : false,
       onCheckChange: checked => {
         const visibleIds = visibleFiles.map(f => f.id)
         setCheckedIds(prev =>
@@ -294,7 +519,7 @@ export function PdfCommand() {
     },
     children: [
       List.Section({
-        title: `PDF（${visibleFiles.length}）`,
+        title: t('sectionPdfTitle', { count: visibleFiles.length }),
         children: queueItems
       })
     ]

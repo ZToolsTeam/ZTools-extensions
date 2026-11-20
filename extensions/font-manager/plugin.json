@@ -1,9 +1,13 @@
 {
   "id": "font-manager",
   "name": "字体管理",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "检索本机已安装字体，输入文字查看真实字形，查看字体文件附带的许可与版权说明。",
   "author": "ZTools Team",
+  "category": [
+    "系统工具"
+  ],
+  "categoryId": "system",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -56,5 +60,46 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Font Manager",
+      "description": "Search installed system fonts, preview custom text with live glyphs, and inspect embedded license and copyright metadata.",
+      "keywords": [
+        "fonts",
+        "typography",
+        "font preview",
+        "system fonts",
+        "license"
+      ],
+      "features": {
+        "font-manager-all": {
+          "explain": "Search and preview all installed local fonts",
+          "cmds": [
+            "fonts",
+            "font manager",
+            "font preview",
+            "system fonts"
+          ]
+        },
+        "font-manager-free-commercial": {
+          "explain": "Inspect fonts that include embedded license metadata",
+          "cmds": [
+            "font license",
+            "commercial fonts",
+            "font terms"
+          ]
+        },
+        "font-manager-commercial-risk": {
+          "explain": "Inspect fonts without embedded license information",
+          "cmds": [
+            "unlicensed fonts",
+            "font copyright",
+            "missing font license"
+          ]
+        }
+      }
+    }
+  }
 }

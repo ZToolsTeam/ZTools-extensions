@@ -9,6 +9,7 @@
   "category": [
     "图像媒体"
   ],
+  "categoryId": "media",
   "permissions": [
     "video",
     "fs",
@@ -24,5 +25,20 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Screen Recorder",
+      "description": "Record your full desktop (all displays) to MP4 video or animated GIF with selectable frame rate (no audio; requires local ffmpeg).",
+      "keywords": [
+        "screen record",
+        "recorder",
+        "mp4",
+        "gif",
+        "capture",
+        "ffmpeg"
+      ]
+    }
+  }
 }

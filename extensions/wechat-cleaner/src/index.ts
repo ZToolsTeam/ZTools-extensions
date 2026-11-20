@@ -5,17 +5,17 @@ import {
   Icon,
   useState,
   useEffect,
+  useLocale,
   showToast,
   Toast,
   confirmAlert
 } from '@ztools/declarative-ui'
 import {
-  OFFICIAL_WECHAT_OWNER_RULES,
+  getOfficialWechatOwnerRules,
   WechatCleanCategoryItem,
   WechatScannedFileEntry,
   WechatAccountStat,
   WECHAT_FILE_DISPLAY_LIMIT,
-  FORBIDDEN_REASON,
   formatBytes,
   formatDateTime,
   fetchWechatCleanSnapshot,
@@ -27,10 +27,10 @@ import {
   openWechatFileDefault,
   isRealElectronHost
 } from './logic.js'
-
-const CLIENT_REQUIRED_TEXT = '需要在 ZTools 客户端中使用'
+import { t } from './i18n.js'
 
 export default function WechatCleanerCommand() {
+  useLocale()
   const inRealHost = isRealElectronHost()
   const [searchText, setSearchText] = useState('')
   const [selectedAccount, setSelectedAccount] = useState<string>('ALL')
@@ -54,7 +54,7 @@ export default function WechatCleanerCommand() {
     if (!inRealHost) return
     setIsLoading(true)
     if (options.showIndicator) {
-      showToast({ style: Toast.Style.Animated, title: '正在扫描微信缓存...' })
+      showToast({ style: Toast.Style.Animated, title: t('toastScanning') })
     }
     try {
       const snap = await fetchWechatCleanSnapshot()
@@ -75,18 +75,18 @@ export default function WechatCleanerCommand() {
         setSelectedFilePaths(pickDefaultCheckedPaths(visible, snap.categories))
       }
       if (snap.error) {
-        showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: snap.error })
+        showToast({ style: Toast.Style.Failure, title: t('toastScanIncomplete'), message: snap.error })
       } else if (options.showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '扫描完成',
-          message: `找到 ${snap.allFiles.length} 个文件，聊天数据库 ${formatBytes(snap.protectedDbBytes)} 受保护`
+          title: t('toastScanDoneTitle'),
+          message: t('toastScanDoneMsg', { count: snap.allFiles.length, size: formatBytes(snap.protectedDbBytes) })
         })
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setScanError(message)
-      showToast({ style: Toast.Style.Failure, title: '扫描失败', message })
+      showToast({ style: Toast.Style.Failure, title: t('toastScanFailed'), message })
     } finally {
       setIsLoading(false)
     }
@@ -143,26 +143,31 @@ export default function WechatCleanerCommand() {
     if (targetFiles.length === 0) {
       showToast({
         style: Toast.Style.Failure,
-        title: '没有勾选任何文件',
-        message: '请先在右侧勾选要清理的文件'
+        title: t('errNoFilesChecked'),
+        message: t('toastNoCheckedMsg')
       })
       return
     }
 
-    const breakdownLines = OFFICIAL_WECHAT_OWNER_RULES.filter(r => r.ownerId !== 999)
+    const breakdownLines = getOfficialWechatOwnerRules().filter(r => r.ownerId !== 999)
       .map(rule => {
         const inCat = targetFiles.filter(f => f.ownerId === rule.ownerId)
         if (inCat.length === 0) return ''
         const bytes = inCat.reduce((s, f) => s + f.sizeBytes, 0)
-        return `- ${rule.shortName}：${inCat.length} 个（${formatBytes(bytes)}）`
+        return t('breakdownLine', { name: rule.shortName, count: inCat.length, size: formatBytes(bytes) })
       })
       .filter(Boolean)
       .join('\n')
 
     const confirmed = await confirmAlert({
-      title: `把 ${targetFiles.length} 个文件移入回收站？`,
-      message: `范围：${selectedAccount === 'ALL' ? '全部账号' : selectedAccount}，共 ${formatBytes(targetBytes)}\n\n${breakdownLines}\n\n${FORBIDDEN_REASON}。文件移入回收站后仍占用磁盘空间，清空回收站后才会释放。`,
-      primaryAction: { title: '移入回收站', style: 'destructive' }
+      title: t('confirmTrashTitle', { count: targetFiles.length }),
+      message: t('confirmTrashMsg', {
+        scope: selectedAccount === 'ALL' ? t('scopeAllAccounts') : selectedAccount,
+        size: formatBytes(targetBytes),
+        breakdown: breakdownLines,
+        forbidden: t('forbiddenReason')
+      }),
+      primaryAction: { title: t('actionMoveToTrash'), style: 'destructive' }
     })
     if (!confirmed) return
 
@@ -183,22 +188,22 @@ export default function WechatCleanerCommand() {
 
   async function locateFile(filePath: string) {
     const ok = await openWechatDirectory(filePath)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: filePath })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('toastLocateFailed'), message: filePath })
   }
 
   async function openFile(filePath: string) {
     const ok = await openWechatFileDefault(filePath)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法打开文件', message: filePath })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('toastOpenFailed'), message: filePath })
   }
 
   if (!inRealHost) {
     return List({
-      searchBarPlaceholder: '搜索微信缓存文件',
+      searchBarPlaceholder: t('clientOnlyPlaceholder'),
       children: [
         List.Item({
           id: 'wx-client-required',
-          title: CLIENT_REQUIRED_TEXT,
-          subtitle: '本插件读取本机微信电脑版的缓存目录，只能在 Windows 版 ZTools 客户端中运行',
+          title: t('clientRequired'),
+          subtitle: t('clientOnlySubtitle'),
           icon: { source: Icon.Info }
         })
       ]
@@ -219,7 +224,7 @@ export default function WechatCleanerCommand() {
       id: f.id,
       title: f.name,
       subtitle: isDbProtected
-        ? `${f.accountId} · 聊天数据库，受保护，不会被清理 · ${f.parentDir}`
+        ? t('protectedFileSub', { account: f.accountId, dir: f.parentDir })
         : `${f.accountId} · ${formatDateTime(f.mtime)} · ${f.parentDir}`,
       checkable: !isDbProtected,
       checked: isChecked,
@@ -228,39 +233,39 @@ export default function WechatCleanerCommand() {
       icon: { source: isDbProtected ? Icon.Lock : Icon.Document },
       accessories: [
         { progress: { value: volRatio } },
-        { tag: { value: isDbProtected ? '受保护' : f.unrecognized ? '用途未识别' : f.ownerName } },
+        { tag: { value: isDbProtected ? t('tagProtected') : f.unrecognized ? t('tagUnrecognized') : f.ownerName } },
         { text: formatBytes(f.sizeBytes) }
       ],
       actions: ActionPanel({
         title: f.name,
         children: [
           Action({
-            title: `清理已勾选的 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})`,
+            title: t('actionCleanChecked', { count: targetFiles.length, size: formatBytes(targetBytes) }),
             icon: Icon.Trash,
             style: Action.Style.Destructive,
             onAction: () => handleCleanChecked()
           }),
           Action({
-            title: '在资源管理器定位',
+            title: t('actionLocateExplorer'),
             icon: Icon.Folder,
             onAction: () => locateFile(f.path)
           }),
           ...(!isDbProtected
             ? [
                 Action({
-                  title: isChecked ? '取消勾选此文件' : '勾选此文件',
+                  title: isChecked ? t('actionUncheckFile') : t('actionCheckFile'),
                   icon: Icon.Checkmark,
                   onAction: () => toggleSingleFile(f.path, !isChecked)
                 })
               ]
             : []),
           Action({
-            title: '使用默认程序打开文件',
+            title: t('actionOpenDefault'),
             icon: Icon.AppWindow,
             onAction: () => openFile(f.path)
           }),
           Action.CopyToClipboard({
-            title: '复制文件完整路径',
+            title: t('actionCopyFullPath'),
             content: f.path
           })
         ]
@@ -269,24 +274,24 @@ export default function WechatCleanerCommand() {
   })
 
   const activeCategory = categories.find(c => String(c.ownerId) === selectedOwnerId)
-  const rightTitle = activeCategory ? `${activeCategory.name}（按体积降序）` : '全部微信文件（按体积降序）'
+  const rightTitle = activeCategory ? t('rightTitleCategory', { name: activeCategory.name }) : t('rightTitleAll')
   const shownText =
     filteredFiles.length > visibleFiles.length
-      ? `${filteredFiles.length} 项，显示最大的 ${visibleFiles.length} 项`
-      : `${filteredFiles.length} 项`
+      ? t('shownTruncated', { total: filteredFiles.length, shown: visibleFiles.length })
+      : t('shownAll', { total: filteredFiles.length })
 
   return List({
-    searchBarPlaceholder: '搜索文件名、路径、分类或微信号',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按微信账号筛选',
+      tooltip: t('accountTooltip'),
       value: selectedAccount,
       onChange: val => setSelectedAccount(val),
       children: [
         List.Dropdown.Item({
-          title: `全部微信账号 (${allFiles.length})`,
+          title: t('accountAllTitle', { count: allFiles.length }),
           value: 'ALL'
         }),
         ...accountStats.map(acc =>
@@ -299,13 +304,19 @@ export default function WechatCleanerCommand() {
     }),
     filterBar: {
       summaryText: scanError
-        ? `扫描结果不完整：${scanError}`
-        : `${selectedAccount === 'ALL' ? '全部账号' : selectedAccount} · 缓存占用 ${formatBytes(totalScannable)} · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)}) · 聊天数据库 ${formatBytes(protectedDbBytes)} 受保护`,
+        ? t('summaryScanError', { error: scanError })
+        : t('summaryNormal', {
+            scope: selectedAccount === 'ALL' ? t('scopeAllAccounts') : selectedAccount,
+            scannable: formatBytes(totalScannable),
+            count: targetFiles.length,
+            size: formatBytes(targetBytes),
+            protectedSize: formatBytes(protectedDbBytes)
+          }),
       actions: [
         {
           id: 'wx-act-rescan',
-          label: '重新扫描',
-          title: '重新扫描',
+          label: t('actionRescan'),
+          title: t('actionRescan'),
           style: 'secondary',
           onAction: () => refreshScan({ showIndicator: true })
         }
@@ -313,21 +324,21 @@ export default function WechatCleanerCommand() {
     },
     subList: {
       title: rightTitle,
-      subtitle: `${shownText} · 已勾选 ${targetFiles.length} 个 (${formatBytes(targetBytes)})`,
+      subtitle: t('subListSubtitle', { shown: shownText, count: targetFiles.length, size: formatBytes(targetBytes) }),
       checkable: selectableVisibleFiles.length > 0,
       checked: allVisibleChecked ? true : someVisibleChecked ? 'indeterminate' : false,
       onCheckChange: () => toggleAllVisibleFiles(),
-      emptyText: isLoading ? '正在扫描...' : '当前账号与分类下没有找到微信缓存文件',
+      emptyText: isLoading ? t('emptyScanning') : t('emptyNoFiles'),
       items: rightSubListItems
     },
     children: [
       List.Section({
-        title: '微信存储总览',
+        title: t('sectionOverview'),
         children: [
           List.Item({
             id: 'wx-nav-all',
-            title: '全部微信文件',
-            subtitle: `已列出 ${allFiles.length} 个文件`,
+            title: t('navAllTitle'),
+            subtitle: t('navAllSub', { count: allFiles.length }),
             icon: { source: Icon.HardDrive },
             accessories: [{ text: formatBytes(totalScannable) }],
             onSelect: () => setSelectedOwnerId('ALL')
@@ -335,7 +346,7 @@ export default function WechatCleanerCommand() {
         ]
       }),
       List.Section({
-        title: '清理分类与数据库保护区',
+        title: t('sectionCategories'),
         children: categories.map(cat => {
           const isProtected = cat.ownerId === 999
           const checkedInCat = targetFiles.filter(f => f.ownerId === cat.ownerId).length
@@ -343,8 +354,8 @@ export default function WechatCleanerCommand() {
             id: `wx-nav-owner-${cat.ownerId}`,
             title: cat.shortName,
             subtitle: isProtected
-              ? '受保护，不会被清理'
-              : `已列出 ${cat.files.length} 个 · 已勾选 ${checkedInCat} 个`,
+              ? t('catProtectedSub')
+              : t('catCountSub', { listed: cat.files.length, checked: checkedInCat }),
             icon: { source: isProtected ? Icon.Lock : Icon.Folder },
             accessories: [{ text: formatBytes(cat.totalSizeBytes) }],
             onSelect: () => setSelectedOwnerId(String(cat.ownerId))

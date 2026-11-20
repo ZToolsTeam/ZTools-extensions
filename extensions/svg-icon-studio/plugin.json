@@ -1,9 +1,13 @@
 {
   "id": "svg-icon-studio",
   "name": "SVG预览与压缩",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "静态 SVG 校验、清理与代码预览，保留文字和数值精度，导出 React TSX / Vue 3 SFC / Data URI",
   "author": "ZTools Team",
+  "category": [
+    "图像媒体"
+  ],
+  "categoryId": "media",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -22,7 +26,9 @@
     }
   ],
   "permissions": [
-    "clipboard"
+    "clipboard",
+    "dialog",
+    "fs"
   ],
   "features": [
     {
@@ -37,5 +43,34 @@
         "SVG预览"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "SVG Preview & Optimizer",
+      "description": "Validate, clean, and preview static SVG icons while preserving text and numeric precision, exporting React TSX, Vue 3 SFC, or Data URI.",
+      "keywords": [
+        "svg",
+        "svgo",
+        "icon",
+        "optimize",
+        "react",
+        "vue",
+        "data uri"
+      ],
+      "features": {
+        "svg-icon-studio": {
+          "explain": "Validate, optimize, and preview static SVGs and export React, Vue, or Data URI",
+          "cmds": [
+            "svg",
+            "svgo",
+            "icon",
+            "svg optimize",
+            "svg preview",
+            "svg to react"
+          ]
+        }
+      }
+    }
+  }
 }

@@ -101,3 +101,80 @@ test('差异详情围栏比内容里最长的反引号多一个：对比含 ``` 
   assert.ok(fencedDiffMarkdown('x `````` y').startsWith('```````diff'))
   assert.equal(fencedDiffMarkdown(''), '```diff\n\n```')
 })
+
+test('拖拽文件接收：拖入两个文件或分两次拖入单个文件自动载入对比', async () => {
+  const dropListeners = []
+  const prevFeatures = globalThis.window.__ztoolsDeclarativeFeatures
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    ...(globalThis.window.ztools || {}),
+    events: {
+      on(event, cb) {
+        if (event === 'plugin_files_dropped') dropListeners.push(cb)
+        return () => {}
+      }
+    }
+  }
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 16 })
+  host.ipc.filesystem_read_file = async (params) => ({
+    success: true,
+    content: params.path.endsWith('old.txt') ? 'line1\nold\nline3' : 'line1\nnew\nline3'
+  })
+
+  try {
+    const view = await mount(FileCompareCommand)
+    assert.equal(dropListeners.length, 1)
+
+    dropListeners[0]({ payload: { files: ['/tmp/old.txt', '/tmp/new.txt'] } })
+    await tick()
+    await tick()
+
+    const hunk = view.item('hunk-0')
+    assert.match(hunk.props.subtitle, /删除 1 行，新增 1 行/)
+    assert.match(String(host.lastToast().title), /已载入两个文件进行对比/)
+    view.unmount()
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = prevFeatures
+  }
+})
+
+test('粘贴文件与文本对比：支持双文件粘贴、targetFieldId 槽位投递与 onTextPaste 顺序填入', async () => {
+  const fileMap = {
+    '/tmp/a.txt': 'line1\nleft-a\nline3',
+    '/tmp/b.txt': 'line1\nright-b\nline3',
+    '/tmp/c.txt': 'line1\noverride-c\nline3'
+  }
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 24 })
+  host.ipc.filesystem_read_file = async (params) => ({
+    success: true,
+    content: fileMap[params.path] || ''
+  })
+
+  const view = await mount(FileCompareCommand)
+  try {
+    // 1. 一次粘贴两个文件直接填入左右槽位并触发比对
+    await view.pasteFiles(['/tmp/a.txt', '/tmp/b.txt'])
+    await tick()
+    assert.match(view.item('hunk-0').props.subtitle, /删除 1 行，新增 1 行/)
+    assert.match(view.text(), /a\.txt ↔ b\.txt/)
+
+    // 2. 指定 targetFieldId 指向右槽位替换右侧文件
+    await view.pasteFiles(['/tmp/c.txt'], { targetFieldId: 'right-slot' })
+    await tick()
+    assert.match(view.text(), /a\.txt ↔ c\.txt/)
+
+    // 3. 指定 targetFieldId 指向左槽位替换左侧文件
+    await view.pasteFiles(['/tmp/b.txt'], { targetFieldId: 'fileA' })
+    await tick()
+    assert.match(view.text(), /b\.txt ↔ c\.txt/)
+
+    // 4. 清空后通过 pasteText 依次填入左槽与右槽
+    await view.run(null, '清空')
+    await view.pasteText('hello\nworld')
+    assert.equal(view.item('need-other').props.title, '还需要右侧（新文）才能对比')
+    await view.pasteText('hello\nztools')
+    assert.match(view.item('hunk-0').props.subtitle, /删除 1 行，新增 1 行/)
+  } finally {
+    view.unmount()
+  }
+})

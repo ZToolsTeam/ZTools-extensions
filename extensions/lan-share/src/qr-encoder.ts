@@ -29,7 +29,25 @@
  *   Software.
  */
 
+import { getLocale } from "@ztools/declarative-ui";
+
 export type EccLevel = "L" | "M" | "Q" | "H";
+
+const QR_ENCODER_MESSAGES: Record<string, {
+  capacityExceeded: (bytes: number) => string;
+}> = {
+  "zh-CN": {
+    capacityExceeded: (bytes) => `内容太长（${bytes} 字节），超出二维码最大容量`
+  },
+  "en-US": {
+    capacityExceeded: (bytes) => `Content is too long (${bytes} bytes), exceeding maximum QR code capacity`
+  }
+};
+
+function qrEncoderStrings() {
+  const locale = getLocale();
+  return QR_ENCODER_MESSAGES[locale] ?? QR_ENCODER_MESSAGES["en-US"];
+}
 
 const ECC_ORDINAL: Record<EccLevel, number> = { L: 0, M: 1, Q: 2, H: 3 };
 /** 格式信息里的纠错等级编码（与序号不同） */
@@ -128,7 +146,7 @@ export function encodeQr(text: string, ecl: EccLevel = "M"): QrCodeMatrix {
   let version = 1;
   let dataCapacityBits = 0;
   for (; ; version++) {
-    if (version > 40) throw new Error(`内容太长（${data.length} 字节），超出二维码最大容量`);
+    if (version > 40) throw new Error(qrEncoderStrings().capacityExceeded(data.length));
     dataCapacityBits = getNumDataCodewords(version, ecl) * 8;
     const ccBits = version < 10 ? 8 : 16;
     if (4 + ccBits + data.length * 8 <= dataCapacityBits) break;

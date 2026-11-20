@@ -1,35 +1,38 @@
-import React, { List, ActionPanel, Action, Icon, Color, showToast, ToastStyle, useState, useRef, useEffect } from '@ztools/declarative-ui'
+import React, { List, ActionPanel, Action, Icon, Color, showToast, ToastStyle, useState, useRef, useEffect, useLocale } from '@ztools/declarative-ui'
 import type { DnsRecordEntry, SslCertHealthReport } from './types.js'
 import { normalizeDomainInput, markdownLiteral, inspectDomainSslCert, resolveDomainDoh } from './ssl-dns-service.js'
+import { t } from './i18n.js'
 export * from './types.js'
 export * from './ssl-dns-service.js'
 const reason = (error: unknown) => error instanceof Error ? error.message : String(error)
 export function certificateMarkdown(cert: SslCertHealthReport): string {
   const fields = [
-    ['证书信任验证', cert.authorized ? '通过' : `未通过：${cert.authorizationError}`],
-    ['域名匹配', cert.hostnameMatches ? '匹配' : '不匹配'], ['TLS 协议', cert.protocol],
-    ['生效时间', cert.validFromIso], ['到期时间', cert.validToIso],
-    ['通用名称', cert.subjectCN || '未提供'], ['颁发机构', cert.issuerName || '未提供'],
-    ['备用名称', cert.subjectAltName || '未提供'], ['序列号', cert.serialNumber], ['SHA-256 指纹', cert.fingerprint256],
+    [t('fieldTrustVerify'), cert.authorized ? t('trustPassed') : t('trustFailed', { error: cert.authorizationError })],
+    [t('fieldDomainMatch'), cert.hostnameMatches ? t('matched') : t('mismatched')], [t('fieldTlsProtocol'), cert.protocol],
+    [t('fieldValidFrom'), cert.validFromIso], [t('fieldValidTo'), cert.validToIso],
+    [t('fieldCommonName'), cert.subjectCN || t('notProvided')], [t('fieldIssuer'), cert.issuerName || t('notProvided')],
+    [t('fieldSan'), cert.subjectAltName || t('notProvided')], [t('fieldSerialNumber'), cert.serialNumber], [t('fieldSha256'), cert.fingerprint256],
   ]
   return markdownLiteral(fields.map(([key, value]) => `${key}：${value}`).join('\n\n') +
-    '\n\n证书链\n\n' + cert.chain.map((entry, index) => `${index + 1}. ${entry.subjectCN || '未提供名称'}\n颁发机构：${entry.issuerName}\n有效期：${entry.validFrom} 至 ${entry.validTo}\nSHA-256：${entry.fingerprint256}`).join('\n\n') +
-    (cert.chainTruncated ? '\n\n证书链超过显示上限，仅显示前 8 项。' : ''))
+    `\n\n${t('certChainTitle')}\n\n` + cert.chain.map((entry, index) => `${index + 1}. ${entry.subjectCN || t('unnamed')}\n${t('chainIssuer', { issuer: entry.issuerName })}\n${t('chainValidity', { from: entry.validFrom, to: entry.validTo })}\n${t('chainSha256', { fp: entry.fingerprint256 })}`).join('\n\n') +
+    (cert.chainTruncated ? `\n\n${t('chainTruncatedNote')}` : ''))
 }
 export function SslDomainCheckCommand() {
+  useLocale()
   const [query, setQuery] = useState(''), [recordFilter, setRecordFilter] = useState('ALL')
   const [cert, setCert] = useState<SslCertHealthReport | null>(null), [records, setRecords] = useState<DnsRecordEntry[]>([])
   const [certError, setCertError] = useState(''), [dnsError, setDnsError] = useState('')
-  const [status, setStatus] = useState(''), [loading, setLoading] = useState(false)
+  const [statusKey, setStatusKey] = useState<{ type: 'empty' | 'cancelled' | 'querying' | 'done'; domain?: string; failures?: number; dnsCount?: number }>({ type: 'empty' })
+  const [loading, setLoading] = useState(false)
   const operation = useRef<AbortController | null>(null), generation = useRef(0), alive = useRef(true)
   const clear = () => { setCert(null); setRecords([]); setCertError(''); setDnsError('') }
   const cancel = () => {
     generation.current++; operation.current?.abort(); operation.current = null
-    setLoading(false); clear(); setStatus('查询已取消')
+    setLoading(false); clear(); setStatusKey({ type: 'cancelled' })
   }
   const changeQuery = (value: string) => {
     // 输入提示只保留在空状态条目上，工具栏摘要不再重复
-    cancel(); setQuery(value); setStatus('')
+    cancel(); setQuery(value); setStatusKey({ type: 'empty' })
   }
   useEffect(() => {
     alive.current = true
@@ -39,9 +42,9 @@ export function SslDomainCheckCommand() {
     if (operation.current) return
     let domain: string
     try { domain = normalizeDomainInput(query) }
-    catch (error) { await showToast({ style: ToastStyle.Failure, title: '请输入有效域名', message: reason(error) }); return }
+    catch (error) { await showToast({ style: ToastStyle.Failure, title: t('errInvalidDomain'), message: reason(error) }); return }
     const controller = new AbortController(), id = ++generation.current
-    operation.current = controller; clear(); setLoading(true); setStatus(`正在查询 ${domain}`)
+    operation.current = controller; clear(); setLoading(true); setStatusKey({ type: 'querying', domain })
     try {
       const [tls, dns] = await Promise.allSettled([
         inspectDomainSslCert(domain, { signal: controller.signal }),
@@ -51,39 +54,43 @@ export function SslDomainCheckCommand() {
       if (tls.status === 'fulfilled') setCert(tls.value); else setCertError(reason(tls.reason))
       if (dns.status === 'fulfilled') setRecords(dns.value); else setDnsError(reason(dns.reason))
       const failures = Number(tls.status === 'rejected') + Number(dns.status === 'rejected')
-      setStatus(`${domain} · ${failures === 2 ? '查询失败' : failures ? '部分查询失败' : '查询完成'}${dns.status === 'fulfilled' ? ` · ${dns.value.length} 条 DNS 记录` : ''}`)
+      setStatusKey({ type: 'done', domain, failures, dnsCount: dns.status === 'fulfilled' ? dns.value.length : undefined })
     } finally {
       if (alive.current && id === generation.current) { operation.current = null; setLoading(false) }
     }
   }
+  const status = statusKey.type === 'empty' ? ''
+    : statusKey.type === 'cancelled' ? t('statusCancelled')
+    : statusKey.type === 'querying' ? t('statusQuerying', { domain: statusKey.domain ?? '' })
+    : `${statusKey.domain} · ${statusKey.failures === 2 ? t('statusAllFailed') : statusKey.failures ? t('statusPartialFailed') : t('statusCompleted')}${statusKey.dnsCount !== undefined ? t('statusDnsCount', { count: statusKey.dnsCount }) : ''}`
   const filtered = records.filter(record => recordFilter === 'ALL' || record.type === recordFilter)
-  const certificateStatus = cert ? cert.isExpired ? '已过期' : cert.isNotYetValid ? '尚未生效' : !cert.hostnameMatches ? '域名不匹配' : !cert.authorized ? '信任验证未通过' : cert.isExpiringSoon ? '即将到期' : '验证通过' : ''
+  const certificateStatus = cert ? cert.isExpired ? t('certExpired') : cert.isNotYetValid ? t('certNotYetValid') : !cert.hostnameMatches ? t('certHostnameMismatch') : !cert.authorized ? t('certUntrusted') : cert.isExpiringSoon ? t('certExpiringSoon') : t('certVerified') : ''
   return (
     <List isShowingDetail={Boolean(cert)} isLoading={loading} searchText={query} onSearchTextChange={changeQuery}
-      searchBarPlaceholder="输入域名或网址，例如 example.com"
-      searchBarAccessory={<List.Dropdown tooltip="筛选 DNS 记录" value={recordFilter} onChange={setRecordFilter}>
-        <List.Dropdown.Item title="全部 DNS 记录" value="ALL" />
+      searchBarPlaceholder={t('searchPlaceholder')}
+      searchBarAccessory={<List.Dropdown tooltip={t('filterTooltip')} value={recordFilter} onChange={setRecordFilter}>
+        <List.Dropdown.Item title={t('filterAll')} value="ALL" />
         {['A', 'AAAA', 'CNAME', 'MX', 'TXT'].map(type => <List.Dropdown.Item key={type} title={type} value={type} />)}
       </List.Dropdown>}
-      filterBar={{ summaryText: status, actions: loading ? [{ id: 'cancel', title: '取消查询', onAction: cancel }] : [] }}>
-      <List.Item id="ssl-probe-trigger" title={loading ? '正在查询…' : query.trim() ? `诊断 ${query.trim()}` : '输入域名后回车诊断'}
-        subtitle="检查 HTTPS（443 端口）证书与 DNS 记录" icon={Icon.Globe}
-        actions={<ActionPanel><Action title="查询域名" icon={Icon.Globe} onAction={run} /></ActionPanel>} />
-      {certError && <List.Item id="tls-error" title="证书查询失败" subtitle={certError} icon={Icon.ExclamationMark}
+      filterBar={{ summaryText: status, actions: loading ? [{ id: 'cancel', title: t('cancelAction'), onAction: cancel }] : [] }}>
+      <List.Item id="ssl-probe-trigger" title={loading ? t('probeLoadingTitle') : query.trim() ? t('probeDiagnoseTitle', { query: query.trim() }) : t('probePromptTitle')}
+        subtitle={t('probeSubtitle')} icon={Icon.Globe}
+        actions={<ActionPanel><Action title={t('queryAction')} icon={Icon.Globe} onAction={run} /></ActionPanel>} />
+      {certError && <List.Item id="tls-error" title={t('tlsErrorTitle')} subtitle={certError} icon={Icon.ExclamationMark}
         detail={<List.Item.Detail markdown={markdownLiteral(certError)} />}
-        actions={<ActionPanel><Action title="重新查询" icon={Icon.ArrowClockwise} onAction={run} /><Action.CopyToClipboard title="复制失败原因" content={certError} /></ActionPanel>} />}
-      {cert && <List.Item id="ssl-certificate" title={cert.domain} subtitle={`${cert.protocol} · ${cert.isExpired ? '证书已过期' : `剩余 ${cert.daysRemaining} 天`}`}
+        actions={<ActionPanel><Action title={t('retryAction')} icon={Icon.ArrowClockwise} onAction={run} /><Action.CopyToClipboard title={t('copyErrorAction')} content={certError} /></ActionPanel>} />}
+      {cert && <List.Item id="ssl-certificate" title={cert.domain} subtitle={`${cert.protocol} · ${cert.isExpired ? t('certExpiredSub') : t('certDaysRemainingSub', { days: cert.daysRemaining })}`}
         icon={cert.isHealthy ? Icon.Shield : Icon.ExclamationMark}
         accessories={[cert.isHealthy && !cert.isExpiringSoon ? { tag: certificateStatus } : { tag: { value: certificateStatus, color: Color.Red } }]}
         detail={<List.Item.Detail markdown={certificateMarkdown(cert)} />}
-        actions={<ActionPanel><Action.CopyToClipboard title="复制证书诊断" content={`${cert.domain}:${cert.port}\n${certificateStatus}\n域名匹配：${cert.hostnameMatches}\n证书可信：${cert.authorized}\n${cert.authorizationError}\n${cert.protocol}\n有效期：${cert.validFromIso} 至 ${cert.validToIso}\n${cert.fingerprint256}`} /></ActionPanel>} />}
-      {dnsError && <List.Item id="dns-error" title="DNS 查询失败" subtitle={dnsError} icon={Icon.ExclamationMark}
+        actions={<ActionPanel><Action.CopyToClipboard title={t('copyCertDiagAction')} content={t('certDiagClipboard', { domain: cert.domain, port: cert.port, status: certificateStatus, matches: String(cert.hostnameMatches), authorized: String(cert.authorized), authError: cert.authorizationError, protocol: cert.protocol, from: cert.validFromIso, to: cert.validToIso, fp: cert.fingerprint256 })} /></ActionPanel>} />}
+      {dnsError && <List.Item id="dns-error" title={t('dnsErrorTitle')} subtitle={dnsError} icon={Icon.ExclamationMark}
         detail={<List.Item.Detail markdown={markdownLiteral(dnsError)} />}
-        actions={<ActionPanel><Action title="重新查询" icon={Icon.ArrowClockwise} onAction={run} /><Action.CopyToClipboard title="复制失败原因" content={dnsError} /></ActionPanel>} />}
+        actions={<ActionPanel><Action title={t('retryAction')} icon={Icon.ArrowClockwise} onAction={run} /><Action.CopyToClipboard title={t('copyErrorAction')} content={dnsError} /></ActionPanel>} />}
       {filtered.map((record, index) => <List.Item key={`${record.type}-${index}`} id={`dns-${record.type}-${index}`} title={record.data}
-        subtitle={`${record.name} · TTL ${record.ttl} 秒`} icon={Icon.Globe} accessories={[{ tag: record.type }]}
-        detail={<List.Item.Detail markdown={`**记录值**\n\n${markdownLiteral(record.data)}`} />}
-        actions={<ActionPanel><Action.CopyToClipboard title="复制记录值" content={record.data} /></ActionPanel>} />)}
+        subtitle={t('dnsTtlSub', { name: record.name, ttl: record.ttl })} icon={Icon.Globe} accessories={[{ tag: record.type }]}
+        detail={<List.Item.Detail markdown={t('dnsDetailMarkdown', { value: markdownLiteral(record.data) })} />}
+        actions={<ActionPanel><Action.CopyToClipboard title={t('copyRecordAction')} content={record.data} /></ActionPanel>} />)}
     </List>
   )
 }

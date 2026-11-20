@@ -1,9 +1,13 @@
 {
   "id": "env-manager",
   "name": "环境变量",
-  "version": "1.0.7",
+  "version": "1.0.9",
   "description": "管理 Windows 注册表环境与 macOS 终端变量，查看只读进程快照，预览 PATH 清理，修改前保留可恢复备份",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -57,5 +61,48 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Environment Variables",
+      "description": "Manage Windows registry and macOS shell environment variables, inspect process snapshots, preview invalid PATH cleanup, and keep restorable backups.",
+      "keywords": [
+        "env",
+        "environment",
+        "path",
+        "variables",
+        "shell",
+        "registry"
+      ],
+      "features": {
+        "env-all": {
+          "explain": "Inspect process variables and manage Windows or macOS persistent environment variables",
+          "cmds": [
+            "env",
+            "path",
+            "environment variables",
+            "env manager"
+          ]
+        },
+        "env-path-clean": {
+          "explain": "Preview and clean nonexistent directories from persistent PATH entries",
+          "cmds": [
+            "clean path",
+            "fix path",
+            "invalid path",
+            "cleanup env"
+          ]
+        },
+        "env-backup": {
+          "explain": "View or restore pre-edit backups and copy current variable snapshots",
+          "cmds": [
+            "backup env",
+            "export env",
+            "restore env"
+          ]
+        }
+      }
+    }
+  }
 }

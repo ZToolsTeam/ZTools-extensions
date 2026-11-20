@@ -1,16 +1,16 @@
 {
   "id": "snippets",
   "name": "快捷短语",
-  "version": "1.2.8",
+  "version": "1.2.10",
   "minAppVersion": "1.1.8.3",
   "description": "管理常用开票税号、收件地址、客服话术与常用模板，支持动态日期/时间/剪贴板宏变量，一键穿透上屏或复制",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "效率工具",
-    "办公工具"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "permissions": [
     "clipboard",
     "database",
@@ -76,5 +76,54 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Text Snippets",
+      "description": "Store frequently used billing info, addresses, replies, and templates with dynamic date, time, and clipboard macros for instant paste or copy.",
+      "keywords": [
+        "snippets",
+        "templates",
+        "text expander",
+        "macros",
+        "replies"
+      ],
+      "features": {
+        "snippets-all": {
+          "explain": "Search and manage all saved text snippets and templates",
+          "cmds": [
+            "snippets",
+            "templates",
+            "quick text",
+            "canned replies"
+          ]
+        },
+        "snippets-invoice": {
+          "explain": "Quickly find and paste company billing title, tax ID, and bank info",
+          "cmds": [
+            "billing info",
+            "tax id",
+            "invoice details"
+          ]
+        },
+        "snippets-address": {
+          "explain": "Quickly look up recipient names, shipping addresses, and phone numbers",
+          "cmds": [
+            "shipping address",
+            "saved address",
+            "contact address"
+          ]
+        },
+        "snippets-new": {
+          "explain": "Create a new text snippet or reusable template",
+          "cmds": [
+            "add snippet",
+            "new snippet",
+            "create template"
+          ]
+        }
+      }
+    }
+  }
 }

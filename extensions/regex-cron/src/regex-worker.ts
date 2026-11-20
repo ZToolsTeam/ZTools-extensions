@@ -1,10 +1,12 @@
-import { runRegexMatch } from './regex-engine.js'
+import { getRegexEngineMessages, runRegexMatchCore } from './regex-engine.js'
+import type { RegexEngineMessages } from './regex-engine.js'
 import type { RegexMatchResult } from './types.js'
+import { t } from './i18n.js'
 
 interface MatchWorker {
   onmessage: ((event: MessageEvent<RegexMatchResult>) => void) | null
   onerror: ((event: ErrorEvent) => void) | null
-  postMessage(data: string[]): void
+  postMessage(data: [string, string, string, RegexEngineMessages]): void
   terminate(): void
 }
 export interface RegexWorkerOptions {
@@ -44,23 +46,23 @@ export function runRegexInWorker(pattern: string, text: string, options: RegexWo
       }
       resolve(result)
     }
-    const cancel = () => finish(failure('匹配已取消'))
+    const cancel = () => finish(failure(t('workerErrCanceled')))
     if (options.signal?.aborted) { cancel(); return }
     if (pattern.length > 2000 || text.length > 50_000) {
-      finish(failure('正则不能超过 2000 个字符，待测文本不能超过 50000 个字符'))
+      finish(failure(t('workerErrInputLimit')))
       return
     }
     // 编译后的函数没有外部依赖，浏览器与测试环境执行同一份算法。
-    const source = `self.onmessage = ({ data }) => self.postMessage((${runRegexMatch.toString()})(...data));`
+    const source = `self.onmessage = ({ data }) => self.postMessage((${runRegexMatchCore.toString()})(...data));`
     try {
       handle = (options.createWorker ?? browserWorker)(source)
       handle.worker.onmessage = event => finish(event.data)
-      handle.worker.onerror = event => finish(failure(`匹配线程失败：${event.message}`))
+      handle.worker.onerror = event => finish(failure(t('workerErrThreadFailed', { message: event.message })))
       options.signal?.addEventListener('abort', cancel, { once: true })
-      timer = setTimeout(() => finish(failure('匹配超过 1 秒，已停止。请简化正则或缩短待测文本')), options.timeoutMs ?? 1000)
-      handle.worker.postMessage([pattern, text])
+      timer = setTimeout(() => finish(failure(t('workerErrTimeout'))), options.timeoutMs ?? 1000)
+      handle.worker.postMessage([pattern, text, 'g', getRegexEngineMessages()])
     } catch (error) {
-      finish(failure(`无法启动正则匹配：${error instanceof Error ? error.message : String(error)}`))
+      finish(failure(t('workerErrStartFailed', { message: error instanceof Error ? error.message : String(error) })))
     }
   })
 }

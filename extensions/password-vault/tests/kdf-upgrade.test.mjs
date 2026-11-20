@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { encryptVaultEntries, decryptVaultEntries, createVaultEntry, validateMasterPassword, PBKDF2_ITERATIONS } from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 const entry = () => createVaultEntry({ title: '测试凭据', category: 'login', username: 'fixture', secretPlain: 'not-a-real-secret' })
 

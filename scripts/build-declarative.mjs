@@ -9,7 +9,7 @@
  * - 统一以 ES2022 模块输出（宿主加载器同时兼容 ESM 与 CommonJS，这里固定一种避免各插件 tsconfig 不一致）
  * - .tsx 默认按 React.createElement 输出（插件里 import React from '@ztools/declarative-ui'）
  * - 构建前清空 dist/，避免残留已删除源码的旧产物
- * - shared/ 下的公共源码（hash.ts、native-ipc.ts、volume-ipc.ts、host-compat.ts、qr-encoder.ts）以复制方式进入插件，构建前校验副本与源文件一致
+ * - shared/ 下的公共源码（hash.ts、native-ipc.ts、volume-ipc.ts、host-compat.ts、qr-encoder.ts、file-import.ts）以复制方式进入插件，构建前校验副本与源文件一致
  * - 同一份脚本在内部插件仓库与公开插件仓库（ZTools-extensions，插件位于 extensions/）都能直接运行
  */
 import { execFileSync } from 'node:child_process'
@@ -18,7 +18,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SHARED = ['hash.ts', 'native-ipc.ts', 'volume-ipc.ts', 'host-compat.ts', 'qr-encoder.ts']
+const SHARED = ['hash.ts', 'native-ipc.ts', 'volume-ipc.ts', 'host-compat.ts', 'qr-encoder.ts', 'file-import.ts']
 
 // 插件所在目录：仓库里有 extensions/ 时在 extensions/ 下，否则就是本脚本上一级目录
 const pluginsRoot = fs.existsSync(path.join(root, 'extensions')) ? path.join(root, 'extensions') : root
@@ -35,8 +35,7 @@ const tscJs = firstExisting(
     path.join(r, 'node_modules/typescript/bin/tsc'),
     path.join(r, 'electron-client/node_modules/typescript/bin/tsc'),
     path.join(r, 'packages/declarative-ui/node_modules/typescript/bin/tsc'),
-    path.join(r, 'frontend/node_modules/typescript/bin/tsc'),
-    path.join(r, 'create-plugin/node_modules/typescript/bin/tsc')
+    path.join(r, 'frontend/node_modules/typescript/bin/tsc')
   ])
 )
 const tsc = tscJs || firstExisting(searchRoots.map((r) => path.join(r, 'node_modules/.bin/tsc')))
@@ -54,7 +53,7 @@ function listAllPlugins() {
   const isPlugin = (rel) => fs.existsSync(path.join(pluginsRoot, rel, 'plugin.json')) && fs.existsSync(path.join(pluginsRoot, rel, 'tsconfig.json'))
   const out = []
   for (const d of fs.readdirSync(pluginsRoot, { withFileTypes: true })) {
-    if (!d.isDirectory() || ['create-plugin', 'shared', 'scripts', 'node_modules', 'packages'].includes(d.name) || d.name.startsWith('.')) continue
+    if (!d.isDirectory() || ['shared', 'scripts', 'node_modules', 'packages'].includes(d.name) || d.name.startsWith('.')) continue
     if (isPlugin(d.name)) {
       out.push(d.name)
       continue

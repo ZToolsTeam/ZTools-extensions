@@ -142,3 +142,42 @@ test('字数与结构块只在文档条目显示，状态栏与左栏不重复�
   host.ipc.clipboard_read_text = async () => ({ success: true, text: '   ' }); await button(v, 'clipboard')
   assert.match(v.tree().props.filterBar.summaryText, /请输入 Markdown/); assert.equal(v.item('document').props.title, '测试文档')
 })
+
+test('支持通过 plugin_files_dropped 拖入 Markdown 文件读取并分析，非支持格式提示错误', async () => {
+  const listeners = new Map()
+  const prevFeatures = globalThis.window.__ztoolsDeclarativeFeatures
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  try {
+    const v = await open()
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/image.png'] } })
+    await tick()
+    assert.match(host.lastToast().message || host.lastToast().title, /\.md/)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/dropped.md'] } })
+    await tick()
+    assert.equal(v.item('document').props.title, '文件内容')
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = prevFeatures
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 pasteFiles 粘贴 Markdown 文件与 pasteText 粘贴 Markdown 源码直接预览', async () => {
+  const v = await open()
+  await v.pasteFiles(['/tmp/pasted.md'])
+  await tick()
+  assert.equal(v.item('document').props.title, '文件内容')
+
+  await v.pasteText('# 粘贴标题\n\n粘贴正文内容')
+  await tick()
+  assert.equal(v.item('document').props.title, '粘贴标题')
+})

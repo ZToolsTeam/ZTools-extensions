@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "keywords": [
     "系统工具",
     "锁屏",
@@ -61,5 +62,46 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "System Commands",
+      "description": "Run common system actions from one list: lock, sleep, hibernate, restart, shutdown, sign out, volume/mute, toggle hidden files, empty Recycle Bin, and keep awake.",
+      "keywords": [
+        "system",
+        "lock",
+        "sleep",
+        "restart",
+        "shutdown",
+        "volume",
+        "mute",
+        "recycle bin"
+      ],
+      "features": {
+        "sys-power": {
+          "explain": "Lock, sleep, hibernate, restart, shut down, or sign out",
+          "cmds": [
+            "system tools",
+            "lock",
+            "sleep",
+            "hibernate",
+            "restart",
+            "shutdown",
+            "logout"
+          ]
+        },
+        "sys-misc": {
+          "explain": "Adjust system volume/mute, toggle hidden files, empty Recycle Bin, and prevent sleep",
+          "cmds": [
+            "volume",
+            "mute",
+            "hidden files",
+            "empty trash",
+            "prevent sleep"
+          ]
+        }
+      }
+    }
+  }
 }

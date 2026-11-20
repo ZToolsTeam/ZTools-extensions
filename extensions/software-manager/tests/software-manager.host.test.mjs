@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as softwareManager from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function createRealHostStub(handlers = {}) {

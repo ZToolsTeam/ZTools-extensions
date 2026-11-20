@@ -2,12 +2,17 @@
   "id": "disk-analyzer",
   "name": "磁盘空间分析",
   "description": "快速分析各磁盘分区空间占用，按文件夹大小与大文件排行直观找出占满硬盘的文件",
-  "version": "2.0.12",
+  "version": "2.0.15",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
+    "文件管理",
     "系统工具"
+  ],
+  "categoryId": [
+    "files",
+    "system"
   ],
   "permissions": [
     "fs",
@@ -28,5 +33,20 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Disk Space Analyzer",
+      "description": "Analyze disk partition usage and rank largest folders and files to quickly identify what is filling up your drive.",
+      "keywords": [
+        "disk",
+        "storage",
+        "space",
+        "analyzer",
+        "large files",
+        "folders"
+      ]
+    }
+  }
 }

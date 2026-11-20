@@ -1,4 +1,5 @@
 import { callHostTransport } from './native-ipc.js'
+import { t } from './i18n.js'
 import type { HostRule, HostsProfile } from './types.js'
 
 export function isValidIpAddress(ip: string): boolean {
@@ -117,6 +118,68 @@ export function buildCombinedHostsContent(profiles: HostsProfile[]): {
   }
 }
 
+export function getDefaultHostsProfiles(): HostsProfile[] {
+  return [
+    {
+      id: 'hosts-system',
+      name: t('defaultSystemName'),
+      isEnabled: true,
+      isSystem: true,
+      rawContent: '127.0.0.1       localhost\n::1             localhost',
+      rulesCount: 2,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 10:00'
+    },
+    {
+      id: 'hosts-local-dev',
+      name: t('defaultLocalDevName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        t('defaultLocalDevComment'),
+        '127.0.0.1       dev.ztools.local',
+        '127.0.0.1       api-dev.ztools.local',
+        '127.0.0.1       auth-dev.ztools.local'
+      ].join('\n'),
+      rulesCount: 3,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 11:20'
+    },
+    {
+      id: 'hosts-staging',
+      name: t('defaultStagingName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        t('defaultStagingComment'),
+        '192.168.10.50   staging.example.com',
+        '192.168.10.51   mysql.staging.example.com',
+        '192.168.10.52   redis.staging.example.com'
+      ].join('\n'),
+      rulesCount: 3,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 09:15'
+    },
+    {
+      id: 'hosts-github',
+      name: t('defaultGithubName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        '140.82.113.4    github.com',
+        '185.199.108.133 raw.githubusercontent.com'
+      ].join('\n'),
+      rulesCount: 2,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-24 18:00'
+    }
+  ]
+}
+
 export const DEFAULT_HOSTS_PROFILES: HostsProfile[] = [
   {
     id: 'hosts-system',
@@ -220,7 +283,7 @@ export async function applyCombinedHosts(
     hostOverride
   )
   if (!res.ok) {
-    const error = res.error || res.data?.error || '写入系统 hosts 失败'
+    const error = res.error || res.data?.error || t('errWriteSystemHostsFailed')
     return {
       success: false,
       errorCode: res.data?.errorCode || errorCodeFromMessage(error) || 'WRITE_FAILED',
@@ -251,11 +314,11 @@ export async function flushDnsCache(
     return {
       success: false,
       output: '',
-      error: res.error || res.data?.error || '刷新 DNS 缓存失败'
+      error: res.error || res.data?.error || t('errFlushDnsFailed')
     }
   }
   return {
     success: true,
-    output: res.data?.output || '本地 DNS 缓存已成功刷新'
+    output: res.data?.output || t('toastFlushDnsSuccess')
   }
 }

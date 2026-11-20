@@ -83,7 +83,6 @@ export interface ActionPanelSubmenuProps extends BaseProps {
     title: string;
     icon?: IconResolvable;
     children?: any;
-    shortcut?: KeyboardShortcut;
 }
 export interface ListItemAccessory {
     text?: string | {
@@ -124,6 +123,16 @@ export interface ListSectionProps extends BaseProps {
     checked?: boolean | "indeterminate";
     onCheckChange?: (checked?: any) => void;
     children?: any;
+}
+/**
+ * 列表没有可显示条目时的空状态（居中的图标 + 标题 + 说明，不可选中）。
+ * 放在 List 的子元素里（顶层或 Section 内均可）；列表有条目时宿主忽略它。
+ * 回车、⌘K 等仍执行 List 级 actions，所以「空列表时按回车新建」这类交互不需要占位条目。
+ */
+export interface ListEmptyViewProps extends BaseProps {
+    title: string;
+    description?: string;
+    icon?: IconResolvable;
 }
 export interface ListDropdownItemProps extends BaseProps {
     title: string;
@@ -246,6 +255,27 @@ export interface SubListProps {
     onCheckChange?: (checked: boolean) => void;
     items?: ViewDescriptor<ListItemProps>[];
 }
+export interface FileInputConfig {
+    /** 允许的扩展名列表（如 ['.png', '.jpg']），不填表示允许任意扩展名 */
+    extensions?: string[];
+    /** 是否允许接收文件夹（默认 false） */
+    allowDirectories?: boolean;
+    /** 是否允许将剪贴板纯位图（截图）落盘为临时 PNG 接收（默认 false） */
+    allowClipboardImage?: boolean;
+    /** 拖放遮罩提示文案 */
+    dropTitle?: string;
+    dropSubtitle?: string;
+    /** 双模粘贴（文件优先，纯文本回退）：当焦点位于空搜索框或非输入区域且剪贴板仅含文本时触发 */
+    onTextPaste?: (text: string) => boolean | void | Promise<boolean | void>;
+}
+export interface FileInputPayload {
+    files: string[];
+    /** files 中由客户端确认是文件夹的路径（仅在接收文件夹且确有文件夹时提供） */
+    directories?: string[];
+    source: "drop" | "paste" | "launch";
+    targetFieldId?: string;
+    rejectedCount?: number;
+}
 export interface ListProps extends BaseProps {
     isLoading?: boolean;
     searchText?: string;
@@ -263,6 +293,8 @@ export interface ListProps extends BaseProps {
     filterBar?: FilterBarProps | ViewDescriptor;
     workbenchPanel?: WorkbenchPanelProps;
     subList?: SubListProps;
+    fileInput?: FileInputConfig;
+    onFileInput?: (payload: FileInputPayload) => void;
     actions?: ViewDescriptor | any;
     children?: any;
 }
@@ -292,6 +324,8 @@ export interface DetailProps extends BaseProps {
     markdown?: string;
     navigationTitle?: string;
     isLoading?: boolean;
+    fileInput?: FileInputConfig;
+    onFileInput?: (payload: FileInputPayload) => void;
     actions?: ViewDescriptor | any;
     metadata?: ViewDescriptor | any;
 }
@@ -305,6 +339,7 @@ export interface FormTextFieldProps extends BaseProps {
     error?: string;
     info?: string;
     autoFocus?: boolean;
+    monospace?: boolean;
 }
 export interface FormTextAreaProps extends BaseProps {
     id: string;
@@ -315,6 +350,8 @@ export interface FormTextAreaProps extends BaseProps {
     onChange?: (val: string) => void;
     error?: string;
     info?: string;
+    autoFocus?: boolean;
+    monospace?: boolean;
 }
 export interface FormCheckboxProps extends BaseProps {
     id: string;
@@ -341,7 +378,9 @@ export interface FormDropdownProps extends BaseProps {
 }
 export interface FormDescriptionProps extends BaseProps {
     title?: string;
-    text: string;
+    text?: string;
+    /** Markdown 内容预览（客户端 1.1.8.11 起），与 Detail 使用相同的安全渲染；提供时优先于 text。 */
+    markdown?: string;
 }
 export interface FormPasswordFieldProps extends FormTextFieldProps {
 }
@@ -376,6 +415,8 @@ export interface SegmentedControlProps extends BaseProps {
 export interface FormProps extends BaseProps {
     navigationTitle?: string;
     isLoading?: boolean;
+    fileInput?: FileInputConfig;
+    onFileInput?: (payload: FileInputPayload) => void;
     actions?: ViewDescriptor | any;
     children?: any;
 }

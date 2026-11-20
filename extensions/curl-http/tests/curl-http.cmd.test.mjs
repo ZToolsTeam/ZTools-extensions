@@ -1,6 +1,8 @@
 // Windows cmd 写法的 cURL（浏览器开发者工具「Copy as cURL (cmd)」）：^" 转义、^ 续行、^% 与 \" 的还原
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import { isCmdStyleCurl, parseCurlCommand, tokenizeCmdCommand } from '../dist/curl-service.js'
 
 // 与 Chromium 开发者工具生成 cmd 版 cURL 时的转义规则一致，用来构造真实格式的输入

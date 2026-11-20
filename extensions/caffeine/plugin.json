@@ -1,15 +1,15 @@
 {
   "id": "caffeine",
   "name": "防休眠常亮",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "阻止系统自动休眠与息屏，支持定时倒计时自动恢复与一键常亮切换",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system"
   ],
@@ -52,5 +52,39 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Keep Awake (Caffeine)",
+      "description": "Prevent your system from sleeping or dimming the screen, with timed countdown auto-restore and one-click toggle.",
+      "keywords": [
+        "caffeine",
+        "keep awake",
+        "prevent sleep",
+        "screen on",
+        "awake"
+      ],
+      "features": {
+        "caffeine-panel": {
+          "explain": "Set keep-awake duration (indefinite, 15m, 30m, 1h, 2h, or 4h)",
+          "cmds": [
+            "caffeine",
+            "keep awake",
+            "prevent sleep",
+            "stay awake"
+          ]
+        },
+        "caffeine-toggle": {
+          "explain": "Toggle keep-awake mode on or off immediately",
+          "cmds": [
+            "caffeine toggle",
+            "toggle awake",
+            "enable awake",
+            "disable awake"
+          ]
+        }
+      }
+    }
+  }
 }

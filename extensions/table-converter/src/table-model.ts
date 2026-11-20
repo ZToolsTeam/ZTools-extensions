@@ -1,4 +1,5 @@
 import type { InferredColumnType, JsonValue, TableGrid } from './types.js'
+import { t } from './i18n.js'
 
 export function safeTextNumber(text: string): boolean {
   const value = Number(text)
@@ -27,14 +28,14 @@ export function parseJsonPreservingData(text: string): JsonValue {
     else if (raw.startsWith('"')) {
       if (/^\s*:/.test(text.slice(token.index! + raw.length))) {
         const name = JSON.parse(raw) as string, current = keys[keys.length - 1]!
-        if (current.has(name)) throw new Error('JSON 存在重复键，请先改为不同名称，避免覆盖数据。')
+        if (current.has(name)) throw new Error(t('errJsonDuplicateKey'))
         current.add(name)
       }
     } else {
       const number = Number(raw)
       if (!Number.isFinite(number) || (Number.isInteger(number) && !Number.isSafeInteger(number))
         || Object.is(number, -0) || decimalSignature(raw) !== decimalSignature(String(number))) {
-        throw new Error('JSON 数字超出可安全转换的精度，请将长数字或精确小数加双引号作为字符串。')
+        throw new Error(t('errJsonNumberPrecision'))
       }
     }
   }
@@ -58,16 +59,16 @@ function uniqueHeaders(input: string[]): { headers: string[]; warnings: string[]
     used.add(name)
     return name
   })
-  return { headers, warnings: headers.some((h, i) => h !== input[i]) ? ['空表头或重名表头已自动命名；所有列均保留。'] : [] }
+  return { headers, warnings: headers.some((h, i) => h !== input[i]) ? [t('warnHeaderRenamed')] : [] }
 }
 
 export function assertGridSize(columns: number, rows: number): void {
-  if (columns > 1000 || rows > 50_000 || columns * rows > 200_000) throw new Error('单次最多 1000 列、5 万行、20 万个单元格，请拆分后转换。')
+  if (columns > 1000 || rows > 50_000 || columns * rows > 200_000) throw new Error(t('errGridLimit'))
 }
 
 export function makeGrid(headers: string[], rows: string[][], values?: (JsonValue | undefined)[][]): TableGrid {
   assertGridSize(headers.length, rows.length)
-  for (const row of rows) if (row.length !== headers.length) throw new Error('各行列数不一致，请检查分隔符、引号或缺少的单元格。')
+  for (const row of rows) if (row.length !== headers.length) throw new Error(t('errRowColMismatch'))
   const inferredTypes = headers.map((_, i): InferredColumnType => {
     if (values) {
       const kinds = new Set(values.map(row => row[i] === null ? 'null' : typeof row[i] === 'object' ? 'json' : typeof row[i]).filter(t => t !== 'undefined'))
@@ -89,7 +90,7 @@ export function matrixGrid(matrix: string[][], hasHeader: boolean): TableGrid {
 
 export function jsonGrid(text: string, hasHeader: boolean): TableGrid {
   const input = parseJsonPreservingData(text)
-  if (!Array.isArray(input)) throw new Error('JSON 输入必须是对象数组或二维数组。')
+  if (!Array.isArray(input)) throw new Error(t('errJsonMustBeArray'))
   if (!input.length) return makeGrid([], [])
   if (input.every(Array.isArray)) {
     const matrix = input as JsonValue[][]
@@ -98,7 +99,7 @@ export function jsonGrid(text: string, hasHeader: boolean): TableGrid {
     const values = hasHeader ? matrix.slice(1) : matrix
     return makeGrid(headers, values.map(row => row.map(displayValue)), values)
   }
-  if (!input.every(row => row !== null && typeof row === 'object' && !Array.isArray(row))) throw new Error('JSON 每行必须都是对象，或每行都是数组，不能混合。')
+  if (!input.every(row => row !== null && typeof row === 'object' && !Array.isArray(row))) throw new Error(t('errJsonMixedRows'))
   const objects = input as Record<string, JsonValue>[]
   const headers = [...new Set(objects.flatMap(Object.keys))]
   assertGridSize(headers.length, objects.length)
@@ -120,11 +121,11 @@ export function cellValue(grid: TableGrid, r: number, c: number): JsonValue | un
 export function boundedJoin(parts: Iterable<string>, separator: string, prefix = '', suffix = ''): string {
   const encoder = new TextEncoder(), result: string[] = []
   let bytes = encoder.encode(prefix + suffix).length
-  if (bytes > 8 * 1024 * 1024) throw new Error('输出超过剪贴板 8 MiB 上限，请拆分输入后转换。')
+  if (bytes > 8 * 1024 * 1024) throw new Error(t('errClipboardLimit'))
   const separatorBytes = encoder.encode(separator).length
   for (const part of parts) {
     bytes += encoder.encode(part).length + (result.length ? separatorBytes : 0)
-    if (bytes > 8 * 1024 * 1024) throw new Error('输出超过剪贴板 8 MiB 上限，请拆分输入后转换。')
+    if (bytes > 8 * 1024 * 1024) throw new Error(t('errClipboardLimit'))
     result.push(part)
   }
   return prefix + result.join(separator) + suffix

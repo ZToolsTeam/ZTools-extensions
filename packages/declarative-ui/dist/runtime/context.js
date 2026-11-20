@@ -1,4 +1,5 @@
 import { setActiveNavigation } from "../api/navigation.js";
+import { onLocaleChange } from "./locale.js";
 export function areViewTreesEqual(a, b) {
     if (a === b)
         return true;
@@ -26,6 +27,7 @@ export class DeclarativeRenderInstance {
     navigationHandler;
     popoutSeed = null;
     popoutRegistry = new Map();
+    unsubscribeLocale = null;
     constructor(component, options) {
         this.component = component;
         this.onUpdateCallback = options?.onUpdate;
@@ -49,6 +51,9 @@ export class DeclarativeRenderInstance {
             // 拷一份 key 表：宿主传入的对象不会被改动，也不受原型链上的属性影响
             this.popoutSeed = new Map(Object.entries(seed));
         }
+        this.unsubscribeLocale = onLocaleChange(() => {
+            this.scheduleRender();
+        });
     }
     /** 取出并删除某个 key 的交接初值（只用一次） */
     consumePopoutSeed(key) {
@@ -208,6 +213,10 @@ export class DeclarativeRenderInstance {
         if (!this.isMounted)
             return;
         this.isMounted = false;
+        if (this.unsubscribeLocale) {
+            this.unsubscribeLocale();
+            this.unsubscribeLocale = null;
+        }
         for (const hook of this.hooks) {
             if (hook.type === "effect" && typeof hook.cleanup === "function") {
                 const cleanup = hook.cleanup;
