@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as backup from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 const item = (id, extra = {}) => ({ id, name: id, path: `C:\\Users\\tester\\${id}`, category: 'dev_terminal', categoryName: '终端', sizeBytes: 12, lastModified: '', statusTag: '', ...extra })
 const vault = 'C:\\Users\\tester\\Documents\\ZToolsBackups'

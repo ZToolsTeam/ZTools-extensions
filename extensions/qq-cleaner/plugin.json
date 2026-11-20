@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "shell",
@@ -24,5 +25,20 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "QQ / TIM Cleaner",
+      "description": "Scan desktop QQ and TIM logs, caches, chat images/videos, and received files, moving selected items to the Recycle Bin without touching chat databases.",
+      "keywords": [
+        "qq",
+        "tim",
+        "cleaner",
+        "cache",
+        "cleanup",
+        "recycle bin"
+      ]
+    }
+  }
 }

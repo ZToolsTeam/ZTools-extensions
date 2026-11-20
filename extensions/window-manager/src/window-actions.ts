@@ -8,6 +8,7 @@ import {
 import { LocalStorage } from "@ztools/declarative-ui";
 import { showHUD } from "@ztools/declarative-ui";
 import { callHostTransport } from "./native-ipc.js";
+import { t } from "./i18n.js";
 
 export const DEFAULT_WINDOW_PREFERENCES: WindowManagementPreferences = {
   innerGap: 0,
@@ -48,175 +49,193 @@ export async function saveWindowPreferences(
   return updated;
 }
 
+type WindowActionSpec = Omit<WindowActionDefinition, "name" | "description"> & {
+  nameKey: Parameters<typeof t>[0];
+  descKey: Parameters<typeof t>[0];
+};
+
+function createWindowAction(spec: WindowActionSpec): WindowActionDefinition {
+  const { nameKey, descKey, ...rest } = spec;
+  return {
+    ...rest,
+    get name() {
+      return t(nameKey);
+    },
+    get description() {
+      return t(descKey);
+    }
+  };
+}
+
 export const WINDOW_ACTIONS: WindowActionDefinition[] = [
-  {
+  createWindowAction({
     id: "left-half",
-    name: "左半屏 (Left Half)",
+    nameKey: "actionNameLeftHalf",
     category: "halves",
-    description: "将活动窗口吸附至屏幕左半侧，占满垂直高度",
+    descKey: "actionDescLeftHalf",
     iconName: "sidebar-left",
-    keywords: ["left", "50%", "half", "左", "左半"]
-  },
-  {
+    keywords: ["left", "50%", "half", "左", "左半", "左半屏"]
+  }),
+  createWindowAction({
     id: "right-half",
-    name: "右半屏 (Right Half)",
+    nameKey: "actionNameRightHalf",
     category: "halves",
-    description: "将活动窗口吸附至屏幕右半侧，占满垂直高度",
+    descKey: "actionDescRightHalf",
     iconName: "sidebar-right",
-    keywords: ["right", "50%", "half", "右", "右半"]
-  },
-  {
+    keywords: ["right", "50%", "half", "右", "右半", "右半屏"]
+  }),
+  createWindowAction({
     id: "top-half",
-    name: "上半屏 (Top Half)",
+    nameKey: "actionNameTopHalf",
     category: "halves",
-    description: "将活动窗口吸附至屏幕上半侧，占满水平宽度",
+    descKey: "actionDescTopHalf",
     iconName: "arrow-up",
-    keywords: ["top", "up", "50%", "half", "上", "上半"]
-  },
-  {
+    keywords: ["top", "up", "50%", "half", "上", "上半", "上半屏"]
+  }),
+  createWindowAction({
     id: "bottom-half",
-    name: "下半屏 (Bottom Half)",
+    nameKey: "actionNameBottomHalf",
     category: "halves",
-    description: "将活动窗口吸附至屏幕下半侧，占满水平宽度",
+    descKey: "actionDescBottomHalf",
     iconName: "arrow-down",
-    keywords: ["bottom", "down", "50%", "half", "下", "下半"]
-  },
-  {
+    keywords: ["bottom", "down", "50%", "half", "下", "下半", "下半屏"]
+  }),
+  createWindowAction({
     id: "first-third",
-    name: "左三分之一 (First Third)",
+    nameKey: "actionNameFirstThird",
     category: "thirds",
-    description: "占据屏幕最左侧 33.3% 宽度",
+    descKey: "actionDescFirstThird",
     iconName: "sidebar-left",
     keywords: ["first third", "left third", "1/3", "左三分之一"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "center-third",
-    name: "中三分之一 (Center Third)",
+    nameKey: "actionNameCenterThird",
     category: "thirds",
-    description: "居中放置并占据屏幕中间 33.3% 宽度",
+    descKey: "actionDescCenterThird",
     iconName: "columns",
     keywords: ["center third", "middle third", "1/3", "中三分之一"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "last-third",
-    name: "右三分之一 (Last Third)",
+    nameKey: "actionNameLastThird",
     category: "thirds",
-    description: "占据屏幕最右侧 33.3% 宽度",
+    descKey: "actionDescLastThird",
     iconName: "sidebar-right",
     keywords: ["last third", "right third", "1/3", "右三分之一"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "first-two-thirds",
-    name: "左三分之二 (First Two Thirds)",
+    nameKey: "actionNameFirstTwoThirds",
     category: "thirds",
-    description: "占据左侧 66.6% 宽度，适用于主工作核心窗口",
+    descKey: "actionDescFirstTwoThirds",
     iconName: "layout",
     keywords: ["first two thirds", "left 2/3", "2/3", "左三分之二"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "last-two-thirds",
-    name: "右三分之二 (Last Two Thirds)",
+    nameKey: "actionNameLastTwoThirds",
     category: "thirds",
-    description: "占据屏幕右侧 66.6% 宽度",
+    descKey: "actionDescLastTwoThirds",
     iconName: "layout",
     keywords: ["last two thirds", "right 2/3", "2/3", "右三分之二"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "top-left",
-    name: "左上角四分之一 (Top Left Quarter)",
+    nameKey: "actionNameTopLeft",
     category: "quarters",
-    description: "占据屏幕左上角 25% 区域 (50% 宽 x 50% 高)",
+    descKey: "actionDescTopLeft",
     iconName: "arrow-ne",
     keywords: ["top-left", "corner", "25%", "左上角"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "top-right",
-    name: "右上角四分之一 (Top Right Quarter)",
+    nameKey: "actionNameTopRight",
     category: "quarters",
-    description: "占据屏幕右上角 25% 区域 (50% 宽 x 50% 高)",
+    descKey: "actionDescTopRight",
     iconName: "arrow-ne",
     keywords: ["top-right", "corner", "25%", "右上角"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "bottom-left",
-    name: "左下角四分之一 (Bottom Left Quarter)",
+    nameKey: "actionNameBottomLeft",
     category: "quarters",
-    description: "占据屏幕左下角 25% 区域 (50% 宽 x 50% 高)",
+    descKey: "actionDescBottomLeft",
     iconName: "arrow-se",
     keywords: ["bottom-left", "corner", "25%", "左下角"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "bottom-right",
-    name: "右下角四分之一 (Bottom Right Quarter)",
+    nameKey: "actionNameBottomRight",
     category: "quarters",
-    description: "占据屏幕右下角 25% 区域 (50% 宽 x 50% 高)",
+    descKey: "actionDescBottomRight",
     iconName: "arrow-se",
     keywords: ["bottom-right", "corner", "25%", "右下角"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "maximize",
-    name: "最大化 (Maximize)",
+    nameKey: "actionNameMaximize",
     category: "center-max",
-    description: "将窗口最大化充满整个可用工作区（主动避让系统任务栏）",
+    descKey: "actionDescMaximize",
     iconName: "maximize",
     keywords: ["max", "fullscreen", "最大化", "满屏"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "restore",
-    name: "还原上一位置 (Restore)",
+    nameKey: "actionNameRestore",
     category: "center-max",
-    description: "将窗口还原到宿主保存的上一位置与尺寸",
+    descKey: "actionDescRestore",
     iconName: "window",
     keywords: ["restore", "还原", "上一位置"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "reasonable-size",
-    name: "黄金适中尺寸 (Reasonable Size 60%)",
+    nameKey: "actionNameReasonableSize",
     category: "center-max",
-    description: "调整窗口至 60% 屏幕宽度与 80% 高度",
+    descKey: "actionDescReasonableSize",
     iconName: "app-window",
     keywords: ["reasonable size", "default", "适中尺寸", "黄金比例"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "center",
-    name: "屏幕居中 (Center)",
+    nameKey: "actionNameCenter",
     category: "center-max",
-    description: "保持当前视窗尺寸并在当前显示器屏幕正中居中",
+    descKey: "actionDescCenter",
     iconName: "center",
     keywords: ["center", "middle", "居中", "屏幕中央"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "next-display",
-    name: "移动到下一显示器 (Next Display)",
+    nameKey: "actionNameNextDisplay",
     category: "displays",
-    description: "将当前窗口投递至下一物理显示器相对等比坐标",
+    descKey: "actionDescNextDisplay",
     iconName: "monitor",
     keywords: ["next display", "screen", "monitor", "下一显示器", "多屏"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "previous-display",
-    name: "移动到上一显示器 (Previous Display)",
+    nameKey: "actionNamePreviousDisplay",
     category: "displays",
-    description: "将当前窗口投递至上一物理显示器相对等比坐标",
+    descKey: "actionDescPreviousDisplay",
     iconName: "monitor",
     keywords: ["previous display", "screen", "monitor", "上一显示器", "多屏"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "make-larger",
-    name: "视窗放大 (Make Larger)",
+    nameKey: "actionNameMakeLarger",
     category: "resize",
-    description: "窗口宽高各增加 100 像素，限制在当前工作区内",
+    descKey: "actionDescMakeLarger",
     iconName: "plus",
     keywords: ["make larger", "grow", "zoom in", "放大"]
-  },
-  {
+  }),
+  createWindowAction({
     id: "make-smaller",
-    name: "视窗缩小 (Make Smaller)",
+    nameKey: "actionNameMakeSmaller",
     category: "resize",
-    description: "窗口宽高各缩小 100 像素，保留最小尺寸并限制在工作区内",
+    descKey: "actionDescMakeSmaller",
     iconName: "minus",
     keywords: ["make smaller", "shrink", "zoom out", "缩小"]
-  }
+  })
 ];
 
 // 兼容别名映射 (Aliases)
@@ -605,7 +624,7 @@ function normalizeWindowActionName(action: string): string {
 export async function loadSupportedWindowActions(hostBridge?: WindowActionHost): Promise<WindowActionDefinition[]> {
   const result = await callHostTransport<unknown>("window_manage_list_actions", {}, hostBridge);
   if (!result.ok || !Array.isArray(result.data)) {
-    throw new Error(result.error || "无法读取窗口动作，请升级客户端后重试");
+    throw new Error(result.error || t("loadActionsFailed"));
   }
   const supported = new Set(result.data.flatMap(item =>
     item && typeof item === "object" && typeof item.name === "string" ? [normalizeWindowActionName(item.name)] : []));
@@ -627,15 +646,15 @@ export async function executeWindowAction(
 ): Promise<WindowActionResult> {
   const canonical = typeof actionId === "string" ? normalizeWindowActionName(actionId) : "";
   const definition = WINDOW_ACTIONS.find(action => action.id === canonical);
-  if (!definition) return { success: false, actionId, actionName: "", error: "不支持的窗口调度动作" };
+  if (!definition) return { success: false, actionId, actionName: "", error: t("unsupportedAction") };
   const result = await callHostTransport<WindowHostResult>("window_manage_action", { action: canonical }, options.hostBridge ?? options.hostOverride);
   const data = result.data;
   if (!result.ok || !data || data.success === false || data.ok === false || (data.success !== true && data.ok !== true)) {
     return { success: false, actionId: canonical, actionName: definition.name,
-      error: result.error || data?.error || data?.message || "窗口操作未获宿主确认" };
+      error: result.error || data?.error || data?.message || t("actionUnconfirmed") };
   }
   const rect = data.rect;
   const actualRect = rect && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) && rect.width > 0 && rect.height > 0 ? rect : undefined;
-  try { await showHUD(`已调整: ${definition.name}`); } catch { /* 提示失败不改变已完成的窗口操作。 */ }
+  try { await showHUD(t("adjustedHud", { name: definition.name })); } catch { /* 提示失败不改变已完成的窗口操作。 */ }
   return { success: true, actionId: canonical, actionName: definition.name, ...(actualRect ? { rect: actualRect } : {}) };
 }

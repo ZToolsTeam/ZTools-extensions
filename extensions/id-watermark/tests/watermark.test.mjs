@@ -97,3 +97,65 @@ test('未选图时 Enter 主动作：工作台为“选择原图…”，剪贴�
   try { await tick(); assert.deepEqual(fast.actions(null).map(a => a.props.title), ['读取剪贴板图片', '选择原图…']) }
   finally { fast.unmount() }
 })
+
+test('支持通过 plugin_files_dropped（旧宿主回退）拖入原图文件加载，非支持格式提示错误', async () => {
+  const listeners = new Map()
+  const host = createHost()
+  const previousBitmap = globalThis.createImageBitmap, previousCanvas = globalThis.OffscreenCanvas
+  globalThis.createImageBitmap = async () => ({ width: 1, height: 1, close() {} })
+  globalThis.OffscreenCanvas = class {}
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const pngBytesLen = Buffer.from(pngB64, 'base64').length
+  host.ipc.filesystem_read_file = async () => ({ success: true, content: pngB64, size: pngBytesLen })
+  const view = await mount(Command, host)
+  try {
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/doc.pdf'] } })
+    await tick()
+    assert.match(host.lastToast().title, /JPG、PNG 或 WebP/)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/idcard.png'] } })
+    await tick()
+    assert.equal(view.items().length, 1)
+    assert.equal(view.items()[0].props.title, 'idcard.png')
+  } finally {
+    view.unmount()
+    globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+    delete globalThis.window.ztools
+    globalThis.createImageBitmap = previousBitmap
+    globalThis.OffscreenCanvas = previousCanvas
+  }
+})
+
+test('支持通过 createCompatFileInputProps 粘贴图片文件或截图位图加载为底图', async () => {
+  const host = createHost()
+  const previousBitmap = globalThis.createImageBitmap, previousCanvas = globalThis.OffscreenCanvas
+  globalThis.createImageBitmap = async () => ({ width: 1, height: 1, close() {} })
+  globalThis.OffscreenCanvas = class {}
+  const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const pngBytesLen = Buffer.from(pngB64, 'base64').length
+  host.ipc.filesystem_read_file = async () => ({ success: true, content: pngB64, size: pngBytesLen })
+  const view = await mount(Command, host)
+  try {
+    await view.pasteFiles(['/Users/me/doc.pdf'])
+    assert.equal(host.lastToast().title, '文件格式不匹配')
+
+    await view.pasteFiles(['/Users/me/pasted_id.png'])
+    await tick()
+    assert.equal(view.items().length, 1)
+    assert.equal(view.items()[0].props.title, 'pasted_id.png')
+  } finally {
+    view.unmount()
+    globalThis.createImageBitmap = previousBitmap
+    globalThis.OffscreenCanvas = previousCanvas
+  }
+})

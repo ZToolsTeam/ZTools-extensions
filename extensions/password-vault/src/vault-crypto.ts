@@ -1,4 +1,5 @@
 import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types.js'
+import { t } from './i18n.js'
 
 /** 新密文使用的 PBKDF2-SHA256 迭代次数（OWASP 现行建议值），写入信封以便以后调整 */
 export const PBKDF2_ITERATIONS = 600000
@@ -14,7 +15,7 @@ const IV_BYTES = 12
 function getWebCrypto(): Crypto {
   const c = (globalThis as Record<string, unknown>).crypto as Crypto | undefined
   if (!c || !c.subtle) {
-    throw new Error('VAULT_CRYPTO_UNAVAILABLE: WebCrypto API 不可用，拒绝以明文存储敏感凭据')
+    throw new Error(t('errCryptoUnavailable'))
   }
   return c
 }
@@ -46,7 +47,7 @@ function base64ToBytes(base64: string): Uint8Array {
     }
     return bytes
   } catch {
-    throw new Error('VAULT_DATA_CORRUPTED: 加密信封 Base64 编码已损坏')
+    throw new Error(t('errBase64Corrupted'))
   }
 }
 
@@ -87,7 +88,7 @@ export function validateMasterPassword(
   const value = String(password || '')
   const minLength = options.isNewVault ? NEW_VAULT_MIN_PASSWORD_LENGTH : EXISTING_VAULT_MIN_PASSWORD_LENGTH
   if (value.length < minLength) {
-    return { valid: false, error: `VAULT_WEAK_MASTER_PASSWORD: 主密码长度至少需要 ${minLength} 位字符` }
+    return { valid: false, error: t('errWeakMasterPassword', { minLength }) }
   }
   return { valid: true }
 }
@@ -97,17 +98,17 @@ function envelopeIterations(envelope: EncryptedVaultEnvelope): number {
   if (envelope.version === 1) return LEGACY_PBKDF2_ITERATIONS
   const iterations = envelope.kdfIterations
   if (!Number.isSafeInteger(iterations) || iterations! < LEGACY_PBKDF2_ITERATIONS || iterations! > MAX_PBKDF2_ITERATIONS) {
-    throw new Error('VAULT_DATA_CORRUPTED: 加密信封的密钥派生参数非法')
+    throw new Error(t('errInvalidKdfIterations'))
   }
   return iterations!
 }
 
 export function validateNewEntryInput(input: VaultNewEntryInput): { valid: boolean; error?: string } {
   if (!input || !String(input.title || '').trim()) {
-    return { valid: false, error: 'VAULT_INVALID_ENTRY: 凭据标题不能为空' }
+    return { valid: false, error: t('errEntryTitleEmpty') }
   }
   if (!String(input.secretPlain || '').trim()) {
-    return { valid: false, error: 'VAULT_INVALID_ENTRY: 密码或密钥内容不能为空' }
+    return { valid: false, error: t('errEntrySecretEmpty') }
   }
   return { valid: true }
 }
@@ -115,15 +116,15 @@ export function validateNewEntryInput(input: VaultNewEntryInput): { valid: boole
 export function getVaultCategoryLabel(category: VaultCategory): string {
   switch (category) {
     case 'login':
-      return '网站与应用账号'
+      return t('catLoginShort')
     case 'apikey':
-      return 'API Key 令牌'
+      return t('catApikeyShort')
     case 'server':
-      return '服务器与数据库'
+      return t('catServerShort')
     case 'license':
-      return '激活码与备忘'
+      return t('catLicenseShort')
     default:
-      return '加密凭据'
+      return t('catDefaultShort')
   }
 }
 
@@ -198,7 +199,7 @@ export async function decryptVaultEntries(
   options?: { knownOriginalCipherBase64?: string }
 ): Promise<VaultEntry[]> {
   if (!masterPassword || String(masterPassword).length === 0) {
-    throw new Error('VAULT_INVALID_MASTER_PASSWORD: 主密码不能为空')
+    throw new Error(t('errMasterPasswordEmpty'))
   }
   if (
     !envelope ||
@@ -207,14 +208,14 @@ export async function decryptVaultEntries(
     !envelope.ivBase64 ||
     !envelope.cipherTextBase64
   ) {
-    throw new Error('VAULT_DATA_CORRUPTED: 加密保险箱数据结构不完整或已损坏')
+    throw new Error(t('errVaultCorrupted'))
   }
 
   if (
     options?.knownOriginalCipherBase64 &&
     options.knownOriginalCipherBase64 !== envelope.cipherTextBase64
   ) {
-    throw new Error('VAULT_DATA_CORRUPTED: 密文完整性校验失败，检测到篡改')
+    throw new Error(t('errVaultTampered'))
   }
 
   const salt = base64ToBytes(envelope.saltBase64)
@@ -222,7 +223,7 @@ export async function decryptVaultEntries(
   const cipherBytes = base64ToBytes(envelope.cipherTextBase64)
 
   if (salt.byteLength !== SALT_BYTES || iv.byteLength !== IV_BYTES || cipherBytes.byteLength < 16) {
-    throw new Error('VAULT_DATA_CORRUPTED: 加密参数长度非法或密文已损坏')
+    throw new Error(t('errVaultInvalidParams'))
   }
 
   const iterations = envelopeIterations(envelope)
@@ -237,9 +238,7 @@ export async function decryptVaultEntries(
       cipherBytes as BufferSource
     )
   } catch {
-    throw new Error(
-      'VAULT_INVALID_MASTER_PASSWORD | VAULT_DATA_CORRUPTED: 主密码错误或保险箱密文已被篡改，AES-GCM 认证标签校验失败'
-    )
+    throw new Error(t('errVaultDecryptFailed'))
   }
 
   try {
@@ -250,7 +249,7 @@ export async function decryptVaultEntries(
     }
     return parsed.entries
   } catch {
-    throw new Error('VAULT_DATA_CORRUPTED: 解密后载荷结构非法')
+    throw new Error(t('errVaultPayloadInvalid'))
   }
 }
 
@@ -296,9 +295,9 @@ export async function copySecretWithAutoClear(secret: string): Promise<void> {
     clipboard_copy_text?: (request: unknown) => Promise<{ success?: boolean; data?: { success?: boolean; clearAfterMs?: number }; error?: { message?: string } }>
   } } } }).__ztoolsElectron
   const method = bridge?.transport?.methods?.clipboard_copy_text
-  if (!method) throw new Error('当前客户端不支持安全复制，请升级客户端')
+  if (!method) throw new Error(t('errSecureCopyUnsupported'))
   const response = await method({ messageId: `vault_copy_${crypto.randomUUID()}`, params: { text: secret, sensitive: true }, timeoutMs: 5000 })
   if (!response?.success || response.data?.success !== true || response.data.clearAfterMs !== 30000) {
-    throw new Error(response?.error?.message || '客户端未确认自动清除，不能保证本次安全复制')
+    throw new Error(response?.error?.message || t('errSecureCopyUnconfirmed'))
   }
 }

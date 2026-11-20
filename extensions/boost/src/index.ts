@@ -7,8 +7,10 @@ import {
   useEffect,
   showToast,
   Toast,
-  confirmAlert
+  confirmAlert,
+  useLocale
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   BoostCandidateItem,
   BoostSnapshot,
@@ -38,11 +40,12 @@ function emptyBoostSnapshot(errors: string[]): BoostSnapshot {
 }
 
 export default function BoostCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [tab, setTab] = useState<'all' | 'process' | 'startup_item' | 'temp_cache'>('all')
   const [impactFilter, setImpactFilter] = useState<'all' | 'high' | 'cleanable'>('all')
   const [snapshot, setSnapshot] = useState<BoostSnapshot>(() =>
-    emptyBoostSnapshot(isRealElectronHost() ? [] : [NOT_IN_CLIENT_MESSAGE])
+    emptyBoostSnapshot(isRealElectronHost() ? [] : [t('notInClient')])
   )
   // 扫描后默认不勾选任何项目，由用户自己选择要结束或移走的内容
   const [checkedIds, setCheckedIds] = useState<string[]>([])
@@ -57,11 +60,11 @@ export default function BoostCommand() {
       if (showIndicator) {
         showToast({
           style: snap.errors.length > 0 ? Toast.Style.Failure : Toast.Style.Success,
-          title: snap.errors.length > 0 ? '扫描完成，部分内容读取失败' : '扫描完成',
+          title: snap.errors.length > 0 ? t('scanPartialTitle') : t('scanOkTitle'),
           message:
             snap.errors.length > 0
-              ? snap.errors.join('；')
-              : `共 ${snap.candidates.length} 项 · 启动项 ${snap.startupItemCount} 项`
+              ? snap.errors.join(t('planJoinSep'))
+              : t('scanOkMsg', { total: snap.candidates.length, startup: snap.startupItemCount })
         })
       }
     } finally {
@@ -78,8 +81,8 @@ export default function BoostCommand() {
     if (selectActionableItems(snapshot.candidates, checkedIds).length === 0) {
       showToast({
         style: Toast.Style.Failure,
-        title: '没有勾选可处理的项目',
-        message: '先勾选要处理的项目（受保护的项目不能勾选），再按 Enter'
+        title: t('noCheckedTitle'),
+        message: t('noCheckedMsg')
       })
       return
     }
@@ -90,18 +93,18 @@ export default function BoostCommand() {
     if (res.failed.length === 0) {
       showToast({
         style: Toast.Style.Success,
-        title: `已处理 ${res.succeeded.length} 个项目`,
-        message: `合计 ${formatBytes(res.handledBytes)}`
+        title: t('batchSuccessTitle', { count: res.succeeded.length }),
+        message: t('batchSuccessMsg', { size: formatBytes(res.handledBytes) })
       })
       return
     }
     const firstErrors = res.failed
       .slice(0, 3)
-      .map(f => `${f.item.name}：${f.error}`)
-      .join('；')
+      .map(f => `${f.item.name}: ${f.error}`)
+      .join(t('planJoinSep'))
     showToast({
       style: Toast.Style.Failure,
-      title: `${res.succeeded.length} 项已处理，${res.failed.length} 项失败`,
+      title: t('batchPartialTitle', { ok: res.succeeded.length, fail: res.failed.length }),
       message: firstErrors
     })
   }
@@ -109,27 +112,27 @@ export default function BoostCommand() {
   async function handleTerminateCandidate(item: BoostCandidateItem) {
     if (!item.pid) return
     if (item.isProtected) {
-      showToast({ style: Toast.Style.Failure, title: `不能结束 ${item.name}`, message: item.lockedReason || FORBIDDEN_REASON })
+      showToast({ style: Toast.Style.Failure, title: t('cannotTerminateTitle', { name: item.name }), message: item.lockedReason || t('forbiddenReason') })
       return
     }
 
     const confirmed = await confirmAlert({
-      title: `强制结束 ${item.name}？`,
+      title: t('confirmKillTitle', { name: item.name }),
       message:
-        `PID ${item.pid}，当前占用 ${formatBytes(item.memoryOrSizeBytes)}。会立即强制结束该进程，进程里未保存的内容会丢失。` +
-        (item.type === 'startup_item' ? '\n\n结束进程只影响本次运行，不会取消它的开机启动。' : ''),
-      primaryAction: { title: '强制结束', style: 'destructive' }
+        t('confirmKillMsg', { pid: item.pid, size: formatBytes(item.memoryOrSizeBytes) }) +
+        (item.type === 'startup_item' ? t('confirmKillStartupNote') : ''),
+      primaryAction: { title: t('confirmKillAction'), style: 'destructive' }
     })
     if (!confirmed) return
 
     const res = await terminateBoostProcess(item.pid, item.name)
     if (!res.ok) {
-      showToast({ style: Toast.Style.Failure, title: '结束进程失败', message: res.error || '结束进程失败' })
+      showToast({ style: Toast.Style.Failure, title: t('errTerminateFailed'), message: res.error || t('errTerminateFailed') })
       return
     }
     showToast({
       style: Toast.Style.Success,
-      title: res.alreadyExited ? '进程已经退出' : '已结束进程',
+      title: res.alreadyExited ? t('procAlreadyExited') : t('procTerminated'),
       message: `${item.name} (PID: ${item.pid})`
     })
     void refreshBoost(false)
@@ -138,7 +141,7 @@ export default function BoostCommand() {
   async function handleOpenLocation(item: BoostCandidateItem) {
     const ok = await openBoostItemLocation(item.path)
     if (!ok) {
-      showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: item.path })
+      showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: item.path })
     }
   }
 
@@ -174,25 +177,25 @@ export default function BoostCommand() {
     const volRatio = Math.max(10, Math.min(100, Math.round((item.memoryOrSizeBytes / maxItemBytes) * 100)))
     const typeLabel =
       item.isProtected
-        ? '受保护'
+        ? t('tagProtected')
         : item.type === 'startup_item'
-        ? item.startupScope || '开机启动项'
+        ? item.startupScope || t('tagStartup')
         : item.type === 'process'
-        ? '进程'
-        : '临时文件'
+        ? t('tagProcess')
+        : t('tagTempFile')
 
     return List.Item({
       id: item.id,
       title: item.name,
       subtitle:
         item.type === 'startup_item'
-          ? `${item.startupScope || '开机启动项'} · ${item.recommendation}`
+          ? `${item.startupScope || t('tagStartup')} · ${item.recommendation}`
           : item.type === 'process'
           ? `PID: ${item.pid} · ${item.recommendation}`
           : item.path,
       checkable: !item.isProtected,
       checked: isChecked,
-      lockedReason: item.isProtected ? item.lockedReason || FORBIDDEN_REASON : undefined,
+      lockedReason: item.isProtected ? item.lockedReason || t('forbiddenReason') : undefined,
       onCheckChange: (c: boolean) => toggleSingleBoost(item.id, c),
       onToggleCheck: (c: boolean) => toggleSingleBoost(item.id, c),
       icon: {
@@ -213,14 +216,14 @@ export default function BoostCommand() {
         title: item.name,
         children: [
           Action({
-            title: '处理已勾选的项目',
+            title: t('actionProcessChecked'),
             icon: Icon.Bolt,
             onAction: () => handleQuickBoost()
           }),
           ...(item.path
             ? [
                 Action({
-                  title: '在资源管理器中定位',
+                  title: t('actionRevealInFolder'),
                   icon: Icon.Folder,
                   onAction: () => handleOpenLocation(item)
                 })
@@ -229,7 +232,7 @@ export default function BoostCommand() {
           ...(item.pid && !item.isProtected
             ? [
                 Action({
-                  title: '结束该进程',
+                  title: t('actionKillProcess'),
                   icon: Icon.XMarkCircle,
                   style: Action.Style.Destructive,
                   onAction: () => handleTerminateCandidate(item)
@@ -249,31 +252,35 @@ export default function BoostCommand() {
 
   const memoryText =
     snapshot.totalMemoryBytes > 0
-      ? `内存已用 ${snapshot.memoryUsagePercent}% (${formatBytes(snapshot.usedMemoryBytes)}/${formatBytes(snapshot.totalMemoryBytes)})`
+      ? t('memoryUsageText', {
+          pct: snapshot.memoryUsagePercent,
+          used: formatBytes(snapshot.usedMemoryBytes),
+          total: formatBytes(snapshot.totalMemoryBytes)
+        })
       : ''
   const summaryParts = [
-    snapshot.errors.join('；'),
+    snapshot.errors.join(t('planJoinSep')),
     memoryText,
-    `已勾选 ${checkedInFiltered.length} 项（合计 ${formatBytes(selectedBytes)}）`
+    t('selectedSummary', { count: checkedInFiltered.length, size: formatBytes(selectedBytes) })
   ].filter(Boolean)
 
   return List({
-    searchBarPlaceholder: '搜索进程、启动项、PID 或临时文件...',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '筛选项目',
+      tooltip: t('dropdownTooltip'),
       value: impactFilter,
       onChange: val => setImpactFilter(val as 'all' | 'high' | 'cleanable'),
       children: [
-        List.Dropdown.Item({ title: `全部项目 (${candidates.length})`, value: 'all' }),
+        List.Dropdown.Item({ title: t('filterAll', { count: candidates.length }), value: 'all' }),
         List.Dropdown.Item({
-          title: `内存占用高 (${candidates.filter(c => c.isHighMemory).length})`,
+          title: t('filterHigh', { count: candidates.filter(c => c.isHighMemory).length }),
           value: 'high'
         }),
         List.Dropdown.Item({
-          title: `可处理的项目 (${candidates.filter(c => !c.isProtected).length})`,
+          title: t('filterCleanable', { count: candidates.filter(c => !c.isProtected).length }),
           value: 'cleanable'
         })
       ]
@@ -283,12 +290,12 @@ export default function BoostCommand() {
       actions: [
         {
           id: 'rescan-boost',
-          label: '重新扫描',
-          title: '重新扫描',
+          label: t('btnRescan'),
+          title: t('btnRescan'),
           style: 'secondary',
           onAction: () => {
             if (!isRealElectronHost()) {
-              showToast({ style: Toast.Style.Failure, title: '无法扫描', message: NOT_IN_CLIENT_MESSAGE })
+              showToast({ style: Toast.Style.Failure, title: t('cannotScanTitle'), message: t('notInClient') })
               return
             }
             void refreshBoost(true)
@@ -297,8 +304,12 @@ export default function BoostCommand() {
       ]
     },
     subList: {
-      title: '进程、启动项与临时文件（按占用降序，勾选后按 Enter 处理）',
-      subtitle: `${filtered.length} 项 · 已选 ${checkedInFiltered.length} 项 (${formatBytes(selectedBytes)})`,
+      title: t('subListTitle'),
+      subtitle: t('subListSubtitle', {
+        total: filtered.length,
+        selected: checkedInFiltered.length,
+        size: formatBytes(selectedBytes)
+      }),
       checkable: selectableFiltered.length > 0,
       checked: allChecked ? true : someChecked ? 'indeterminate' : false,
       onCheckChange: checked => {
@@ -310,43 +321,43 @@ export default function BoostCommand() {
           setCheckedIds(checkedIds.filter(id => !removeSet.has(id)))
         }
       },
-      emptyText: snapshot.errors.includes(NOT_IN_CLIENT_MESSAGE) ? NOT_IN_CLIENT_MESSAGE : '当前分类下没有项目',
+      emptyText: snapshot.errors.includes(t('notInClient')) ? t('notInClient') : t('emptyNoItems'),
       items: rightSubListItems
     },
     children: [
       List.Section({
-        title: '分类',
+        title: t('sectionCategory'),
         children: [
           List.Item({
             id: 'boost-nav-all',
-            title: '全部项目',
-            subtitle: `共 ${candidates.length} 项`,
+            title: t('navAllTitle'),
+            subtitle: t('navAllSub', { count: candidates.length }),
             icon: { source: Icon.Bolt },
-            accessories: [{ text: `${candidates.length} 项` }],
+            accessories: [{ text: t('itemCountText', { count: candidates.length }) }],
             onSelect: () => setTab('all')
           }),
           List.Item({
             id: 'boost-nav-process',
-            title: '内存占用最高的进程',
-            subtitle: '结束进程可释放内存，未保存的内容会丢失',
+            title: t('navProcTitle'),
+            subtitle: t('navProcSub'),
             icon: { source: Icon.Cpu },
-            accessories: [{ text: `${candidates.filter(c => c.type === 'process').length} 项` }],
+            accessories: [{ text: t('itemCountText', { count: candidates.filter(c => c.type === 'process').length }) }],
             onSelect: () => setTab('process')
           }),
           List.Item({
             id: 'boost-nav-startup',
-            title: '“启动”文件夹与常驻进程',
-            subtitle: '用户与公共“启动”文件夹，以及按名称判断的常驻进程',
+            title: t('navStartupTitle'),
+            subtitle: t('navStartupSub'),
             icon: { source: Icon.Rocket },
-            accessories: [{ text: `${candidates.filter(c => c.type === 'startup_item').length} 项` }],
+            accessories: [{ text: t('itemCountText', { count: candidates.filter(c => c.type === 'startup_item').length }) }],
             onSelect: () => setTab('startup_item')
           }),
           List.Item({
             id: 'boost-nav-temp',
-            title: '临时文件',
-            subtitle: '临时文件夹（%TEMP%）里较大的文件',
+            title: t('navTempTitle'),
+            subtitle: t('navTempSub'),
             icon: { source: Icon.Trash },
-            accessories: [{ text: `${candidates.filter(c => c.type === 'temp_cache').length} 项` }],
+            accessories: [{ text: t('itemCountText', { count: candidates.filter(c => c.type === 'temp_cache').length }) }],
             onSelect: () => setTab('temp_cache')
           })
         ]

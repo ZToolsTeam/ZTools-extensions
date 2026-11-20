@@ -1,3 +1,5 @@
+[English](en/getting-started.md) | **简体中文**
+
 # 开发入门
 
 本文带你从零做出第一个插件：创建、编译、测试、在 ZTools 客户端里试用，再提交 Pull Request。示例插件 ID 用 `my-tool`，换成你自己的即可。
@@ -242,7 +244,7 @@ Windows（把路径换成 ZTools 的安装目录；免安装版就是解压目�
 ## 8. 提交 Pull Request
 
 1. Fork 本仓库，在自己的分支上提交 `extensions/my-tool/` 下的源码、清单、图标和测试（`dist/` 已被忽略，不用管）。
-2. 按 [贡献指南](../CONTRIBUTING.md) 跑一遍合并前检查。
+2. 按 [贡献指南](../CONTRIBUTING.zh-CN.md) 跑一遍合并前检查。
 3. 发起 Pull Request，按模板写清楚改了什么、在哪些系统上验证过、为什么需要这些权限。
 
 审核会看什么见 [审核标准](review.md)；版本号、平台声明、草稿和下架的规则见 [发布规则](publishing.md)。PR 合并后由官方发布到插件市场。

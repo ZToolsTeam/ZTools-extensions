@@ -1,9 +1,13 @@
 {
   "id": "curl-http",
   "name": "轻量接口调试",
-  "version": "1.0.7",
+  "version": "1.0.9",
   "description": "解析 cURL 命令（bash / cmd 写法）或网址，由客户端发起 HTTP 请求查看响应，并生成 Fetch、Axios、Python、Go 请求代码",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -39,5 +43,35 @@
         "cURL转换"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Lightweight HTTP Client",
+      "description": "Parse cURL commands (bash/cmd) or URLs, send HTTP requests to inspect responses, and generate Fetch, Axios, Python, and Go code snippets.",
+      "keywords": [
+        "curl",
+        "http",
+        "api",
+        "rest",
+        "fetch",
+        "axios",
+        "request",
+        "debug"
+      ],
+      "features": {
+        "curl-http": {
+          "explain": "Parse cURL commands, send HTTP requests, or generate multi-language client code",
+          "cmds": [
+            "curl",
+            "http",
+            "api",
+            "fetch",
+            "rest client",
+            "curl convert"
+          ]
+        }
+      }
+    }
+  }
 }

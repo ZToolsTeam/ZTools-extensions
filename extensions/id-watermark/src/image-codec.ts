@@ -1,13 +1,14 @@
 import type { ImageMetadata } from './types.js'
+import { t } from './i18n.js'
 
 export const MAX_IMAGE_BYTES = 16 * 1024 * 1024
 export function checkImageDimensions(width: number, height: number): void {
   if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 8 * 1024 * 1024)
-    throw new Error('图片尺寸超过上限：边长最多 8192 像素，总计最多 800 万像素')
+    throw new Error(t('errImageDimensions'))
 }
 /** 解码前限制像素数；实际格式和完整性仍由图像解码器确认。 */
 export function inspectImageHeader(bytes: Uint8Array): void {
-  if (!(bytes instanceof Uint8Array) || bytes.length < 12 || bytes.length > MAX_IMAGE_BYTES) throw new Error('请选择 16 MiB 以内的 JPG、PNG 或 WebP 图片')
+  if (!(bytes instanceof Uint8Array) || bytes.length < 12 || bytes.length > MAX_IMAGE_BYTES) throw new Error(t('errImageFileSize'))
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
   const tag = (offset: number) => String.fromCharCode(...bytes.subarray(offset, offset + 4))
   if (bytes.length >= 24 && bytes[0] === 137 && tag(1) === 'PNG\r' && tag(12) === 'IHDR') {
@@ -32,7 +33,7 @@ export function inspectImageHeader(bytes: Uint8Array): void {
   if (tag(0) === 'RIFF' && tag(8) === 'WEBP' && bytes.length >= 30) {
     const kind = tag(12)
     if (kind === 'VP8X') {
-      if (bytes[20] & 2) throw new Error('请使用静态图片，暂不处理动态 WebP')
+      if (bytes[20] & 2) throw new Error(t('errAnimatedWebp'))
       const u24 = (i: number) => bytes[i] | bytes[i + 1] << 8 | bytes[i + 2] << 16
       checkImageDimensions(u24(24) + 1, u24(27) + 1); return
     }
@@ -44,11 +45,20 @@ export function inspectImageHeader(bytes: Uint8Array): void {
       checkImageDimensions((size & 16383) + 1, ((size >>> 14) & 16383) + 1); return
     }
   }
-  throw new Error('图片文件头无效，无法确定真实尺寸')
+  if (bytes.length >= 26 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    const dibSize = view.getUint32(14, true)
+    if (dibSize === 12) {
+      checkImageDimensions(view.getUint16(18, true), view.getUint16(20, true)); return
+    }
+    if (dibSize >= 40) {
+      checkImageDimensions(view.getInt32(18, true), Math.abs(view.getInt32(22, true))); return
+    }
+  }
+  throw new Error(t('errInvalidHeaderDims'))
 }
 export async function decodeImage(bytes: Uint8Array): Promise<ImageBitmap> {
   inspectImageHeader(bytes)
-  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') throw new Error('客户端缺少本地图像处理能力，请升级后重试')
+  if (typeof createImageBitmap !== 'function' || typeof OffscreenCanvas !== 'function') throw new Error(t('errMissingImageCap'))
   const bitmap = await createImageBitmap(new Blob([new Uint8Array(bytes).buffer]))
   try { checkImageDimensions(bitmap.width, bitmap.height) } catch (error) { bitmap.close(); throw error }
   return bitmap

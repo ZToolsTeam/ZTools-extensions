@@ -4,9 +4,9 @@ export type EffectCleanup = () => void;
 export type EffectCallback = () => void | EffectCleanup | Promise<void>;
 export interface HookRecord {
     type: "state" | "effect" | "memo" | "ref";
-    value?: any;
-    setter?: (newVal: any) => void;
-    deps?: any[];
+    value?: unknown;
+    setter?: (newVal: unknown) => void;
+    deps?: readonly unknown[];
     cleanup?: EffectCleanup;
 }
 export interface DeclarativeRenderInstanceOptions {
@@ -36,7 +36,7 @@ export interface CollectedPopoutState {
     /** paths 函数抛错或返回了非数组的 key：整项不带，避免带着状态却丢了授权 */
     rejected: string[];
 }
-export declare function areViewTreesEqual(a: any, b: any): boolean;
+export declare function areViewTreesEqual(a: unknown, b: unknown): boolean;
 export declare class DeclarativeRenderInstance {
     private component;
     private hooks;
@@ -52,7 +52,8 @@ export declare class DeclarativeRenderInstance {
     private navigationHandler?;
     private popoutSeed;
     private popoutRegistry;
-    constructor(component: () => any, options?: DeclarativeRenderInstanceOptions);
+    private unsubscribeLocale;
+    constructor(component: () => unknown, options?: DeclarativeRenderInstanceOptions);
     /** 取出并删除某个 key 的交接初值（只用一次） */
     consumePopoutSeed(key: string): {
         found: true;
@@ -61,7 +62,7 @@ export declare class DeclarativeRenderInstance {
         found: false;
     };
     /** 登记 usePopoutState；同一实例里 key 重复时只保留第一个，返回 false */
-    registerPopoutState(key: string, index: number, paths?: (value: any) => unknown): boolean;
+    registerPopoutState(key: string, index: number, paths?: (value: unknown) => unknown): boolean;
     /** 读取当前登记的状态最新值（独立窗口弹出前调用） */
     collectPopoutState(): CollectedPopoutState;
     get hookIndex(): number;

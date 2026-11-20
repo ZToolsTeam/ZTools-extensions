@@ -8,11 +8,25 @@ type DynamicBridge = ReturnType<typeof JSON.parse>;
 
 import { callHostTransport, invokePluginService, isRealElectronHost, formatBytes } from './native-ipc.js'
 import { encodeQr } from './qr-encoder.js'
+import { pathKey, type FileImportRules, type FileImportTransport } from './file-import.js'
+import { t } from './i18n.js'
 
 export { formatBytes }
 
 export const DLL_PLUGIN_NAME = 'LanSharePlugin'
 export const HOST_REQUIRED_MESSAGE = '需要在 ZTools 客户端中使用'
+export const LAN_SHARE_MAX_FILES = 500
+export const LAN_SHARE_BATCH_SIZE = 100
+export const FORBIDDEN_SHARE_PATTERN =
+  /(^|[\\/])(Windows|System32|SysWOW64|Program Files|Program Files \(x86\)|Boot|Recovery)($|[\\/])/i
+export const LAN_SHARE_IMPORT_RULES: FileImportRules = {
+  maxFiles: LAN_SHARE_MAX_FILES,
+  forbiddenPath: FORBIDDEN_SHARE_PATTERN
+}
+
+export function createLanShareImportTransport(hostOverride?: DynamicBridge): FileImportTransport {
+  return (method, params) => callHostTransport(method, params, hostOverride)
+}
 
 export interface LanInterface {
   name: string
@@ -65,8 +79,8 @@ export function buildDownloadUrl(portalUrl: string, id: string, name: string): s
  * 把客户端返回的共享状态整理成界面数据；字段缺失时留空，不填默认值
  */
 export function parseLanShareStatus(data: DynamicBridge): LanShareStatus {
-  if (!data || typeof data !== 'object') return failedStatus('客户端返回的共享状态无效')
-  if (data.ok === false || data.success === false) return failedStatus(String(data.error || '读取共享状态失败'))
+  if (!data || typeof data !== 'object') return failedStatus(t('errInvalidStatus'))
+  if (data.ok === false || data.success === false) return failedStatus(String(data.error || t('errReadStatusFailed')))
   const running = data.running === true
   const lanIp = String(data.lanIp || data.primaryIp || '')
   const port = Number(data.port)
@@ -103,9 +117,9 @@ async function callLanShare(
   params: Record<string, unknown>,
   hostOverride?: DynamicBridge
 ): Promise<LanShareStatus> {
-  if (!hostAvailable(hostOverride)) return failedStatus(HOST_REQUIRED_MESSAGE)
+  if (!hostAvailable(hostOverride)) return failedStatus(t('hostRequired'))
   const res = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, func, params, hostOverride)
-  if (!res.ok) return failedStatus(res.error || '调用局域网共享服务失败')
+  if (!res.ok) return failedStatus(res.error || t('errCallServiceFailed'))
   return parseLanShareStatus(res.data)
 }
 
@@ -115,16 +129,16 @@ export function fetchLanShareStatus(hostOverride?: DynamicBridge): Promise<LanSh
 
 export async function startLanShare(hostOverride?: DynamicBridge): Promise<LanActionResult> {
   const status = await callLanShare('startShareServer', {}, hostOverride)
-  if (!status.ok) return { ok: false, message: status.error || '启动共享服务失败', status }
-  if (!status.running) return { ok: false, message: '客户端没有启动共享服务', status }
-  return { ok: true, message: '共享服务已启动', status }
+  if (!status.ok) return { ok: false, message: status.error || t('errStartFailed'), status }
+  if (!status.running) return { ok: false, message: t('errStartUnconfirmed'), status }
+  return { ok: true, message: t('msgStarted'), status }
 }
 
 export async function stopLanShare(hostOverride?: DynamicBridge): Promise<LanActionResult> {
   const status = await callLanShare('stopShareServer', {}, hostOverride)
-  if (!status.ok) return { ok: false, message: status.error || '停止共享服务失败', status }
-  if (status.running) return { ok: false, message: '客户端没有停止共享服务', status }
-  return { ok: true, message: '共享服务已停止', status }
+  if (!status.ok) return { ok: false, message: status.error || t('errStopFailed'), status }
+  if (status.running) return { ok: false, message: t('errStopUnconfirmed'), status }
+  return { ok: true, message: t('msgStopped'), status }
 }
 
 /**
@@ -133,15 +147,15 @@ export async function stopLanShare(hostOverride?: DynamicBridge): Promise<LanAct
 export async function pickFilesToShare(
   hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; canceled?: boolean; paths: string[]; error?: string }> {
-  if (!hostAvailable(hostOverride)) return { ok: false, paths: [], error: HOST_REQUIRED_MESSAGE }
+  if (!hostAvailable(hostOverride)) return { ok: false, paths: [], error: t('hostRequired') }
   const res = await callHostTransport<DynamicBridge>(
     'window_show_open_dialog',
-    { title: '选择要共享的文件', properties: ['openFile', 'multiSelections'] },
+    { title: t('pickFilesTitle'), properties: ['openFile', 'multiSelections'] },
     hostOverride
   )
-  if (!res.ok) return { ok: false, paths: [], error: res.error || '打开文件选择框失败' }
+  if (!res.ok) return { ok: false, paths: [], error: res.error || t('errOpenPickerFailed') }
   const data = res.data
-  if (!data || typeof data !== 'object') return { ok: false, paths: [], error: '文件选择框没有返回结果' }
+  if (!data || typeof data !== 'object') return { ok: false, paths: [], error: t('errPickerNoResult') }
   if (data.canceled) return { ok: true, canceled: true, paths: [] }
   const paths: string[] = []
   if (typeof data.filePath === 'string' && data.filePath) paths.push(data.filePath)
@@ -151,7 +165,7 @@ export async function pickFilesToShare(
       if (value) paths.push(value)
     }
   }
-  if (paths.length === 0) return { ok: false, paths: [], error: '文件选择框没有返回文件路径' }
+  if (paths.length === 0) return { ok: false, paths: [], error: t('errPickerNoPaths') }
   return { ok: true, paths }
 }
 
@@ -165,40 +179,198 @@ export async function addFilesToShare(
   hostOverride?: DynamicBridge
 ): Promise<LanActionResult & { addedCount: number; skipped: string[] }> {
   const list = Array.isArray(paths) ? paths.map((p) => String(p || '').trim()).filter(Boolean) : []
-  if (list.length === 0) return { ok: false, message: '没有选择文件', addedCount: 0, skipped: [] }
-  if (!hostAvailable(hostOverride)) return { ok: false, message: HOST_REQUIRED_MESSAGE, addedCount: 0, skipped: list }
+  if (list.length === 0) return { ok: false, message: t('errNoFilesSelected'), addedCount: 0, skipped: [] }
+  if (!hostAvailable(hostOverride)) return { ok: false, message: t('hostRequired'), addedCount: 0, skipped: list }
   const res = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, 'addFiles', { paths: list }, hostOverride)
-  if (!res.ok) return { ok: false, message: res.error || '加入共享列表失败', addedCount: 0, skipped: list }
+  if (!res.ok) return { ok: false, message: res.error || t('errAddShareFailed'), addedCount: 0, skipped: list }
   const status = parseLanShareStatus(res.data)
-  if (!status.ok) return { ok: false, message: status.error || '加入共享列表失败', status, addedCount: 0, skipped: list }
+  if (!status.ok) return { ok: false, message: status.error || t('errAddShareFailed'), status, addedCount: 0, skipped: list }
   const added: DynamicBridge[] = Array.isArray(res.data?.added) ? res.data.added : []
   const addedPaths = added.map((a) => String(a?.path || ''))
   const skipped = list.filter((p) => !addedPaths.some((a) => samePath(a, p)))
   const addedCount = list.length - skipped.length
   if (addedCount === 0) {
-    return { ok: false, message: '没有文件被加入：文件不存在或无法读取', status, addedCount, skipped }
+    return { ok: false, message: t('errNoFilesAdded'), status, addedCount, skipped }
   }
   const message = skipped.length > 0
-    ? `已共享 ${addedCount} 个文件，${skipped.length} 个文件无法读取已跳过`
-    : `已共享 ${addedCount} 个文件`
+    ? t('msgSharedPartial', { added: addedCount, skipped: skipped.length })
+    : t('msgSharedAll', { added: addedCount })
   return { ok: true, message, status, addedCount, skipped }
 }
 
+export interface LanShareBatchResult {
+  ok: boolean
+  addedCount: number
+  skipped: string[]
+  failedBatches: number
+  errorMessage?: string
+  duplicateNameCount: number
+  status?: LanShareStatus
+}
+
+export interface ClearSharedFilesResult {
+  ok: boolean
+  message: string
+  detail?: string
+  removedCount: number
+  failedCount: number
+  failed: Array<{ id: string; name: string; reason: string }>
+  status?: LanShareStatus
+}
+
+/**
+ * 统计共享列表中与其他文件重名的文件数量（按路径去重后，不区分大小写比较文件名）
+ */
+export function countDuplicateFileNames(files: ReadonlyArray<{ name: string; path: string }>): number {
+  const unique = new Map<string, string>()
+  files.forEach((file, index) => {
+    const key = file.path ? pathKey(file.path) : `__idx_${index}`
+    const name = String(file.name || file.path.split(/[\\/]/).pop() || '').trim().toLowerCase()
+    if (name && !unique.has(key)) unique.set(key, name)
+  })
+  const counts = new Map<string, number>()
+  for (const name of unique.values()) {
+    counts.set(name, (counts.get(name) ?? 0) + 1)
+  }
+  let duplicateTotal = 0
+  for (const count of counts.values()) {
+    if (count >= 2) duplicateTotal += count
+  }
+  return duplicateTotal
+}
+
+/**
+ * 分批把文件加入共享列表（每批最多 100 个），汇总成功/跳过/批次失败与同名文件数
+ */
+export async function addFilesToShareBatched(
+  paths: string[],
+  hostOverride?: DynamicBridge
+): Promise<LanShareBatchResult> {
+  const seen = new Set<string>()
+  const uniquePaths: string[] = []
+  for (const raw of Array.isArray(paths) ? paths : []) {
+    const trimmed = String(raw || '').trim()
+    if (!trimmed) continue
+    const key = pathKey(trimmed)
+    if (seen.has(key)) continue
+    seen.add(key)
+    uniquePaths.push(trimmed)
+  }
+  if (uniquePaths.length === 0) {
+    return { ok: false, addedCount: 0, skipped: [], failedBatches: 0, errorMessage: t('errNoFilesSelected'), duplicateNameCount: 0 }
+  }
+
+  let addedCount = 0
+  const skipped: string[] = []
+  let failedBatches = 0
+  let lastError: string | undefined
+  let lastStatus: LanShareStatus | undefined
+
+  for (let i = 0; i < uniquePaths.length; i += LAN_SHARE_BATCH_SIZE) {
+    const chunk = uniquePaths.slice(i, i + LAN_SHARE_BATCH_SIZE)
+    const res = await addFilesToShare(chunk, hostOverride)
+    if (res.status?.ok) lastStatus = res.status
+    addedCount += res.addedCount
+    skipped.push(...res.skipped)
+    if (!res.ok && !res.status?.ok) {
+      failedBatches += 1
+      lastError = res.message
+    } else if (!res.ok && !lastError) {
+      lastError = res.message
+    }
+  }
+
+  const candidateFiles: Array<{ name: string; path: string }> = lastStatus?.files?.length
+    ? lastStatus.files
+    : uniquePaths
+        .filter((p) => !skipped.some((s) => samePath(s, p)))
+        .map((p) => ({ name: p.split(/[\\/]/).pop() || p, path: p }))
+  const duplicateNameCount = countDuplicateFileNames(candidateFiles)
+
+  return {
+    ok: addedCount > 0,
+    addedCount,
+    skipped,
+    failedBatches,
+    errorMessage: lastError,
+    duplicateNameCount,
+    status: lastStatus
+  }
+}
+
 export async function setFileShared(id: string, shared: boolean, hostOverride?: DynamicBridge): Promise<LanActionResult> {
-  if (typeof id !== 'string' || !id.trim()) return { ok: false, message: '共享项 ID 不能为空' }
+  if (typeof id !== 'string' || !id.trim()) return { ok: false, message: t('errEmptyShareId') }
   const status = await callLanShare('toggleFileShare', { id: id.trim(), shared }, hostOverride)
-  if (!status.ok) return { ok: false, message: status.error || '切换共享状态失败', status }
+  if (!status.ok) return { ok: false, message: status.error || t('errToggleFailed'), status }
   const file = status.files.find((f) => f.id === id.trim())
-  if (!file || file.shared !== shared) return { ok: false, message: '客户端没有更新该文件的共享状态', status }
-  return { ok: true, message: shared ? '已恢复共享该文件' : '已暂停共享该文件', status }
+  if (!file || file.shared !== shared) return { ok: false, message: t('errToggleUnconfirmed'), status }
+  return { ok: true, message: shared ? t('msgResumedShare') : t('msgPausedShare'), status }
 }
 
 export async function removeSharedFile(id: string, hostOverride?: DynamicBridge): Promise<LanActionResult> {
-  if (typeof id !== 'string' || !id.trim()) return { ok: false, message: '共享项 ID 不能为空' }
+  if (typeof id !== 'string' || !id.trim()) return { ok: false, message: t('errEmptyShareId') }
   const status = await callLanShare('removeSharedFile', { id: id.trim() }, hostOverride)
-  if (!status.ok) return { ok: false, message: status.error || '移除失败', status }
-  if (status.files.some((f) => f.id === id.trim())) return { ok: false, message: '客户端没有移除该文件', status }
-  return { ok: true, message: '已从共享列表移除，文件本身没有删除', status }
+  if (!status.ok) return { ok: false, message: status.error || t('errRemoveFailed'), status }
+  if (status.files.some((f) => f.id === id.trim())) return { ok: false, message: t('errRemoveUnconfirmed'), status }
+  return { ok: true, message: t('msgRemovedFile'), status }
+}
+
+/**
+ * 循环调用 removeSharedFile 清空共享列表（只移出共享，不删除文件），如实汇总部分失败
+ */
+export async function clearAllSharedFiles(
+  files: readonly SharedFileItem[],
+  hostOverride?: DynamicBridge
+): Promise<ClearSharedFilesResult> {
+  const list = Array.isArray(files) ? files : []
+  if (list.length === 0) {
+    return { ok: false, message: t('errAlreadyEmpty'), removedCount: 0, failedCount: 0, failed: [] }
+  }
+  if (!hostAvailable(hostOverride)) {
+    return {
+      ok: false,
+      message: t('hostRequired'),
+      removedCount: 0,
+      failedCount: list.length,
+      failed: list.map((f) => ({ id: f.id, name: f.name, reason: t('hostRequired') }))
+    }
+  }
+
+  let removedCount = 0
+  const failed: Array<{ id: string; name: string; reason: string }> = []
+  let lastStatus: LanShareStatus | undefined
+
+  for (const file of list) {
+    const res = await removeSharedFile(file.id, hostOverride)
+    if (res.status?.ok) lastStatus = res.status
+    if (res.ok) {
+      removedCount += 1
+    } else {
+      failed.push({ id: file.id, name: file.name, reason: res.message || t('errRemoveFailed') })
+    }
+  }
+
+  if (failed.length === 0) {
+    return {
+      ok: true,
+      message: t('msgClearedAll', { count: removedCount }),
+      removedCount,
+      failedCount: 0,
+      failed,
+      status: lastStatus
+    }
+  }
+
+  const first = failed[0]
+  return {
+    ok: false,
+    message: t('msgClearedPartial', { removed: removedCount, failed: failed.length }),
+    detail: first ? `${first.name}：${first.reason}` : undefined,
+    removedCount,
+    failedCount: failed.length,
+    failed,
+    status: lastStatus
+  }
 }
 
 /**
@@ -228,4 +400,14 @@ export function filterSharedFiles(files: SharedFileItem[], query: string): Share
   const q = typeof query === 'string' ? query.trim().toLowerCase() : ''
   if (!q) return files
   return files.filter((f) => f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+}
+
+export function extractDroppedSharePaths(envelopeOrPayload: unknown): string[] {
+  const raw = envelopeOrPayload && typeof envelopeOrPayload === 'object'
+    ? (envelopeOrPayload as { payload?: { files?: unknown }; files?: unknown })
+    : {}
+  const list = Array.isArray(raw.payload?.files) ? raw.payload!.files : Array.isArray(raw.files) ? raw.files : []
+  return list
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map((item) => item.trim())
 }

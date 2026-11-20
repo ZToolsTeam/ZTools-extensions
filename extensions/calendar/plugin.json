@@ -1,9 +1,13 @@
 {
   "id": "calendar",
   "name": "日程日历",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "description": "在本机记录和查看日程，用浏览器打开日程里的视频会议链接，可新建、删除日程并导出 ICS 日历文件",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -27,5 +31,20 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Local Calendar",
+      "description": "Create, view, and delete local calendar events, open embedded video meeting links in your browser, and export schedules as ICS files.",
+      "keywords": [
+        "calendar",
+        "schedule",
+        "events",
+        "ics",
+        "meeting",
+        "agenda"
+      ]
+    }
+  }
 }

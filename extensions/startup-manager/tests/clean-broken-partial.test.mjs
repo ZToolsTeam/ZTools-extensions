@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
 
 const require = createRequire(import.meta.url)
 const { removeBrokenStartupItems, describeCleanBrokenResult } = require('../dist/startup-service.js')

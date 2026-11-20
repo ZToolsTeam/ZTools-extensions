@@ -1,13 +1,16 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import FlowGuardCommand, {
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
+  default: FlowGuardCommand,
   NOT_IN_CLIENT_MESSAGE,
   fetchFlowGuardSnapshot,
   terminateNetworkProcess,
   openNetworkProcessLocation
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 function withBridge(bridge, fn) {
   setDeclarativeBridge(bridge)

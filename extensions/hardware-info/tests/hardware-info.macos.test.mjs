@@ -2,6 +2,8 @@
 // 覆盖：CPU 负载两次采样、磁盘容量按访达的 1000 进制显示、卷名、产品版本 unknown、并发刷新与卸载后不更新
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import HardwareInfoCommand from '../dist/index.js'
 import { exportHardwareReport, fetchHardwareTelemetrySnapshot, formatStorageBytes, CPU_SAMPLE_INTERVAL_MS } from '../dist/logic.js'

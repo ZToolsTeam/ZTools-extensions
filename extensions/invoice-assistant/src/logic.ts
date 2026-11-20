@@ -2,23 +2,80 @@
  * 电子发票识别与报销归集业务逻辑
  *
  * 核心能力：
- * 1. 扫描下载 / 桌面 / 文档目录中的 PDF、XML 电子发票，交给宿主识别发票号码、开票日期、销售方、购买方、价税合计与税额
+ * 1. 通过选择文件、选择文件夹或拖入导入 PDF、OFD、XML 及图片格式电子发票，按每批最多 50 个交给宿主识别发票号码、开票日期、销售方、购买方、价税合计与税额
  * 2. 识别不到的字段保持为空并标为「未识别」，补全前不能勾选导出，也不参与按字段生成文件名
  * 3. 发票号查重与个人抬头提示
  * 4. 按模板复制出规范命名的发票副本（不改动原文件），生成 UTF-8 BOM 报销明细 CSV 与可直接粘贴到表格的 TSV 文本
  */
 
 import {
-  getRealSystemPath,
+  callHostTransport,
   invokeDllPluginCapability,
-  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
+import {
+  friendlyFileError,
+  pathKey,
+  type FileImportRules,
+  type FileImportTransport
+} from './file-import.js'
+import { t } from './i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
 export type InvoiceCategoryType = '餐饮招待' | '交通出行' | '差旅住宿' | '办公采购' | '其他费用'
+
+export function translateCategory(cat: InvoiceCategoryType | string): string {
+  switch (cat) {
+    case '餐饮招待': return t('catDining')
+    case '交通出行': return t('catTransit')
+    case '差旅住宿': return t('catLodging')
+    case '办公采购': return t('catOffice')
+    case '其他费用': return t('catOther')
+    default: return cat
+  }
+}
+
+export function getInvoiceFieldLabel(key: InvoiceFieldKey): string {
+  switch (key) {
+    case 'invoiceNo': return t('fieldInvoiceNo')
+    case 'issueDate': return t('fieldIssueDate')
+    case 'sellerName': return t('fieldSellerName')
+    case 'buyerName': return t('fieldBuyerName')
+    case 'totalAmount': return t('fieldTotalAmount')
+    case 'taxAmount': return t('fieldTaxAmount')
+  }
+}
+
+export function getUnrecognizedText(): string {
+  return t('unrecognized')
+}
+
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
+
+export function getInvoiceRenameTemplates(): InvoiceRenameTemplate[] {
+  return [
+    { id: 'tpl-standard', title: t('tpl1Title'), patternDesc: INVOICE_RENAME_TEMPLATES[0]!.patternDesc },
+    { id: 'tpl-date-first', title: t('tpl2Title'), patternDesc: INVOICE_RENAME_TEMPLATES[1]!.patternDesc },
+    { id: 'tpl-amount-first', title: t('tpl3Title'), patternDesc: INVOICE_RENAME_TEMPLATES[2]!.patternDesc },
+    { id: 'tpl-tax-audit', title: t('tpl4Title'), patternDesc: INVOICE_RENAME_TEMPLATES[3]!.patternDesc }
+  ]
+}
+
+export function getInvoiceCategoryGroups(): Array<{ id: string; name: string }> {
+  return [
+    { id: 'ALL', name: t('grpAll') },
+    { id: 'TRAVEL', name: t('grpTravel') },
+    { id: '交通出行', name: t('grpTransit') },
+    { id: '差旅住宿', name: t('grpLodging') },
+    { id: '餐饮招待', name: t('grpDining') },
+    { id: '办公采购', name: t('grpOffice') },
+    { id: '其他费用', name: t('grpOther') }
+  ]
+}
 
 /** 报销明细里每张发票都必须有的字段 */
 export type InvoiceFieldKey = 'invoiceNo' | 'issueDate' | 'sellerName' | 'buyerName' | 'totalAmount' | 'taxAmount'
@@ -293,9 +350,9 @@ export function isInvoiceComplete(item: InvoiceRecordItem): boolean {
 export function describeInvoiceIssues(item: InvoiceRecordItem): string {
   const { missing, needsReview } = getInvoiceFieldIssues(item)
   const parts: string[] = []
-  if (missing.length > 0) parts.push(`未识别：${missing.map((f) => INVOICE_FIELD_LABELS[f]).join('、')}`)
-  if (needsReview.length > 0) parts.push(`${needsReview.map((f) => INVOICE_FIELD_LABELS[f]).join('、')}待核对`)
-  return parts.join('；')
+  if (missing.length > 0) parts.push(t('issueMissingPrefix', { fields: missing.map((f) => getInvoiceFieldLabel(f)).join(t('listSep')) }))
+  if (needsReview.length > 0) parts.push(t('issueNeedsReviewSuffix', { fields: needsReview.map((f) => getInvoiceFieldLabel(f)).join(t('listSep')) }))
+  return parts.join(t('semiSep'))
 }
 
 /** 可以勾选导出：字段完整且不是重复发票 */
@@ -309,9 +366,9 @@ export function defaultCheckedInvoiceIds(items: InvoiceRecordItem[]): string[] {
 }
 
 export function formatCurrency(amount: number | null | undefined): string {
-  if (amount === null || amount === undefined) return UNRECOGNIZED_TEXT
+  if (amount === null || amount === undefined) return t('unrecognized')
   const num = Number(amount)
-  if (!Number.isFinite(num)) return UNRECOGNIZED_TEXT
+  if (!Number.isFinite(num)) return t('unrecognized')
   return `¥${num.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
@@ -325,18 +382,19 @@ export function buildTargetInvoiceFileName(item: InvoiceRecordItem, templateId: 
   const tailNo = item.invoiceNo.slice(-4)
   const amt = (item.totalAmount as number).toFixed(2)
   const date = item.issueDate
-  const cat = item.category || '其他费用'
+  const cat = translateCategory(item.category || '其他费用')
+  const unit = t('currencyUnit')
 
   if (templateId === 'tpl-date-first') {
-    return `${date}_[${cat}]_${amt}元_${safeSeller}${ext}`
+    return `${date}_[${cat}]_${amt}${unit}_${safeSeller}${ext}`
   }
   if (templateId === 'tpl-amount-first') {
-    return `[${cat}]_${amt}元_${safeSeller}_${tailNo}${ext}`
+    return `[${cat}]_${amt}${unit}_${safeSeller}_${tailNo}${ext}`
   }
   if (templateId === 'tpl-tax-audit') {
-    return `${item.invoiceNo}_${date}_${safeSeller}_${amt}元${ext}`
+    return `${item.invoiceNo}_${date}_${safeSeller}_${amt}${unit}${ext}`
   }
-  return `[${cat}]_${date}_${safeSeller}_${amt}元_${tailNo}${ext}`
+  return `[${cat}]_${date}_${safeSeller}_${amt}${unit}_${tailNo}${ext}`
 }
 
 /**
@@ -365,16 +423,16 @@ export function buildUniqueTargetNames(items: InvoiceRecordItem[], templateId: s
 }
 
 function displayText(value: string): string {
-  return value || UNRECOGNIZED_TEXT
+  return value || t('unrecognized')
 }
 
 function displayAmount(value: number | null): string {
-  return value === null || !Number.isFinite(value) ? UNRECOGNIZED_TEXT : value.toFixed(2)
+  return value === null || !Number.isFinite(value) ? t('unrecognized') : value.toFixed(2)
 }
 
 function displayDate(item: InvoiceRecordItem): string {
-  if (!item.issueDate) return UNRECOGNIZED_TEXT
-  return item.issueDateNeedsReview ? `${item.issueDate}(待核对)` : item.issueDate
+  if (!item.issueDate) return t('unrecognized')
+  return item.issueDateNeedsReview ? t('needsReviewTag', { date: item.issueDate }) : item.issueDate
 }
 
 /**
@@ -383,16 +441,16 @@ function displayDate(item: InvoiceRecordItem): string {
  */
 export function buildInvoiceTsvTable(items: InvoiceRecordItem[], templateId = 'tpl-standard'): string {
   const header = [
-    '序号',
-    '发票号码',
-    '开票日期',
-    '费用分类',
-    '销方名称',
-    '购方抬头',
-    '价税合计(元)',
-    '税额(元)',
-    '不含税金额(元)',
-    '归档文件名'
+    t('tsvColIndex'),
+    t('tsvColInvoiceNo'),
+    t('tsvColIssueDate'),
+    t('tsvColCategory'),
+    t('tsvColSeller'),
+    t('tsvColBuyer'),
+    t('tsvColTotal'),
+    t('tsvColTax'),
+    t('tsvColNet'),
+    t('tsvColFileName')
   ].join('\t')
 
   const names = buildUniqueTargetNames(items, templateId)
@@ -402,7 +460,7 @@ export function buildInvoiceTsvTable(items: InvoiceRecordItem[], templateId = 't
       idx + 1,
       clean(displayText(item.invoiceNo)),
       displayDate(item),
-      item.category,
+      translateCategory(item.category),
       clean(displayText(item.sellerName)),
       clean(displayText(item.buyerName)),
       displayAmount(item.totalAmount),
@@ -418,11 +476,11 @@ export function buildInvoiceTsvTable(items: InvoiceRecordItem[], templateId = 't
 /** 单张发票的文字摘要（复制用），未识别的字段写「未识别」 */
 export function buildInvoiceSummaryText(item: InvoiceRecordItem): string {
   return [
-    `发票号码: ${displayText(item.invoiceNo)}`,
-    `开票日期: ${displayDate(item)}`,
-    `销方名称: ${displayText(item.sellerName)}`,
-    `购方名称: ${displayText(item.buyerName)}`,
-    `价税合计: ${displayAmount(item.totalAmount)}元 (税额: ${displayAmount(item.taxAmount)}元)`
+    t('summaryLineNo', { val: displayText(item.invoiceNo) }),
+    t('summaryLineDate', { val: displayDate(item) }),
+    t('summaryLineSeller', { val: displayText(item.sellerName) }),
+    t('summaryLineBuyer', { val: displayText(item.buyerName) }),
+    t('summaryLineAmount', { total: displayAmount(item.totalAmount), tax: displayAmount(item.taxAmount) })
   ].join('\n')
 }
 
@@ -507,26 +565,26 @@ export function validateInvoiceEdits(input: InvoiceEditInput, now: Date = new Da
   const errors: Partial<Record<InvoiceFieldKey, string>> = {}
 
   const invoiceNo = normalizeInvoiceNo(input.invoiceNo)
-  if (!invoiceNo) errors.invoiceNo = '发票号码应为 8 位（传统发票）或 20 位（数电发票）数字'
+  if (!invoiceNo) errors.invoiceNo = t('errEditInvoiceNo')
 
   const issueDate = normalizeIssueDate(input.issueDate, now)
-  if (!issueDate) errors.issueDate = '请按 YYYY-MM-DD 填写真实的开票日期，且不能晚于今天'
+  if (!issueDate) errors.issueDate = t('errEditIssueDate')
 
   const sellerName = String(input.sellerName ?? '').trim()
-  if (!sellerName) errors.sellerName = '请填写销售方名称'
-  else if (sellerName.length > 100) errors.sellerName = '销售方名称不能超过 100 个字符'
+  if (!sellerName) errors.sellerName = t('errEditSellerEmpty')
+  else if (sellerName.length > 100) errors.sellerName = t('errEditSellerLong')
 
   const buyerName = String(input.buyerName ?? '').trim()
-  if (!buyerName) errors.buyerName = '请填写购买方名称（发票抬头）'
-  else if (buyerName.length > 100) errors.buyerName = '购买方名称不能超过 100 个字符'
+  if (!buyerName) errors.buyerName = t('errEditBuyerEmpty')
+  else if (buyerName.length > 100) errors.buyerName = t('errEditBuyerLong')
 
   const totalAmount = parseAmountText(input.totalAmount)
-  if (totalAmount === null || totalAmount <= 0) errors.totalAmount = '价税合计应为大于 0 的金额，最多两位小数'
-  else if (totalAmount > 100_000_000) errors.totalAmount = '价税合计超出范围'
+  if (totalAmount === null || totalAmount <= 0) errors.totalAmount = t('errEditTotalInvalid')
+  else if (totalAmount > 100_000_000) errors.totalAmount = t('errEditTotalRange')
 
   const taxAmount = parseAmountText(input.taxAmount)
-  if (taxAmount === null) errors.taxAmount = '税额应为不小于 0 的金额，最多两位小数（免税填 0）'
-  else if (totalAmount !== null && taxAmount > totalAmount) errors.taxAmount = '税额不能大于价税合计'
+  if (taxAmount === null) errors.taxAmount = t('errEditTaxInvalid')
+  else if (totalAmount !== null && taxAmount > totalAmount) errors.taxAmount = t('errEditTaxExceeds')
 
   if (Object.keys(errors).length > 0) return { ok: false, errors }
   return {
@@ -561,23 +619,23 @@ export function validateInvocationPayload(
   params: unknown
 ): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if ((key === 'outputDir' || key === 'targetDir') && FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: t('errSecurityIntercepted', { reason: getForbiddenReason() }) }
       }
     }
   }
@@ -591,7 +649,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errParamValidation'))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -604,13 +662,14 @@ export async function invokeNativeCapability(
   }
 }
 
-const INVOICE_FILE_REGEX = /\.(?:pdf|xml)$/i
-const INVOICE_NAME_HINT = /发票|fapiao|invoice|电子票|通行费|行程单|滴滴|高铁|酒店|餐饮|报销|\d{8,20}/i
-/** 本插件以前导出的汇总文件，不是发票 */
-const EXPORTED_FILE_NAMES = /合并报销打印件|报销台账|报销发票明细汇总表|报销发票合并打印版/
+export const INVOICE_IMPORT_EXTENSIONS = ['.pdf', '.ofd', '.xml', '.jpg', '.jpeg', '.png'] as const
+export const INVOICE_IMPORT_SUPPORTED_TEXT = 'PDF / OFD / XML / JPG / PNG'
+export const INVOICE_PARSE_BATCH_SIZE = 50
 
-/** 扫描时每个目录最多检查的文件数（宿主限制） */
-export const SCAN_FILES_PER_DIR = 200
+const INVOICE_FILE_REGEX = /\.(?:pdf|ofd|xml|jpg|jpeg|png)$/i
+
+/** 本插件以前导出的汇总文件，不是发票 */
+export const EXPORTED_FILE_NAMES = /合并报销打印件|报销台账|报销发票明细汇总表|报销发票合并打印版/
 
 export function isInsideExportDirectory(filePath: string): boolean {
   return filePath
@@ -618,15 +677,146 @@ export function isInsideExportDirectory(filePath: string): boolean {
     .some((segment) => segment.toLowerCase() === EXPORT_ROOT_DIR_NAME.toLowerCase())
 }
 
-export interface InvoiceWorkspaceResult {
+/** 导入规则：支持 6 种电子发票格式，跳过历史导出产物与导出目录，拦截系统受保护路径 */
+export const INVOICE_IMPORT_RULES: FileImportRules = {
+  extensions: INVOICE_IMPORT_EXTENSIONS,
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN,
+  excludeDirNames: [EXPORT_ROOT_DIR_NAME],
+  excludeFile: (name, filePath) => EXPORTED_FILE_NAMES.test(name) || isInsideExportDirectory(filePath)
+}
+
+export function createInvoiceImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
+
+export function isInvoiceFilePath(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 4096 || /[\0\r\n"]/.test(trimmed)) return false
+  if (FORBIDDEN_TARGET_PATTERN.test(trimmed)) return false
+  const name = trimmed.split(/[\\/]/).pop() || ''
+  if (EXPORTED_FILE_NAMES.test(name) || isInsideExportDirectory(trimmed)) return false
+  return INVOICE_FILE_REGEX.test(trimmed)
+}
+
+function dedupeInvoicePaths(rawPaths: string[]): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  for (const raw of rawPaths) {
+    if (!isInvoiceFilePath(raw)) continue
+    const trimmed = raw.trim()
+    const key = pathKey(trimmed)
+    if (seen.has(key)) continue
+    seen.add(key)
+    out.push(trimmed)
+  }
+  return out
+}
+
+export interface ParseInvoiceFilesOptions {
+  signal?: AbortSignal
+  onProgress?: (progress: { done: number; total: number }) => void
+  batchSize?: number
+}
+
+/**
+ * 调用宿主分批解析指定的电子发票文件：每批最多 50 个，单批失败不阻断其他批次并如实记录失败。
+ */
+export async function parseInvoiceFiles(
+  filePaths: string[],
+  expectedBuyer = '',
+  hostOverride?: unknown,
+  now: Date = new Date(),
+  options: ParseInvoiceFilesOptions = {}
+): Promise<{
   ok: boolean
   invoices: InvoiceRecordItem[]
-  scannedFilesCount: number
-  /** 宿主读取或解析失败的文件 */
   parseErrors: InvoiceParseError[]
-  /** 实际扫描的目录 */
-  scannedDirs: string[]
+  batchErrors: string[]
+  canceled?: boolean
   error?: string
+}> {
+  const validPaths = dedupeInvoicePaths(Array.isArray(filePaths) ? filePaths : [])
+  if (validPaths.length === 0) return { ok: true, invoices: [], parseErrors: [], batchErrors: [] }
+
+  const rawBatchSize = options.batchSize
+  const batchSize =
+    typeof rawBatchSize === 'number' && Number.isInteger(rawBatchSize) && rawBatchSize > 0
+      ? Math.min(rawBatchSize, INVOICE_PARSE_BATCH_SIZE)
+      : INVOICE_PARSE_BATCH_SIZE
+
+  const recognized: InvoiceRecordItem[] = []
+  const parseErrors: InvoiceParseError[] = []
+  const batchErrors: string[] = []
+  let succeededBatches = 0
+  let done = 0
+
+  for (let offset = 0; offset < validPaths.length; offset += batchSize) {
+    if (options.signal?.aborted) {
+      return { ok: false, invoices: [], parseErrors: [], batchErrors: [], canceled: true }
+    }
+    const chunk = validPaths.slice(offset, offset + batchSize)
+    const params = expectedBuyer ? { files: chunk, expectedBuyer } : { files: chunk }
+    let res: NativeInvocationResult
+    try {
+      res = await invokeNativeCapability('ParseInvoices', params, hostOverride)
+    } catch (err) {
+      const errMsg = friendlyFileError(err)
+      batchErrors.push(errMsg)
+      for (const file of chunk) {
+        parseErrors.push({ file, error: errMsg })
+      }
+      done += chunk.length
+      options.onProgress?.({ done, total: validPaths.length })
+      continue
+    }
+
+    if (options.signal?.aborted) {
+      return { ok: false, invoices: [], parseErrors: [], batchErrors: [], canceled: true }
+    }
+
+    if (!res.ok || !res.data || typeof res.data !== 'object') {
+      const errMsg = friendlyFileError(res.error || t('errHostNoInvoiceResult'))
+      batchErrors.push(errMsg)
+      for (const file of chunk) {
+        parseErrors.push({ file, error: errMsg })
+      }
+      done += chunk.length
+      options.onProgress?.({ done, total: validPaths.length })
+      continue
+    }
+
+    succeededBatches += 1
+    const data = res.data as { invoices?: unknown; errors?: unknown }
+    parseErrors.push(...readParseErrors(data.errors))
+    const rawEntries = Array.isArray(data.invoices) ? (data.invoices as Array<Record<string, unknown>>) : []
+    for (let i = 0; i < rawEntries.length; i++) {
+      const raw = rawEntries[i]
+      const normalized = normalizeParsedInvoice(raw && typeof raw === 'object' ? raw : {}, recognized.length + i, now)
+      if (normalized) recognized.push(normalized)
+      else parseErrors.push({ file: String(raw?.fileName ?? t('nthResultFallback', { n: recognized.length + i + 1 })), error: t('errResultMissingPath') })
+    }
+    done += chunk.length
+    options.onProgress?.({ done, total: validPaths.length })
+  }
+
+  if (succeededBatches === 0) {
+    return {
+      ok: false,
+      invoices: [],
+      parseErrors,
+      batchErrors,
+      error: batchErrors[0] || t('errParseInvoicesFailed')
+    }
+  }
+
+  return {
+    ok: true,
+    invoices: detectInvoiceAnomalies(recognized, expectedBuyer),
+    parseErrors,
+    batchErrors,
+    ...(batchErrors.length > 0 ? { error: batchErrors[0] } : {})
+  }
 }
 
 function readParseErrors(raw: unknown): InvoiceParseError[] {
@@ -635,107 +825,9 @@ function readParseErrors(raw: unknown): InvoiceParseError[] {
     const rec = (entry && typeof entry === 'object' ? entry : {}) as Record<string, unknown>
     return {
       file: String(rec.file ?? rec.path ?? ''),
-      error: String(rec.error ?? rec.message ?? '未知错误')
+      error: friendlyFileError(rec.error ?? rec.message ?? t('errUnknown'))
     }
   })
-}
-
-export async function fetchRealInvoicesWorkspace(
-  expectedBuyer = '',
-  hostOverride?: unknown,
-  now: Date = new Date()
-): Promise<InvoiceWorkspaceResult> {
-  const scanner = createDirectoryScanner(hostOverride)
-  const [downloadsDir, desktopDir, documentsDir] = await Promise.all([
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride),
-    getRealSystemPath('documents', hostOverride)
-  ])
-
-  const dirs = [downloadsDir, desktopDir, documentsDir].filter(Boolean)
-  if (dirs.length === 0) {
-    return {
-      ok: false,
-      invoices: [],
-      scannedFilesCount: 0,
-      parseErrors: [],
-      scannedDirs: [],
-      error: '无法获取下载、桌面、文档目录的路径，请确认客户端已正常启动'
-    }
-  }
-
-  const candidatePaths: string[] = []
-  const seen = new Set<string>()
-
-  for (const dir of dirs) {
-    const scan = await scanner.scan(dir, {
-      maxDepth: 2,
-      maxFiles: SCAN_FILES_PER_DIR,
-      collectTopN: 45,
-      filterExt: INVOICE_FILE_REGEX,
-      hostOverride
-    })
-    for (const f of scan.files) {
-      if (f.sizeBytes <= 0) continue
-      if (!INVOICE_FILE_REGEX.test(f.name)) continue
-      if (EXPORTED_FILE_NAMES.test(f.name)) continue
-      if (isInsideExportDirectory(f.path)) continue
-      if (!INVOICE_NAME_HINT.test(f.name) && candidatePaths.length >= 12) continue
-      const norm = f.path.toLowerCase()
-      if (seen.has(norm)) continue
-      seen.add(norm)
-      candidatePaths.push(f.path)
-    }
-  }
-
-  if (candidatePaths.length === 0) {
-    return { ok: !scanner.error, invoices: [], scannedFilesCount: 0, parseErrors: [], scannedDirs: dirs, error: scanner.error }
-  }
-
-  const res = await invokeNativeCapability(
-    'ParseInvoices',
-    {
-      files: candidatePaths,
-      ...(expectedBuyer ? { expectedBuyer } : {})
-    },
-    hostOverride
-  )
-
-  if (!res.ok || !res.data || typeof res.data !== 'object') {
-    return {
-      ok: false,
-      invoices: [],
-      scannedFilesCount: candidatePaths.length,
-      parseErrors: [],
-      scannedDirs: dirs,
-      error: res.error || '宿主没有返回发票识别结果'
-    }
-  }
-
-  const payload = res.data as Record<string, unknown>
-  const rawList = Array.isArray(payload.invoices)
-    ? (payload.invoices as Array<Record<string, unknown>>)
-    : []
-  const parseErrors = readParseErrors(payload.errors)
-
-  const parsed: InvoiceRecordItem[] = []
-  rawList.forEach((raw, idx) => {
-    const item = normalizeParsedInvoice(raw && typeof raw === 'object' ? raw : {}, idx, now)
-    if (item) {
-      parsed.push(item)
-    } else {
-      parseErrors.push({ file: String(raw?.fileName ?? `第 ${idx + 1} 条结果`), error: '识别结果缺少文件路径' })
-    }
-  })
-
-  return {
-    ok: true,
-    invoices: detectInvoiceAnomalies(parsed, expectedBuyer),
-    scannedFilesCount: candidatePaths.length,
-    parseErrors,
-    error: scanner.error,
-    scannedDirs: dirs
-  }
 }
 
 /**
@@ -745,14 +837,14 @@ export async function fetchRealInvoicesWorkspace(
 export function buildExportOutputDir(firstInvoicePath: string, now: Date = new Date()): string {
   const p = String(firstInvoicePath || '').trim()
   const idx = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'))
-  if (idx <= 0) throw new Error(`无法确定发票所在目录: ${p || '(空路径)'}`)
+  if (idx <= 0) throw new Error(t('errCannotResolveDir', { path: p || t('emptyPathLabel') }))
   const sep = p[idx] as string
   const dir = p.slice(0, idx)
   const stamp =
     `${now.getFullYear()}${pad2(now.getMonth() + 1)}${pad2(now.getDate())}_` +
     `${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}_` +
     String(now.getMilliseconds()).padStart(3, '0')
-  return `${dir}${sep}${EXPORT_ROOT_DIR_NAME}${sep}报销归档_${stamp}`
+  return `${dir}${sep}${EXPORT_ROOT_DIR_NAME}${sep}${t('exportDirPrefix')}_${stamp}`
 }
 
 export type InvoiceExportMode = 'bundle' | 'csv'
@@ -788,14 +880,14 @@ export async function exportInvoices(
     ...extra
   })
 
-  if (items.length === 0) return fail('请先勾选至少 1 张需要报销的电子发票')
+  if (items.length === 0) return fail(t('errExportEmpty'))
   const incomplete = items.filter((i) => !isInvoiceComplete(i))
   if (incomplete.length > 0) {
-    return fail(`${incomplete.length} 张发票有未识别或待核对的字段（如 ${incomplete[0]!.fileName}），请先补全`)
+    return fail(t('errExportIncomplete', { count: incomplete.length, file: incomplete[0]!.fileName }))
   }
   const duplicates = items.filter((i) => i.isDuplicate)
   if (duplicates.length > 0) {
-    return fail(`${duplicates.length} 张发票与其他发票号码重复（如 ${duplicates[0]!.fileName}），不能重复报销`)
+    return fail(t('errExportDuplicate', { count: duplicates.length, file: duplicates[0]!.fileName }))
   }
 
   let outputDir: string
@@ -817,28 +909,28 @@ export async function exportInvoices(
   if (mode === 'bundle') {
     const copyRes = await invokeNativeCapability('BatchRenameInvoices', params, hostOverride)
     if (!copyRes.ok) {
-      return fail(`复制规范命名副本失败：${copyRes.error || '宿主未说明原因'}（${outputDir} 中可能已有部分副本）`, { outputDir })
+      return fail(t('errCopyBundleFailed', { error: friendlyFileError(copyRes.error || t('errHostNoReason')), dir: outputDir }), { outputDir })
     }
     const data = (copyRes.data ?? {}) as Record<string, unknown>
     const renamed = Array.isArray(data.renamedFiles) ? data.renamedFiles : null
     if (!renamed) {
-      return fail('宿主没有返回已复制的文件列表，无法确认副本已生成', { outputDir })
+      return fail(t('errHostNoCopiedFiles'), { outputDir })
     }
     copiedCount = renamed.length
     if (copiedCount !== items.length) {
-      return fail(`只复制了 ${copiedCount}/${items.length} 份副本，未生成报销明细 CSV`, { outputDir, copiedCount })
+      return fail(t('errPartialCopied', { copied: copiedCount, total: items.length }), { outputDir, copiedCount })
     }
   }
 
   const csvRes = await invokeNativeCapability('ExportInvoicesCsv', params, hostOverride)
-  const copiedNote = copiedCount > 0 ? `已复制 ${copiedCount} 份副本，但` : ''
+  const copiedNote = copiedCount > 0 ? t('copiedNotePrefix', { count: copiedCount }) : ''
   if (!csvRes.ok) {
-    return fail(`${copiedNote}生成报销明细 CSV 失败：${csvRes.error || '宿主未说明原因'}`, { outputDir, copiedCount })
+    return fail(t('errExportCsvFailed', { note: copiedNote, error: friendlyFileError(csvRes.error || t('errHostNoReason')) }), { outputDir, copiedCount })
   }
   const csvData = (csvRes.data ?? {}) as Record<string, unknown>
   const csvPath = typeof csvData.csvOutputPath === 'string' ? csvData.csvOutputPath.trim() : ''
   if (!csvPath) {
-    return fail(`${copiedNote}宿主没有返回 CSV 文件路径，无法确认报销明细已生成`, { outputDir, copiedCount })
+    return fail(t('errHostNoCsvPath', { note: copiedNote }), { outputDir, copiedCount })
   }
   const hostOutDir = typeof csvData.outputDir === 'string' && csvData.outputDir.trim() ? csvData.outputDir.trim() : outputDir
   return { ok: true, outputDir: hostOutDir, copiedCount, csvPath }
@@ -853,7 +945,8 @@ export async function trashInvoiceFile(
   hostOverride?: unknown
 ): Promise<{ ok: boolean; error?: string }> {
   if (!filePath || FORBIDDEN_TARGET_PATTERN.test(filePath)) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: getForbiddenReason() }
   }
-  return trashRealItem(filePath, hostOverride)
+  const res = await trashRealItem(filePath, hostOverride)
+  return res.ok ? res : { ok: false, error: friendlyFileError(res.error || t('errTrashFailed')) }
 }

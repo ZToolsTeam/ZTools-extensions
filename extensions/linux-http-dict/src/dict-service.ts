@@ -1,4 +1,5 @@
-import type { HttpStatusItem, LinuxCommandItem, PortItem } from './types'
+import type { HttpStatusItem, LinuxCommandGroup, LinuxCommandItem, PortItem } from './types'
+import { t } from './i18n.js'
 
 export const LINUX_COMMANDS_DICT: LinuxCommandItem[] = [
   {
@@ -555,6 +556,84 @@ export const COMMON_PORTS_DICT: PortItem[] = [
   }
 ]
 
+const GROUP_KEY: Record<LinuxCommandGroup, 'grpFile' | 'grpNet' | 'grpText' | 'grpSystem' | 'grpDisk'> = {
+  file: 'grpFile',
+  net: 'grpNet',
+  text: 'grpText',
+  system: 'grpSystem',
+  disk: 'grpDisk',
+  security: 'grpSystem',
+}
+
+const CMD_PREFIX: Record<string, string> = {
+  'cmd-tar': 'tar',
+  'cmd-unzip': 'unzip',
+  'cmd-find': 'find',
+  'cmd-lsof': 'lsof',
+  'cmd-ss': 'ss',
+  'cmd-netstat': 'netstat',
+  'cmd-grep': 'grep',
+  'cmd-awk': 'awk',
+  'cmd-systemctl': 'sys',
+  'cmd-du-df': 'dudf',
+}
+
+const PORT_CAT_KEY: Record<number, string> = {
+  22: 'pCatRemote',
+  53: 'pCatNetBase',
+  80: 'pCatWeb',
+  443: 'pCatWeb',
+  3306: 'pCatRdb',
+  5432: 'pCatRdb',
+  6379: 'pCatCache',
+  8080: 'pCatApp',
+  8848: 'pCatRegistry',
+  9092: 'pCatMq',
+  9200: 'pCatSearch',
+  27017: 'pCatNosql',
+}
+
+function localizeLinuxCommand(item: LinuxCommandItem): LinuxCommandItem {
+  const prefix = CMD_PREFIX[item.id]
+  if (!prefix) return item
+  return {
+    ...item,
+    groupLabel: t(GROUP_KEY[item.group]),
+    description: t(`${prefix}Desc` as never),
+    stars: item.stars.startsWith('5/5') ? t('stars5') : t('stars4'),
+    params: item.params.map((p, idx) => ({ ...p, desc: t(`${prefix}P${idx + 1}` as never) })),
+    examples: item.examples.map((e, idx) => ({
+      ...e,
+      title: t(`${prefix}E${idx + 1}Title` as never),
+      ...(e.note ? { note: t(`${prefix}E${idx + 1}Note` as never) } : {}),
+    })),
+  }
+}
+
+function localizeHttpStatus(item: HttpStatusItem): HttpStatusItem {
+  const prefix = `h${item.code}`
+  return {
+    ...item,
+    meaning: t(`${prefix}Mean` as never),
+    causes: item.causes.map((_, idx) => t(`${prefix}C${idx + 1}` as never)),
+    troubleshooting: item.troubleshooting.map((_, idx) => ({
+      step: t(`${prefix}S${idx + 1}Step` as never),
+      action: t(`${prefix}S${idx + 1}Act` as never),
+    })),
+    architectureNotes: t(`${prefix}Arch` as never),
+  }
+}
+
+function localizePort(item: PortItem): PortItem {
+  const catKey = PORT_CAT_KEY[item.port]
+  return {
+    ...item,
+    category: catKey ? t(catKey as never) : item.category,
+    description: t(`p${item.port}Desc` as never),
+    securityNotice: t(`p${item.port}Sec` as never),
+  }
+}
+
 function sanitizeSearchQuery(rawQuery: string): string {
   return String(rawQuery ?? '')
     .trim()
@@ -562,42 +641,54 @@ function sanitizeSearchQuery(rawQuery: string): string {
     .slice(0, 120)
 }
 
+function matchesLinuxCommand(item: LinuxCommandItem, q: string): boolean {
+  return (
+    item.name.toLowerCase().includes(q) ||
+    item.description.toLowerCase().includes(q) ||
+    item.groupLabel.toLowerCase().includes(q) ||
+    item.aliases.some((a) => a.toLowerCase().includes(q)) ||
+    item.examples.some((e) => e.title.toLowerCase().includes(q) || e.cmd.toLowerCase().includes(q))
+  )
+}
+
 export function searchLinuxCommands(query: string): LinuxCommandItem[] {
   const q = sanitizeSearchQuery(query)
-  if (!q) return LINUX_COMMANDS_DICT
-  return LINUX_COMMANDS_DICT.filter(
-    (item) =>
-      item.name.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q) ||
-      item.groupLabel.toLowerCase().includes(q) ||
-      item.aliases.some((a) => a.toLowerCase().includes(q)) ||
-      item.examples.some((e) => e.title.toLowerCase().includes(q) || e.cmd.toLowerCase().includes(q))
+  const localized = LINUX_COMMANDS_DICT.map(localizeLinuxCommand)
+  if (!q) return localized
+  return localized.filter((item, idx) => matchesLinuxCommand(item, q) || matchesLinuxCommand(LINUX_COMMANDS_DICT[idx], q))
+}
+
+function matchesHttpStatus(item: HttpStatusItem, q: string): boolean {
+  return (
+    String(item.code).includes(q) ||
+    item.phrase.toLowerCase().includes(q) ||
+    item.meaning.toLowerCase().includes(q) ||
+    item.causes.some((c) => c.toLowerCase().includes(q)) ||
+    item.troubleshooting.some((tr) => tr.step.toLowerCase().includes(q) || tr.action.toLowerCase().includes(q))
   )
 }
 
 export function searchHttpStatus(query: string): HttpStatusItem[] {
   const q = sanitizeSearchQuery(query)
-  if (!q) return HTTP_STATUS_DICT
-  return HTTP_STATUS_DICT.filter(
-    (item) =>
-      String(item.code).includes(q) ||
-      item.phrase.toLowerCase().includes(q) ||
-      item.meaning.toLowerCase().includes(q) ||
-      item.causes.some((c) => c.toLowerCase().includes(q)) ||
-      item.troubleshooting.some((t) => t.step.toLowerCase().includes(q) || t.action.toLowerCase().includes(q))
+  const localized = HTTP_STATUS_DICT.map(localizeHttpStatus)
+  if (!q) return localized
+  return localized.filter((item, idx) => matchesHttpStatus(item, q) || matchesHttpStatus(HTTP_STATUS_DICT[idx], q))
+}
+
+function matchesPort(item: PortItem, q: string): boolean {
+  return (
+    String(item.port).includes(q) ||
+    item.service.toLowerCase().includes(q) ||
+    item.category.toLowerCase().includes(q) ||
+    item.description.toLowerCase().includes(q)
   )
 }
 
 export function searchCommonPorts(query: string): PortItem[] {
   const q = sanitizeSearchQuery(query)
-  if (!q) return COMMON_PORTS_DICT
-  return COMMON_PORTS_DICT.filter(
-    (item) =>
-      String(item.port).includes(q) ||
-      item.service.toLowerCase().includes(q) ||
-      item.category.toLowerCase().includes(q) ||
-      item.description.toLowerCase().includes(q)
-  )
+  const localized = COMMON_PORTS_DICT.map(localizePort)
+  if (!q) return localized
+  return localized.filter((item, idx) => matchesPort(item, q) || matchesPort(COMMON_PORTS_DICT[idx], q))
 }
 
 /** 各系统查看本机端口占用的命令：Linux 用 ss，macOS 没有 ss、改用 lsof，Windows 用 netstat。 */

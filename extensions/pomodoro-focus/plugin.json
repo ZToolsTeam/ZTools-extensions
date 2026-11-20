@@ -1,9 +1,13 @@
 {
   "id": "pomodoro-focus",
   "name": "番茄倒数",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "25 分钟番茄专注与短长休息，离页继续计时、重启恢复状态；本地保存重要日程倒数日并发送系统通知",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -56,5 +60,47 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Pomodoro & Countdown",
+      "description": "25-minute Pomodoro focus timer with short/long breaks that persists across page switches and restarts, plus local event countdowns with system notifications.",
+      "keywords": [
+        "pomodoro",
+        "focus",
+        "timer",
+        "countdown",
+        "productivity",
+        "break"
+      ],
+      "features": {
+        "pomodoro-main": {
+          "explain": "View active Pomodoro timer status and browse important event countdowns",
+          "cmds": [
+            "pomodoro",
+            "focus",
+            "countdown",
+            "timer"
+          ]
+        },
+        "pomodoro-start": {
+          "explain": "Start a 25-minute Pomodoro focus session immediately",
+          "cmds": [
+            "start focus",
+            "start pomodoro",
+            "focus now"
+          ]
+        },
+        "pomodoro-new-countdown": {
+          "explain": "Create a new countdown for deadlines, paydays, or launch dates",
+          "cmds": [
+            "new countdown",
+            "add countdown",
+            "add deadline"
+          ]
+        }
+      }
+    }
+  }
 }

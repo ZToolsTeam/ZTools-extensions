@@ -2,15 +2,15 @@
   "id": "translator",
   "name": "划词翻译",
   "description": "中英互译常用词与办公短语（只查客户端内置的离线词库，收录有限），并把英文转成 camelCase / snake_case 变量名",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "alias": "tr",
   "category": [
-    "办公效率",
-    "文本工具"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "keywords": [
     "translate",
     "translator",
@@ -71,5 +71,50 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Offline Translator & Naming",
+      "description": "Translate common Chinese and English words and office phrases using the built-in offline dictionary, and convert phrases into camelCase or snake_case variable names.",
+      "keywords": [
+        "translate",
+        "translator",
+        "dictionary",
+        "english",
+        "chinese",
+        "camelcase",
+        "naming"
+      ],
+      "features": {
+        "translate-standard": {
+          "explain": "Translate between Chinese and English using the built-in offline dictionary",
+          "cmds": [
+            "translate",
+            "translator",
+            "en to zh",
+            "zh to en"
+          ]
+        },
+        "translate-dict": {
+          "explain": "Look up common Chinese and English words in the offline dictionary",
+          "cmds": [
+            "dictionary",
+            "lookup",
+            "define",
+            "word"
+          ]
+        },
+        "translate-naming": {
+          "explain": "Convert phrases into English variable names (camelCase / snake_case)",
+          "cmds": [
+            "variable naming",
+            "code naming",
+            "camelcase",
+            "snake_case"
+          ]
+        }
+      }
+    }
+  }
 }

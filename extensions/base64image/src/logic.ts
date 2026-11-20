@@ -2,9 +2,11 @@
  * ZTools Base64 图片编解码核心业务逻辑 (纯函数)
  */
 
+import { t } from "./i18n.js";
+
 export const MAXIMUM_BASE64_BYTES = 16 * 1024 * 1024; // 16 MiB
 
-export type Base64ImageFormat = "png" | "jpg" | "gif" | "webp" | "svg";
+export type Base64ImageFormat = "png" | "jpg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif";
 
 export interface ParsedImageResult {
   valid: boolean;
@@ -27,10 +29,13 @@ const MIME_TYPES: Record<Base64ImageFormat, string> = {
   jpg: "image/jpeg",
   gif: "image/gif",
   webp: "image/webp",
-  svg: "image/svg+xml"
+  svg: "image/svg+xml",
+  bmp: "image/bmp",
+  ico: "image/x-icon",
+  avif: "image/avif"
 };
 
-const DATA_URI_REGEX = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml);base64,/i;
+const DATA_URI_REGEX = /^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml|bmp|x-icon|vnd\.microsoft\.icon|avif);base64,/i;
 
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -92,6 +97,29 @@ export function detectImageFormat(bytes: Uint8Array): Base64ImageFormat | undefi
     return "webp";
   }
 
+  if (bytes.length >= 6 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return "bmp";
+  }
+
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x00 &&
+    bytes[1] === 0x00 &&
+    (bytes[2] === 0x01 || bytes[2] === 0x02) &&
+    bytes[3] === 0x00
+  ) {
+    return "ico";
+  }
+
+  if (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.subarray(4, 8)) === "ftyp" &&
+    (String.fromCharCode(...bytes.subarray(8, 12)) === "avif" ||
+      String.fromCharCode(...bytes.subarray(8, 12)) === "avis")
+  ) {
+    return "avif";
+  }
+
   // 检测 SVG 文本标签
   try {
     if (isSvgSource(new TextDecoder("utf-8", { fatal: true }).decode(bytes))) {
@@ -132,42 +160,43 @@ export function isSvgSource(text: string): boolean {
 export function parseBase64Image(rawInput: string): ParsedImageResult {
   const text = (rawInput || "").trim();
   if (!text) {
-    return { valid: false, error: "Base64 内容不能为空" };
+    return { valid: false, error: t("errEmptyBase64") };
   }
 
   if (text.length > MAXIMUM_BASE64_BYTES) {
-    return { valid: false, error: `Base64 内容超过 16MiB 上限 (${formatFileSize(text.length)})` };
+    return { valid: false, error: t("errBase64TooLarge", { size: formatFileSize(text.length) }) };
   }
 
   // 检查是否包含非 ASCII 字符 (SVG 原始源码输入走专门编码分支)
   if (/[^\u0000-\u007f]/.test(text)) {
-    return { valid: false, error: "Base64 编码内容必须仅包含 ASCII 字符" };
+    return { valid: false, error: t("errNonAsciiBase64") };
   }
 
   const prefixMatch = text.match(DATA_URI_REGEX);
   if (/^data:/i.test(text) && !prefixMatch) {
-    return { valid: false, error: "图片 Data URI 协议头格式不正确，缺少 image/* 前缀" };
+    return { valid: false, error: t("errInvalidDataUriHeader") };
   }
 
   const rawBase64 = prefixMatch ? text.slice(prefixMatch[0].length) : text;
   const cleanBase64 = rawBase64.replace(/[ \t\r\n]/g, "");
 
   if (!cleanBase64 || cleanBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(cleanBase64)) {
-    return { valid: false, error: "Base64 字符内容非法或填充位数不正确" };
+    return { valid: false, error: t("errInvalidBase64Chars") };
   }
 
   let bytes: Uint8Array;
   try {
     bytes = base64ToBytes(cleanBase64);
-  } catch (err: any) {
-    return { valid: false, error: `Base64 解码失败: ${err?.message || "数据损坏"}` };
+  } catch (err: unknown) {
+    const detail = err instanceof Error && err.message ? err.message : t("errDataCorrupted");
+    return { valid: false, error: t("errDecodeFailed", { detail }) };
   }
 
   const format = detectImageFormat(bytes);
   if (!format) {
     return {
       valid: false,
-      error: "未识别出支持的图片格式，仅支持 PNG、JPEG、GIF、WebP 与 SVG"
+      error: t("errUnrecognizedImageFormat")
     };
   }
 
@@ -200,7 +229,7 @@ export function parseBase64Image(rawInput: string): ParsedImageResult {
 export function encodeSvgOrTextToBase64(sourceText: string): ParsedImageResult {
   const text = (sourceText || "").trim();
   if (!text) {
-    return { valid: false, error: "输入内容不能为空" };
+    return { valid: false, error: t("errEmptyInput") };
   }
 
   const isSvg = /<svg[\s/>]/i.test(text);

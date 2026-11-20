@@ -1,9 +1,10 @@
+import { t } from './i18n.js'
 import type { FontFilter, FontPreview, InstalledFont } from './types.js'
 export const DEFAULT_PREVIEW = '天地玄黄 宇宙洪荒\nThe quick brown fox 0123456789'
 export function validatePreviewText(text: string) {
-  if (!text.trim()) throw new Error('请输入预览文字')
-  if ([...text].length > 160) throw new Error('预览文字最多 160 个字符')
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error('预览文字含不支持的控制字符')
+  if (!text.trim()) throw new Error(t('enterPreviewText'))
+  if ([...text].length > 160) throw new Error(t('previewTooLong'))
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error(t('previewControlChars'))
   return text
 }
 export function filterFonts(fonts: InstalledFont[], filter: FontFilter, query: string) {
@@ -24,9 +25,9 @@ const LAST_RESORT = 'LastResort'
 export function previewMarkdown(preview: FontPreview) {
   const fallbacks = preview.fallbacks.filter(name => name !== LAST_RESORT)
   const notes = preview.coverageWarning ? [textMarkdown(preview.coverageWarning)] : [
-    ...(fallbacks.length ? [`部分字形使用系统回退字体：${fallbacks.map(textMarkdown).join('、')}`] : []),
-    ...(preview.fallbacks.includes(LAST_RESORT) ? ['部分字符本机没有任何字体包含，显示为占位方框。'] : [])
+    ...(fallbacks.length ? [t('fallbackFontsNote', { fonts: fallbacks.map(textMarkdown).join(t('listSep')) })] : []),
+    ...(preview.fallbacks.includes(LAST_RESORT) ? [t('lastResortNote')] : [])
   ]
-  const note = notes.length ? notes.join('\n\n') : '以上字形由所选字体绘制。'
-  return `![所选字体的实际字形](data:image/png;base64,${preview.png})\n\n${note}`
+  const note = notes.length ? notes.join('\n\n') : t('renderedBySelectedNote')
+  return `![${t('previewImageAlt')}](data:image/png;base64,${preview.png})\n\n${note}`
 }

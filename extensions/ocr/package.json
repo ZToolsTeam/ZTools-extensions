@@ -1,7 +1,7 @@
 {
   "name": "@ztools/plugin-ocr",
   "version": "1.0.0",
-  "description": "用 Windows 系统文字识别在本机识别图片和屏幕截图中的文字",
+  "description": "在本机识别图片和屏幕截图中的文字，不联网",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

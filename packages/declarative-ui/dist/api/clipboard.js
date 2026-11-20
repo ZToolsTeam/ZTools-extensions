@@ -1,4 +1,5 @@
 import { getDeclarativeBridge } from "./bridge.js";
+import { tApiError } from "./error-messages.js";
 let memoryClipboard = "";
 export const Clipboard = {
     /**
@@ -43,7 +44,7 @@ export const Clipboard = {
         }
         await this.copy(text);
         // 宿主不支持粘贴到前台应用：内容已复制，但不能让插件以为已经粘贴。
-        throw Object.assign(new Error("当前宿主不支持粘贴到前台应用，内容已复制到剪贴板"), { code: "NOT_SUPPORTED" });
+        throw Object.assign(new Error(tApiError("clipboardPasteUnsupported")), { code: "NOT_SUPPORTED" });
     },
     /**
      * 读取剪贴板文本
@@ -64,6 +65,27 @@ export const Clipboard = {
             }
         }
         return memoryClipboard;
+    },
+    /**
+     * 读取剪贴板中的文件路径列表（经宿主安全校验与授权后返回）
+     */
+    async readFiles() {
+        const bridge = getDeclarativeBridge();
+        if (bridge?.readClipboardFiles) {
+            const files = await bridge.readClipboardFiles();
+            return Array.isArray(files) ? files.filter((item) => typeof item === "string" && item.length > 0) : [];
+        }
+        return [];
+    },
+    /**
+     * 读取剪贴板中的图片（支持 Base64 dataUrl 或宿主生成的临时缓存文件路径）
+     */
+    async readImage() {
+        const bridge = getDeclarativeBridge();
+        if (bridge?.readClipboardImage) {
+            return await bridge.readClipboardImage();
+        }
+        return null;
     },
     /**
      * 清空剪贴板

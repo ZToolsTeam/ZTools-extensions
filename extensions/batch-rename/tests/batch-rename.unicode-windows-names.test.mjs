@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { applyRenameRule, buildRenamePreview, executeRealFileRename } from '../dist/logic.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { applyRenameRule, buildRenamePreview, executeRealFileRename } = await import('../dist/logic.js')
 
 const entry = (dir, name, sep = '/') => ({ name, fullPath: `${dir}${sep}${name}`, parentDir: dir, extension: '', sizeBytes: 1, lastModifiedMs: 0 })
 

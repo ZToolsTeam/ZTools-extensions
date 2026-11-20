@@ -8,24 +8,31 @@ import React, {
   confirmAlert,
   showToast,
   useEffect,
+  useLocale,
   useMemo,
+  useRef,
   useState
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   copyProcessInfoToClipboard,
   detectClipboardCandidatePath,
+  extractDroppedUnlockPath,
   filterLockingProcesses,
   inspectTargetLocks,
   loadRemovableDrives,
   looksLikeFilePath,
+  normalizeProcessBaseName,
   openUnlockedTarget,
   revealLockedTargetInFolder,
   revealProcessExecutableInFolder,
   sanitizeInputPath,
+  selectUnlockTarget,
   unlockAllProcesses,
   unlockAndTrashTarget,
   unlockSingleProcess
 } from './unlock-service.js'
+import { createCompatFileInputProps, isDeclarativeFileInputSupported } from './host-compat.js'
 import type {
   LockingProcessItem,
   RemovableDriveItem,
@@ -34,7 +41,7 @@ import type {
 
 function extractBaseName(targetPath: string): string {
   const cleaned = sanitizeInputPath(targetPath).replace(/[\\/]+$/, '')
-  if (!cleaned) return '未指定路径'
+  if (!cleaned) return t('unspecifiedPath')
   if (/^[a-zA-Z]:$/.test(cleaned)) return `${cleaned}\\`
   const parts = cleaned.split(/[\\/]/)
   return parts[parts.length - 1] || cleaned
@@ -45,6 +52,7 @@ export default function FileUnlockCommand(props?: {
   featureCode?: string
   hostOverride?: unknown
 }) {
+  const locale = useLocale()
   const [targetPath, setTargetPath] = useState<string>(
     sanitizeInputPath(props?.initialPath ?? '')
   )
@@ -56,25 +64,34 @@ export default function FileUnlockCommand(props?: {
   const [lastError, setLastError] = useState<string>('')
   const [partialScan, setPartialScan] = useState<boolean>(false)
   const [driveNotice, setDriveNotice] = useState<string>('')
+  const isUsbEntry = props?.featureCode === 'usb-unlock'
+  // 检测批次号：每次检测、清空目标、卸载都会递增，迟到的检测结果一律丢弃
+  const inspectSeq = useRef(0)
+  // 目标代次：清空目标或卸载时递增，进行中的解锁操作完成后不再回写旧目标的状态
+  const targetEpoch = useRef(0)
+  const alive = useRef(true)
 
   const runInspection = async (rawPath: string) => {
     const cleaned = sanitizeInputPath(rawPath)
+    const seq = ++inspectSeq.current
     if (!cleaned) {
       setProcesses([])
       setLastError('')
+      setIsLoading(false)
       return
     }
     setIsLoading(true)
     setLastError('')
     try {
       const res = await inspectTargetLocks(cleaned, props?.hostOverride)
+      if (!alive.current || seq !== inspectSeq.current) return
       if (!res.ok) {
         setProcesses([])
-        setLastError(res.error || '目标路径检测失败')
+        setLastError(res.error || t('errTargetInspectFailed'))
         await showToast({
           style: Toast.Style.Failure,
-          title: '无法扫描目标路径',
-          message: res.error || '请检查路径是否存在或是否有访问权限'
+          title: t('toastCannotScanTitle'),
+          message: res.error || t('toastCannotScanMsg')
         })
         return
       }
@@ -83,58 +100,118 @@ export default function FileUnlockCommand(props?: {
       setPartialScan(res.partial === true)
       setLastError('')
     } finally {
-      setIsLoading(false)
+      if (alive.current && seq === inspectSeq.current) {
+        setIsLoading(false)
+      }
     }
   }
 
+  /** 读取外接移动磁盘列表：只列出盘符与容量，不扫描磁盘内的任何文件 */
+  const refreshRemovableDrives = async () => {
+    const drives = await loadRemovableDrives(props?.hostOverride)
+    if (!alive.current) return
+    setRemovableDrives(drives.drives)
+    setDriveNotice(drives.error ? t('driveNoticeFailedPrefix', { error: drives.error }) : drives.warning ?? '')
+  }
+
   useEffect(() => {
-    let cancelled = false
-    let seq = 0
-
-    const init = async () => {
-      const mySeq = ++seq
-      setIsLoading(true)
-      try {
-        const [clipCandidate, drives] = await Promise.all([
-          props?.initialPath
-            ? Promise.resolve(sanitizeInputPath(props.initialPath))
-            : detectClipboardCandidatePath(props?.hostOverride),
-          loadRemovableDrives(props?.hostOverride)
-        ])
-        if (cancelled || mySeq !== seq) return
-        setRemovableDrives(drives.drives)
-        setDriveNotice(drives.error ? `读取外接磁盘失败：${drives.error}` : drives.warning ?? '')
-
-        const initialTarget =
-          clipCandidate ||
-          (props?.featureCode === 'usb-unlock' && drives.drives[0]?.mount ? drives.drives[0].mount : '')
-
-        if (initialTarget) {
-          setTargetPath(initialTarget)
-          const res = await inspectTargetLocks(initialTarget, props?.hostOverride)
-          if (cancelled || mySeq !== seq) return
-          if (res.ok) {
-            setTargetPath(res.targetPath)
-            setProcesses(res.processes)
-            setPartialScan(res.partial === true)
-            setLastError('')
-          } else {
-            setProcesses([])
-            setLastError(res.error || '')
-          }
-        }
-      } finally {
-        if (!cancelled && mySeq === seq) {
-          setIsLoading(false)
-        }
-      }
+    alive.current = true
+    // 启动时不读取剪贴板、不自动检测任何路径：
+    // - 宿主显式传入 initialPath 时才检测该路径（用户主动发起的目标）
+    // - U 盘入口只列出外接移动磁盘，由用户选择后再检测
+    const initialTarget = sanitizeInputPath(props?.initialPath ?? '')
+    if (initialTarget) {
+      void runInspection(initialTarget)
+    } else if (isUsbEntry) {
+      void refreshRemovableDrives()
     }
-
-    void init()
     return () => {
-      cancelled = true
+      alive.current = false
+      ++inspectSeq.current
+      ++targetEpoch.current
     }
   }, [props?.initialPath, props?.featureCode, props?.hostOverride])
+
+  useEffect(() => {
+    if (isDeclarativeFileInputSupported()) return
+    const ztools = (globalThis as { window?: { ztools?: { events?: { on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void; off?: (event: string, cb: (payload: unknown) => void) => void } } } }).window?.ztools
+    if (typeof ztools?.events?.on !== 'function') return
+    const handler = (envelopeOrPayload: unknown) => {
+      const dropped = extractDroppedUnlockPath(envelopeOrPayload)
+      if (!dropped) return
+      setTargetPath(dropped)
+      void runInspection(dropped)
+    }
+    const off = ztools.events.on('plugin_files_dropped', handler)
+    return () => {
+      if (typeof off === 'function') off()
+      else ztools?.events?.off?.('plugin_files_dropped', handler)
+    }
+  }, [])
+
+  const handlePickTarget = async (directory: boolean) => {
+    const epoch = targetEpoch.current
+    const picked = await selectUnlockTarget(directory, props?.hostOverride)
+    if (!alive.current || epoch !== targetEpoch.current) return
+    if (picked.canceled) return
+    if (picked.error || !picked.path) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: directory ? t('toastPickFolderFailed') : t('toastPickFileFailed'),
+        message: picked.error || t('toastNoValidPath')
+      })
+      return
+    }
+    setTargetPath(picked.path)
+    await runInspection(picked.path)
+  }
+
+  /** 用户主动触发：读取剪贴板，内容是完整路径时设为检测目标 */
+  const handleDetectClipboard = async () => {
+    if (isLoading) {
+      await showToast({ style: Toast.Style.Failure, title: t('toastBusyWait') })
+      return
+    }
+    const epoch = targetEpoch.current
+    const candidate = await detectClipboardCandidatePath(props?.hostOverride)
+    if (!alive.current || epoch !== targetEpoch.current) return
+    if (!candidate) {
+      await showToast({
+        style: Toast.Style.Failure,
+        title: t('toastClipboardNoPath'),
+        message: t('toastClipboardPathHint')
+      })
+      return
+    }
+    setTargetPath(candidate)
+    await runInspection(candidate)
+  }
+
+  /** 清空当前目标：只重置检测目标与占用结果，不碰磁盘文件；检测进行中不可用 */
+  const handleClearTarget = async () => {
+    if (isLoading) {
+      await showToast({ style: Toast.Style.Failure, title: t('toastBusyClearWin') })
+      return
+    }
+    ++inspectSeq.current
+    ++targetEpoch.current
+    setTargetPath('')
+    setProcesses([])
+    setPartialScan(false)
+    setLastError('')
+    setSearchQuery('')
+    setProcessFilter('all')
+  }
+
+  const fileInputProps = createCompatFileInputProps(
+    (files) => {
+      const dropped = extractDroppedUnlockPath({ files })
+      if (!dropped) return
+      setTargetPath(dropped)
+      void runInspection(dropped)
+    },
+    { allowDirectories: true }
+  )
 
   const killableCount = useMemo(
     () => processes.filter((p) => !p.isProtected).length,
@@ -159,24 +236,25 @@ export default function FileUnlockCommand(props?: {
     if (proc.isProtected) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '安全策略拦截',
-        message: `${proc.name} (PID ${proc.pid}) 为系统关键保护进程，严禁强制结束`
+        title: t('toastPolicyBlocked'),
+        message: t('toastPolicyBlockedMsg', { name: proc.name, pid: proc.pid })
       })
       return
     }
 
     const actionTitle = trashAfterUnlock
-      ? `确认结束进程 ${proc.name} (PID ${proc.pid}) 并将目标移入回收站？`
-      : `确认结束占用进程 ${proc.name} (PID ${proc.pid})？`
+      ? t('confirmSingleTrashTitle', { name: proc.name, pid: proc.pid })
+      : t('confirmSingleKillTitle', { name: proc.name, pid: proc.pid })
 
     const confirmed = await confirmAlert({
       title: actionTitle,
       message:
-        proc.serviceTypeLabel === '资源管理器'
-          ? '检测到资源管理器占用，解锁后将自动平滑重启 explorer.exe，桌面不会黑屏。'
-          : `目标路径: ${targetPath}\n进程路径: ${proc.executablePath}`
+        normalizeProcessBaseName(proc.name) === 'explorer'
+          ? t('confirmExplorerMsg')
+          : t('confirmTargetProcMsg', { target: targetPath, exec: proc.executablePath })
     })
     if (!confirmed) return
+    const epoch = targetEpoch.current
 
     const res = await unlockSingleProcess(
       proc,
@@ -184,19 +262,21 @@ export default function FileUnlockCommand(props?: {
       { trashAfterUnlock },
       props?.hostOverride
     )
+    // 操作期间目标已被清空或界面已关闭：只如实提示结果，不再回写旧目标的状态
+    const stale = !alive.current || epoch !== targetEpoch.current
 
     if (!res.ok) {
       await showToast({
         style: Toast.Style.Failure,
         title:
           res.errorCode === 'PROCESS_IDENTITY_MISMATCH'
-            ? '进程 PID 已变更，已拦截误杀'
+            ? t('toastPidMismatch')
             : res.errorCode === 'PROCESS_PROTECTED'
-              ? '系统关键保护进程禁止终止'
-              : '解除占用失败',
-        message: res.error || '请尝试使用管理员权限运行'
+              ? t('toastProtectedNoKill')
+              : t('toastUnlockFailed'),
+        message: res.error || t('toastTryAdminHint')
       })
-      if (['PROCESS_IDENTITY_MISMATCH', 'LOCK_CHANGED', 'LOCK_RECHECK_FAILED', 'PROCESS_GONE'].includes(res.errorCode ?? '') && targetPath) {
+      if (!stale && ['PROCESS_IDENTITY_MISMATCH', 'LOCK_CHANGED', 'LOCK_RECHECK_FAILED', 'PROCESS_GONE'].includes(res.errorCode ?? '') && targetPath) {
         await runInspection(targetPath)
       }
       return
@@ -205,11 +285,12 @@ export default function FileUnlockCommand(props?: {
     await showToast({
       style: Toast.Style.Success,
       title: res.trashed
-        ? `已解锁并移入回收站: ${extractBaseName(targetPath)}`
-        : `已解除进程占用: ${proc.name}`,
-      message: res.explorerRestarted ? '已平滑重启 Windows 资源管理器' : `PID ${proc.pid} 已释放句柄`
+        ? t('toastUnlockedTrashed', { name: extractBaseName(targetPath) })
+        : t('toastUnlockedProc', { name: proc.name }),
+      message: res.explorerRestarted ? t('toastExplorerRestarted') : t('toastHandleReleased', { pid: proc.pid })
     })
 
+    if (stale) return
     if (res.trashed) {
       setProcesses([])
     } else if (targetPath) {
@@ -221,7 +302,7 @@ export default function FileUnlockCommand(props?: {
     if (!targetPath) {
       await showToast({
         style: Toast.Style.Animated,
-        title: '请先输入或选择被占用的文件或文件夹路径'
+        title: t('toastInputPathFirst')
       })
       return
     }
@@ -229,45 +310,48 @@ export default function FileUnlockCommand(props?: {
     if (processes.length > 0 && killableCount === 0) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '无法强制解锁系统核心进程',
-        message: '当前所有占用进程均为系统关键保护进程，受安全策略保护'
+        title: t('toastCannotUnlockKernel'),
+        message: t('toastAllProtectedMsg')
       })
       return
     }
 
     const confirmed = await confirmAlert({
       title: trashAfterUnlock
-        ? `确认结束 ${killableCount} 个占用进程并将「${extractBaseName(targetPath)}」移入回收站？`
-        : `确认一键结束 ${killableCount} 个可安全终止的占用进程？`,
-      message: `目标路径: ${targetPath}`
+        ? t('confirmBatchTrashTitle', { count: killableCount, name: extractBaseName(targetPath) })
+        : t('confirmBatchKillTitle', { count: killableCount }),
+      message: t('confirmTargetOnlyMsg', { target: targetPath })
     })
     if (!confirmed) return
+    const epoch = targetEpoch.current
 
     const res = trashAfterUnlock
       ? await unlockAndTrashTarget(processes, targetPath, props?.hostOverride)
       : await unlockAllProcesses(processes, targetPath, {}, props?.hostOverride)
+    const stale = !alive.current || epoch !== targetEpoch.current
 
     if (!res.ok) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '批量解锁未完全成功',
-        message: res.error || '部分进程需要管理员权限或已变更'
+        title: t('toastBatchIncomplete'),
+        message: res.error || t('toastBatchPartialAdminHint')
       })
-      await runInspection(targetPath)
+      if (!stale) await runInspection(targetPath)
       return
     }
 
     await showToast({
       style: Toast.Style.Success,
       title: res.trashed
-        ? `已全部解锁并移入回收站`
-        : `已解除 ${res.unlockedCount} 个进程占用`,
+        ? t('toastBatchUnlockedTrashed')
+        : t('toastBatchUnlockedCount', { count: res.unlockedCount }),
       message:
         res.skippedProtectedCount > 0
-          ? `已跳过 ${res.skippedProtectedCount} 个系统关键保护进程`
+          ? t('toastSkippedProtected', { count: res.skippedProtectedCount })
           : extractBaseName(targetPath)
     })
 
+    if (stale) return
     if (res.trashed) {
       setProcesses([])
     } else {
@@ -277,69 +361,122 @@ export default function FileUnlockCommand(props?: {
 
   const summaryText = useMemo(() => {
     if (!targetPath) {
-      return '粘贴或选择被占用的文件、文件夹或外接移动磁盘以检测占用进程'
+      return isUsbEntry ? t('winSummaryUsbIdle') : t('winSummaryIdle')
+    }
+    const name = extractBaseName(targetPath)
+    if (isLoading) {
+      return t('winSummaryScanning', { name })
     }
     if (lastError) {
-      return `目标: ${extractBaseName(targetPath)} | 检测异常: ${lastError}`
+      return t('winSummaryError', { name, error: lastError })
     }
     if (processes.length === 0 && partialScan) {
-      return `目标: ${extractBaseName(targetPath)} | 只检查了部分文件，未发现占用，但结果不完整`
+      return t('winSummaryPartial', { name })
     }
     if (processes.length === 0) {
-      return `目标: ${extractBaseName(targetPath)} | 当前检测未发现文件占用；目录句柄或权限外的占用可能无法识别`
+      return t('winSummaryUnlocked', { name })
     }
-    return `目标: ${extractBaseName(targetPath)} | 发现 ${processes.length} 个占用进程（可结束 ${killableCount} 个）`
-  }, [targetPath, lastError, processes.length, killableCount, partialScan])
+    return t('winSummaryFound', { name, total: processes.length, killable: killableCount })
+  }, [isUsbEntry, targetPath, isLoading, lastError, processes.length, killableCount, partialScan, locale])
+
+  const renderPickAndClipboardActions = () => [
+    <Action
+      key="act-pick-file"
+      title={t('actionPickFileInspect')}
+      icon={Icon.Document}
+      shortcut={{ modifiers: ['ctrl'], key: 'o' }}
+      onAction={() => {
+        void handlePickTarget(false)
+      }}
+    />,
+    <Action
+      key="act-pick-folder"
+      title={t('actionPickFolderInspect')}
+      icon={Icon.Folder}
+      shortcut={{ modifiers: ['ctrl', 'shift'], key: 'o' }}
+      onAction={() => {
+        void handlePickTarget(true)
+      }}
+    />,
+    <Action
+      key="act-detect-clipboard"
+      title={t('actionDetectClipboard')}
+      icon={Icon.Clipboard}
+      onAction={() => {
+        void handleDetectClipboard()
+      }}
+    />
+  ]
+
+  const renderClearTargetAction = () =>
+    targetPath ? (
+      <Action
+        title={t('actionClearTarget')}
+        icon={Icon.Trash}
+        shortcut={{ modifiers: ['ctrl', 'shift'], key: 'backspace' }}
+        onAction={() => {
+          void handleClearTarget()
+        }}
+      />
+    ) : null
 
   return (
     <List
-      navigationTitle="文件解锁"
+      {...fileInputProps}
+      navigationTitle={t('navTitle')}
       isLoading={isLoading}
       isShowingDetail={false}
-      searchBarPlaceholder="粘贴或拖入被占用的文件/文件夹/盘符路径，或搜索进程名..."
+      searchText={searchQuery}
+      searchBarPlaceholder={t('winSearchPlaceholder')}
       onSearchTextChange={handleSearchChange}
+      actions={
+        <ActionPanel>
+          {renderPickAndClipboardActions()}
+          {renderClearTargetAction()}
+        </ActionPanel>
+      }
       searchBarAccessory={
         <List.Dropdown
-          tooltip="按进程类型筛选"
+          tooltip={t('winFilterTooltip')}
           value={processFilter}
           onChange={(val: string) => setProcessFilter(val as UnlockProcessFilter)}
         >
-          <List.Dropdown.Item title="全部占用进程" value="all" />
-          <List.Dropdown.Item title="可安全结束" value="killable" />
-          <List.Dropdown.Item title="系统保护进程" value="protected" />
+          <List.Dropdown.Item title={t('winFilterAll')} value="all" />
+          <List.Dropdown.Item title={t('winFilterKillable')} value="killable" />
+          <List.Dropdown.Item title={t('winFilterProtected')} value="protected" />
         </List.Dropdown>
       }
       filterBar={{
         summaryText,
         actions: [
           {
-            id: 'unlock-all',
-            title: '一键全部解锁',
-            style: 'primary',
+            id: 'pick-file',
+            title: t('actionPickFileInspect'),
+            style: 'secondary',
             onAction: () => {
-              void handleUnlockAll(false)
+              void handlePickTarget(false)
             }
           },
           {
-            id: 'unlock-and-trash',
-            title: '解锁并移入回收站',
-            style: 'destructive',
+            id: 'pick-folder',
+            title: t('actionPickFolderInspect'),
+            style: 'secondary',
             onAction: () => {
-              void handleUnlockAll(true)
+              void handlePickTarget(true)
             }
           }
         ]
       }}
     >
       {driveNotice && (
-        <List.Section title="外接移动磁盘快捷检测">
-          <List.Item id="drive-notice" icon={Icon.ExclamationMark} title={driveNotice} subtitle="仍可在搜索框粘贴盘符或路径直接检测" />
+        <List.Section title={t('secUsbDrivesTitle')}>
+          <List.Item id="drive-notice" icon={Icon.ExclamationMark} title={driveNotice} subtitle={t('driveNoticeSub')} />
         </List.Section>
       )}
       {removableDrives.length > 0 && (
         <List.Section
-          title="外接移动磁盘快捷检测"
-          subtitle={`${removableDrives.length} 个设备`}
+          title={t('secUsbDrivesTitle')}
+          subtitle={t('secUsbDrivesSub', { count: removableDrives.length })}
         >
           {removableDrives.map((drive) => (
             <List.Item
@@ -347,12 +484,12 @@ export default function FileUnlockCommand(props?: {
               id={`drive-${drive.mount}`}
               icon={Icon.HardDrive}
               title={`${drive.label} (${drive.mount})`}
-              subtitle={`可用 ${drive.freeText} / 总计 ${drive.totalText}`}
-              accessories={[{ text: targetPath === drive.mount ? '当前检测目标' : '检测谁占用了此磁盘' }]}
+              subtitle={t('driveSizeSub', { free: drive.freeText, total: drive.totalText })}
+              accessories={[{ text: targetPath === drive.mount ? t('driveTagCurrent') : t('driveTagInspect') }]}
               actions={
                 <ActionPanel>
                   <Action
-                    title="检测此移动磁盘的占用进程"
+                    title={t('actionInspectUsbDrive')}
                     icon={Icon.MagnifyingGlass}
                     onAction={() => {
                       setTargetPath(drive.mount)
@@ -360,12 +497,27 @@ export default function FileUnlockCommand(props?: {
                     }}
                   />
                   <Action
-                    title="在文件管理器中打开此磁盘"
+                    title={t('actionOpenDriveInFm')}
                     icon={Icon.Folder}
                     onAction={() => {
                       void openUnlockedTarget(drive.mount, props?.hostOverride)
                     }}
                   />
+                  <Action
+                    title={t('actionRefreshDrives')}
+                    icon={Icon.ArrowClockwise}
+                    onAction={() => {
+                      void refreshRemovableDrives()
+                    }}
+                  />
+                  <Action
+                    title={t('actionDetectClipboard')}
+                    icon={Icon.Clipboard}
+                    onAction={() => {
+                      void handleDetectClipboard()
+                    }}
+                  />
+                  {renderClearTargetAction()}
                 </ActionPanel>
               }
             />
@@ -374,63 +526,82 @@ export default function FileUnlockCommand(props?: {
       )}
 
       {filteredProcesses.length === 0 ? (
-        <List.Section title="检测结果">
+        <List.Section title={t('secInspectResult')}>
           <List.Item
             id="empty-status"
-            icon={lastError ? Icon.ExclamationMark : Icon.CheckCircle}
+            icon={isLoading ? Icon.Clock : lastError ? Icon.ExclamationMark : Icon.CheckCircle}
             title={
               !targetPath
-                ? '请粘贴被锁定的文件、文件夹或盘符路径'
-                : lastError
-                  ? '目标路径无法完成占用检测'
-                  : partialScan
-                    ? '只检查了部分文件，未发现占用（结果不完整）'
-                    : '当前路径未被任何进程占用'
+                ? t('emptyTitleNoTarget')
+                : isLoading
+                  ? t('emptyTitleScanning')
+                  : lastError
+                    ? t('emptyTitleError')
+                    : partialScan
+                      ? t('emptyTitlePartial')
+                      : t('emptyTitleUnlocked')
             }
             subtitle={
               !targetPath
-                ? '在顶部搜索框直接粘贴完整路径（如 D:\\report.docx），即可毫秒级定位占用元凶'
-                : lastError
-                  ? lastError
-                  : partialScan
-                    ? '文件夹较大或有子目录无法读取，未检查的文件仍可能被占用；请检测具体文件后再操作'
-                    : '您可以直接删除、重命名该文件，或安全弹出外接移动磁盘'
+                ? t('emptySubNoTarget')
+                : isLoading
+                  ? t('emptySubScanning')
+                  : lastError
+                    ? lastError
+                    : partialScan
+                      ? t('emptySubPartial')
+                      : t('emptySubUnlocked')
             }
             actions={
-              targetPath ? (
-                <ActionPanel>
+              <ActionPanel>
+                {targetPath && (
                   <Action
-                    title="重新扫描占用状态"
+                    title={t('actionRescanLocks')}
                     icon={Icon.ArrowClockwise}
                     shortcut={{ modifiers: ['ctrl'], key: 'r' }}
                     onAction={() => {
                       void runInspection(targetPath)
                     }}
                   />
+                )}
+                {targetPath && !lastError && processes.length > 0 && (
                   <Action
-                    title="定位被检测文件所在目录"
-                    icon={Icon.Folder}
+                    title={t('actionUnlockAll')}
+                    icon={Icon.LockUnlocked}
                     onAction={() => {
-                      void revealLockedTargetInFolder(targetPath, props?.hostOverride)
+                      void handleUnlockAll(false)
                     }}
                   />
+                )}
+                {targetPath && !lastError && (
                   <Action
-                    title="移入回收站"
+                    title={t('actionUnlockAndTrash')}
                     icon={Icon.Trash}
                     style={Action.Style.Destructive}
                     onAction={() => {
                       void handleUnlockAll(true)
                     }}
                   />
-                </ActionPanel>
-              ) : undefined
+                )}
+                {renderPickAndClipboardActions()}
+                {targetPath && (
+                  <Action
+                    title={t('actionRevealTargetDir')}
+                    icon={Icon.Folder}
+                    onAction={() => {
+                      void revealLockedTargetInFolder(targetPath, props?.hostOverride)
+                    }}
+                  />
+                )}
+                {renderClearTargetAction()}
+              </ActionPanel>
             }
           />
         </List.Section>
       ) : (
         <List.Section
-          title="占用进程列表"
-          subtitle={`${filteredProcesses.length} 个进程`}
+          title={t('secLockingProcs')}
+          subtitle={t('secLockingProcsSub', { count: filteredProcesses.length })}
         >
           {filteredProcesses.map((proc) => (
             <List.Item
@@ -441,61 +612,82 @@ export default function FileUnlockCommand(props?: {
               subtitle={`PID ${proc.pid} · ${proc.executablePath}`}
               accessories={
                 proc.isProtected
-                  ? [{ tag: { value: '系统保护', color: Color.Red } }]
+                  ? [{ tag: { value: t('tagSysProtected'), color: Color.Red } }]
                   : [{ text: proc.serviceTypeLabel }]
               }
               actions={
                 <ActionPanel>
                   <Action
-                    title="结束占用进程（解锁）"
+                    title={t('actionUnlockSingle')}
                     icon={Icon.LockUnlocked}
                     onAction={() => {
                       void handleUnlockSingle(proc, false)
                     }}
                   />
                   <Action
-                    title="结束进程并删除目标文件"
+                    title={t('actionKillAndDelete')}
                     icon={Icon.Trash}
                     style={Action.Style.Destructive}
                     onAction={() => {
                       void handleUnlockSingle(proc, true)
                     }}
                   />
-                  <Action
-                    title="定位进程程序所在目录"
-                    icon={Icon.Folder}
-                    onAction={() => {
-                      void revealProcessExecutableInFolder(proc.executablePath, props?.hostOverride)
-                    }}
-                  />
-                  <Action
-                    title="定位被锁文件所在目录"
-                    icon={Icon.Folder}
-                    onAction={() => {
-                      void revealLockedTargetInFolder(targetPath || proc.lockedPath, props?.hostOverride)
-                    }}
-                  />
-                  <Action
-                    title="复制占用进程信息"
-                    icon={Icon.Clipboard}
-                    shortcut={{ modifiers: ['ctrl'], key: 'c' }}
-                    onAction={async () => {
-                      const text = `${proc.name} (PID ${proc.pid}) - ${proc.executablePath} -> ${proc.lockedPath}`
-                      await copyProcessInfoToClipboard(text, props?.hostOverride)
-                      await showToast({
-                        style: Toast.Style.Success,
-                        title: '已复制占用进程信息'
-                      })
-                    }}
-                  />
-                  <Action
-                    title="重新扫描占用状态"
-                    icon={Icon.ArrowClockwise}
-                    shortcut={{ modifiers: ['ctrl'], key: 'r' }}
-                    onAction={() => {
-                      void runInspection(targetPath)
-                    }}
-                  />
+                  <ActionPanel.Section title={t('secTargetAndBatch')}>
+                    <Action
+                      title={t('actionUnlockAll')}
+                      icon={Icon.LockUnlocked}
+                      onAction={() => {
+                        void handleUnlockAll(false)
+                      }}
+                    />
+                    <Action
+                      title={t('actionUnlockAndTrash')}
+                      icon={Icon.Trash}
+                      style={Action.Style.Destructive}
+                      onAction={() => {
+                        void handleUnlockAll(true)
+                      }}
+                    />
+                    <Action
+                      title={t('actionRescanLocks')}
+                      icon={Icon.ArrowClockwise}
+                      shortcut={{ modifiers: ['ctrl'], key: 'r' }}
+                      onAction={() => {
+                        void runInspection(targetPath)
+                      }}
+                    />
+                    {renderClearTargetAction()}
+                  </ActionPanel.Section>
+                  <ActionPanel.Section title={t('secLocateAndSelect')}>
+                    <Action
+                      title={t('actionRevealProcDir')}
+                      icon={Icon.Folder}
+                      onAction={() => {
+                        void revealProcessExecutableInFolder(proc.executablePath, props?.hostOverride)
+                      }}
+                    />
+                    <Action
+                      title={t('actionRevealLockedDir')}
+                      icon={Icon.Folder}
+                      onAction={() => {
+                        void revealLockedTargetInFolder(targetPath || proc.lockedPath, props?.hostOverride)
+                      }}
+                    />
+                    <Action
+                      title={t('actionCopyProcInfo')}
+                      icon={Icon.Clipboard}
+                      shortcut={{ modifiers: ['ctrl'], key: 'c' }}
+                      onAction={async () => {
+                        const text = `${proc.name} (PID ${proc.pid}) - ${proc.executablePath} -> ${proc.lockedPath}`
+                        await copyProcessInfoToClipboard(text, props?.hostOverride)
+                        await showToast({
+                          style: Toast.Style.Success,
+                          title: t('toastCopiedProcInfo')
+                        })
+                      }}
+                    />
+                    {renderPickAndClipboardActions()}
+                  </ActionPanel.Section>
                 </ActionPanel>
               }
             />

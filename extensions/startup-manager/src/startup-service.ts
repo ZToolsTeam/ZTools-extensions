@@ -3,6 +3,7 @@ import {
   showRealItemInFolder,
   writeRealClipboardText
 } from './native-ipc.js'
+import { t } from './i18n.js'
 import type {
   StartupCleanBrokenResult,
   StartupEntryItem,
@@ -130,15 +131,15 @@ export function isMicrosoftProtectedStartupItem(item: {
 export function resolveStartupSourceLabel(source: StartupSourceType): StartupSourceLabel {
   switch (source) {
     case 'folder':
-      return '启动目录'
+      return t('sourceFolder')
     case 'service':
-      return '后台服务'
+      return t('sourceService')
     case 'task':
-      return '计划任务'
+      return t('sourceTask')
     case 'launchd':
-      return 'LaunchAgent'
+      return t('sourceLaunchAgent')
     default:
-      return '注册表'
+      return t('sourceRegistry')
   }
 }
 
@@ -227,7 +228,7 @@ export async function scanStartupItems(
   )
 
   if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '扫描启动项失败')
+    const errText = String(res.data?.error ?? res.error ?? res.message ?? t('errScanFailed'))
     const errCode = extractStartupErrorCode(errText, res.data?.errorCode)
     return {
       ok: false,
@@ -274,7 +275,7 @@ export async function setStartupItemEnabled(
       enabled: Boolean(item?.enabled),
       updatedItems: currentItems,
       errorCode: 'INVALID_IDENTIFIER',
-      error: 'INVALID_IDENTIFIER: 缺少启动项标识'
+      error: t('errMissingId')
     }
   }
 
@@ -290,7 +291,7 @@ export async function setStartupItemEnabled(
       enabled: item.enabled,
       updatedItems: currentItems,
       errorCode: 'INVALID_IDENTIFIER',
-      error: 'INVALID_IDENTIFIER: 启动项标识包含非法控制字符或注入风险片段，已拦截'
+      error: t('errDangerousId')
     }
   }
 
@@ -301,7 +302,7 @@ export async function setStartupItemEnabled(
       enabled: item.enabled,
       updatedItems: currentItems,
       errorCode: 'PROTECTED_SYSTEM_ITEM',
-      error: 'PROTECTED_SYSTEM_ITEM: 微软系统核心服务或系统任务受安全保护，禁止禁用'
+      error: t('errProtectedSystem')
     }
   }
 
@@ -325,7 +326,7 @@ export async function setStartupItemEnabled(
   )
 
   if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '切换启动项状态失败')
+    const errText = String(res.data?.error ?? res.error ?? res.message ?? t('errToggleFailed'))
     const errCode = extractStartupErrorCode(errText, res.data?.errorCode)
     return {
       ok: false,
@@ -362,7 +363,7 @@ export async function removeBrokenStartupItems(
       removedIds: [],
       remainingItems: currentItems,
       errorCode: 'EMPTY_ITEMS',
-      error: 'EMPTY_ITEMS: 当前没有可清理的无效残留启动项'
+      error: t('errEmptyBrokenItems')
     }
   }
 
@@ -377,7 +378,7 @@ export async function removeBrokenStartupItems(
         removedIds: [],
         remainingItems: currentItems,
         errorCode: 'INVALID_IDENTIFIER',
-        error: 'INVALID_IDENTIFIER: 启动项标识包含非法字符，拒绝清理'
+        error: t('errDangerousBrokenId')
       }
     }
     if (!item.fileMissing) {
@@ -387,7 +388,7 @@ export async function removeBrokenStartupItems(
         removedIds: [],
         remainingItems: currentItems,
         errorCode: 'ITEM_NOT_BROKEN',
-        error: `ITEM_NOT_BROKEN: 启动项 "${item.name}" 的目标文件仍然存在，禁止作为残留项删除`
+        error: t('errItemNotBroken', { name: item.name })
       }
     }
   }
@@ -413,7 +414,7 @@ export async function removeBrokenStartupItems(
   const remainingItems = currentItems.filter((entry) => !removedSet.has(entry.id))
 
   if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '清理残留启动项失败')
+    const errText = String(res.data?.error ?? res.error ?? res.message ?? t('errCleanFailed'))
     const errCode = extractStartupErrorCode(errText, res.data?.errorCode)
     return {
       ok: false,
@@ -428,7 +429,7 @@ export async function removeBrokenStartupItems(
 
   // 部分成功：宿主以 success:true 返回（传输层在 success:false 时会丢弃数据），并带 partial / failed 说明未清理的条目
   if (res.data.partial === true || failed.length > 0) {
-    const errText = String(res.data.error ?? '') || `PARTIAL_FAILED: ${failed.map((entry) => `${entry.id}：${entry.error}`).join('；')}`
+    const errText = String(res.data.error ?? '') || t('errPartialFailed', { details: failed.map((entry) => `${entry.id}：${entry.error}`).join('；') })
     return {
       ok: true,
       partial: true,
@@ -457,7 +458,7 @@ function normalizeCleanFailures(raw: unknown): Array<{ id: string; errorCode: st
     .map((entry) => {
       const errorCode = String(entry.errorCode ?? entry.code ?? '').trim()
       const error = String(entry.error ?? entry.reason ?? entry.message ?? '').trim()
-      return { id: String(entry.id ?? ''), errorCode, error: error || errorCode || '未说明原因' }
+      return { id: String(entry.id ?? ''), errorCode, error: error || errorCode || t('errNoReason') }
     })
 }
 
@@ -466,11 +467,11 @@ export function describeCleanBrokenResult(res: StartupCleanBrokenResult, items: 
   const failed = res.failed ?? []
   const nameOf = (id: string) => items.find((entry) => entry.id === id)?.name || id
   const reasons = failed.map((entry) => `${nameOf(entry.id)}：${entry.error}`).join('；')
-  if (res.ok && !res.partial) return { title: `已清理 ${res.removedCount} 个无效残留启动项` }
+  if (res.ok && !res.partial) return { title: t('cleanAllSuccessTitle', { count: res.removedCount }) }
   if (res.removedCount > 0 || res.partial) {
-    return { title: `已清理 ${res.removedCount} 个，${failed.length} 个未清理`, message: reasons || res.error }
+    return { title: t('cleanPartialTitle', { removed: res.removedCount, failed: failed.length }), message: reasons || res.error }
   }
-  return { title: '批量清理残留启动项失败', message: reasons || res.error || '部分系统级条目需要管理员权限' }
+  return { title: t('cleanAllFailedTitle'), message: reasons || res.error || t('cleanAllFailedFallbackMsg') }
 }
 
 export function filterStartupItems(

@@ -1,5 +1,5 @@
-import { LocalStorage } from "@ztools/declarative-ui";
-import { getDeclarativeBridge } from "@ztools/declarative-ui";
+import { LocalStorage, getDeclarativeBridge } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   callHostTransport,
   invokePluginService,
@@ -421,6 +421,32 @@ export function parseColor(input: string): ColorConversionResult {
     };
   }
 
+function buildColorResult(rgb: RGB, hslOverride?: HSL, hsvOverride?: HSV): ColorConversionResult {
+  const hex = rgbToHex(rgb);
+  const hsl = hslOverride ?? rgbToHsl(rgb);
+  const hsv = hsvOverride ?? rgbToHsv(rgb);
+  const cmyk = rgbToCmyk(rgb);
+  const alpha = rgb.a ?? 1;
+  return {
+    hex,
+    hex8: `${hex}FF`,
+    rgb,
+    hsl,
+    hsv,
+    cmyk,
+    cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
+    cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${alpha})`,
+    cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
+    cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${alpha})`,
+    cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
+    cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
+    cssVar: `--color-primary: ${hex};`,
+    wcag: calculateWcag(rgb),
+    harmonies: generateHarmonies(rgb),
+    isValid: true
+  };
+}
+
   // 2. RGB 匹配 (rgb(r, g, b) 或 rgba(r, g, b, a))
   const rgbMatch = trimmed.match(/^rgba?\(?\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)(?:\s*,\s*([\d.]+))?\)?/i);
   if (rgbMatch) {
@@ -430,28 +456,7 @@ export function parseColor(input: string): ColorConversionResult {
       b: Math.max(0, Math.min(255, parseInt(rgbMatch[3], 10))),
       a: rgbMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbMatch[4]))) : 1
     };
-    const hex = rgbToHex(rgb);
-    const hsl = rgbToHsl(rgb);
-    const hsv = rgbToHsv(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${rgb.a ?? 1})`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${rgb.a ?? 1})`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    return buildColorResult(rgb);
   }
 
   // 3. HSL 匹配 (hsl(h, s%, l%) 或 hsla(h, s%, l%, a))
@@ -464,27 +469,7 @@ export function parseColor(input: string): ColorConversionResult {
     };
     const rgb = hslToRgb(hsl);
     rgb.a = hslMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(hslMatch[4]))) : 1;
-    const hex = rgbToHex(rgb);
-    const hsv = rgbToHsv(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${rgb.a ?? 1})`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, ${rgb.a ?? 1})`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    return buildColorResult(rgb, hsl);
   }
 
   // 4. HSV 匹配 (hsv(h, s%, v%))
@@ -496,27 +481,7 @@ export function parseColor(input: string): ColorConversionResult {
       v: Math.max(0, Math.min(100, parseInt(hsvMatch[3], 10)))
     };
     const rgb = hsvToRgb(hsv);
-    const hex = rgbToHex(rgb);
-    const hsl = rgbToHsl(rgb);
-    const cmyk = rgbToCmyk(rgb);
-    return {
-      hex,
-      hex8: `${hex}FF`,
-      rgb,
-      hsl,
-      hsv,
-      cmyk,
-      cssRgb: `rgb(${rgb.r}, ${rgb.g}, ${rgb.b})`,
-      cssRgba: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 1)`,
-      cssHsl: `hsl(${hsl.h}, ${hsl.s}%, ${hsl.l}%)`,
-      cssHsla: `hsla(${hsl.h}, ${hsl.s}%, ${hsl.l}%, 1)`,
-      cssHsv: `hsv(${hsv.h}, ${hsv.s}%, ${hsv.v}%)`,
-      cssCmyk: `cmyk(${cmyk.c}%, ${cmyk.m}%, ${cmyk.y}%, ${cmyk.k}%)`,
-      cssVar: `--color-primary: ${hex};`,
-      wcag: calculateWcag(rgb),
-      harmonies: generateHarmonies(rgb),
-      isValid: true
-    };
+    return buildColorResult(rgb, undefined, hsv);
   }
 
   // 默认 Fallback
@@ -561,7 +526,27 @@ export function generateColorSwatchSvg(hex: string, width = 360, height = 120): 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function checkPermissionError(errText: string, data?: any): void {
+interface RawColorPayload {
+  permissionDenied?: boolean;
+  error?: string;
+  ok?: boolean;
+  hex?: unknown;
+  color?: unknown;
+  r?: unknown;
+  g?: unknown;
+  b?: unknown;
+  rgb?: { r?: unknown; g?: unknown; b?: unknown };
+  x?: unknown;
+  y?: unknown;
+}
+
+function asColorPayload(value: unknown): RawColorPayload | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as RawColorPayload)
+    : undefined;
+}
+
+function checkPermissionError(errText: string, data?: RawColorPayload): void {
   if (
     data?.permissionDenied ||
     errText.includes("SCREEN_RECORDING") ||
@@ -569,14 +554,12 @@ function checkPermissionError(errText: string, data?: any): void {
     errText.includes("Screen Recording") ||
     errText.includes("屏幕录制")
   ) {
-    throw new Error(
-      "SCREEN_RECORDING_PERMISSION_DENIED: 缺少 macOS 屏幕录制权限 (TCC Screen Recording)，请前往「系统设置 -> 隐私与安全性 -> 录屏与系统录音」授予 ZTools 权限"
-    );
+    throw new Error(t("errScreenRecordingPerm"));
   }
 }
 
 function buildPickedColorResultFromRaw(
-  raw: any,
+  raw: unknown,
   fallbackX = 0,
   fallbackY = 0
 ): PickedColorResult | null {
@@ -596,18 +579,19 @@ function buildPickedColorResultFromRaw(
       };
     }
   }
-  if (typeof raw === "object") {
-    let hexStr = typeof raw.hex === "string" ? raw.hex : typeof raw.color === "string" ? raw.color : "";
-    if (!hexStr && typeof raw.r === "number" && typeof raw.g === "number" && typeof raw.b === "number") {
-      hexStr = rgbToHex({ r: raw.r, g: raw.g, b: raw.b });
+  const obj = asColorPayload(raw);
+  if (obj) {
+    let hexStr = typeof obj.hex === "string" ? obj.hex : typeof obj.color === "string" ? obj.color : "";
+    if (!hexStr && typeof obj.r === "number" && typeof obj.g === "number" && typeof obj.b === "number") {
+      hexStr = rgbToHex({ r: obj.r, g: obj.g, b: obj.b });
     } else if (
       !hexStr &&
-      raw.rgb &&
-      typeof raw.rgb.r === "number" &&
-      typeof raw.rgb.g === "number" &&
-      typeof raw.rgb.b === "number"
+      obj.rgb &&
+      typeof obj.rgb.r === "number" &&
+      typeof obj.rgb.g === "number" &&
+      typeof obj.rgb.b === "number"
     ) {
-      hexStr = rgbToHex(raw.rgb);
+      hexStr = rgbToHex({ r: obj.rgb.r, g: obj.rgb.g, b: obj.rgb.b });
     }
     if (hexStr) {
       const parsed = parseColor(hexStr);
@@ -616,8 +600,8 @@ function buildPickedColorResultFromRaw(
         rgb: parsed.rgb,
         hsl: parsed.hsl,
         hsv: parsed.hsv,
-        x: typeof raw.x === "number" ? raw.x : fallbackX,
-        y: typeof raw.y === "number" ? raw.y : fallbackY,
+        x: typeof obj.x === "number" ? obj.x : fallbackX,
+        y: typeof obj.y === "number" ? obj.y : fallbackY,
         source: "native",
         pickedAt: Date.now()
       };
@@ -631,20 +615,22 @@ function buildPickedColorResultFromRaw(
  * 结合 screen_get_cursor_pos 与 ColorPickerPlugin.pickScreenPixel / screen_pick_color 获取真实屏幕像素 RGB/HEX 值；
  * 真实宿主下若失败则如实抛出错误，彻底清零随机伪造假颜色的代码。
  */
-export async function pickScreenColor(hostOverride?: any): Promise<PickedColorResult> {
+export async function pickScreenColor(hostOverride?: unknown): Promise<PickedColorResult> {
   const strictReal = isStrictRealHost(hostOverride);
-  const bridge = getDeclarativeBridge();
-  if (bridge && typeof (bridge as any).pickScreenColor === "function") {
+  const bridge = getDeclarativeBridge() as { pickScreenColor?: () => Promise<unknown> } | undefined;
+  if (bridge && typeof bridge.pickScreenColor === "function") {
     try {
-      const res = await (bridge as any).pickScreenColor();
-      checkPermissionError(String(res?.error || ""), res);
+      const res = await bridge.pickScreenColor();
+      const resObj = asColorPayload(res);
+      checkPermissionError(String(resObj?.error || ""), resObj);
       const picked = buildPickedColorResultFromRaw(res);
       if (picked) return picked;
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
       if (
-        String(err?.message || "").includes("SCREEN_RECORDING") ||
-        String(err?.message || "").includes("TCC") ||
-        String(err?.message || "").includes("屏幕录制")
+        msg.includes("SCREEN_RECORDING") ||
+        msg.includes("TCC") ||
+        msg.includes("屏幕录制")
       ) {
         throw err;
       }
@@ -656,12 +642,12 @@ export async function pickScreenColor(hostOverride?: any): Promise<PickedColorRe
 
   if (strictReal) {
     // 1. 获取当前光标真实屏幕坐标
-    const cursorRes = await callHostTransport<any>("screen_get_cursor_pos", {}, hostOverride);
+    const cursorRes = await callHostTransport<RawColorPayload>("screen_get_cursor_pos", {}, hostOverride);
     const cursorX = typeof cursorRes.data?.x === "number" ? cursorRes.data.x : 0;
     const cursorY = typeof cursorRes.data?.y === "number" ? cursorRes.data.y : 0;
 
     // 2. 优先调用 ColorPickerPlugin.pickScreenPixel 获取真实屏幕像素颜色
-    const pluginRes = await invokePluginService<any>(
+    const pluginRes = await invokePluginService<RawColorPayload>(
       "ColorPickerPlugin",
       "pickScreenPixel",
       { x: cursorX, y: cursorY },
@@ -674,7 +660,7 @@ export async function pickScreenColor(hostOverride?: any): Promise<PickedColorRe
     }
 
     // 3. 兼容宿主 screen_pick_color IPC 通道
-    const pickRes = await callHostTransport<any>(
+    const pickRes = await callHostTransport<RawColorPayload>(
       "screen_pick_color",
       { x: cursorX, y: cursorY },
       hostOverride
@@ -686,7 +672,7 @@ export async function pickScreenColor(hostOverride?: any): Promise<PickedColorRe
     }
 
     // 4. 兼容宿主 screen_capture (mode: "color")
-    const capRes = await callHostTransport<any>(
+    const capRes = await callHostTransport<RawColorPayload>(
       "screen_capture",
       { mode: "color", x: cursorX, y: cursorY },
       hostOverride
@@ -701,7 +687,7 @@ export async function pickScreenColor(hostOverride?: any): Promise<PickedColorRe
       pluginRes.error ||
       pickRes.error ||
       capRes.error ||
-      "COLOR_PICKER_FAILED: 未能从屏幕获取真实像素颜色";
+      t("errColorPickerFailed");
     throw new Error(errMsg);
   }
 

@@ -87,3 +87,21 @@ test('个别卷读不到容量时其余分区照常分析，读不到的卷如�
   host.ipc.system_list_volumes = async () => ({ volumes: [], partial: true, errors: ['/: 卷容量无效'] })
   await assert.rejects(fetchDiskAnalysisSnapshot(), /没有读取到已挂载卷：\/: 卷容量无效/)
 })
+
+test('分区容量先于目录扫描回调给界面；列表为空时回收站名称按当前系统给', async () => {
+  const { scanned } = installHost()
+  const events = []
+  const snap = await fetchDiskAnalysisSnapshot(undefined, (summary) => {
+    events.push({ scannedSoFar: scanned.length, summary })
+  })
+  assert.equal(events.length, 1)
+  assert.equal(events[0].scannedSoFar, 0, '容量回调必须在任何目录扫描之前')
+  assert.equal(events[0].summary.totalCapacityBytes, snap.totalCapacityBytes)
+  assert.equal(events[0].summary.totalUsedBytes, 100 * 1024 ** 3)
+  assert.deepEqual(events[0].summary.drives.map(d => d.drive), ['/'])
+  // 回调抛错不影响扫描
+  const again = await fetchDiskAnalysisSnapshot(undefined, () => { throw new Error('ui') })
+  assert.ok(again.files.some(f => f.name === 'final.mp4'))
+  assert.equal(trashName('', true), '废纸篓')
+  assert.equal(trashName('', false), '回收站')
+})

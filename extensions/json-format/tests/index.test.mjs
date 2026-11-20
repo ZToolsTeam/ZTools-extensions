@@ -82,3 +82,23 @@ test('详情页复制标题与实际缩进一致（4 格 / Tab）', async () => 
     } finally { detail.unmount() }
   } finally { view.unmount() }
 })
+
+test('粘贴文件与纯文本：支持 Ctrl+V 粘贴 .json 文件读取内容并校验，以及粘贴 JSON 文本', async () => {
+  host.ipc.filesystem_read_file = async (params) => {
+    assert.equal(params.path, '/Users/me/config.json')
+    assert.equal(params.encoding, 'utf8')
+    return { content: '{"port":8080,"debug":true}' }
+  }
+  const view = await mount(JsonFormatCommand)
+  const getAreaValue = () => view.tree().children.find((c) => c.type === 'Form.TextArea').props.value
+  try {
+    await view.pasteFiles(['/Users/me/config.json'])
+    assert.equal(getAreaValue(), '{"port":8080,"debug":true}')
+    assert.equal(host.lastToast().title, '已读取文件并成功校验')
+
+    await view.pasteText('{"name":"ztools"}')
+    assert.equal(getAreaValue(), '{"name":"ztools"}')
+  } finally {
+    view.unmount()
+  }
+})

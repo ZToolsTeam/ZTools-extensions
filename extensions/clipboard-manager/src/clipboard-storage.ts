@@ -14,6 +14,7 @@ import {
   ClipboardPreferences,
   PasteSequenceState
 } from "./types.js";
+import { t } from "./i18n.js";
 
 const STORAGE_KEY = "ztools:clipboard:history";
 const PREFS_STORAGE_KEY = "ztools:clipboard:preferences";
@@ -271,7 +272,7 @@ export function parseColorDetails(colorStr: string): { hex: string; rgb: string;
 }
 
 /** 不在 ZTools 客户端里运行（拿不到宿主通道）时的提示；此时不显示任何示例记录 */
-export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+export const NOT_IN_CLIENT_MESSAGE = t("notInClient");
 
 // 简单轻量拼音首字母映射辅助 (用于支持剪贴板常用中文首字母拼音快速检索)
 const PINYIN_INITIALS_MAP: Record<string, string> = {
@@ -370,7 +371,7 @@ const HOST_MASKED_PREVIEW = /^•+ \[高熵敏感机密已脱敏\]$/;
 function parseHistoryFilePaths(content: string): string[] {
   const parsed: unknown = JSON.parse(content);
   if (!Array.isArray(parsed) || !parsed.every((file): file is string => typeof file === "string" && file.length > 0)) {
-    throw new Error("剪贴板文件历史格式无效");
+    throw new Error(t("errInvalidFileHistory"));
   }
   return parsed;
 }
@@ -483,7 +484,7 @@ function decodeStoredRecords(raw: unknown): ClipboardItem[] | null {
     const row = item as Record<string, unknown>;
     return typeof row.id !== "string" || !row.id || typeof row.content !== "string" ||
       (row.pinned !== undefined && typeof row.pinned !== "boolean");
-  })) throw new Error("剪贴板本地历史格式损坏");
+  })) throw new Error(t("errCorruptedLocalHistory"));
   return parsed;
 }
 
@@ -560,9 +561,9 @@ async function queryHostHistory(hostOverride?: unknown): Promise<ClipboardItem[]
         const d = ipcRes.data as unknown[] | { items?: unknown; records?: unknown };
         const list = Array.isArray(d) ? d : Array.isArray(d?.items) ? d.items : Array.isArray(d?.records) ? d.records : null;
         if (list) return list.map((r: unknown, i: number) => mapRawClipboardRecord(r, i));
-        lastHostHistoryError = "宿主返回的剪贴板历史格式无法识别";
+        lastHostHistoryError = t("errHostHistoryFormat");
       } else if (!ipcRes.ok && !isHostMethodMissing(ipcRes.error)) {
-        lastHostHistoryError = ipcRes.error || "读取宿主剪贴板历史失败";
+        lastHostHistoryError = ipcRes.error || t("errHostHistoryReadFailed");
       }
     } catch (error) {
       lastHostHistoryError = error instanceof Error ? error.message : String(error);
@@ -767,7 +768,7 @@ export async function saveEditedClipboardItem(
   waitOptions?: HostRecordWaitOptions
 ): Promise<{ persisted: boolean; where?: "host" | "local"; item?: ClipboardItem; items: ClipboardItem[]; message?: string }> {
   const content = String(input?.content ?? "");
-  if (!content.trim()) return { persisted: false, items: [], message: "内容不能为空" };
+  if (!content.trim()) return { persisted: false, items: [], message: t("errContentEmpty") };
   const pinned = Boolean(input?.pinned);
 
   const removeOriginal = async (keepId: string) => {
@@ -775,7 +776,7 @@ export async function saveEditedClipboardItem(
     if (isLocalRecordId(original.id)) {
       return updateLocalRecord(original.id, (latest) => {
         if (latest.content !== original.content || Boolean(latest.pinned) !== Boolean(original.pinned)) {
-          throw new Error("旧历史记录已变化");
+          throw new Error(t("errOldRecordChanged"));
         }
         return null;
       });
@@ -789,12 +790,12 @@ export async function saveEditedClipboardItem(
     if (record.pinned !== pinned) {
       const toggled = await callHistoryHost("clipboard_history_toggle_pin", { id: record.id }, hostOverride);
       if (!toggled.ok) {
-        return { persisted: false, items: await getClipboardHistory(hostOverride), message: "已记录到历史，但置顶状态未能保存" };
+        return { persisted: false, items: await getClipboardHistory(hostOverride), message: t("errPinnedNotSaved") };
       }
       item = { ...record, pinned };
     }
     if (!await removeOriginal(record.id)) {
-      return { persisted: false, items: await getClipboardHistory(hostOverride), message: "新内容已保存，但旧记录已变化或无法移除，请刷新后检查" };
+      return { persisted: false, items: await getClipboardHistory(hostOverride), message: t("errOldRecordUnremovable") };
     }
     return { persisted: true, where: "host", item, items: await getClipboardHistory(hostOverride) };
   }
@@ -810,7 +811,7 @@ export async function saveEditedClipboardItem(
     const next = await updateStoredRecords((stored) => {
       const latest = keepOriginalId ? stored.find((entry) => entry.id === keepOriginalId) : undefined;
       if (keepOriginalId && (!latest || latest.content !== original?.content)) {
-        throw new Error("历史记录已被修改或删除，请刷新后重试");
+        throw new Error(t("errRecordModifiedOrDeleted"));
       }
       // 表单没有改置顶时，保留另一窗口刚更新的置顶状态。
       const item = latest && pinned === original?.pinned ? { ...candidate, pinned: latest.pinned } : candidate;
@@ -819,11 +820,11 @@ export async function saveEditedClipboardItem(
     });
     const item = next[0];
     if (original && !isLocalRecordId(original.id) && !await removeOriginal(item.id)) {
-      return { persisted: false, items: await getClipboardHistory(hostOverride), message: "新内容已保存，但旧记录无法移除，请刷新后检查" };
+      return { persisted: false, items: await getClipboardHistory(hostOverride), message: t("errOldRecordRemoveFailed") };
     }
     return { persisted: true, where: "local", item, items: await getClipboardHistory(hostOverride) };
   } catch (err: unknown) {
-    return { persisted: false, items: [], message: err instanceof Error ? err.message : "插件存储写入失败" };
+    return { persisted: false, items: [], message: err instanceof Error ? err.message : t("errLocalStorageWriteFailed") };
   }
 }
 
@@ -883,7 +884,7 @@ export async function clearUnpinnedClipboardHistory(hostOverride?: unknown): Pro
   await readStoredRecords(true);
   const hostRes = await callHistoryHost("clipboard_history_clear_unpinned", {}, hostOverride);
   if (!hostRes.ok && (hostOverride || isRealElectronHost())) {
-    throw new Error("宿主剪贴板历史清空失败，请重试");
+    throw new Error(t("errHostClearFailed"));
   }
   const data = hostRes.data as number | { count?: unknown; clearedCount?: unknown } | null | undefined;
   let removed = hostRes.ok ? Number(typeof data === "number" ? data : data?.count ?? data?.clearedCount ?? 0) || 0 : 0;
@@ -905,15 +906,15 @@ export async function restoreClipboardItem(item: ClipboardItem, paste = false, h
     if (res.ok && res.data?.success !== false) return;
     // 旧客户端没有按 ID 恢复的接口：文本仍可由 SDK 写入，图片与文件只能提示升级
     if (!res.ok && isHostMethodMissing(res.error)) {
-      if (item.type === "image" || item.type === "files") throw hostUpgradeError("恢复图片和文件历史");
+      if (item.type === "image" || item.type === "files") throw hostUpgradeError(t("restoreMediaFeature"));
       if (paste) await Clipboard.paste(item.content);
       else await Clipboard.copy(item.content);
       return;
     }
-    throw new Error(res.error || "恢复剪贴板历史失败");
+    throw new Error(res.error || t("errRestoreFailed"));
   }
   if (item.type === "image" || (item.type === "files" && item.filePaths?.length)) {
-    throw new Error("图片与文件历史需要由客户端宿主恢复");
+    throw new Error(t("errRestoreMediaRequiresHost"));
   }
   if (paste) await Clipboard.paste(item.content);
   else await Clipboard.copy(item.content);
@@ -940,14 +941,14 @@ export async function pasteSequentialClipboard(
 ): Promise<{ success: boolean; item?: ClipboardItem; remaining: number; offset: number; message?: string; pasteFailed?: boolean }> {
   if (isRealElectronHost()) {
     const res = await callHostTransport("clipboard_history_paste_sequential");
-    if (!res.ok) return { success: false, pasteFailed: true, remaining: items.length, offset: 0, message: res.error || "流水粘贴失败" };
+    if (!res.ok) return { success: false, pasteFailed: true, remaining: items.length, offset: 0, message: res.error || t("errSeqPasteFailed") };
     const data = res.data;
     const position = sequencePosition(data);
     return {
       success: data?.success === true,
       ...(data?.item ? { item: mapRawClipboardRecord(data.item) } : {}),
       ...position,
-      ...(data?.success === false ? { pasteFailed: Boolean(data.item), message: String(data.message || "流水粘贴失败") } : {})
+      ...(data?.success === false ? { pasteFailed: Boolean(data.item), message: String(data.message || t("errSeqPasteFailed")) } : {})
     };
   }
   // 宿主已取到条目但粘贴失败（如 macOS 未授权辅助功能）：如实返回失败，不能再走本地回退把它报成成功
@@ -1030,7 +1031,7 @@ export async function resetPasteSequence(): Promise<void> {
     // 真实客户端里指针在宿主：重置失败要让用户知道，不能提示“已重置”
     const res = await callHostTransport("clipboard_history_reset_sequence");
     if (!res.ok || res.data?.success === false) {
-      if (res.ok || !isHostMethodMissing(res.error)) throw new Error(res.error || "宿主未能重置流水粘贴指针");
+      if (res.ok || !isHostMethodMissing(res.error)) throw new Error(res.error || t("errResetSeqFailed"));
     }
     return;
   }
@@ -1123,10 +1124,10 @@ export function filterClipboardItems(items: ClipboardItem[], options: ClipboardF
 export function formatCopiedTime(timestamp: number): string {
   const diff = Date.now() - timestamp;
   const minutes = Math.floor(diff / 60000);
-  if (minutes < 1) return "刚刚";
-  if (minutes < 60) return `${minutes} 分钟前`;
+  if (minutes < 1) return t("timeJustNow");
+  if (minutes < 60) return t("timeMinutesAgo", { n: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} 小时前`;
+  if (hours < 24) return t("timeHoursAgo", { n: hours });
   const days = Math.floor(hours / 24);
-  return `${days} 天前`;
+  return t("timeDaysAgo", { n: days });
 }

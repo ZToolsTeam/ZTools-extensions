@@ -1,9 +1,11 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import BoostCommand from '../dist/index.js'
-import * as boost from '../dist/logic.js'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { default: BoostCommand } = await import('../dist/index.js')
+const boost = await import('../dist/logic.js')
 
 const MB = 1024 * 1024
 const APPDATA = 'C:\\Users\\tester\\AppData\\Roaming'

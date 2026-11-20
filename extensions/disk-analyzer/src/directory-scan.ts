@@ -1,14 +1,15 @@
 import { callHostTransport } from './native-ipc.js'
+import { t } from './i18n.js'
 
 /** 目录扫描失败必须传播；空的成功结果与能力/权限失败分开。 */
 export async function scanRealDirectoryTree(directory: string, limit: number, hostOverride?: unknown) {
   const result = await callHostTransport<Record<string, unknown>>('system_search_files', { query: `dir:${directory}`, limit }, hostOverride)
   const data = result.data
-  if (!result.ok || !data || !Array.isArray(data.files)) throw new Error(`${directory}: ${result.error || '目录扫描结果无效'}`)
-  if (data.degraded || data.partial) throw new Error(`${directory}: 目录扫描未完整返回，请检查访问权限后重试`)
+  if (!result.ok || !data || !Array.isArray(data.files)) throw new Error(`${directory}: ${result.error || t('dirScanInvalidResult')}`)
+  if (data.degraded || data.partial) throw new Error(`${directory}: ${t('dirScanIncomplete')}`)
   return {
     files: data.files.map((value: unknown) => {
-      if (!value || typeof value !== 'object') throw new Error(`${directory}: 文件记录无效`)
+      if (!value || typeof value !== 'object') throw new Error(`${directory}: ${t('dirScanInvalidFileRecord')}`)
       const file = value as Record<string, unknown>
       return {
       path: String(file.path || ''), name: String(file.name || ''),
@@ -17,7 +18,7 @@ export async function scanRealDirectoryTree(directory: string, limit: number, ho
       }
     }),
     subdirs: (Array.isArray(data.subdirs) ? data.subdirs : []).map((value: unknown) => {
-      if (!value || typeof value !== 'object') throw new Error(`${directory}: 子目录记录无效`)
+      if (!value || typeof value !== 'object') throw new Error(`${directory}: ${t('dirScanInvalidSubdirRecord')}`)
       const dir = value as Record<string, unknown>
       return {
       path: String(dir.path || ''), name: String(dir.name || ''),

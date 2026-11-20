@@ -1,9 +1,129 @@
+import { getLocale } from "@ztools/declarative-ui";
+
 /**
  * JSON 格式化、校验与 TypeScript / Rust / Go 类型推导
  *
  * 校验用 JSON.parse 判定合法性；错误定位、类型推导、JSONPath 与统计都基于自带的无损解析器（parseJsonAst），
  * 数字保留原文写法，因此超过 2^53 的长整数、1.0 这类小数写法不会在推导和展示中丢失。
  */
+
+const JSON_LOGIC_MESSAGES: Record<string, {
+  endOfInput: string;
+  bomChar: string;
+  invisibleChar: (code: string) => string;
+  unterminatedString: string;
+  invalidUnicodeEscape: string;
+  invalidEscape: (ch: string) => string;
+  unescapedNewline: string;
+  unescapedControlChar: string;
+  invalidNumber: (raw: string) => string;
+  unexpectedEndExpectedValue: string;
+  singleQuoteString: string;
+  unrecognizedValue: (word: string) => string;
+  expectedValueGot: (got: string) => string;
+  unexpectedEndObject: string;
+  trailingCommaObject: string;
+  singleQuoteKey: string;
+  unquotedKey: (word: string) => string;
+  expectedKeyGot: (got: string) => string;
+  unexpectedEndColon: string;
+  expectedColonGot: (got: string) => string;
+  expectedCommaOrBraceGot: (got: string) => string;
+  trailingCommaArray: string;
+  unexpectedEndArray: string;
+  expectedCommaOrBracketGot: (got: string) => string;
+  emptyContent: string;
+  trailingContent: (got: string) => string;
+  syntaxErrorFallback: string;
+  lineColError: (line: number, column: number, message: string) => string;
+  tsUnsafeIntComment: string;
+  tsGenFailed: (message: string) => string;
+  rustBigIntComment: string;
+  rustGenFailed: (message: string) => string;
+  goInvalidTagComment: (rawKey: string) => string;
+  goGenFailed: (message: string) => string;
+  invalidJsonFallback: string;
+}> = {
+  "zh-CN": {
+    endOfInput: "输入结尾",
+    bomChar: "不可见的 BOM 字符",
+    invisibleChar: (code) => `不可见字符 U+${code}`,
+    unterminatedString: "字符串缺少结束的双引号",
+    invalidUnicodeEscape: "无效的 \\u 转义，需要 4 位十六进制数字",
+    invalidEscape: (ch) => `无效的转义序列 '\\${ch}'`,
+    unescapedNewline: "字符串中不能直接换行，请写成 \\n",
+    unescapedControlChar: "字符串中包含未转义的控制字符",
+    invalidNumber: (raw) => `数字格式不合法 '${raw}'`,
+    unexpectedEndExpectedValue: "JSON 意外结束，此处缺少值",
+    singleQuoteString: "字符串必须使用双引号，不能使用单引号",
+    unrecognizedValue: (word) => `无法识别的值 '${word}'（字符串需要用双引号包裹，字面量只能是 true / false / null）`,
+    expectedValueGot: (got) => `此处应为值，却遇到 ${got}`,
+    unexpectedEndObject: "JSON 意外结束，对象缺少 '}'",
+    trailingCommaObject: "对象末尾多了一个逗号",
+    singleQuoteKey: "键名必须使用双引号，不能使用单引号",
+    unquotedKey: (word) => `键名 '${word}' 必须用双引号包裹`,
+    expectedKeyGot: (got) => `此处应为用双引号包裹的键名，却遇到 ${got}`,
+    unexpectedEndColon: "JSON 意外结束，键名后缺少 ':'",
+    expectedColonGot: (got) => `键名后应为 ':'，却遇到 ${got}`,
+    expectedCommaOrBraceGot: (got) => `此处应为 ',' 或 '}'，却遇到 ${got}`,
+    trailingCommaArray: "数组末尾多了一个逗号",
+    unexpectedEndArray: "JSON 意外结束，数组缺少 ']'",
+    expectedCommaOrBracketGot: (got) => `此处应为 ',' 或 ']'，却遇到 ${got}`,
+    emptyContent: "内容为空",
+    trailingContent: (got) => `JSON 已经结束，后面还有多余内容 ${got}`,
+    syntaxErrorFallback: "JSON 语法错误",
+    lineColError: (line, column, message) => `第 ${line} 行第 ${column} 列：${message}`,
+    tsUnsafeIntComment: " // 超出 JS 安全整数范围，JSON.parse 会丢精度",
+    tsGenFailed: (message) => `// 无法生成 TypeScript Interface：${message}`,
+    rustBigIntComment: "    // 数值超出 64 位整数范围：需启用 serde_json 的 arbitrary_precision 特性才能保留原值",
+    rustGenFailed: (message) => `// 无法生成 Rust Struct：${message}`,
+    goInvalidTagComment: (rawKey) => `// 原始键 ${rawKey} 含 struct tag 不支持的字符，需要自定义 UnmarshalJSON`,
+    goGenFailed: (message) => `// 无法生成 Go Struct：${message}`,
+    invalidJsonFallback: "JSON 无效"
+  },
+  "en-US": {
+    endOfInput: "end of input",
+    bomChar: "invisible BOM character",
+    invisibleChar: (code) => `invisible character U+${code}`,
+    unterminatedString: "Unterminated string (missing closing double quote)",
+    invalidUnicodeEscape: "Invalid \\u escape sequence (expected 4 hex digits)",
+    invalidEscape: (ch) => `Invalid escape sequence '\\${ch}'`,
+    unescapedNewline: "Unescaped newline in string; use \\n instead",
+    unescapedControlChar: "Unescaped control character in string",
+    invalidNumber: (raw) => `Invalid number format '${raw}'`,
+    unexpectedEndExpectedValue: "Unexpected end of JSON; expected a value",
+    singleQuoteString: "Strings must use double quotes, not single quotes",
+    unrecognizedValue: (word) => `Unrecognized value '${word}' (strings must be double-quoted; literals can only be true / false / null)`,
+    expectedValueGot: (got) => `Expected a value, but found ${got}`,
+    unexpectedEndObject: "Unexpected end of JSON; missing '}' in object",
+    trailingCommaObject: "Trailing comma in object",
+    singleQuoteKey: "Object keys must use double quotes, not single quotes",
+    unquotedKey: (word) => `Object key '${word}' must be wrapped in double quotes`,
+    expectedKeyGot: (got) => `Expected a double-quoted key, but found ${got}`,
+    unexpectedEndColon: "Unexpected end of JSON; missing ':' after key",
+    expectedColonGot: (got) => `Expected ':' after key, but found ${got}`,
+    expectedCommaOrBraceGot: (got) => `Expected ',' or '}', but found ${got}`,
+    trailingCommaArray: "Trailing comma in array",
+    unexpectedEndArray: "Unexpected end of JSON; missing ']' in array",
+    expectedCommaOrBracketGot: (got) => `Expected ',' or ']', but found ${got}`,
+    emptyContent: "Content is empty",
+    trailingContent: (got) => `Unexpected trailing content after JSON: ${got}`,
+    syntaxErrorFallback: "Invalid JSON syntax",
+    lineColError: (line, column, message) => `Line ${line}, Col ${column}: ${message}`,
+    tsUnsafeIntComment: " // Exceeds JS safe integer range; JSON.parse will lose precision",
+    tsGenFailed: (message) => `// Failed to generate TypeScript Interface: ${message}`,
+    rustBigIntComment: "    // Value exceeds 64-bit integer range: enable serde_json's arbitrary_precision feature to preserve exact value",
+    rustGenFailed: (message) => `// Failed to generate Rust Struct: ${message}`,
+    goInvalidTagComment: (rawKey) => `// Key ${rawKey} contains characters unsupported in Go struct tags; custom UnmarshalJSON required`,
+    goGenFailed: (message) => `// Failed to generate Go Struct: ${message}`,
+    invalidJsonFallback: "Invalid JSON"
+  }
+};
+
+function jsonStrings() {
+  const locale = getLocale();
+  return JSON_LOGIC_MESSAGES[locale] ?? JSON_LOGIC_MESSAGES["en-US"];
+}
 
 export interface JsonErrorInfo {
   line: number;
@@ -63,6 +183,7 @@ const NUMBER_RE = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/;
 
 /** 解析 JSON 文本为语法树；语法错误抛出带偏移量的 JsonSyntaxError */
 export function parseJsonAst(text: string): JsonNode {
+  const s = jsonStrings();
   let i = 0;
   const n = text.length;
 
@@ -70,10 +191,10 @@ export function parseJsonAst(text: string): JsonNode {
     throw new JsonSyntaxError(message, at);
   };
   const describe = (at: number): string => {
-    if (at >= n) return "输入结尾";
+    if (at >= n) return s.endOfInput;
     const ch = String.fromCodePoint(text.codePointAt(at) as number);
-    if (ch === "﻿") return "不可见的 BOM 字符";
-    if (/[\s\p{Cc}\p{Cf}]/u.test(ch)) return `不可见字符 U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+    if (ch === "﻿") return s.bomChar;
+    if (/[\s\p{Cc}\p{Cf}]/u.test(ch)) return s.invisibleChar(ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0"));
     return `'${ch}'`;
   };
   /** 从 at 开始匹配（re 必须以 ^ 开头） */
@@ -96,7 +217,7 @@ export function parseJsonAst(text: string): JsonNode {
     let out = "";
     let start = i;
     for (;;) {
-      if (i >= n) fail("字符串缺少结束的双引号", quote);
+      if (i >= n) fail(s.unterminatedString, quote);
       const c = text.charCodeAt(i);
       if (c === 34) {
         out += text.slice(start, i);
@@ -106,23 +227,23 @@ export function parseJsonAst(text: string): JsonNode {
       if (c === 92) {
         out += text.slice(start, i);
         const e = text[i + 1];
-        if (e === undefined) fail("字符串缺少结束的双引号", quote);
+        if (e === undefined) fail(s.unterminatedString, quote);
         const simple: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
         if (e in simple) {
           out += simple[e];
           i += 2;
         } else if (e === "u") {
           const hex = text.slice(i + 2, i + 6);
-          if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail("无效的 \\u 转义，需要 4 位十六进制数字");
+          if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail(s.invalidUnicodeEscape);
           out += String.fromCharCode(parseInt(hex, 16));
           i += 6;
         } else {
-          fail(`无效的转义序列 '\\${e}'`);
+          fail(s.invalidEscape(e));
         }
         start = i;
         continue;
       }
-      if (c < 0x20) fail(c === 10 || c === 13 ? "字符串中不能直接换行，请写成 \\n" : "字符串中包含未转义的控制字符");
+      if (c < 0x20) fail(c === 10 || c === 13 ? s.unescapedNewline : s.unescapedControlChar);
       i++;
     }
   };
@@ -131,7 +252,7 @@ export function parseJsonAst(text: string): JsonNode {
     const raw = matchAt(NUMBER_RE, i);
     const next = raw ? text[i + raw.length] : undefined;
     if (!raw || (next !== undefined && /[0-9.eE+\-]/.test(next))) {
-      fail(`数字格式不合法 '${matchAt(/^[-+0-9.eE]+/, i) ?? text[i]}'`);
+      fail(s.invalidNumber(matchAt(/^[-+0-9.eE]+/, i) ?? text[i]));
     }
     i += raw!.length;
     return { kind: "number", raw: raw! };
@@ -139,13 +260,13 @@ export function parseJsonAst(text: string): JsonNode {
 
   const parseValue = (): JsonNode => {
     skipWs();
-    if (i >= n) fail("JSON 意外结束，此处缺少值");
+    if (i >= n) fail(s.unexpectedEndExpectedValue);
     const c = text[i];
     if (c === "{") return parseObject();
     if (c === "[") return parseArray();
     if (c === '"') return { kind: "string", value: parseString() };
     if (c === "-" || (c >= "0" && c <= "9")) return parseNumber();
-    if (c === "'") fail("字符串必须使用双引号，不能使用单引号");
+    if (c === "'") fail(s.singleQuoteString);
     if (/[A-Za-z_$]/.test(c)) {
       const w = wordAt(i);
       if (w === "true" || w === "false") {
@@ -156,9 +277,9 @@ export function parseJsonAst(text: string): JsonNode {
         i += 4;
         return { kind: "null" };
       }
-      fail(`无法识别的值 '${w}'（字符串需要用双引号包裹，字面量只能是 true / false / null）`);
+      fail(s.unrecognizedValue(w));
     }
-    return fail(`此处应为值，却遇到 ${describe(i)}`);
+    return fail(s.expectedValueGot(describe(i)));
   };
 
   const parseObject = (): JsonNode => {
@@ -173,15 +294,15 @@ export function parseJsonAst(text: string): JsonNode {
       skipWs();
       const c = text[i];
       if (c !== '"') {
-        if (i >= n) fail("JSON 意外结束，对象缺少 '}'");
-        if (c === "}" && entries.length > 0) fail("对象末尾多了一个逗号");
-        if (c === "'") fail("键名必须使用双引号，不能使用单引号");
-        if (/[A-Za-z_$]/.test(c)) fail(`键名 '${wordAt(i)}' 必须用双引号包裹`);
-        fail(`此处应为用双引号包裹的键名，却遇到 ${describe(i)}`);
+        if (i >= n) fail(s.unexpectedEndObject);
+        if (c === "}" && entries.length > 0) fail(s.trailingCommaObject);
+        if (c === "'") fail(s.singleQuoteKey);
+        if (/[A-Za-z_$]/.test(c)) fail(s.unquotedKey(wordAt(i)));
+        fail(s.expectedKeyGot(describe(i)));
       }
       const key = parseString();
       skipWs();
-      if (text[i] !== ":") fail(i >= n ? "JSON 意外结束，键名后缺少 ':'" : `键名后应为 ':'，却遇到 ${describe(i)}`);
+      if (text[i] !== ":") fail(i >= n ? s.unexpectedEndColon : s.expectedColonGot(describe(i)));
       i++;
       entries.push([key, parseValue()]);
       skipWs();
@@ -193,7 +314,7 @@ export function parseJsonAst(text: string): JsonNode {
         i++;
         return { kind: "object", entries };
       }
-      fail(i >= n ? "JSON 意外结束，对象缺少 '}'" : `此处应为 ',' 或 '}'，却遇到 ${describe(i)}`);
+      fail(i >= n ? s.unexpectedEndObject : s.expectedCommaOrBraceGot(describe(i)));
     }
   };
 
@@ -207,7 +328,7 @@ export function parseJsonAst(text: string): JsonNode {
     }
     for (;;) {
       skipWs();
-      if (text[i] === "]" && items.length > 0) fail("数组末尾多了一个逗号");
+      if (text[i] === "]" && items.length > 0) fail(s.trailingCommaArray);
       items.push(parseValue());
       skipWs();
       if (text[i] === ",") {
@@ -218,15 +339,15 @@ export function parseJsonAst(text: string): JsonNode {
         i++;
         return { kind: "array", items };
       }
-      fail(i >= n ? "JSON 意外结束，数组缺少 ']'" : `此处应为 ',' 或 ']'，却遇到 ${describe(i)}`);
+      fail(i >= n ? s.unexpectedEndArray : s.expectedCommaOrBracketGot(describe(i)));
     }
   };
 
   skipWs();
-  if (i >= n) fail("内容为空");
+  if (i >= n) fail(s.emptyContent);
   const root = parseValue();
   skipWs();
-  if (i < n) fail(`JSON 已经结束，后面还有多余内容 ${describe(i)}`);
+  if (i < n) fail(s.trailingContent(describe(i)));
   return root;
 }
 
@@ -292,11 +413,12 @@ function buildErrorInfo(raw: string, offset: number, message: string): JsonError
  * 校验 JSON 语法并返回行号/列号定位与统计指标
  */
 export function validateJson(raw: string): JsonValidationResult {
+  const s = jsonStrings();
   if (!raw || !raw.trim()) {
     return {
       valid: false,
-      error: "内容为空",
-      errorInfo: buildErrorInfo("", 0, "内容为空")
+      error: s.emptyContent,
+      errorInfo: buildErrorInfo("", 0, s.emptyContent)
     };
   }
 
@@ -305,7 +427,7 @@ export function validateJson(raw: string): JsonValidationResult {
     parsed = JSON.parse(raw);
   } catch (err: unknown) {
     let offset = 0;
-    let message = err instanceof Error ? err.message : "JSON 语法错误";
+    let message = err instanceof Error ? err.message : s.syntaxErrorFallback;
     try {
       astOfText(raw);
     } catch (e) {
@@ -319,7 +441,7 @@ export function validateJson(raw: string): JsonValidationResult {
       }
     }
     const errorInfo = buildErrorInfo(raw, offset, message);
-    return { valid: false, error: `第 ${errorInfo.line} 行第 ${errorInfo.column} 列：${message}`, errorInfo };
+    return { valid: false, error: s.lineColError(errorInfo.line, errorInfo.column, message), errorInfo };
   }
 
   let ast: JsonNode | undefined;
@@ -636,7 +758,7 @@ export function jsonToTsInterface(raw: unknown, rootName = "RootObject"): string
         .map(([key, val]) => {
           const safeKey = /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
           const mark = node.optional?.has(key) ? "?" : "";
-          const note = val.kind === "number" && isUnsafeInteger(val.raw) ? " // 超出 JS 安全整数范围，JSON.parse 会丢精度" : "";
+          const note = val.kind === "number" && isUnsafeInteger(val.raw) ? jsonStrings().tsUnsafeIntComment : "";
           return `  ${safeKey}${mark}: ${tsType(val, key, selfBase)};${note}`;
         })
         .join("\n");
@@ -694,7 +816,8 @@ export function jsonToTsInterface(raw: unknown, rootName = "RootObject"): string
     }
     return table.output().join("\n\n");
   } catch (err: unknown) {
-    return `// 无法生成 TypeScript Interface：${err instanceof Error ? err.message : "JSON 无效"}`;
+    const s = jsonStrings();
+    return s.tsGenFailed(err instanceof Error ? err.message : s.invalidJsonFallback);
   }
 }
 
@@ -758,7 +881,7 @@ export function jsonToRustStruct(raw: unknown, rootName = "RootObject"): string 
         if (field.replace(/^r#/, "") !== key) lines.push(`    #[serde(rename = ${rustStringLiteral(key)})]`);
         let type = rustType(val, key, selfBase);
         if (type.includes("serde_json::Value") && hasBigNumber(val)) {
-          lines.push("    // 数值超出 64 位整数范围：需启用 serde_json 的 arbitrary_precision 特性才能保留原值");
+          lines.push(jsonStrings().rustBigIntComment);
         }
         if (node.optional?.has(key)) {
           // 部分样本缺这个字段：缺失时反序列化为 None，序列化时省略
@@ -819,7 +942,8 @@ export function jsonToRustStruct(raw: unknown, rootName = "RootObject"): string 
     }
     return "use serde::{Deserialize, Serialize};\n\n" + table.output().join("\n\n");
   } catch (err: unknown) {
-    return `// 无法生成 Rust Struct：${err instanceof Error ? err.message : "JSON 无效"}`;
+    const s = jsonStrings();
+    return s.rustGenFailed(err instanceof Error ? err.message : s.invalidJsonFallback);
   }
 }
 
@@ -861,7 +985,7 @@ export function jsonToGoStruct(raw: unknown, rootName = "RootObject"): string {
           const optional = node.optional?.has(key) ?? false;
           const type = optional ? goNilable(goType(val, key, selfBase)) : goType(val, key, selfBase);
           if (!isValidGoTagName(key)) {
-            return `\t${field}\t${type}\t// 原始键 ${JSON.stringify(key)} 含 struct tag 不支持的字符，需要自定义 UnmarshalJSON`;
+            return `\t${field}\t${type}\t${jsonStrings().goInvalidTagComment(JSON.stringify(key))}`;
           }
           const tagName = (key === "-" ? "-," : key) + (optional ? (key === "-" ? "omitempty" : ",omitempty") : "");
           return `\t${field}\t${type}\t\`json:"${tagName}"\``;
@@ -922,7 +1046,8 @@ export function jsonToGoStruct(raw: unknown, rootName = "RootObject"): string {
     const code = table.output().join("\n\n");
     return usesJsonNumber || usesRawMessage ? `import "encoding/json"\n\n${code}` : code;
   } catch (err: unknown) {
-    return `// 无法生成 Go Struct：${err instanceof Error ? err.message : "JSON 无效"}`;
+    const s = jsonStrings();
+    return s.goGenFailed(err instanceof Error ? err.message : s.invalidJsonFallback);
   }
 }
 

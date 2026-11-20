@@ -11,9 +11,11 @@ import {
   Toast,
   Clipboard,
   confirmAlert,
-  useNavigation
+  useNavigation,
+  useLocale
 } from "@ztools/declarative-ui";
 import { useState, useEffect } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   callHostTransport,
   isRealElectronHost
@@ -47,13 +49,13 @@ function ClipboardColorActions({ color }: { color: ReturnType<typeof parseColorD
   return (<> {color ? (
             <>
               <Action.CopyToClipboard
-                title="复制 RGB 颜色值"
+                title={t("actionCopyRgb")}
                 content={color.rgb}
                 icon={Icon.Eye}
                 shortcut={{ modifiers: ["ctrl", "shift"], key: "r" }}
               />
               <Action.CopyToClipboard
-                title="复制 HSL 颜色值"
+                title={t("actionCopyHsl")}
                 content={color.hsl}
                 icon={Icon.Eye}
                 shortcut={{ modifiers: ["ctrl", "shift"], key: "s" }}
@@ -82,12 +84,12 @@ export function getDisplayTitle(item: ClipboardItem): string {
 }
 
 export function getClipboardMarkdown(item: ClipboardItem): string {
-  let markdown = `# 剪贴板内容详情\n\n`;
+  let markdown = t("detailTitle");
 
   const sensitivity = maskSensitiveContent(item.content);
   if (sensitivity.isSensitive) {
     // 敏感内容：所有类型都只展示遮罩后的文本，不渲染可点击链接或完整 JSON
-    markdown += `> **安全防护提示**: 检测到敏感凭据 (${sensitivity.reason || "机密凭据"})，下方预览已遮罩；复制、粘贴仍使用原文。\n\n`;
+    markdown += t("detailSensitiveNote", { reason: sensitivity.reason || t("secretFallback") });
     let body = item.content;
     if (item.type === "json") {
       try {
@@ -103,9 +105,9 @@ export function getClipboardMarkdown(item: ClipboardItem): string {
 
   if (item.type === "color") {
     const details = parseColorDetails(item.content);
-    markdown += `### 调色盘与色彩代码\n\n`;
+    markdown += t("detailColorTitle");
     if (details) {
-      markdown += `\`\`\`css\n/* HEX 格式 */\ncolor: ${details.hex};\n\n/* RGB 格式 */\nbackground-color: ${details.rgb};\n\n/* HSL 格式 */\nborder-color: ${details.hsl};\n\`\`\`\n\n`;
+      markdown += `\`\`\`css\n/* HEX */\ncolor: ${details.hex};\n\n/* RGB */\nbackground-color: ${details.rgb};\n\n/* HSL */\nborder-color: ${details.hsl};\n\`\`\`\n\n`;
       markdown += `> **HEX**: \`${details.hex}\` | **RGB**: \`${details.rgb}\` | **HSL**: \`${details.hsl}\``;
     } else {
       markdown += fencedBlock(item.content);
@@ -115,29 +117,32 @@ export function getClipboardMarkdown(item: ClipboardItem): string {
       const parsed = JSON.parse(item.content);
       const formatted = JSON.stringify(parsed, null, 2);
       const keysCount = typeof parsed === "object" && parsed !== null ? Object.keys(parsed).length : 0;
-      markdown += `### JSON 结构化数据预览 (${keysCount} 个顶层属性)\n\n${fencedBlock(formatted, "json")}`;
+      markdown += t("detailJsonTitle", { count: keysCount, block: fencedBlock(formatted, "json") });
     } catch {
       markdown += fencedBlock(item.content, "json");
     }
   } else if (item.type === "code") {
     markdown += fencedBlock(item.content, "typescript");
   } else if (item.type === "link") {
-    markdown += `### 网络链接\n\n[${item.content}](${item.content})\n\n> 协议: \`${item.content.startsWith("https") ? "HTTPS (安全加密)" : "HTTP"}\``;
+    markdown += t("detailLinkSection", {
+      url: item.content,
+      proto: item.content.startsWith("https") ? "HTTPS" : "HTTP"
+    });
   } else if (item.type === "image") {
     // 宿主只返回缩略图；缩略图生成失败时 content 为空，不能渲染成空图片，也不编造分辨率
     if (item.content.startsWith("data:image/")) {
-      markdown += `![图片预览](${item.content})`;
+      markdown += `![${t("detailImgAlt")}](${item.content})`;
       if (item.imageDimensions?.width && item.imageDimensions?.height) {
-        markdown += `\n\n> 分辨率: ${item.imageDimensions.width} x ${item.imageDimensions.height}`;
+        markdown += t("detailImgRes", { w: item.imageDimensions.width, h: item.imageDimensions.height });
       }
     } else {
-      markdown += "> 这条图片记录没有可用的缩略图预览，复制或粘贴仍使用原图。";
+      markdown += t("detailImgNoThumb");
     }
   } else if (item.type === "files") {
     if (isUnavailableFileItem(item)) {
-      markdown += "> 这些文件来自其他系统，在本机不存在，不能粘贴或定位；可以复制路径文字。\n\n";
+      markdown += t("detailForeignFilesNote");
     }
-    markdown += "### 包含的文件列表\n\n" + fencedBlock(item.filePaths?.length ? item.filePaths.join("\n") : item.content);
+    markdown += t("detailFilesTitle") + fencedBlock(item.filePaths?.length ? item.filePaths.join("\n") : item.content);
   } else {
     // 纯文本按原样展示：保留换行与所有字符，不当作 Markdown 解析
     markdown += fencedBlock(item.content);
@@ -148,10 +153,10 @@ export function getClipboardMarkdown(item: ClipboardItem): string {
 /** 删除前请用户确认；取消或无法弹出确认框时不删除 */
 async function confirmDeleteItem(item: ClipboardItem): Promise<boolean> {
   return confirmAlert({
-    title: "删除这条剪贴板记录？",
+    title: t("confirmDeleteTitle"),
     message: getDisplayTitle(item).slice(0, 120),
-    primaryAction: { title: "删除", style: "destructive" },
-    dismissAction: { title: "取消" }
+    primaryAction: { title: t("actionDelete"), style: "destructive" },
+    dismissAction: { title: t("actionCancel") }
   });
 }
 
@@ -189,34 +194,38 @@ export function isUnavailableFileItem(item: ClipboardItem): boolean {
 /** 系统文件管理器名称：按当前平台；平台未知时按路径写法判断 */
 export function fileManagerName(samplePath: string): string {
   const platform = currentPlatform();
-  if (platform === "mac") return "访达";
-  if (platform === "windows") return "资源管理器";
-  return isWindowsStylePath(String(samplePath || "")) ? "资源管理器" : "访达";
+  if (platform === "mac") return t("fmFinder");
+  if (platform === "windows") return t("fmExplorer");
+  return isWindowsStylePath(String(samplePath || "")) ? t("fmExplorer") : t("fmFinder");
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  text: "文本", code: "代码", image: "图片", files: "文件", link: "链接", color: "颜色", json: "JSON"
-};
-
-/** 内容类型的中文名 */
+/** 内容类型的显示名 */
 export function typeLabel(type: string): string {
-  return TYPE_LABELS[type] ?? "文本";
+  switch (type) {
+    case "code": return t("typeCode");
+    case "image": return t("typeImage");
+    case "files": return t("typeFiles");
+    case "link": return t("typeLink");
+    case "color": return t("typeColor");
+    case "json": return t("typeJson");
+    default: return t("typeText");
+  }
 }
 
 /** 在文件管理器中定位文件：以宿主返回结果为准，失败时如实提示 */
 async function revealClipboardFile(filePath: string): Promise<void> {
   // 只做“显示”：不能在定位失败时退回用默认程序打开文件
   const res = await callHostTransport("shell_show_item_in_folder", { fullPath: filePath });
-  if (res.ok) await showToast(Toast.Style.Success, `已在${fileManagerName(filePath)}中显示`, filePath);
-  else await showToast(Toast.Style.Failure, "定位失败", `${filePath}\n${res.error || "文件可能已被移动或删除"}`);
+  if (res.ok) await showToast(Toast.Style.Success, t("toastRevealed", { manager: fileManagerName(filePath) }), filePath);
+  else await showToast(Toast.Style.Failure, t("toastRevealFailed"), `${filePath}\n${res.error || t("toastRevealMissingFallback")}`);
 }
 
 async function handleRestoreClipboardItem(item: ClipboardItem, paste: boolean): Promise<void> {
   try {
     await restoreClipboardItem(item, paste);
-    await showToast(Toast.Style.Success, paste ? "已发送粘贴请求" : "已复制");
+    await showToast(Toast.Style.Success, paste ? t("toastPasted") : t("toastCopied"));
   } catch (error) {
-    await showToast(Toast.Style.Failure, paste ? "粘贴失败" : "复制失败", error instanceof Error ? error.message : String(error));
+    await showToast(Toast.Style.Failure, paste ? t("toastPasteFailed") : t("toastCopyFailed"), error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -225,7 +234,7 @@ function ItemPrimaryActions({ item }: { item: ClipboardItem }) {
   if (isUnavailableFileItem(item)) {
     return (
       <Action.CopyToClipboard
-        title="复制文件路径"
+        title={t("actionCopyFilePaths")}
         content={(item.filePaths || []).join("\n")}
         icon={Icon.CopyClipboard}
       />
@@ -234,12 +243,12 @@ function ItemPrimaryActions({ item }: { item: ClipboardItem }) {
   return (
     <>
       <Action
-        title="粘贴到前台应用"
+        title={t("actionPasteToActive")}
         onAction={() => handleRestoreClipboardItem(item, true)}
         icon={Icon.Checkmark}
       />
       <Action
-        title="仅复制到剪贴板"
+        title={t("actionCopyToClipboard")}
         onAction={() => handleRestoreClipboardItem(item, false)}
         icon={Icon.CopyClipboard}
         shortcut={{ modifiers: ["ctrl"], key: "c" }}
@@ -262,6 +271,7 @@ export function ClipboardDetailView({
   /** 由列表负责切换置顶并刷新；返回切换后的真实置顶状态，null 表示切换失败 */
   onPinToggled?: (id: string) => Promise<boolean | null | void> | boolean | null | void;
 }) {
+  useLocale();
   const { pop } = useNavigation();
   const [pinned, setPinned] = useState<boolean>(Boolean(item.pinned));
   const markdown = getClipboardMarkdown(item);
@@ -273,14 +283,14 @@ export function ClipboardDetailView({
   return (
     <Detail
       markdown={markdown}
-      navigationTitle={`${typeLabel(item.type)}详情`}
+      navigationTitle={t("detailNavTitle", { type: typeLabel(item.type) })}
       metadata={
         <Detail.Metadata>
-          <Detail.Metadata.Label title="内容类型" text={typeLabel(item.type)} icon={Icon.Document} />
-          <Detail.Metadata.Label title="复制时间" text={formatCopiedTime(item.copiedAt)} icon={Icon.Clock} />
-          <Detail.Metadata.Label title="置顶状态" text={pinned ? "已置顶" : "未置顶"} icon={Icon.Pin} />
+          <Detail.Metadata.Label title={t("metaContentType")} text={typeLabel(item.type)} icon={Icon.Document} />
+          <Detail.Metadata.Label title={t("metaCopiedAt")} text={formatCopiedTime(item.copiedAt)} icon={Icon.Clock} />
+          <Detail.Metadata.Label title={t("metaPinStatus")} text={pinned ? t("metaPinned") : t("metaUnpinned")} icon={Icon.Pin} />
           {item.sourceAppName ? (
-            <Detail.Metadata.Label title="来源应用" text={item.sourceAppName} icon={Icon.AppWindow} />
+            <Detail.Metadata.Label title={t("metaSourceApp")} text={item.sourceAppName} icon={Icon.AppWindow} />
           ) : null}
           {colorDetails ? (
             <>
@@ -290,25 +300,25 @@ export function ClipboardDetailView({
             </>
           ) : null}
           {item.charCount !== undefined && (
-            <Detail.Metadata.Label title="字符总数" text={`${item.charCount} 字符`} icon={Icon.Pencil} />
+            <Detail.Metadata.Label title={t("metaCharCount")} text={t("metaCharCountVal", { count: item.charCount })} icon={Icon.Pencil} />
           )}
           {item.lineCount !== undefined && (
-            <Detail.Metadata.Label title="文本行数" text={`${item.lineCount} 行`} icon={Icon.List} />
+            <Detail.Metadata.Label title={t("metaLineCount")} text={t("metaLineCountVal", { count: item.lineCount })} icon={Icon.List} />
           )}
           {(sensitivity.isSensitive || item.isSensitive) ? (
-            <Detail.Metadata.Label title="敏感脱敏" text={sensitivity.reason || "已脱敏"} icon={Icon.Lock} />
+            <Detail.Metadata.Label title={t("metaSensitiveLabel")} text={sensitivity.reason || t("metaMaskedDefault")} icon={Icon.Lock} />
           ) : null}
           {unavailable ? (
-            <Detail.Metadata.Label title="文件状态" text="来自其他系统，本机不可用" icon={Icon.ExclamationMark} />
+            <Detail.Metadata.Label title={t("metaFileStatus")} text={t("metaFileForeign")} icon={Icon.ExclamationMark} />
           ) : null}
         </Detail.Metadata>
       }
       actions={
-        <ActionPanel title="条目操作">
+        <ActionPanel title={t("panelItemActions")}>
           <ItemPrimaryActions item={item} />
           {item.type === "link" ? (
             <Action.OpenInBrowser
-              title="在浏览器中打开链接"
+              title={t("actionOpenInBrowser")}
               url={item.content}
               icon={Icon.Globe}
               shortcut={{ modifiers: ["ctrl"], key: "o" }}
@@ -316,15 +326,15 @@ export function ClipboardDetailView({
           ) : null}
           {revealPath ? (
             <Action
-              title={`在${fileManagerName(revealPath)}中显示文件`}
+              title={t("actionRevealFile", { manager: fileManagerName(revealPath) })}
               icon={Icon.Folder}
-              shortcut={{ modifiers: ["ctrl"], key: "o" }}
+              shortcut={{ modifiers: ["ctrl", "shift"], key: "o" }}
               onAction={() => revealClipboardFile(revealPath)}
             />
           ) : null}
           <ClipboardColorActions color={colorDetails} />
           <Action
-            title={pinned ? "取消置顶" : "置顶条目"}
+            title={pinned ? t("actionUnpin") : t("actionPin")}
             icon={Icon.Pin}
             shortcut={{ modifiers: ["ctrl"], key: "p" }}
             onAction={async () => {
@@ -337,25 +347,25 @@ export function ClipboardDetailView({
                 next = (await toggleClipboardItemPin(item.id)) ? !pinned : null;
               }
               if (next === null) {
-                await showToast(Toast.Style.Failure, pinned ? "取消置顶失败" : "置顶失败", "历史记录可能已被删除，请返回列表刷新");
+                await showToast(Toast.Style.Failure, pinned ? t("toastUnpinFailed") : t("toastPinFailed"), t("toastRecordDeletedHint"));
                 return;
               }
               setPinned(next);
-              await showToast(Toast.Style.Success, next ? "已置顶" : "已取消置顶");
+              await showToast(Toast.Style.Success, next ? t("toastPinned") : t("toastUnpinned"));
             }}
           />
           <Action
-            title="删除该记录"
+            title={t("actionDeleteRecord")}
             icon={Icon.Trash}
             shortcut={{ modifiers: ["ctrl"], key: "x" }}
             onAction={async () => {
               if (!(await confirmDeleteItem(item))) return;
               const res = onDeleted ? await onDeleted(item.id) : await deleteClipboardItem(item.id);
               if (res === false) {
-                await showToast(Toast.Style.Failure, "删除失败", "历史记录可能已被删除，请返回列表刷新");
+                await showToast(Toast.Style.Failure, t("toastDeleteFailed"), t("toastRecordDeletedHint"));
                 return;
               }
-              await showToast(Toast.Style.Success, "条目已删除");
+              await showToast(Toast.Style.Success, t("toastRecordDeleted"));
               pop();
             }}
           />
@@ -376,37 +386,38 @@ export function ClipboardItemForm({
   /** 返回 persisted=false 时表单不关闭并提示失败原因 */
   onSaved?: (input: { content: string; pinned: boolean }) => Promise<{ persisted: boolean; message?: string } | void> | void;
 }) {
+  useLocale();
   const { pop } = useNavigation();
   const [content, setContent] = useState<string>(initialItem?.content || "");
   const [pinned, setPinned] = useState<boolean>(Boolean(initialItem?.pinned));
 
   return (
     <Form
-      navigationTitle={initialItem ? "编辑剪贴板内容" : "新建剪贴板内容"}
+      navigationTitle={initialItem ? t("formNavEdit") : t("formNavNew")}
       actions={
         <ActionPanel>
           <Action.SubmitForm
-            title={initialItem ? "保存并写入剪贴板" : "创建并写入剪贴板"}
+            title={initialItem ? t("formSubmitEdit") : t("formSubmitNew")}
             icon={Icon.Checkmark}
             onSubmit={async (values: Record<string, unknown>) => {
               const text = typeof values?.content === "string" ? values.content : content;
               const pin = typeof values?.pinned === "boolean" ? values.pinned : pinned;
               if (!text.trim()) {
-                await showToast(Toast.Style.Failure, "内容不能为空");
+                await showToast(Toast.Style.Failure, t("errContentEmpty"));
                 return;
               }
               try {
                 await Clipboard.copy(text);
               } catch (err: unknown) {
-                await showToast(Toast.Style.Failure, "写入系统剪贴板失败", err instanceof Error ? err.message : "请重试");
+                await showToast(Toast.Style.Failure, t("toastWriteClipboardFailed"), err instanceof Error ? err.message : t("toastRetry"));
                 return;
               }
               const result = await onSaved?.({ content: text, pinned: pin });
               if (result && result.persisted === false) {
-                await showToast(Toast.Style.Failure, "已写入系统剪贴板，但未能保存到历史", result.message || "请重试");
+                await showToast(Toast.Style.Failure, t("toastSavedLocalFailed"), result.message || t("toastRetry"));
                 return;
               }
-              await showToast(Toast.Style.Success, "已保存并同步至系统剪贴板");
+              await showToast(Toast.Style.Success, t("toastSavedSuccess"));
               pop();
             }}
           />
@@ -415,14 +426,14 @@ export function ClipboardItemForm({
     >
       <Form.TextArea
         id="content"
-        title="剪贴板文本内容"
-        placeholder="输入或编辑要写入剪贴板的文本、代码、JSON 或链接..."
+        title={t("formContentLabel")}
+        placeholder={t("formContentPlaceholder")}
         value={content}
         onChange={(v: string) => setContent(String(v ?? ""))}
       />
       <Form.Checkbox
         id="pinned"
-        label="置顶保护该条目"
+        label={t("formPinLabel")}
         value={pinned}
         onChange={(v: boolean) => setPinned(Boolean(v))}
       />
@@ -435,11 +446,12 @@ export function ClipboardItemForm({
  * 布局一标杆：左 48% 历史列表 + 右 52% 真实内容本体预览，零彩色 Emoji 污染
  */
 export default function ClipboardHistoryCommand() {
+  useLocale();
   const { push } = useNavigation();
   const inClient = isRealElectronHost();
   // 不在客户端里运行时列表保持为空并提示，不显示任何示例记录
   const [items, setItems] = useState<ClipboardItem[]>([]);
-  const [loadError, setLoadError] = useState<string>(inClient ? "" : NOT_IN_CLIENT_MESSAGE);
+  const [loadError, setLoadError] = useState<string>(inClient ? "" : t("notInClient"));
   const [filterType, setFilterType] = useState<string>("all");
   const [searchText, setSearchText] = useState<string>("");
   const [selectedId, setSelectedId] = useState<string>("");
@@ -483,7 +495,7 @@ export default function ClipboardHistoryCommand() {
     const ok = await toggleClipboardItemPin(id);
     const data = await reloadItems();
     if (!ok) {
-      await showToast(Toast.Style.Failure, "置顶状态未能保存", "历史记录可能已被删除");
+      await showToast(Toast.Style.Failure, t("toastPinSaveFailed"), t("toastRecordMissing"));
       return null;
     }
     const current = data.find((item) => item.id === id);
@@ -493,26 +505,26 @@ export default function ClipboardHistoryCommand() {
   const handleDelete = async (id: string): Promise<boolean> => {
     const ok = await deleteClipboardItem(id);
     await reloadItems();
-    if (!ok) await showToast(Toast.Style.Failure, "删除失败", "历史记录可能已被删除");
+    if (!ok) await showToast(Toast.Style.Failure, t("toastDeleteFailed"), t("toastRecordMissing"));
     return ok;
   };
 
   const handleClearUnpinned = async () => {
     const unpinned = items.filter((item) => !item.pinned).length;
     const confirmed = await confirmAlert({
-      title: "清空所有未置顶的剪贴板记录？",
-      message: `将删除全部未置顶记录（当前列表中有 ${unpinned} 条），置顶的记录会保留。删除后无法恢复。`,
-      primaryAction: { title: "清空", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("confirmClearTitle"),
+      message: t("confirmClearMsg", { count: unpinned }),
+      primaryAction: { title: t("actionClear"), style: "destructive" },
+      dismissAction: { title: t("actionCancel") }
     });
     if (!confirmed) return;
     try {
       await clearUnpinnedClipboardHistory();
       const data = await reloadItems();
-      await showToast(Toast.Style.Success, "已清空未置顶历史", `保留了 ${data.filter((i) => i.pinned).length} 条置顶条目`);
+      await showToast(Toast.Style.Success, t("toastClearedTitle"), t("toastClearedMsg", { count: data.filter((i) => i.pinned).length }));
     } catch (error) {
       await reloadItems();
-      await showToast(Toast.Style.Failure, "清空历史失败", error instanceof Error ? error.message : String(error));
+      await showToast(Toast.Style.Failure, t("toastClearFailed"), error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -523,13 +535,13 @@ export default function ClipboardHistoryCommand() {
       setHostWarning(getLastHostHistoryError());
       await showToast(
         Toast.Style.Success,
-        res.added ? "已同步当前系统剪贴板" : "系统剪贴板已是最新记录",
-        res.item ? getDisplayTitle(res.item) : "当前系统剪贴板为空"
+        res.added ? t("toastSyncedNew") : t("toastSyncedUpToDate"),
+        res.item ? getDisplayTitle(res.item) : t("toastClipboardEmpty")
       );
     } catch (error) {
       await showToast(
         Toast.Style.Failure,
-        "同步系统剪贴板失败",
+        t("toastSyncFailed"),
         error instanceof Error ? error.message : String(error)
       );
     }
@@ -549,22 +561,22 @@ export default function ClipboardHistoryCommand() {
     if (res.success && res.item) {
       await showToast(
         Toast.Style.Success,
-        `流水粘贴 [第 ${res.offset} 项]`,
-        `剩余 ${res.remaining} 条记录`
+        t("toastSeqPasteTitle", { offset: res.offset }),
+        t("toastSeqPasteRemaining", { count: res.remaining })
       );
     } else if (res.pasteFailed) {
-      await showToast(Toast.Style.Failure, "已复制，但无法粘贴", res.message || "请手动粘贴");
+      await showToast(Toast.Style.Failure, t("toastSeqPasteCantPaste"), res.message || t("toastSeqPasteManual"));
     } else {
-      await showToast(Toast.Style.Failure, "连续流水粘贴已结束", res.message || "无可用条目");
+      await showToast(Toast.Style.Failure, t("toastSeqPasteEnded"), res.message || t("toastSeqPasteNoItems"));
     }
   };
 
   const handleResetSequence = async () => {
     try {
       await resetPasteSequence();
-      await showToast(Toast.Style.Success, "流水粘贴指针已重置", "下一次粘贴将重新从首条开始");
+      await showToast(Toast.Style.Success, t("toastSeqResetTitle"), t("toastSeqResetMsg"));
     } catch (error) {
-      await showToast(Toast.Style.Failure, "重置流水粘贴指针失败", error instanceof Error ? error.message : String(error));
+      await showToast(Toast.Style.Failure, t("toastSeqResetFailed"), error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -584,20 +596,20 @@ export default function ClipboardHistoryCommand() {
     <List
       isLoading={isLoading}
       isShowingDetail={isShowingDetail}
-      searchBarPlaceholder="搜索剪贴板历史（支持拼音缩写、内容、代码、色彩、文件名）..."
+      searchBarPlaceholder={t("searchPlaceholder")}
       onSearchTextChange={setSearchText}
       onSelectionChange={(id) => setSelectedId(id || "")}
       filterBar={{
         summaryText: loadError
-          ? (loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : `读取剪贴板历史失败：${loadError}`)
+          ? (loadError === t("notInClient") ? t("notInClient") : t("summaryLoadFailed", { error: loadError }))
           : hostWarning
-            ? `客户端剪贴板历史读取失败（${hostWarning}），只显示插件保存的 ${items.length} 条`
-            : `历史共 ${items.length} 条 · 置顶 ${pinnedCount} 条`,
+            ? t("summaryHostWarning", { error: hostWarning, count: items.length })
+            : t("summaryNormal", { total: items.length, pinned: pinnedCount }),
         actions: [
           {
             id: "clear",
-            label: "清空非置顶",
-            title: "清空非置顶",
+            label: t("btnClearUnpinned"),
+            title: t("btnClearUnpinned"),
             style: "secondary",
             onAction: () => {
               void handleClearUnpinned();
@@ -605,8 +617,8 @@ export default function ClipboardHistoryCommand() {
           },
           {
             id: "sync",
-            label: "同步剪贴板",
-            title: "同步剪贴板",
+            label: t("btnSyncClipboard"),
+            title: t("btnSyncClipboard"),
             style: "secondary",
             onAction: () => {
               void handleSyncSystemClipboard();
@@ -615,14 +627,14 @@ export default function ClipboardHistoryCommand() {
         ]
       }}
       actions={
-        <ActionPanel title="剪贴板全局操作">
+        <ActionPanel title={t("panelGlobalActions")}>
           <Action
-            title="读取并同步当前系统剪贴板"
+            title={t("actionSyncClipboard")}
             icon={Icon.Repeat}
             onAction={handleSyncSystemClipboard}
           />
           <Action.Push
-            title="新建剪贴板记录..."
+            title={t("actionNewRecord")}
             icon={Icon.Plus}
             shortcut={{ modifiers: ["ctrl"], key: "n" }}
             target={<ClipboardItemForm onSaved={saveFromForm()} />}
@@ -631,31 +643,31 @@ export default function ClipboardHistoryCommand() {
       }
       searchBarAccessory={
         <List.Dropdown
-          tooltip="按类型筛选"
+          tooltip={t("dropdownTooltip")}
           value={filterType}
           onChange={setFilterType}
         >
-          <List.Dropdown.Item title="全部格式" value="all" icon={Icon.List} />
-          <List.Dropdown.Item title="已置顶" value="pinned" icon={Icon.Pin} />
-          <List.Dropdown.Item title="色彩代码" value="color" icon={Icon.Eye} />
-          <List.Dropdown.Item title="JSON 数据" value="json" icon={Icon.Code} />
-          <List.Dropdown.Item title="代码片段" value="code" icon={Icon.Terminal} />
-          <List.Dropdown.Item title="链接网址" value="link" icon={Icon.Globe} />
-          <List.Dropdown.Item title="文件列表" value="files" icon={Icon.Folder} />
-          <List.Dropdown.Item title="图片" value="image" icon={Icon.Image} />
-          <List.Dropdown.Item title="纯文本" value="text" icon={Icon.Document} />
+          <List.Dropdown.Item title={t("filterAll")} value="all" icon={Icon.List} />
+          <List.Dropdown.Item title={t("filterPinned")} value="pinned" icon={Icon.Pin} />
+          <List.Dropdown.Item title={t("filterColor")} value="color" icon={Icon.Eye} />
+          <List.Dropdown.Item title={t("filterJson")} value="json" icon={Icon.Code} />
+          <List.Dropdown.Item title={t("filterCode")} value="code" icon={Icon.Terminal} />
+          <List.Dropdown.Item title={t("filterLink")} value="link" icon={Icon.Globe} />
+          <List.Dropdown.Item title={t("filterFiles")} value="files" icon={Icon.Folder} />
+          <List.Dropdown.Item title={t("filterImage")} value="image" icon={Icon.Image} />
+          <List.Dropdown.Item title={t("filterText")} value="text" icon={Icon.Document} />
         </List.Dropdown>
       }
     >
       {loadError && items.length === 0 ? (
         <List.Item
           id="load-error"
-          title={loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : "无法读取剪贴板历史"}
-          subtitle={loadError === NOT_IN_CLIENT_MESSAGE ? "在 ZTools 中打开「剪贴板历史」后查看" : loadError}
+          title={loadError === t("notInClient") ? t("notInClient") : t("loadErrorTitle")}
+          subtitle={loadError === t("notInClient") ? t("loadErrorClientSub") : loadError}
           icon={Icon.ExclamationMark}
         />
       ) : null}
-      <List.Section title={`历史记录 (${filteredItems.length} 条)`}>
+      <List.Section title={t("sectionHistoryTitle", { count: filteredItems.length })}>
         {filteredItems.map(item => {
           const colorDetails = item.type === "color" ? parseColorDetails(item.content) : null;
           const sensitivity = maskSensitiveContent(item.content);
@@ -671,9 +683,9 @@ export default function ClipboardHistoryCommand() {
               subtitle={formatCopiedTime(item.copiedAt)}
               icon={getItemIcon(item)}
               accessories={[
-                ...(item.pinned ? [{ tag: { value: "置顶" }, tooltip: "已置顶" }] : []),
-                ...(isItemSensitive ? [{ tag: { value: "敏感", color: Color.Red } }] : []),
-                ...(unavailable ? [{ tag: { value: "本机不可用" }, tooltip: "文件来自其他系统，在本机不存在" }] : []),
+                ...(item.pinned ? [{ tag: { value: t("tagPinned") }, tooltip: t("metaPinned") }] : []),
+                ...(isItemSensitive ? [{ tag: { value: t("tagSensitive"), color: Color.Red } }] : []),
+                ...(unavailable ? [{ tag: { value: t("tagUnavailable") }, tooltip: t("tagUnavailableTooltip") }] : []),
                 { text: typeLabel(item.type) }
               ]}
               detail={
@@ -681,11 +693,11 @@ export default function ClipboardHistoryCommand() {
                   markdown={getClipboardMarkdown(item)}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="类型" text={typeLabel(item.type)} icon={Icon.Document} />
-                      <List.Item.Detail.Metadata.Label title="复制时间" text={formatCopiedTime(item.copiedAt)} icon={Icon.Clock} />
-                      <List.Item.Detail.Metadata.Label title="置顶" text={item.pinned ? "已置顶" : "普通"} icon={Icon.Pin} />
+                      <List.Item.Detail.Metadata.Label title={t("metaType")} text={typeLabel(item.type)} icon={Icon.Document} />
+                      <List.Item.Detail.Metadata.Label title={t("metaCopiedAt")} text={formatCopiedTime(item.copiedAt)} icon={Icon.Clock} />
+                      <List.Item.Detail.Metadata.Label title={t("metaPinShort")} text={item.pinned ? t("metaPinned") : t("metaPinNormal")} icon={Icon.Pin} />
                       {item.sourceAppName ? (
-                        <List.Item.Detail.Metadata.Label title="来源应用" text={item.sourceAppName} icon={Icon.AppWindow} />
+                        <List.Item.Detail.Metadata.Label title={t("metaSourceApp")} text={item.sourceAppName} icon={Icon.AppWindow} />
                       ) : null}
                       {colorDetails ? (
                         <>
@@ -694,27 +706,27 @@ export default function ClipboardHistoryCommand() {
                         </>
                       ) : null}
                       {item.charCount !== undefined && (
-                        <List.Item.Detail.Metadata.Label title="字符数" text={`${item.charCount}`} icon={Icon.Pencil} />
+                        <List.Item.Detail.Metadata.Label title={t("metaCharCountShort")} text={`${item.charCount}`} icon={Icon.Pencil} />
                       )}
                       {item.lineCount !== undefined && (
-                        <List.Item.Detail.Metadata.Label title="行数" text={`${item.lineCount}`} icon={Icon.List} />
+                        <List.Item.Detail.Metadata.Label title={t("metaLineCountShort")} text={`${item.lineCount}`} icon={Icon.List} />
                       )}
                       {isItemSensitive ? (
-                        <List.Item.Detail.Metadata.Label title="安全状态" text="已脱敏遮罩" icon={Icon.Lock} />
+                        <List.Item.Detail.Metadata.Label title={t("metaSecurityStatus")} text={t("metaSecurityMasked")} icon={Icon.Lock} />
                       ) : null}
                       {unavailable ? (
-                        <List.Item.Detail.Metadata.Label title="文件状态" text="来自其他系统，本机不可用" icon={Icon.ExclamationMark} />
+                        <List.Item.Detail.Metadata.Label title={t("metaFileStatus")} text={t("metaFileForeign")} icon={Icon.ExclamationMark} />
                       ) : null}
                     </List.Item.Detail.Metadata>
                   }
                 />
               }
               actions={
-                <ActionPanel title="剪贴板动作">
+                <ActionPanel title={t("panelClipboardActions")}>
                   <ItemPrimaryActions item={item} />
 
                   <Action.Push
-                    title="全屏查看详情"
+                    title={t("actionFullDetail")}
                     target={
                       <ClipboardDetailView
                         item={item}
@@ -727,21 +739,21 @@ export default function ClipboardHistoryCommand() {
                   />
 
                   <Action
-                    title="连续流水粘贴下一个"
+                    title={t("actionSeqPasteNext")}
                     icon={Icon.ArrowRight}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "v" }}
                     onAction={handlePasteSequential}
                   />
 
                   <Action
-                    title="重置流水粘贴指针"
+                    title={t("actionResetSeq")}
                     icon={Icon.RotateClockwise}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "z" }}
                     onAction={handleResetSequence}
                   />
 
                   <Action
-                    title={isShowingDetail ? "关闭右侧详情分栏" : "展开右侧详情分栏"}
+                    title={isShowingDetail ? t("actionHideDetail") : t("actionShowDetail")}
                     icon={Icon.SidebarRight}
                     shortcut={{ modifiers: ["ctrl"], key: "b" }}
                     onAction={() => setIsShowingDetail(!isShowingDetail)}
@@ -749,16 +761,16 @@ export default function ClipboardHistoryCommand() {
 
                   {revealPath ? (
                     <Action
-                      title={`在${fileManagerName(revealPath)}中显示文件`}
+                      title={t("actionRevealFile", { manager: fileManagerName(revealPath) })}
                       icon={Icon.Folder}
-                      shortcut={{ modifiers: ["ctrl"], key: "o" }}
+                      shortcut={{ modifiers: ["ctrl", "shift"], key: "o" }}
                       onAction={() => revealClipboardFile(revealPath)}
                     />
                   ) : null}
 
                   {item.type === "link" ? (
                     <Action.OpenInBrowser
-                      title="在浏览器中打开网址"
+                      title={t("actionOpenUrlInBrowser")}
                       url={item.content}
                       icon={Icon.Globe}
                       shortcut={{ modifiers: ["ctrl"], key: "o" }}
@@ -768,26 +780,26 @@ export default function ClipboardHistoryCommand() {
                   <ClipboardColorActions color={colorDetails} />
 
                   <Action.Push
-                    title="编辑该剪贴板内容..."
+                    title={t("actionEditRecord")}
                     icon={Icon.Pencil}
                     shortcut={{ modifiers: ["ctrl"], key: "e" }}
                     target={<ClipboardItemForm initialItem={item} onSaved={saveFromForm(item)} />}
                   />
                   <Action.Push
-                    title="新建剪贴板记录..."
+                    title={t("actionNewRecord")}
                     icon={Icon.Plus}
                     shortcut={{ modifiers: ["ctrl"], key: "n" }}
                     target={<ClipboardItemForm onSaved={saveFromForm()} />}
                   />
                   <Action
-                    title="读取并同步当前系统剪贴板"
+                    title={t("actionSyncClipboard")}
                     icon={Icon.Repeat}
                     shortcut={{ modifiers: ["ctrl"], key: "r" }}
                     onAction={handleSyncSystemClipboard}
                   />
 
                   <Action
-                    title={item.pinned ? "取消置顶" : "置顶条目"}
+                    title={item.pinned ? t("actionUnpin") : t("actionPin")}
                     icon={Icon.Pin}
                     shortcut={{ modifiers: ["ctrl"], key: "p" }}
                     onAction={async () => {
@@ -796,7 +808,7 @@ export default function ClipboardHistoryCommand() {
                   />
 
                   <Action
-                    title="删除该记录"
+                    title={t("actionDeleteRecord")}
                     icon={Icon.Trash}
                     shortcut={{ modifiers: ["ctrl"], key: "x" }}
                     onAction={async () => {
@@ -806,7 +818,7 @@ export default function ClipboardHistoryCommand() {
                   />
 
                   <Action
-                    title="清空所有未置顶记录"
+                    title={t("actionClearUnpinnedAll")}
                     icon={Icon.Trash}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "x" }}
                     onAction={handleClearUnpinned}

@@ -1,9 +1,13 @@
 {
   "id": "regex-cron",
   "name": "正则与Cron",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "中国本土常用正则速查与实时测试高亮，支持Cron表达式中文语义解析与未来5次执行时间推算",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -60,5 +64,49 @@
         "cron计算器"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Regex & Cron Toolkit",
+      "description": "Browse common regex presets, test patterns live with capture group highlighting, and explain Cron expressions with the next 5 scheduled run times.",
+      "keywords": [
+        "regex",
+        "regexp",
+        "cron",
+        "crontab",
+        "tester",
+        "schedule"
+      ],
+      "features": {
+        "regex-dict": {
+          "explain": "Browse and copy common business regex presets (ID, phone, tax ID, license plate, etc.)",
+          "cmds": [
+            "regex",
+            "regex presets",
+            "common regex",
+            "regexp"
+          ]
+        },
+        "regex-tester": {
+          "explain": "Test regular expressions in real time with capture group highlighting",
+          "cmds": [
+            "regex test",
+            "regex tester",
+            "test regex",
+            "regexp debug"
+          ]
+        },
+        "cron-explainer": {
+          "explain": "Explain Cron expressions and preview the next 5 execution times",
+          "cmds": [
+            "cron",
+            "crontab",
+            "cron parser",
+            "cron schedule"
+          ]
+        }
+      }
+    }
+  }
 }

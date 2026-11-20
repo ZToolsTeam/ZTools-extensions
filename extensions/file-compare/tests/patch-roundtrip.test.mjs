@@ -13,8 +13,8 @@ function applyPatch(left, right, patch) {
   try {
     fs.writeFileSync(path.join(dir, 'text.txt'), left)
     fs.writeFileSync(path.join(dir, 'change.patch'), patch)
-    execFileSync('git', ['apply', '--check', '--no-index', '-p0', 'change.patch'], { cwd: dir })
-    execFileSync('git', ['apply', '--no-index', '-p0', 'change.patch'], { cwd: dir })
+    execFileSync('git', ['-c', 'core.autocrlf=false', 'apply', '--check', '--no-index', '-p0', 'change.patch'], { cwd: dir })
+    execFileSync('git', ['-c', 'core.autocrlf=false', 'apply', '--no-index', '-p0', 'change.patch'], { cwd: dir })
     assert.equal(fs.readFileSync(path.join(dir, 'text.txt'), 'utf8'), right)
   } finally { fs.rmSync(dir, { recursive: true, force: true }) }
 }

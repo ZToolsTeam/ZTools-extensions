@@ -1,0 +1,108 @@
+{
+  "id": "formula-ocr",
+  "name": "公式识别",
+  "description": "框选屏幕、剪贴板或图片里的数学公式，在本机识别成 LaTeX，支持印刷体与手写，结果直接复制",
+  "version": "1.1.3",
+  "author": "ZTools Team",
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "alias": "latex",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
+  "permissions": [
+    "clipboard",
+    "screen",
+    "dialog",
+    "fs",
+    "shell",
+    "notification"
+  ],
+  "requireAdmin": false,
+  "nativeComponents": [],
+  "features": [
+    {
+      "code": "formula-region",
+      "explain": "框选屏幕上的公式，识别成 LaTeX 并复制",
+      "mode": "no-view",
+      "cmds": [
+        "截图识别公式",
+        "框选识别公式",
+        "公式截图",
+        "截图转 LaTeX"
+      ]
+    },
+    {
+      "code": "formula-clipboard",
+      "explain": "识别剪贴板图片里的公式，LaTeX 复制回剪贴板",
+      "mode": "no-view",
+      "cmds": [
+        "识别剪贴板公式",
+        "剪贴板公式转 LaTeX"
+      ]
+    },
+    {
+      "code": "formula-workbench",
+      "explain": "识别图片里的公式，预览排版效果，复制 LaTeX",
+      "cmds": [
+        "公式识别",
+        "公式转 LaTeX",
+        "图片转 LaTeX",
+        "数学公式识别",
+        "LaTeX OCR"
+      ]
+    }
+  ],
+  "targets": [
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "minAppVersion": "1.1.8.11",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Math Formula OCR",
+      "description": "Capture screen regions, clipboard images, or files to recognize printed and handwritten math formulas into LaTeX offline and copy automatically.",
+      "keywords": [
+        "formula",
+        "latex",
+        "ocr",
+        "math",
+        "equation",
+        "screenshot"
+      ],
+      "features": {
+        "formula-region": {
+          "explain": "Select a screen region to recognize math formulas as LaTeX and copy",
+          "cmds": [
+            "formula capture",
+            "screenshot latex",
+            "math ocr region"
+          ]
+        },
+        "formula-clipboard": {
+          "explain": "Recognize math formulas from clipboard images and copy LaTeX",
+          "cmds": [
+            "clipboard formula",
+            "clipboard latex",
+            "paste formula ocr"
+          ]
+        },
+        "formula-workbench": {
+          "explain": "Recognize formulas from image files, preview rendering, and copy LaTeX",
+          "cmds": [
+            "formula ocr",
+            "latex ocr",
+            "math to latex",
+            "image to latex"
+          ]
+        }
+      }
+    }
+  }
+}

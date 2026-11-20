@@ -8,6 +8,7 @@
  * - 只把用户勾选的文件移入回收站，失败如实返回
  */
 
+import { t } from './i18n.js'
 import {
   formatBytes,
   getRealFileSize,
@@ -114,6 +115,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp(
 )
 export const FORBIDDEN_REASON =
   'QQ 聊天记录与账号数据库 (Msg3.0.db / nt_msg.db / Registry.db / Info.db) 受保护，不会被清理'
+export const getForbiddenReason = (): string => t('forbiddenReason')
 
 export interface OfficialQQGroupRule {
   groupId: QQGroupId
@@ -130,197 +132,183 @@ export interface OfficialQQGroupRule {
 /**
  * 12 大官方清理分组 (201~213) + 999 核心聊天数据库保护区，分组规则与 Windows 原生组件一致
  */
-export const OFFICIAL_QQ_GROUP_RULES: OfficialQQGroupRule[] = [
-  {
-    groupId: 203,
-    id: 'qq-group-203-logs',
-    name: 'QQ / TIM 运行跟踪日志',
-    shortName: '运行跟踪日志 (.tlg/.log)',
-    color: '#64748b',
-    category: 'logs',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description:
-      'QQ、TIM 与腾讯公共组件每日生成的跟踪诊断日志 (Tencent\\Logs\\QQ.tlg、TIM.tlg、%user%\\Log、nt_data\\Log)，可以清理'
-  },
-  {
-    groupId: 201,
-    id: 'qq-group-201-images',
-    name: '好友与群聊图片缓存',
-    shortName: '聊天图片 (Image/Pic)',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      '群聊与好友会话中的图片文件 (Tencent Files\\%user%\\Image\\Group/C2C、nt_qq\\nt_data\\Pic)，清理后聊天里的图片可能无法再查看，默认不勾选'
-  },
-  {
-    groupId: 208,
-    id: 'qq-group-208-avatars',
-    name: '好友与群头像缓存库',
-    shortName: '头像缓存 (Head/MiscHead)',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description:
-      '本地缓存的好友头像、群头像与历史动态头像包 (MiscHead.db、QQHead、GroupHead、PushHead、SelCreateGroupHead、nt_data\\Head)，打开会话时自动刷新'
-  },
-  {
-    groupId: 202,
-    id: 'qq-group-202-cache',
-    name: '账号运行与网页临时缓存',
-    shortName: '账号运行缓存 (AppWebCache)',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description:
-      'QQ 账号目录下的网页容器缓存、离线资源包与广告推广缓冲 (AppWebCache、Temp、OfflinePackage、Ads、CloudRes、VasscUpdate、nt_temp)'
-  },
-  {
-    groupId: 209,
-    id: 'qq-group-209-app-cache',
-    name: 'QQ / TIM 系统级内核与应用缓存',
-    shortName: '系统内核缓存 (Roaming)',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description:
-      'Roaming\\Tencent\\QQ 与 TIM 下的 WebKit 渲染缓存、安装包残留与 GPU 着色器缓存 (webkit_cache、STemp、AuTemp、InstallPackageDR、Skins、GPUCache)'
-  },
-  {
-    groupId: 211,
-    id: 'qq-group-211-browser-miniapp',
-    name: '内置浏览器、小程序与频道缓存',
-    shortName: '内置浏览器/小程序',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'recommended',
-    defaultChecked: true,
-    description:
-      'QQ 内置 MiniBrowser、小程序引擎、QQ 频道与轻游戏缓存 (Local\\Tencent\\MiniBrowser、QQGuild、QQApp、TIMApp、Partitions、miniapp)'
-  },
-  {
-    groupId: 205,
-    id: 'qq-group-205-videos',
-    name: '聊天短视频与群视频缓存',
-    shortName: '聊天视频 (Video)',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      '聊天中收发或缓冲的视频文件 (Tencent Files\\%user%\\Video、nt_qq\\nt_data\\Video)，清理后可能无法再播放，默认不勾选'
-  },
-  {
-    groupId: 206,
-    id: 'qq-group-206-voice',
-    name: '聊天语音消息分片',
-    shortName: '聊天语音 (Audio/Ptt)',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      '好友与群聊收发的语音消息音频文件 (Tencent Files\\%user%\\Audio、Voice、nt_qq\\nt_data\\Ptt)，清理后可能无法再播放，默认不勾选'
-  },
-  {
-    groupId: 207,
-    id: 'qq-group-207-emoji-cache',
-    name: '接收表情与推荐贴纸缓存',
-    shortName: '接收表情缓存',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description:
-      '聊天中接收的动态表情缓存与智能推荐表情包 (CustomFaceRecv、ExpressionRecommend、RecommendFace、Emoji\\emoji_cache)，不含用户收藏表情'
-  },
-  {
-    groupId: 212,
-    id: 'qq-group-212-fav-emoji',
-    name: '用户收藏的自定义表情包',
-    shortName: '收藏表情 (CustomFace)',
-    color: '#64748b',
-    category: 'files',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      '用户主动收藏的自定义表情数据库与收藏夹资源 (CustomFace.dbc、CustomFace.db、CustomFace、MyCollection)，清理后无法恢复，默认不勾选'
-  },
-  {
-    groupId: 204,
-    id: 'qq-group-204-file-recv',
-    name: '聊天接收与云端下载文件',
-    shortName: '接收的文件 (FileRecv)',
-    color: '#64748b',
-    category: 'files',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      '通过 QQ / TIM 接收的办公文档、压缩包与传输文件 (Tencent Files\\%user%\\FileRecv、FileCloud、nt_data\\File)，请仔细核对后再勾选'
-  },
-  {
-    groupId: 213,
-    id: 'qq-group-213-session',
-    name: '登录会话与快速状态凭证',
-    shortName: '登录会话数据',
-    color: '#64748b',
-    category: 'files',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description:
-      'QQ / TIM 本地登录态与快速唤醒缓存 (loginrdo.cache、urdo.cache、rdo.cache、Session Storage)，清理后可能需要重新扫码登录，默认不勾选'
-  },
-  {
-    groupId: 999,
-    id: 'qq-group-999-protected-db',
-    name: '核心聊天记录与注册数据库保护区 (Msg3.0.db / nt_msg.db)',
-    shortName: '核心聊天数据库 (受保护)',
-    color: '#64748b',
-    category: 'protected',
-    riskLevel: 'protected',
-    defaultChecked: false,
-    description:
-      '存放所有 QQ / TIM 聊天文字记录、群组关系与本地注册表的加密 SQLite 数据库 (Msg3.0.db、Msg3.0index.db、nt_msg.db、Registry.db、Info.db)，受保护，不会被清理'
-  }
-]
+export function getOfficialQQGroupRules(): OfficialQQGroupRule[] {
+  return [
+    {
+      groupId: 203,
+      id: 'qq-group-203-logs',
+      name: t('g203Name'),
+      shortName: t('g203Short'),
+      color: '#64748b',
+      category: 'logs',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('g203Desc')
+    },
+    {
+      groupId: 201,
+      id: 'qq-group-201-images',
+      name: t('g201Name'),
+      shortName: t('g201Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g201Desc')
+    },
+    {
+      groupId: 208,
+      id: 'qq-group-208-avatars',
+      name: t('g208Name'),
+      shortName: t('g208Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('g208Desc')
+    },
+    {
+      groupId: 202,
+      id: 'qq-group-202-cache',
+      name: t('g202Name'),
+      shortName: t('g202Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('g202Desc')
+    },
+    {
+      groupId: 209,
+      id: 'qq-group-209-app-cache',
+      name: t('g209Name'),
+      shortName: t('g209Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('g209Desc')
+    },
+    {
+      groupId: 211,
+      id: 'qq-group-211-browser-miniapp',
+      name: t('g211Name'),
+      shortName: t('g211Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'recommended',
+      defaultChecked: true,
+      description: t('g211Desc')
+    },
+    {
+      groupId: 205,
+      id: 'qq-group-205-videos',
+      name: t('g205Name'),
+      shortName: t('g205Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g205Desc')
+    },
+    {
+      groupId: 206,
+      id: 'qq-group-206-voice',
+      name: t('g206Name'),
+      shortName: t('g206Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g206Desc')
+    },
+    {
+      groupId: 207,
+      id: 'qq-group-207-emoji-cache',
+      name: t('g207Name'),
+      shortName: t('g207Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('g207Desc')
+    },
+    {
+      groupId: 212,
+      id: 'qq-group-212-fav-emoji',
+      name: t('g212Name'),
+      shortName: t('g212Short'),
+      color: '#64748b',
+      category: 'files',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g212Desc')
+    },
+    {
+      groupId: 204,
+      id: 'qq-group-204-file-recv',
+      name: t('g204Name'),
+      shortName: t('g204Short'),
+      color: '#64748b',
+      category: 'files',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g204Desc')
+    },
+    {
+      groupId: 213,
+      id: 'qq-group-213-session',
+      name: t('g213Name'),
+      shortName: t('g213Short'),
+      color: '#64748b',
+      category: 'files',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('g213Desc')
+    },
+    {
+      groupId: 999,
+      id: 'qq-group-999-protected-db',
+      name: t('g999Name'),
+      shortName: t('g999Short'),
+      color: '#64748b',
+      category: 'protected',
+      riskLevel: 'protected',
+      defaultChecked: false,
+      description: t('g999Desc')
+    }
+  ]
+}
 
-const PRESET_ITEMS: CapabilityActionItem[] = [
-  {
-    id: 'qq-info-detect',
-    title: '自动侦测本机 QQ / NTQQ / TIM 数据存储路径与 QQ 号 (UIN) 列表',
-    subtitle: '穿透扫描默认文档 Tencent Files、Roaming\\Tencent\\Users 与符号链接迁移目录',
-    tag: '账号侦测',
-    method: 'QueryQQInfo',
-    params: {}
-  },
-  {
-    id: 'qq-scan-junk',
-    title: '深度扫描 12 大官方分组 (日志.tlg/群聊图片/头像库/内核缓存/视频/语音/接收文件)',
-    subtitle: '按 12 类缓存分别统计可清理空间，聊天记录数据库 (Msg3.0.db / nt_msg.db) 始终受保护、不会被清理',
-    tag: '专项扫描',
-    method: 'StartScanAsync',
-    params: { scanScope: 'safe_cache' }
-  },
-  {
-    id: 'qq-stats-summary',
-    title: '查看各 QQ 号与 12 大清理分组空间占比明细',
-    subtitle: '支持按 QQ 号 (qqNumber) 与修改时间 (minModifiedDate: 0/1/2/3) 多维筛选',
-    tag: '空间统计',
-    method: 'GetTotalStats',
-    params: {}
-  }
-]
+export const OFFICIAL_QQ_GROUP_RULES: OfficialQQGroupRule[] = getOfficialQQGroupRules()
 
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return PRESET_ITEMS.map(item => ({
-    ...item,
-    params: { ...item.params }
-  }))
+  return [
+    {
+      id: 'qq-info-detect',
+      title: t('preset1Title'),
+      subtitle: t('preset1Sub'),
+      tag: t('preset1Tag'),
+      method: 'QueryQQInfo',
+      params: {}
+    },
+    {
+      id: 'qq-scan-junk',
+      title: t('preset2Title'),
+      subtitle: t('preset2Sub'),
+      tag: t('preset2Tag'),
+      method: 'StartScanAsync',
+      params: { scanScope: 'safe_cache' }
+    },
+    {
+      id: 'qq-stats-summary',
+      title: t('preset3Title'),
+      subtitle: t('preset3Sub'),
+      tag: t('preset3Tag'),
+      method: 'GetTotalStats',
+      params: {}
+    }
+  ]
 }
 
 export function filterCapabilityItems(items: CapabilityActionItem[], query: string): CapabilityActionItem[] {
@@ -339,10 +327,10 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 }
 
 export function formatDateTime(mtimeSeconds: number): string {
-  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return '未知日期'
+  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return t('unknownDate')
   const ms = mtimeSeconds > 1e12 ? mtimeSeconds : mtimeSeconds * 1000
   const d = new Date(ms)
-  if (Number.isNaN(d.getTime())) return '未知日期'
+  if (Number.isNaN(d.getTime())) return t('unknownDate')
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
@@ -350,7 +338,7 @@ export function formatDateTime(mtimeSeconds: number): string {
 }
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
-  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, FORBIDDEN_REASON)
+  return validateNativeCapabilityPayload(method, params, FORBIDDEN_TARGET_PATTERN, getForbiddenReason())
 }
 
 export async function invokeNativeCapability(
@@ -360,7 +348,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('paramValidationFailed'))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -388,7 +376,8 @@ export function classifyQQFilePath(fullPath: string): {
   const lower = norm.toLowerCase()
 
   // 1. 提取所属 QQ 号 (UIN: 5~12 位数字)
-  let accountId = '公共组件 (Shared)'
+  const sharedId = t('sharedAccountId')
+  let accountId = sharedId
   const tfMatch = norm.match(/Tencent Files\\(\d{5,12})(?:\\|$)/i)
   const usersMatch = norm.match(/\\Tencent\\Users\\(\d{5,12})(?:\\|$)/i)
   if (tfMatch && tfMatch[1]) {
@@ -403,7 +392,7 @@ export function classifyQQFilePath(fullPath: string): {
     clientType = 'QQNT'
   } else if (lower.includes('\\tim\\') || lower.includes('tim.tlg') || lower.includes('timlibsdk')) {
     clientType = 'TIM'
-  } else if (accountId === '公共组件 (Shared)') {
+  } else if (accountId === sharedId) {
     clientType = 'Shared'
   }
 
@@ -592,6 +581,8 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     return lower
   }
 
+  const groupRules = getOfficialQQGroupRules()
+  const sharedAccountId = t('sharedAccountId')
   const registerScannedFile = (fullPath: string, sizeBytes: number, mtime = 0) => {
     if (!fullPath || sizeBytes <= 0) return
     const key = canonicalizeQQKey(fullPath)
@@ -604,12 +595,11 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     const parentDir = lastSep > 0 ? cleanPath.slice(0, lastSep) : cleanPath
 
     const cls = classifyQQFilePath(cleanPath)
-    if (cls.accountId !== '公共组件 (Shared)') {
+    if (cls.accountId !== sharedAccountId) {
       detectedAccountSet.add(cls.accountId)
     }
 
-    const ruleMeta =
-      OFFICIAL_QQ_GROUP_RULES.find(r => r.groupId === cls.groupId) || OFFICIAL_QQ_GROUP_RULES[0]
+    const ruleMeta = groupRules.find(r => r.groupId === cls.groupId) || groupRules[0]
 
     allFiles.push({
       id: `qq-file-${allFiles.length}`,
@@ -735,7 +725,7 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
   allFiles.sort((a, b) => b.sizeBytes - a.sizeBytes)
 
   // 构建 12 大官方清理分组 + 1 个核心聊天数据库保护区
-  const categories: QQCleanCategoryItem[] = OFFICIAL_QQ_GROUP_RULES.map(rule => {
+  const categories: QQCleanCategoryItem[] = groupRules.map(rule => {
     const catFiles = allFiles.filter(f => f.groupId === rule.groupId)
     const extra = extraGroupTotals.get(rule.groupId)
     const sampledBytes = catFiles.reduce((acc, f) => acc + f.sizeBytes, 0)
@@ -816,9 +806,9 @@ export async function fetchQQCleanSnapshot(hostOverride?: Record<string, unknown
     .map(([accountId, stat]) => ({
       accountId,
       label:
-        accountId === '公共组件 (Shared)'
-          ? '腾讯公共组件与日志缓存 (Logs / QQ / TIM)'
-          : `QQ 号 (UIN): ${accountId}`,
+        accountId === sharedAccountId
+          ? t('sharedAccountLabel')
+          : t('qqAccountLabel', { id: accountId }),
       clientType: stat.clientType,
       rootDir: stat.rootDir,
       fileCount: stat.fileCount,
@@ -911,7 +901,7 @@ export async function executeQQCleanup(
     skippedPaths: []
   }
   if (unique.length === 0) {
-    return { ...result, error: '没有勾选任何文件' }
+    return { ...result, error: t('noFilesCheckedTitle') }
   }
 
   for (const targetPath of unique) {
@@ -926,17 +916,17 @@ export async function executeQQCleanup(
       result.freedBytes += sizeOf.get(targetPath) || 0
       result.deletedPaths.push(targetPath)
     } else {
-      result.failed.push({ path: targetPath, error: res.error || '移入回收站失败' })
+      result.failed.push({ path: targetPath, error: res.error || t('trashFailed') })
     }
   }
 
   result.failedCount = result.failed.length
   if (result.deletedCount === 0 && result.failedCount === 0) {
-    return { ...result, error: '勾选的文件都是受保护的聊天数据库，没有清理任何文件' }
+    return { ...result, error: t('allProtectedSkipped') }
   }
   result.ok = result.failedCount === 0
   if (!result.ok) {
-    result.error = `${result.failedCount} 个文件未能移入回收站：${result.failed[0].error}`
+    result.error = t('partialTrashFailed', { count: result.failedCount, error: result.failed[0].error })
   }
   return result
 }
@@ -946,18 +936,22 @@ export function summarizeQQCleanup(res: QQCleanupResult): { success: boolean; ti
   if (res.ok) {
     return {
       success: true,
-      title: `已移入回收站 ${res.deletedCount} 个文件`,
-      message: `共 ${formatBytes(res.freedBytes)}，清空回收站后才会释放磁盘空间`
+      title: t('summaryAllOkTitle', { count: res.deletedCount }),
+      message: t('summaryAllOkMsg', { bytes: formatBytes(res.freedBytes) })
     }
   }
   if (res.deletedCount > 0) {
     return {
       success: false,
-      title: `${res.failedCount} 个文件未能移入回收站`,
-      message: `已移入回收站 ${res.deletedCount} 个文件（${formatBytes(res.freedBytes)}）；失败原因：${res.failed[0]?.error || '未知'}`
+      title: t('summaryPartialTitle', { count: res.failedCount }),
+      message: t('summaryPartialMsg', {
+        count: res.deletedCount,
+        bytes: formatBytes(res.freedBytes),
+        error: res.failed[0]?.error || t('unknownError')
+      })
     }
   }
-  return { success: false, title: '清理失败', message: res.error || '文件未能移入回收站' }
+  return { success: false, title: t('summaryFailTitle'), message: res.error || t('summaryFailMsg') }
 }
 
 export async function openQQDirectory(dirPath: string, hostOverride?: unknown): Promise<boolean> {

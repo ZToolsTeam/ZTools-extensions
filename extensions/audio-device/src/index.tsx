@@ -1,15 +1,17 @@
-import React, { Action, ActionPanel, Clipboard, Detail, Form, Icon, List, Toast, showToast, useEffect, useMemo, useNavigation, useRef, useState } from '@ztools/declarative-ui'
+import React, { Action, ActionPanel, Clipboard, Detail, Form, Icon, List, Toast, showToast, useEffect, useLocale, useMemo, useNavigation, useRef, useState } from '@ztools/declarative-ui'
 import { AudioDeviceManager, transportLabel } from './audio-service.js'
 import type { AudioDevice, IOType } from './types.js'
+import { t } from './i18n.js'
 export * from './types.js'
 export * from './audio-service.js'
 
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 function volumeText(device: AudioDevice): string {
-  if (device.isMuted) return '已静音'
-  return device.volume === undefined ? '设备不提供音量状态' : `音量 ${device.volume}%`
+  if (device.isMuted) return t('muted')
+  return device.volume === undefined ? t('volumeUnsupported') : t('volumePercent', { volume: device.volume })
 }
 export function AudioVolumeForm({ device, manager, onSaved }: { device: AudioDevice; manager: AudioDeviceManager; onSaved: () => void }) {
+  useLocale()
   const [volume, setVolume] = useState(String(device.volume ?? ''))
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
@@ -18,34 +20,36 @@ export function AudioVolumeForm({ device, manager, onSaved }: { device: AudioDev
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const submit = async () => {
     if (pending.current) return
-    if (!volume.trim()) { await showToast(Toast.Style.Failure, '请输入音量'); return }
+    if (!volume.trim()) { await showToast(Toast.Style.Failure, t('enterVolumePrompt')); return }
     pending.current = true; setBusy(true)
     try {
       const actual = await manager.setDeviceVolume(device.id, Number(volume))
-      if (mounted.current) { onSaved(); await showToast(Toast.Style.Success, `音量已设为 ${actual.volume}%`); pop() }
-    } catch (error) { if (mounted.current) await showToast(Toast.Style.Failure, '音量设置失败', message(error)) }
+      if (mounted.current) { onSaved(); await showToast(Toast.Style.Success, t('volumeSetToast', { volume: actual.volume ?? 0 })); pop() }
+    } catch (error) { if (mounted.current) await showToast(Toast.Style.Failure, t('volumeSetFailed'), message(error)) }
     finally { pending.current = false; if (mounted.current) setBusy(false) }
   }
-  return <Form navigationTitle={`调节音量：${device.name}`} isLoading={busy} actions={<ActionPanel><Action.SubmitForm title="应用音量" onSubmit={submit} /></ActionPanel>}>
-    <Form.TextField id="volume" title="音量（0—100）" value={volume} onChange={value => { if (!pending.current) setVolume(value) }} />
+  return <Form navigationTitle={t('volumeFormNavTitle', { name: device.name })} isLoading={busy} actions={<ActionPanel><Action.SubmitForm title={t('applyVolumeAction')} onSubmit={submit} /></ActionPanel>}>
+    <Form.TextField id="volume" title={t('volumeFieldTitle')} value={volume} onChange={value => { if (!pending.current) setVolume(value) }} />
   </Form>
 }
 export function AudioDeviceDetailView({ device }: { device: AudioDevice }) {
+  useLocale()
   const markdown = [
-    `- 类型：${device.type === 'output' ? '输出' : '输入'}`,
-    `- 软件音量控制：${device.canSetVolume ? '支持' : '不支持'}`,
-    `- 软件静音：${device.canMute ? '支持' : '不支持'}`,
-    ...(transportLabel(device.transportType) ? [`- 连接方式：${transportLabel(device.transportType)}`] : []),
-    ...(device.sampleRate ? [`- 采样率：${device.sampleRate} Hz`] : []),
-    ...(device.channels ? [`- 声道：${device.channels}`] : [])
+    t('detailTypeLine', { type: device.type === 'output' ? t('detailTypeOutput') : t('detailTypeInput') }),
+    t('detailVolumeLine', { support: device.canSetVolume ? t('detailSupported') : t('detailUnsupported') }),
+    t('detailMuteLine', { support: device.canMute ? t('detailSupported') : t('detailUnsupported') }),
+    ...(transportLabel(device.transportType) ? [t('detailTransportLine', { transport: transportLabel(device.transportType) })] : []),
+    ...(device.sampleRate ? [t('detailSampleRateLine', { rate: device.sampleRate })] : []),
+    ...(device.channels ? [t('detailChannelsLine', { channels: device.channels })] : [])
   ].join('\n')
-  return <Detail navigationTitle={`设备信息：${device.name}`} markdown={markdown} actions={<ActionPanel><Action title="复制设备标识" icon={Icon.CopyClipboard} onAction={async () => {
-    try { await Clipboard.copy(device.uid); await showToast(Toast.Style.Success, '已复制设备标识') }
-    catch (error) { await showToast(Toast.Style.Failure, '复制失败', message(error)) }
+  return <Detail navigationTitle={t('detailNavTitle', { name: device.name })} markdown={markdown} actions={<ActionPanel><Action title={t('copyUidAction')} icon={Icon.CopyClipboard} onAction={async () => {
+    try { await Clipboard.copy(device.uid); await showToast(Toast.Style.Success, t('copiedUidToast')) }
+    catch (error) { await showToast(Toast.Style.Failure, t('copyFailedToast'), message(error)) }
   }} /></ActionPanel>} />
 }
 
 export function AudioDeviceCommand(props?: { featureCode?: string; hostOverride?: unknown }) {
+  const locale = useLocale()
   const manager = useMemo(() => new AudioDeviceManager(props?.hostOverride), [props?.hostOverride])
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<IOType | 'all' | 'favourites'>(props?.featureCode === 'audio-input' ? 'input' : 'all')
@@ -65,7 +69,7 @@ export function AudioDeviceCommand(props?: { featureCode?: string; hostOverride?
       const devices = await manager.syncDevicesFromHost()
       if (!mounted.current || request !== generation.current) return false
       refresh()
-      if (notify) await showToast(Toast.Style.Success, `已读取 ${devices.length} 个音频设备`)
+      if (notify) await showToast(Toast.Style.Success, t('loadedDevicesToast', { count: devices.length }))
       return true
     } catch (failure) {
       if (mounted.current && request === generation.current) setError(message(failure))
@@ -80,7 +84,7 @@ export function AudioDeviceCommand(props?: { featureCode?: string; hostOverride?
       await operation()
       if (mounted.current && request === generation.current) { refresh(); await showToast(Toast.Style.Success, title) }
     } catch (failure) {
-      if (mounted.current && request === generation.current) { refresh(); await showToast(Toast.Style.Failure, '操作失败', message(failure)) }
+      if (mounted.current && request === generation.current) { refresh(); await showToast(Toast.Style.Failure, t('actionFailedToast'), message(failure)) }
     } finally { busy.current = false; if (mounted.current && request === generation.current) setLoading(false) }
   }
   useEffect(() => {
@@ -89,41 +93,41 @@ export function AudioDeviceCommand(props?: { featureCode?: string; hostOverride?
     void reload(false)
     return () => { mounted.current = false; generation.current++ }
   }, [manager, props?.featureCode])
-  const devices = useMemo(() => manager.filterDevices({ ioType: filter, query }), [manager, filter, query, version])
+  const devices = useMemo(() => manager.filterDevices({ ioType: filter, query }), [manager, filter, query, version, locale])
   const defaultOutput = manager.getDefaultOutputDevice()
   const defaultInput = manager.getDefaultInputDevice()
-  const summary = error ? '设备读取失败，可重试' : loading ? '正在读取或设置音频设备…' : manager.preferenceWarning || `默认输出：${defaultOutput?.name || '无'} · 默认输入：${defaultInput?.name || '无'}`
-  return <List navigationTitle="音频设备切换" isLoading={loading} isShowingDetail={false} searchBarPlaceholder="搜索扬声器、耳机或麦克风…" onSearchTextChange={setQuery}
-    filterBar={{ summaryText: summary, actions: [{ id: 'refresh-audio', title: '重新扫描', onAction: () => reload() }] }}
-    searchBarAccessory={<List.Dropdown tooltip="设备类型" value={filter} onChange={value => setFilter(value as typeof filter)}>
-      <List.Dropdown.Item value="all" title="全部设备" /><List.Dropdown.Item value="output" title="输出设备" /><List.Dropdown.Item value="input" title="输入设备" /><List.Dropdown.Item value="favourites" title="常用设备" />
+  const summary = error ? t('summaryLoadFailed') : loading ? t('summaryLoading') : manager.preferenceWarning || t('summaryDefaults', { output: defaultOutput?.name || t('noneLabel'), input: defaultInput?.name || t('noneLabel') })
+  return <List navigationTitle={t('navTitle')} isLoading={loading} isShowingDetail={false} searchBarPlaceholder={t('searchPlaceholder')} onSearchTextChange={setQuery}
+    filterBar={{ summaryText: summary, actions: [{ id: 'refresh-audio', title: t('rescanAction'), onAction: () => reload() }] }}
+    searchBarAccessory={<List.Dropdown tooltip={t('filterTooltip')} value={filter} onChange={value => setFilter(value as typeof filter)}>
+      <List.Dropdown.Item value="all" title={t('filterAll')} /><List.Dropdown.Item value="output" title={t('filterOutput')} /><List.Dropdown.Item value="input" title={t('filterInput')} /><List.Dropdown.Item value="favourites" title={t('filterFavourites')} />
     </List.Dropdown>}
   >
-    {error ? <List.Item id="error" title="无法读取音频设备" subtitle={error} icon={Icon.ExclamationMark} /> : devices.length === 0 ? <List.Item id="empty" title={loading ? '正在读取…' : '没有符合条件的音频设备'} icon={Icon.SpeakerOff} /> : devices.map(device => <List.Item key={device.id} id={device.id} title={device.name} subtitle={[device.type === 'input' ? '输入' : '输出', transportLabel(device.transportType), volumeText(device)].filter(Boolean).join(' · ')} icon={device.type === 'input' ? Icon.Microphone : device.isMuted ? Icon.SpeakerOff : Icon.SpeakerHigh}
-      accessories={[...(device.isDefault ? [{ text: '当前默认' }] : []), ...(device.isFavourite ? [{ icon: Icon.Star }] : [])]}
+    {error ? <List.Item id="error" title={t('loadErrorTitle')} subtitle={error} icon={Icon.ExclamationMark} /> : devices.length === 0 ? <List.Item id="empty" title={loading ? t('loadingItemTitle') : t('emptyItemTitle')} icon={Icon.SpeakerOff} /> : devices.map(device => <List.Item key={device.id} id={device.id} title={device.name} subtitle={[device.type === 'input' ? t('detailTypeInput') : t('detailTypeOutput'), transportLabel(device.transportType), volumeText(device)].filter(Boolean).join(' · ')} icon={device.type === 'input' ? Icon.Microphone : device.isMuted ? Icon.SpeakerOff : Icon.SpeakerHigh}
+      accessories={[...(device.isDefault ? [{ text: t('defaultTag') }] : []), ...(device.isFavourite ? [{ icon: Icon.Star }] : [])]}
       actions={<ActionPanel>
-        {device.canSetDefault && !device.isDefault && <Action title={`设为默认${device.type === 'output' ? '输出' : '输入'}`} icon={Icon.Checkmark} onAction={() => run(() => manager.setDefaultDevice(device.id), '已切换默认设备')} />}
-        {device.canMute && <Action title={device.isMuted ? '取消静音' : '静音设备'} icon={Icon.SpeakerOff} onAction={() => run(() => manager.toggleDeviceMute(device.id), '已更新静音状态')} />}
-        {device.canSetVolume && <Action title="设置音量…" icon={Icon.SpeakerHigh} onAction={() => push(<AudioVolumeForm device={device} manager={manager} onSaved={refresh} />)} />}
-        {device.canSetVolume && <Action title="音量增加 10%" icon={Icon.Plus} onAction={() => run(() => manager.stepDeviceVolume(device.id, 10), '已更新设备音量')} />}
-        {device.canSetVolume && <Action title="音量降低 10%" icon={Icon.Minus} onAction={() => run(() => manager.stepDeviceVolume(device.id, -10), '已更新设备音量')} />}
-        {!manager.preferenceWarning && <Action title={device.isFavourite ? '取消常用' : '设为常用'} icon={Icon.Star} onAction={() => run(() => manager.toggleFavourite(device.id), '已更新常用设备')} />}
-        <Action title="查看设备信息" icon={Icon.Info} onAction={() => push(<AudioDeviceDetailView device={device} />)} />
+        {device.canSetDefault && !device.isDefault && <Action title={t('setDefaultAction', { type: device.type === 'output' ? t('detailTypeOutput') : t('detailTypeInput') })} icon={Icon.Checkmark} onAction={() => run(() => manager.setDefaultDevice(device.id), t('switchedDefaultToast'))} />}
+        {device.canMute && <Action title={device.isMuted ? t('unmuteAction') : t('muteAction')} icon={Icon.SpeakerOff} onAction={() => run(() => manager.toggleDeviceMute(device.id), t('muteUpdatedToast'))} />}
+        {device.canSetVolume && <Action title={t('setVolumeAction')} icon={Icon.SpeakerHigh} onAction={() => push(<AudioVolumeForm device={device} manager={manager} onSaved={refresh} />)} />}
+        {device.canSetVolume && <Action title={t('volumeUpAction')} icon={Icon.Plus} onAction={() => run(() => manager.stepDeviceVolume(device.id, 10), t('volumeUpdatedToast'))} />}
+        {device.canSetVolume && <Action title={t('volumeDownAction')} icon={Icon.Minus} onAction={() => run(() => manager.stepDeviceVolume(device.id, -10), t('volumeUpdatedToast'))} />}
+        {!manager.preferenceWarning && <Action title={device.isFavourite ? t('unfavouriteAction') : t('favouriteAction')} icon={Icon.Star} onAction={() => run(() => manager.toggleFavourite(device.id), t('favouriteUpdatedToast'))} />}
+        <Action title={t('viewDetailsAction')} icon={Icon.Info} onAction={() => push(<AudioDeviceDetailView device={device} />)} />
       </ActionPanel>}
     />)}
   </List>
 }
 let muteCommandPending = false
 export async function AudioMuteToggleCommand(props?: { hostOverride?: unknown }): Promise<string> {
-  if (muteCommandPending) throw new Error('静音切换正在执行，请稍后重试')
+  if (muteCommandPending) throw new Error(t('muteBusyError'))
   muteCommandPending = true
   try {
     const manager = new AudioDeviceManager(props?.hostOverride)
     await manager.syncDevicesFromHost()
     const target = manager.getDefaultOutputDevice()
-    if (!target) throw new Error('当前没有默认输出设备')
+    if (!target) throw new Error(t('noDefaultOutputError'))
     const actual = await manager.toggleDeviceMute(target.id)
-    return actual.isMuted ? '默认输出设备已静音' : '默认输出设备已取消静音'
+    return actual.isMuted ? t('defaultOutputMuted') : t('defaultOutputUnmuted')
   } finally { muteCommandPending = false }
 }
 export const commands = {

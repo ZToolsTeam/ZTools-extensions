@@ -23,6 +23,7 @@ export { formatBytes, isRealElectronHost } from './native-ipc.js'
 
 import type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
 export type { CapabilityActionItem, PluginInvocationResult as NativeInvocationResult } from './native-ipc.js'
+import { t } from './i18n.js'
 
 
 export type WechatOwnerId = 107 | 108 | 109 | 110 | 111 | 112 | 113 | 114 | 115 | 999
@@ -104,8 +105,7 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp(
   '(?:^|[\\\\/])(?:MSG\\d*\\.db|MicroMsg\\.db|MediaMsg\\d*\\.db|db_storage[\\\\/].*\\.db(?:-wal|-shm)?|message_\\d+\\.db|contact\\.db|session\\.db)$',
   'i'
 )
-export const FORBIDDEN_REASON =
-  '微信聊天记录与联系人数据库 (MSG.db / MicroMsg.db / db_storage 下的 .db) 受保护，不会被清理'
+export const FORBIDDEN_REASON = t('forbiddenReason')
 
 export interface OfficialWechatOwnerRule {
   ownerId: WechatOwnerId
@@ -122,151 +122,149 @@ export interface OfficialWechatOwnerRule {
 /**
  * 9 大专项清理分类 (owner 107~115) + 1 项核心聊天数据库保护区 (999)，分类规则与 Windows 原生组件一致
  */
-export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = [
-  {
-    ownerId: 107,
-    id: 'wx-owner-107-sns-web',
-    name: '朋友圈与公众号网页缓存',
-    shortName: '朋友圈/网页缓存',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description: '朋友圈动态流图片/视频缓存、内置浏览器网页缓存 (xwechat/radium/Users、FileStorage/Sns & Cache)，清理后不影响聊天记录'
-  },
-  {
-    ownerId: 115,
-    id: 'wx-owner-115-xplugin',
-    name: '小程序与跨端引擎组件包',
-    shortName: '小程序/XPlugin',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'recommended',
-    defaultChecked: true,
-    description: '微信小程序历史版本包、RadiumWMPF 跨端引擎运行时与 XPlugin 插件缓存 (xwechat/xplugin/Plugins)，按需自动重下'
-  },
-  {
-    ownerId: 113,
-    id: 'wx-owner-113-xlog',
-    name: '微信运行跟踪与输入法日志',
-    shortName: '运行跟踪日志 (.xlog)',
-    color: '#64748b',
-    category: 'logs',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description: '微信每日生成的加密诊断跟踪日志 (xwechat/log/*.xlog) 与微信输入法运行日志 (WeType/*.xlog)，可以清理'
-  },
-  {
-    ownerId: 112,
-    id: 'wx-owner-112-crash',
-    name: '崩溃转储与诊断快照',
-    shortName: '崩溃转储 (.dmp)',
-    color: '#64748b',
-    category: 'logs',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description: '微信与小程序进程异常退出时生成的内存转储快照 (crashinfo/WeChatAppEx_*.dmp、Weixin_*.dmp)，可放心清理'
-  },
-  {
-    ownerId: 111,
-    id: 'wx-owner-111-emoticon',
-    name: '表情包与动态贴纸缓存',
-    shortName: '表情包与资源缓存',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description: '群聊自动加载的动态表情包缓存、聊天气泡资源与临时缩略图 (business/emoticon、resource、FileStorage/Temp)'
-  },
-  {
-    ownerId: 114,
-    id: 'wx-owner-114-update',
-    name: '版本升级补丁与公共宿主缓存',
-    shortName: '升级补丁/WMPF',
-    color: '#64748b',
-    category: 'cache',
-    riskLevel: 'safe',
-    defaultChecked: true,
-    description: '微信客户端热更新残留包、WMPF 公共宿主缓存与网络探针缓存 (xwechat_files/WMPF、all_users、xwechat/net)'
-  },
-  {
-    ownerId: 109,
-    id: 'wx-owner-109-video-voice',
-    name: '聊天视频与语音媒体文件',
-    shortName: '聊天视频/语音',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description: '群聊与私聊中的视频文件、音视频缓存与语音分片 (msg/video、FileStorage/Video、Media Cache)，清理后聊天里的视频和语音可能无法再播放，默认不勾选'
-  },
-  {
-    ownerId: 108,
-    id: 'wx-owner-108-chat-images',
-    name: '聊天加密图片与缩略图附件',
-    shortName: '聊天加密图片 (.dat)',
-    color: '#64748b',
-    category: 'media',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description: '聊天过程中收发的原图加密文件 (.dat) 与附件缩略图 (msg/attach、FileStorage/MsgAttach)，清理后过期图片将无法查看原图'
-  },
-  {
-    ownerId: 110,
-    id: 'wx-owner-110-recv-files',
-    name: '聊天接收与自动下载文档',
-    shortName: '聊天接收文件',
-    color: '#64748b',
-    category: 'files',
-    riskLevel: 'caution',
-    defaultChecked: false,
-    description: '通过微信接收或自动下载的办公文档、压缩包与工作文件 (msg/file、FileStorage/File)，请核对后再勾选清理'
-  },
-  {
-    ownerId: 999,
-    id: 'wx-owner-999-protected-db',
-    name: '核心聊天文字与联系人数据库保护区 (db_storage)',
-    shortName: '核心聊天数据库 (受保护)',
-    color: '#64748b',
-    category: 'protected',
-    riskLevel: 'protected',
-    defaultChecked: false,
-    description: '存放所有聊天文字记录、联系人列表与会话索引的加密 SQLite 数据库 (db_storage/message_0.db、contact.db、MSG.db)，受保护，不会被清理'
-  }
-]
-
-const PRESET_ITEMS: CapabilityActionItem[] = [
-  {
-    id: 'wx-detect-info',
-    title: '自动识别本机微信 WeChat Files / xwechat_files 存储目录与微信号',
-    subtitle: '支持默认文档路径、AppData\\Roaming\\Tencent\\xwechat 与符号链接迁移目录的多账号扫描',
-    tag: '目录识别',
-    method: 'GetWechatInfo',
-    params: {}
-  },
-  {
-    id: 'wx-scan-cache',
-    title: '扫描 9 大专项分类 (朋友圈/小程序/XLog/崩溃Dmp/视频/图片/接收文件)',
-    subtitle: '按 9 类缓存识别高占用冗余文件，聊天数据库始终受保护、不会被清理',
-    tag: '专项扫描',
-    method: 'StartScanAsync',
-    params: { scope: 'cache_and_video' }
-  },
-  {
-    id: 'wx-total-stats',
-    title: '查看各账号分类空间占用统计报告',
-    subtitle: '按微信号 wxid、时间范围与 9 大专项展示可安全释放容量',
-    tag: '容量报告',
-    method: 'GetTotalStats',
-    params: {}
-  }
-]
+export function getOfficialWechatOwnerRules(): OfficialWechatOwnerRule[] {
+  return [
+    {
+      ownerId: 107,
+      id: 'wx-owner-107-sns-web',
+      name: t('owner107Name'),
+      shortName: t('owner107Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('owner107Desc')
+    },
+    {
+      ownerId: 115,
+      id: 'wx-owner-115-xplugin',
+      name: t('owner115Name'),
+      shortName: t('owner115Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'recommended',
+      defaultChecked: true,
+      description: t('owner115Desc')
+    },
+    {
+      ownerId: 113,
+      id: 'wx-owner-113-xlog',
+      name: t('owner113Name'),
+      shortName: t('owner113Short'),
+      color: '#64748b',
+      category: 'logs',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('owner113Desc')
+    },
+    {
+      ownerId: 112,
+      id: 'wx-owner-112-crash',
+      name: t('owner112Name'),
+      shortName: t('owner112Short'),
+      color: '#64748b',
+      category: 'logs',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('owner112Desc')
+    },
+    {
+      ownerId: 111,
+      id: 'wx-owner-111-emoticon',
+      name: t('owner111Name'),
+      shortName: t('owner111Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('owner111Desc')
+    },
+    {
+      ownerId: 114,
+      id: 'wx-owner-114-update',
+      name: t('owner114Name'),
+      shortName: t('owner114Short'),
+      color: '#64748b',
+      category: 'cache',
+      riskLevel: 'safe',
+      defaultChecked: true,
+      description: t('owner114Desc')
+    },
+    {
+      ownerId: 109,
+      id: 'wx-owner-109-video-voice',
+      name: t('owner109Name'),
+      shortName: t('owner109Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('owner109Desc')
+    },
+    {
+      ownerId: 108,
+      id: 'wx-owner-108-chat-images',
+      name: t('owner108Name'),
+      shortName: t('owner108Short'),
+      color: '#64748b',
+      category: 'media',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('owner108Desc')
+    },
+    {
+      ownerId: 110,
+      id: 'wx-owner-110-recv-files',
+      name: t('owner110Name'),
+      shortName: t('owner110Short'),
+      color: '#64748b',
+      category: 'files',
+      riskLevel: 'caution',
+      defaultChecked: false,
+      description: t('owner110Desc')
+    },
+    {
+      ownerId: 999,
+      id: 'wx-owner-999-protected-db',
+      name: t('owner999Name'),
+      shortName: t('owner999Short'),
+      color: '#64748b',
+      category: 'protected',
+      riskLevel: 'protected',
+      defaultChecked: false,
+      description: t('owner999Desc')
+    }
+  ]
+}
+export const OFFICIAL_WECHAT_OWNER_RULES: OfficialWechatOwnerRule[] = getOfficialWechatOwnerRules()
 
 export function getCapabilityItems(): CapabilityActionItem[] {
-  return PRESET_ITEMS.map(item => ({
-    ...item,
-    params: { ...item.params }
-  }))
+  return [
+    {
+      id: 'wx-detect-info',
+      title: t('capDetectTitle'),
+      subtitle: t('capDetectSub'),
+      tag: t('capDetectTag'),
+      method: 'GetWechatInfo',
+      params: {}
+    },
+    {
+      id: 'wx-scan-cache',
+      title: t('capScanTitle'),
+      subtitle: t('capScanSub'),
+      tag: t('capScanTag'),
+      method: 'StartScanAsync',
+      params: { scope: 'cache_and_video' }
+    },
+    {
+      id: 'wx-total-stats',
+      title: t('capStatsTitle'),
+      subtitle: t('capStatsSub'),
+      tag: t('capStatsTag'),
+      method: 'GetTotalStats',
+      params: {}
+    }
+  ]
 }
 
 export function filterCapabilityItems(items: CapabilityActionItem[], query: string): CapabilityActionItem[] {
@@ -285,10 +283,10 @@ export function filterCapabilityItems(items: CapabilityActionItem[], query: stri
 }
 
 export function formatDateTime(mtimeSeconds: number): string {
-  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return '未知日期'
+  if (!mtimeSeconds || !Number.isFinite(mtimeSeconds) || mtimeSeconds <= 0) return t('unknownDate')
   const ms = mtimeSeconds > 1e12 ? mtimeSeconds : mtimeSeconds * 1000
   const d = new Date(ms)
-  if (Number.isNaN(d.getTime())) return '未知日期'
+  if (Number.isNaN(d.getTime())) return t('unknownDate')
   const yyyy = d.getFullYear()
   const mm = String(d.getMonth() + 1).padStart(2, '0')
   const dd = String(d.getDate()).padStart(2, '0')
@@ -297,27 +295,27 @@ export function formatDateTime(mtimeSeconds: number): string {
 
 export function validateInvocationPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: `SECURITY_INTERCEPTED: ${t('forbiddenReason')}` }
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: t('errParamOutOfRange', { key }) }
       }
     }
   }
@@ -332,7 +330,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(check.error || t('errParamValidationFailed'))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -362,7 +360,7 @@ export function classifyWechatFilePath(
   const lower = norm.toLowerCase()
 
   // 1. 识别所属账号 (wxid / 微信号目录)
-  let accountId = '公共组件 (Shared)'
+  let accountId = t('sharedAccountId')
   const xwMatch = norm.match(/xwechat_files\\([^\\]+)/i) || norm.match(/WeChat Files\\([^\\]+)/i)
   if (xwMatch && xwMatch[1]) {
     const seg = xwMatch[1]
@@ -526,13 +524,14 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
 
     const knownAccounts = Array.from(detectedAccountSet)
     const cls = classifyWechatFilePath(cleanPath, knownAccounts)
-    if (cls.accountId !== '公共组件 (Shared)') {
+    if (cls.accountId !== t('sharedAccountId')) {
       detectedAccountSet.add(cls.accountId)
     }
 
+    const ownerRules = getOfficialWechatOwnerRules()
     const ruleMeta =
-      OFFICIAL_WECHAT_OWNER_RULES.find(r => r.ownerId === cls.ownerId) ||
-      OFFICIAL_WECHAT_OWNER_RULES[0]
+      ownerRules.find(r => r.ownerId === cls.ownerId) ||
+      ownerRules[0]
 
     allFiles.push({
       id: `wx-file-${allFiles.length}`,
@@ -671,7 +670,7 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
   allFiles.sort((a, b) => b.sizeBytes - a.sizeBytes)
 
   // 3. 构建 9 大官方专项分类 + 1 个核心数据库保护区
-  const categories: WechatCleanCategoryItem[] = OFFICIAL_WECHAT_OWNER_RULES.map(rule => {
+  const categories: WechatCleanCategoryItem[] = getOfficialWechatOwnerRules().map(rule => {
     const catFiles = allFiles.filter(f => f.ownerId === rule.ownerId)
     const extra = extraOwnerTotals.get(rule.ownerId)
     const sampledBytes = catFiles.reduce((acc, f) => acc + f.sizeBytes, 0)
@@ -745,9 +744,9 @@ export async function fetchWechatCleanSnapshot(hostOverride?: Record<string, unk
     .map(([accountId, stat]) => ({
       accountId,
       label:
-        accountId === '公共组件 (Shared)'
-          ? '微信公共引擎与跨端缓存 (xplugin/log/WMPF)'
-          : `微信号: ${accountId}`,
+        accountId === t('sharedAccountId')
+          ? t('sharedAccountLabel')
+          : t('accountLabelPrefix', { id: accountId }),
       rootDir: stat.rootDir,
       fileCount: stat.fileCount,
       totalBytes: stat.totalBytes
@@ -839,7 +838,7 @@ export async function executeWechatCleanup(
     skippedPaths: []
   }
   if (unique.length === 0) {
-    return { ...result, error: '没有勾选任何文件' }
+    return { ...result, error: t('errNoFilesChecked') }
   }
 
   for (const targetPath of unique) {
@@ -854,17 +853,17 @@ export async function executeWechatCleanup(
       result.freedBytes += sizeOf.get(targetPath) || 0
       result.deletedPaths.push(targetPath)
     } else {
-      result.failed.push({ path: targetPath, error: res.error || '移入回收站失败' })
+      result.failed.push({ path: targetPath, error: res.error || t('errTrashFailed') })
     }
   }
 
   result.failedCount = result.failed.length
   if (result.deletedCount === 0 && result.failedCount === 0) {
-    return { ...result, error: '勾选的文件都是受保护的聊天数据库，没有清理任何文件' }
+    return { ...result, error: t('errAllProtected') }
   }
   result.ok = result.failedCount === 0
   if (!result.ok) {
-    result.error = `${result.failedCount} 个文件未能移入回收站：${result.failed[0].error}`
+    result.error = t('errPartialTrash', { count: result.failedCount, error: result.failed[0].error })
   }
   return result
 }
@@ -874,18 +873,22 @@ export function summarizeWechatCleanup(res: WechatCleanupResult): { success: boo
   if (res.ok) {
     return {
       success: true,
-      title: `已移入回收站 ${res.deletedCount} 个文件`,
-      message: `共 ${formatBytes(res.freedBytes)}，清空回收站后才会释放磁盘空间`
+      title: t('summarySuccessTitle', { count: res.deletedCount }),
+      message: t('summarySuccessMsg', { size: formatBytes(res.freedBytes) })
     }
   }
   if (res.deletedCount > 0) {
     return {
       success: false,
-      title: `${res.failedCount} 个文件未能移入回收站`,
-      message: `已移入回收站 ${res.deletedCount} 个文件（${formatBytes(res.freedBytes)}）；失败原因：${res.failed[0]?.error || '未知'}`
+      title: t('summaryPartialTitle', { count: res.failedCount }),
+      message: t('summaryPartialMsg', {
+        deleted: res.deletedCount,
+        size: formatBytes(res.freedBytes),
+        error: res.failed[0]?.error || t('unknownError')
+      })
     }
   }
-  return { success: false, title: '清理失败', message: res.error || '文件未能移入回收站' }
+  return { success: false, title: t('summaryFailedTitle'), message: res.error || t('summaryFailedMsg') }
 }
 
 export async function openWechatDirectory(dirPath: string, hostOverride?: unknown): Promise<boolean> {

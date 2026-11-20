@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import HardwareInfoCommand from '../dist/index.js'
 import { evaluateHardwareScenarios, fetchHardwareTelemetrySnapshot, exportHardwareReport, CPU_SAMPLE_INTERVAL_MS } from '../dist/logic.js'

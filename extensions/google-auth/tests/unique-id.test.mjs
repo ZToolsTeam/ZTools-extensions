@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import {setRuntimeLocale} from '@ztools/declarative-ui'
 import {createAccount} from '../dist/logic.js'
+setRuntimeLocale('zh-CN')
 test('同一毫秒内创建的不同记录保留完整唯一标识',async t=>{
  t.mock.method(Date,'now',()=>1700000000000)
  let sequence=0

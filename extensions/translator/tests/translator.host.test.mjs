@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as translator from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const translator = await import('../dist/index.js')
 
 async function withRealElectronWindow(handlers, fn) {
   const prevWindow = globalThis.window

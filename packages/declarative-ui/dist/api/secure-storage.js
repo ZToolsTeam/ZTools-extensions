@@ -1,16 +1,17 @@
 import { updateStoredItem } from "./storage-update.js";
 import { getDeclarativeBridge } from "./bridge.js";
+import { tApiError } from "./error-messages.js";
 import { ZToolsHostError } from "./host-error.js";
 /** 与宿主 credential_v1_* 的 key 规则一致 */
 export const SECURE_STORAGE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 export const SECURE_STORAGE_MAX_VALUE_BYTES = 64 * 1024;
 export function assertSecureStorageKey(key) {
     if (typeof key !== "string" || !SECURE_STORAGE_KEY_PATTERN.test(key)) {
-        throw new ZToolsHostError("INVALID_STORAGE_KEY", "SecureStorage 的 key 必须是 1–128 个字符，以字母或数字开头，只含字母、数字和 . _ : -");
+        throw new ZToolsHostError("INVALID_STORAGE_KEY", tApiError("secureStorageInvalidKey"));
     }
 }
 function unavailable() {
-    return new ZToolsHostError("SECURE_STORAGE_UNAVAILABLE", "当前宿主不支持加密存储，请升级 ZTools");
+    return new ZToolsHostError("SECURE_STORAGE_UNAVAILABLE", tApiError("secureStorageUnavailable"));
 }
 function implementation() {
     return getDeclarativeBridge()?.secureStorage;

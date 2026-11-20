@@ -1,15 +1,15 @@
 {
   "id": "clean-keyboard",
   "name": "键盘清洁锁",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Mac 系统键盘清洁锁，可同时拦截鼠标，支持 5～300 秒倒计时、紧急解锁与失联自动解除",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system"
   ],
@@ -36,5 +36,30 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Keyboard Cleaning Lock",
+      "description": "Lock your Mac keyboard (and optionally mouse) for safe cleaning with a 5 to 300 second countdown, emergency unlock, and automatic failsafe release.",
+      "keywords": [
+        "keyboard lock",
+        "clean keyboard",
+        "disable keyboard",
+        "macos",
+        "lock input"
+      ],
+      "features": {
+        "clean-keyboard": {
+          "explain": "Lock keyboard input for cleaning with automatic unlock after countdown",
+          "cmds": [
+            "clean keyboard",
+            "lock keyboard",
+            "keyboard lock",
+            "disable keyboard"
+          ]
+        }
+      }
+    }
+  }
 }

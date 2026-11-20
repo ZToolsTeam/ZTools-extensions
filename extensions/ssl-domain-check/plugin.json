@@ -1,9 +1,13 @@
 {
   "id": "ssl-domain-check",
   "name": "域名与SSL诊断",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "查询域名真实 TLS 证书、信任与名称匹配状态、有效期和证书链，并查看 DNS 解析记录",
   "author": "ZTools Team",
+  "category": [
+    "网络工具"
+  ],
+  "categoryId": "network",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -42,5 +46,35 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "SSL & Domain Diagnostics",
+      "description": "Inspect live TLS certificates, trust and hostname validation, expiration countdown, certificate chains, and DNS records for any domain.",
+      "keywords": [
+        "ssl",
+        "tls",
+        "cert",
+        "certificate",
+        "dns",
+        "dig",
+        "domain"
+      ],
+      "features": {
+        "ssl-domain-check": {
+          "explain": "Check domain SSL certificate validity, chain details, and DNS records",
+          "cmds": [
+            "ssl",
+            "tls",
+            "cert",
+            "dns",
+            "dig",
+            "nslookup",
+            "domain check"
+          ]
+        }
+      }
+    }
+  }
 }

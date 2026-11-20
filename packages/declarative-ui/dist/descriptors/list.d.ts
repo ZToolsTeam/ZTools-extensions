@@ -1,4 +1,4 @@
-import { ListProps, ListItemProps, ListSectionProps, ListDropdownProps, ListDropdownItemProps, ListDropdownSectionProps, ViewDescriptor } from "./types.js";
+import { ListProps, ListItemProps, ListSectionProps, ListEmptyViewProps, ListDropdownProps, ListDropdownItemProps, ListDropdownSectionProps, ViewDescriptor } from "./types.js";
 export interface ListDropdownComponent {
     (props?: ListDropdownProps, ...children: any[]): ViewDescriptor<ListDropdownProps>;
     Item: (props: ListDropdownItemProps) => ViewDescriptor<ListDropdownItemProps>;
@@ -12,6 +12,7 @@ export interface ListComponent {
     (props?: ListProps, ...children: any[]): ViewDescriptor<ListProps>;
     Item: ListItemComponent;
     Section: (props?: ListSectionProps, ...children: any[]) => ViewDescriptor<ListSectionProps>;
+    EmptyView: (props: ListEmptyViewProps) => ViewDescriptor<ListEmptyViewProps>;
     Dropdown: ListDropdownComponent;
 }
 /**

@@ -1,4 +1,5 @@
 import { hmac, digest, bytesToHex } from "./hash.js";
+import { t } from "./i18n.js";
 
 export type OTPAlgorithm = "SHA1" | "SHA256" | "SHA512";
 
@@ -45,7 +46,7 @@ export function isValidBase32(secret: string): boolean {
 export function base32Decode(secret: string): Uint8Array {
   const cleaned = cleanSecret(secret);
   if (!cleaned) {
-    throw new Error("密钥不能为空");
+    throw new Error(t("errSecretEmpty"));
   }
 
   let bits = 0;
@@ -56,7 +57,7 @@ export function base32Decode(secret: string): Uint8Array {
     const char = cleaned[i];
     const val = BASE32_CHARS.indexOf(char);
     if (val === -1) {
-      throw new Error(`密钥格式错误: 包含非法字符 '${char}'，Base32 仅允许 A-Z 和 2-7`);
+      throw new Error(t("errInvalidBase32Char", { char }));
     }
 
     value = (value << 5) | val;
@@ -157,7 +158,7 @@ export interface ParsedOTPAuth {
 export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
   const trimmed = (urlText || "").trim();
   if (!trimmed.toLowerCase().startsWith("otpauth://")) {
-    throw new Error("链接必须以 otpauth:// 开头");
+    throw new Error(t("errOtpauthPrefix"));
   }
 
   try {
@@ -165,10 +166,10 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
     const type = parsedUrl.hostname.toLowerCase();
     // 本插件只按时间生成口令（TOTP）。HOTP 按计数器生成，若按 TOTP 计算会显示错误口令，必须直接拒绝
     if (type === "hotp") {
-      throw new Error("暂不支持 HOTP（计数器型）链接，请使用基于时间的 TOTP 链接");
+      throw new Error(t("errHotpUnsupported"));
     }
     if (type !== "totp") {
-      throw new Error(`不支持的 OTP 类型: ${type}`);
+      throw new Error(t("errUnsupportedOtpType", { type }));
     }
 
     const pathname = decodeURIComponent(parsedUrl.pathname.replace(/^\//, ""));
@@ -185,37 +186,37 @@ export function parseOTPAuthURL(urlText: string): ParsedOTPAuth {
 
     const secret = cleanSecret(parsedUrl.searchParams.get("secret") || "");
     if (!secret || !isValidBase32(secret)) {
-      throw new Error("链接中缺少有效的 Base32 secret 密钥参数");
+      throw new Error(t("errMissingSecretParam"));
     }
 
     // 链接里的位数、周期、算法不受支持时直接拒绝：悄悄换成默认值会生成与服务端不一致的口令
     const rawDigits = (parsedUrl.searchParams.get("digits") ?? "6").trim();
     if (!/^[678]$/.test(rawDigits)) {
-      throw new Error(`不支持 ${rawDigits || "空"} 位口令，仅支持 6～8 位`);
+      throw new Error(t("errUnsupportedDigits", { digits: rawDigits || t("emptyValue") }));
     }
     const digits = Number(rawDigits);
     const rawPeriod = (parsedUrl.searchParams.get("period") ?? "30").trim();
     if (!/^[1-9]\d{0,2}$/.test(rawPeriod) || Number(rawPeriod) > MAX_PERIOD_SECONDS) {
-      throw new Error(`刷新周期 ${rawPeriod || "空"} 无效，需为 1～${MAX_PERIOD_SECONDS} 秒的整数`);
+      throw new Error(t("errInvalidPeriod", { period: rawPeriod || t("emptyValue"), max: MAX_PERIOD_SECONDS }));
     }
     const period = Number(rawPeriod);
     const rawAlgo = (parsedUrl.searchParams.get("algorithm") ?? "SHA1").trim().toUpperCase();
     if (rawAlgo !== "SHA1" && rawAlgo !== "SHA256" && rawAlgo !== "SHA512") {
-      throw new Error(`不支持 ${rawAlgo || "空"} 算法，仅支持 SHA1、SHA256、SHA512`);
+      throw new Error(t("errUnsupportedAlgo", { algo: rawAlgo || t("emptyValue") }));
     }
     const algorithm: OTPAlgorithm = rawAlgo;
 
     return {
       type: "totp",
       secret,
-      name: name || issuer || "未命名账号",
+      name: name || issuer || t("unnamedAccount"),
       issuer: issuer || "2FA",
       period,
       digits,
       algorithm
     };
   } catch (err) {
-    throw new Error(`解析 otpauth 链接失败: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(t("errParseOtpauthFailed", { error: err instanceof Error ? err.message : String(err) }));
   }
 }
 
@@ -232,33 +233,33 @@ export function createAccount(params: {
 }): AuthAccount {
   const trimmedName = (params.name || "").trim();
   if (!trimmedName) {
-    throw new Error("账号名称不能为空");
+    throw new Error(t("errAccountNameEmpty"));
   }
 
   const cleaned = cleanSecret(params.secret);
   if (!cleaned) {
-    throw new Error("密钥不能为空");
+    throw new Error(t("errSecretEmpty"));
   }
 
   if (!isValidBase32(cleaned)) {
-    throw new Error("密钥不是合法的 Base32 编码（仅支持 A-Z 与 2-7）");
+    throw new Error(t("errInvalidBase32"));
   }
   // 不足 2 个字符解不出任何字节，算出的口令与服务端无关
   if (base32Decode(cleaned).length === 0) {
-    throw new Error("密钥太短，请检查是否完整复制");
+    throw new Error(t("errSecretTooShort"));
   }
   if (params.digits !== undefined && ![6, 7, 8].includes(params.digits)) {
-    throw new Error("口令位数仅支持 6～8 位");
+    throw new Error(t("errDigitsRange"));
   }
   if (params.period !== undefined && (!Number.isInteger(params.period) || params.period < 1 || params.period > MAX_PERIOD_SECONDS)) {
-    throw new Error(`刷新周期需为 1～${MAX_PERIOD_SECONDS} 秒的整数`);
+    throw new Error(t("errPeriodRange", { max: MAX_PERIOD_SECONDS }));
   }
   if (params.algorithm !== undefined && !["SHA1", "SHA256", "SHA512"].includes(params.algorithm)) {
-    throw new Error("算法仅支持 SHA1、SHA256、SHA512");
+    throw new Error(t("errAlgoRange"));
   }
 
   if (typeof globalThis.crypto?.randomUUID !== 'function') {
-    throw new Error('无法生成唯一标识，请重启客户端后重试')
+    throw new Error(t("errCannotGenId"))
   }
   return {
     id: "auth_" + Date.now().toString(36) + "_" + globalThis.crypto.randomUUID(),
@@ -375,16 +376,16 @@ export function mergeLegacyAccounts(secureRaw: unknown[], legacy: AuthAccount[])
 export function describeSecureStorageUnavailable(reason: string): string {
   switch (reason) {
     case "encryption-unavailable":
-      return "系统加密存储不可用（钥匙串被拒绝访问或尚未解锁）";
+      return t("secEncryptionUnavailable");
     case "insecure-backend":
-      return "系统只提供不安全的明文加密后端";
+      return t("secInsecureBackend");
     case "backend-unknown":
-      return "无法确认系统加密后端是否安全";
+      return t("secBackendUnknown");
     case "host-unsupported":
-      return "当前 ZTools 版本不支持加密存储，请升级 ZTools";
+      return t("secHostUnsupported");
     case "identity-required":
-      return "无法确认插件身份，请关闭后重新打开插件";
+      return t("secIdentityRequired");
     default:
-      return `系统加密存储不可用（${reason}）`;
+      return t("secUnavailableDefault", { reason });
   }
 }

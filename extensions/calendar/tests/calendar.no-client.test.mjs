@@ -1,14 +1,18 @@
 // 不在 ZTools 客户端里运行时：不显示示例日程，新建 / 读取 / 删除如实报不可用，不在内存里假装保存
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import CalendarCommand, {
+
+setRuntimeLocale('zh-CN')
+const {
+  default: CalendarCommand,
   NOT_IN_CLIENT_MESSAGE,
   createCalendarEvent,
   deleteCalendarEvent,
   fetchCalendarPage,
   exportCalendarIcs
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 const host = createHost()
 

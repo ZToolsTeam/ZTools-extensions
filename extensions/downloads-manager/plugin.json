@@ -2,14 +2,14 @@
   "id": "downloads-manager",
   "name": "下载管理",
   "description": "聚合已识别的系统下载、网盘与接收目录，支持自定义目录、筛选、打开和安全回收；扫描不完整时明确提示",
-  "version": "2.1.9",
+  "version": "2.1.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "效率工具",
-    "系统工具"
+    "文件管理"
   ],
+  "categoryId": "files",
   "permissions": [
     "fs",
     "system",
@@ -76,5 +76,54 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Downloads Manager",
+      "description": "Aggregate system downloads, cloud drive, and chat received folders with custom directory support, filtering, opening, and safe recycling.",
+      "keywords": [
+        "downloads",
+        "files",
+        "installers",
+        "folders",
+        "cleanup"
+      ],
+      "features": {
+        "downloads-all": {
+          "explain": "Browse and filter files across detected download and custom folders",
+          "cmds": [
+            "downloads",
+            "dl",
+            "recent downloads",
+            "downloads manager"
+          ]
+        },
+        "downloads-netdisk": {
+          "explain": "Filter files from detected cloud drive and downloader folders",
+          "cmds": [
+            "netdisk",
+            "cloud downloads",
+            "downloader files"
+          ]
+        },
+        "downloads-im": {
+          "explain": "Filter files received via chat apps (WeChat, QQ, Lark, DingTalk)",
+          "cmds": [
+            "chat files",
+            "wechat files",
+            "received files"
+          ]
+        },
+        "downloads-clean-installers": {
+          "explain": "Find installer packages and move unprotected items to Recycle Bin / Trash",
+          "cmds": [
+            "clean installers",
+            "installers",
+            "delete installers"
+          ]
+        }
+      }
+    }
+  }
 }

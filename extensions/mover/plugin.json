@@ -2,12 +2,17 @@
   "id": "mover",
   "name": "C盘搬家",
   "description": "把 C 盘用户目录下的微信与 QQ 文件、下载、文档、视频和 npm / pip / NuGet 缓存复制到其他分区，并在原位置建立目录联接，软件仍按原路径访问",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
+    "文件管理",
     "系统工具"
+  ],
+  "categoryId": [
+    "files",
+    "system"
   ],
   "permissions": [
     "fs",
@@ -24,5 +29,20 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Drive C Folder Mover",
+      "description": "Move large C: drive user folders (WeChat/QQ files, Downloads, Documents, Videos, npm/pip/NuGet caches) to another drive and create directory junctions transparently.",
+      "keywords": [
+        "move folder",
+        "drive c",
+        "junction",
+        "symlink",
+        "disk space",
+        "windows"
+      ]
+    }
+  }
 }

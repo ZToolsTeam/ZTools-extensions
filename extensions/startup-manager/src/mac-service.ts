@@ -1,3 +1,4 @@
+import { t } from './i18n.js'
 export interface MacStartupItem {
   id: string; label: string; file: string; domain: string; scope: 'user-agent' | 'system-agent' | 'daemon'
   program: string; args: string[]; scheduled: boolean; enabled: boolean; loaded: boolean; running: boolean
@@ -12,15 +13,15 @@ export const startupOperation = () => `startup_${Date.now()}_${++nextId}`
 export async function startupInvoke(method: string, params: Record<string, unknown>) {
   const bridge = (globalThis as unknown as { __ztoolsElectron?: Bridge }).__ztoolsElectron
   const invoke = bridge?.transport?.methods?.[method]
-  if (!invoke) throw new Error('请升级客户端后使用 Mac 启动管理')
+  if (!invoke) throw new Error(t('macErrUpgrade'))
   const writing = ['set-enabled', 'remove', 'restore'].includes(String(params.action))
   const reply = await invoke({ messageId: startupOperation(), params, timeoutMs: writing ? 120000 : 30000 })
-  if (reply?.success !== true || !record(reply.data) || reply.data.success !== true) throw new Error(reply?.error?.message || '启动管理未确认成功')
+  if (reply?.success !== true || !record(reply.data) || reply.data.success !== true) throw new Error(reply?.error?.message || t('macErrUnconfirmed'))
   return reply.data
 }
 export async function scanStartup(operationId: string): Promise<StartupReport> {
   const data = await startupInvoke('startup_manager', { action: 'scan', operationId })
-  if (!Array.isArray(data.items) || data.items.length > 1536 || !Array.isArray(data.warnings) || data.warnings.some(w => typeof w !== 'string') || !Array.isArray(data.backups)) throw new Error('启动管理返回的列表不完整')
+  if (!Array.isArray(data.items) || data.items.length > 1536 || !Array.isArray(data.warnings) || data.warnings.some(w => typeof w !== 'string') || !Array.isArray(data.backups)) throw new Error(t('macErrIncompleteList'))
   const ids = new Set<string>()
   for (const item of data.items) {
     if (!record(item) || typeof item.id !== 'string' || !/^[a-f0-9]{64}$/.test(item.id) || ids.has(item.id) ||
@@ -30,13 +31,13 @@ export async function scanStartup(operationId: string): Promise<StartupReport> {
         !Array.isArray(item.args) || item.args.some(a => typeof a !== 'string') ||
         (item.pid !== null && (!Number.isSafeInteger(item.pid) || Number(item.pid) <= 0)) ||
         (item.blockedReason !== null && typeof item.blockedReason !== 'string') ||
-        typeof item.programState !== 'string' || !['available', 'missing', 'unknown'].includes(item.programState)) throw new Error('启动项返回了无效状态')
+        typeof item.programState !== 'string' || !['available', 'missing', 'unknown'].includes(item.programState)) throw new Error(t('macErrInvalidState'))
     ids.add(item.id)
   }
   for (const backup of data.backups) {
     if (!record(backup) || !['id', 'createdAt', 'label'].every(k => typeof backup[k] === 'string') ||
         (backup.kind !== 'toggle' && backup.kind !== 'remove') ||
-        !Number.isFinite(Date.parse(String(backup.createdAt))) || typeof backup.beforeEnabled !== 'boolean' || typeof backup.afterEnabled !== 'boolean') throw new Error('恢复记录返回结果无效')
+        !Number.isFinite(Date.parse(String(backup.createdAt))) || typeof backup.beforeEnabled !== 'boolean' || typeof backup.afterEnabled !== 'boolean') throw new Error(t('macErrInvalidBackup'))
   }
   return data as unknown as StartupReport
 }

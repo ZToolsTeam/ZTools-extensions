@@ -5,7 +5,7 @@
  * ZTools 声明式插件脚手架
  *
  * 生成的工程与插件仓库里的现有插件结构一致：
- * 1. plugin.json：只写宿主实际读取的字段（id、name、version、description、author、entry、icon、mode、
+ * 1. plugin.json：只写宿主实际读取的字段（id、name、version、description、author、category、entry、icon、mode、
  *    permissions、targets、nativeComponents），符合 packages/ztools-plugins-spec/plugin.schema.json；
  * 2. src/：源码，SDK 一律从 '@ztools/declarative-ui' 引入；
  * 3. 不单独装 TypeScript，统一用仓库的 scripts/build-declarative.mjs 编译到 dist/（dist/ 不提交）；
@@ -17,7 +17,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline/promises'
-import { buildPlatformTargets, describePlatforms, SUPPORTED_PLATFORMS } from '../packages/ztools-plugins-spec/src/validator.js'
+import { buildPlatformTargets, describePlatforms, PLUGIN_CATEGORIES, PLUGIN_CATEGORY_SET, SUPPORTED_PLATFORMS } from '../packages/ztools-plugins-spec/src/validator.js'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -79,6 +79,27 @@ export function parsePlatformOption(value) {
   return [...new Set(platforms)]
 }
 
+/**
+ * 解析插件分类选项：默认 ['办公效率']，支持逗号或斜杠分隔 1-2 个标准分类
+ * @param {string | string[] | undefined} value
+ * @returns {string[]}
+ */
+export function parseCategoryOption(value) {
+  const parts = Array.isArray(value)
+    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : String(value ?? '').split(/[,，/]/).map((item) => item.trim()).filter(Boolean)
+  if (parts.length === 0) return ['办公效率']
+  const unique = [...new Set(parts)]
+  if (unique.length > 2) {
+    throw new Error(`插件分类最多填 2 个（当前 ${unique.length} 个）`)
+  }
+  const invalid = unique.filter((cat) => !PLUGIN_CATEGORY_SET.has(cat))
+  if (invalid.length > 0) {
+    throw new Error(`无法识别的插件分类: "${invalid.join(', ')}"（可选 ${PLUGIN_CATEGORIES.join(' / ')}）`)
+  }
+  return unique
+}
+
 function cleanText(value, fallback) {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
@@ -128,12 +149,14 @@ export async function createPlugin({
   title,
   description,
   author,
+  category,
   targetDir = defaultTargetDir(),
   force = false,
   platforms = [...SUPPORTED_PLATFORMS]
 }) {
-  // 平台声明非法时直接报错，不生成半成品目录
+  // 平台与分类声明非法时直接报错，不生成半成品目录
   const targets = buildPlatformTargets(platforms)
+  const normalizedCategory = parseCategoryOption(category)
   // 1. 校验 ID
   const idCheck = validatePluginId(pluginId)
   if (!idCheck.valid) {
@@ -175,6 +198,7 @@ export async function createPlugin({
     version: '1.0.0',
     description: normalizedDesc,
     author: normalizedAuthor,
+    category: normalizedCategory,
     entry: 'dist/index.js',
     icon: 'icon.svg',
     mode: 'view',
@@ -435,20 +459,26 @@ ZTools 插件脚手架
 
 选项:
   --platform <p>     支持的平台：cross（跨平台，默认）/ windows / macos
+  --category <c>     插件分类（1-2 项，逗号分隔，默认 "办公效率"；可选：${PLUGIN_CATEGORIES.join(' / ')}）
   --author <name>    作者（默认 "${DEFAULT_AUTHOR}"）
   --target-dir <dir> 生成到哪个目录（默认 "${defaultTargetDir()}"）
   --force, -f        目标目录已存在时覆盖
   --help, -h         显示此帮助信息
 
 示例:
-  npm run create-plugin -- quick-notes "便签" "记录一段文字"
-  npm run create-plugin -- wifi-tool "Wi-Fi 工具" --platform windows
+  npm run create-plugin -- quick-notes "便签" "记录一段文字" --category 办公效率
+  npm run create-plugin -- wifi-tool "Wi-Fi 工具" --platform windows --category 网络工具
     `.trim())
     process.exit(0)
   }
 
   const force = args.includes('--force') || args.includes('-f')
-  const options = { '--target-dir': readOption(args, '--target-dir'), '--platform': readOption(args, '--platform'), '--author': readOption(args, '--author') }
+  const options = {
+    '--target-dir': readOption(args, '--target-dir'),
+    '--platform': readOption(args, '--platform'),
+    '--category': readOption(args, '--category'),
+    '--author': readOption(args, '--author')
+  }
   for (const [flag, opt] of Object.entries(options)) {
     if (opt.missing) {
       console.error(flag === '--platform' ? '错误: --platform 需要指定 cross / windows / macos' : `错误: ${flag} 需要一个值`)
@@ -487,12 +517,14 @@ ZTools 插件脚手架
 
   try {
     const platforms = parsePlatformOption(platformOption)
+    const category = parseCategoryOption(options['--category'].value)
     console.log(`\n正在生成插件工程: "${pluginId}"（${describePlatforms(platforms)}）...`)
     const result = await createPlugin({
       pluginId,
       title,
       description,
       author: options['--author'].value,
+      category,
       targetDir: options['--target-dir'].value ?? defaultTargetDir(),
       force,
       platforms

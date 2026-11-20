@@ -2,15 +2,20 @@
   "id": "file-unlock",
   "name": "文件解锁",
   "description": "检测文件、文件夹和外接磁盘的真实进程占用，确认后结束进程，支持不覆盖改名，或移入回收站 / 废纸篓以便恢复",
-  "version": "1.0.8",
+  "version": "1.0.13",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "文件管理",
+    "系统工具"
+  ],
+  "categoryId": [
+    "files",
+    "system"
   ],
   "permissions": [
+    "dialog",
     "fs",
     "system",
     "clipboard",
@@ -58,5 +63,42 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "File Unlocker",
+      "description": "Detect processes locking files, folders, or external drives. Confirm to terminate locking processes, safely rename without overwriting, or move to Recycle Bin / Trash.",
+      "keywords": [
+        "unlock",
+        "file lock",
+        "in use",
+        "handle",
+        "eject",
+        "usb",
+        "delete"
+      ],
+      "features": {
+        "file-unlock": {
+          "explain": "Detect file locks, terminate locking processes after confirmation, or move to Trash",
+          "cmds": [
+            "file unlock",
+            "unlock",
+            "who locked",
+            "cannot delete",
+            "file in use"
+          ]
+        },
+        "usb-unlock": {
+          "explain": "Detect background processes preventing safe ejection of USB drives",
+          "cmds": [
+            "usb unlock",
+            "eject",
+            "safe eject",
+            "drive in use"
+          ]
+        }
+      }
+    }
+  }
 }

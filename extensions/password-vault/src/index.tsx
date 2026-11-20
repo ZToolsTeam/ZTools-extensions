@@ -8,6 +8,7 @@ import React, {
   showToast,
   Toast,
   confirmAlert,
+  useLocale,
   useNavigation,
   useState,
   useEffect,
@@ -16,12 +17,14 @@ import React, {
   useRef
 } from '@ztools/declarative-ui'
 import type { EncryptedVaultEnvelope, VaultCategory, VaultEntry, VaultNewEntryInput } from './types.js'
+import { t } from './i18n.js'
 import {
   copySecretWithAutoClear,
   createVaultEntry,
   decryptVaultEntries,
   encryptVaultEntries,
   generateSecurePassword,
+  getVaultCategoryLabel,
   validateMasterPassword,
   validateNewEntryInput
 } from './vault-crypto.js'
@@ -34,14 +37,14 @@ const VAULT_STORAGE_KEY = 'ztools.password-vault.envelope.v1'
 function parseStoredEnvelope(raw: unknown): EncryptedVaultEnvelope {
   const value: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('保险箱数据格式无效')
+    throw new Error(t('errEnvelopeFormatInvalid'))
   }
   const envelope = value as Record<string, unknown>
   if ((envelope.version !== 1 && !(envelope.version === 2 && Number.isSafeInteger(envelope.kdfIterations))) ||
       typeof envelope.saltBase64 !== 'string' || !envelope.saltBase64 ||
       typeof envelope.ivBase64 !== 'string' || !envelope.ivBase64 ||
       typeof envelope.cipherTextBase64 !== 'string' || !envelope.cipherTextBase64) {
-    throw new Error('保险箱数据不完整或版本不受支持')
+    throw new Error(t('errEnvelopeIncomplete'))
   }
   return envelope as unknown as EncryptedVaultEnvelope
 }
@@ -68,6 +71,7 @@ interface VaultEntryFormProps {
 }
 
 export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: VaultEntryFormProps) {
+  useLocale()
   const { pop } = useNavigation()
   const [title, setTitle] = useState(initialEntry?.title ?? '')
   const [category, setCategory] = useState<VaultCategory>(initialEntry?.category ?? 'login')
@@ -84,7 +88,7 @@ export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: V
     setSecretPlain(pwd)
     await showToast({
       style: Toast.Style.Success,
-      title: '已填入 20 位高强度随机密码'
+      title: t('toastGenerated20')
     })
   }, [])
 
@@ -101,7 +105,7 @@ export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: V
     if (!check.valid) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '无法保存凭据',
+        title: t('toastCannotSaveEntry'),
         message: check.error
       })
       return
@@ -109,64 +113,64 @@ export function VaultEntryForm({ initialPassword = '', initialEntry, onSave }: V
     if (submitting.current) return
     submitting.current = true; setSaving(true)
     try { await onSave(input); pop() }
-    catch (error) { await showToast({ style: Toast.Style.Failure, title: '未保存，原数据保留', message: error instanceof Error ? error.message : String(error) }) }
+    catch (error) { await showToast({ style: Toast.Style.Failure, title: t('toastNotSavedKept'), message: error instanceof Error ? error.message : String(error) }) }
     finally { submitting.current = false; setSaving(false) }
   }, [title, category, username, endpoint, secretPlain, note, onSave, pop])
 
   return (
     <Form
-      navigationTitle={initialEntry ? '编辑加密凭据' : '新建加密凭据'}
+      navigationTitle={initialEntry ? t('formTitleEdit') : t('formTitleNew')}
       isLoading={saving}
       actions={
         <ActionPanel>
-          <Action.SubmitForm title="加密保存至保险箱" icon={Icon.Lock} onSubmit={handleSubmit} />
-          <Action title="生成 20 位随机密码填入" icon={Icon.Wand} onAction={handleGenerate} />
+          <Action.SubmitForm title={t('formSubmitSave')} icon={Icon.Lock} onSubmit={handleSubmit} />
+          <Action title={t('formActionGen20')} icon={Icon.Wand} onAction={handleGenerate} />
         </ActionPanel>
       }
     >
       <Form.TextField
         id="title"
-        title="凭据名称"
-        placeholder="例如：GitHub 主账号 / DeepSeek API Key / 生产数据库"
+        title={t('fieldTitleLabel')}
+        placeholder={t('fieldTitlePlaceholder')}
         value={title}
         onChange={setTitle}
       />
       <Form.Dropdown
         id="category"
-        title="凭据分类"
+        title={t('fieldCategoryLabel')}
         value={category}
         onChange={(v: string) => setCategory(v as VaultCategory)}
       >
-        <Form.Dropdown.Item value="login" title="网站与应用账号" icon={Icon.Globe} />
-        <Form.Dropdown.Item value="apikey" title="API Key 与访问令牌" icon={Icon.Key} />
-        <Form.Dropdown.Item value="server" title="服务器与数据库密码" icon={Icon.Terminal} />
-        <Form.Dropdown.Item value="license" title="软件激活码与备忘" icon={Icon.Document} />
+        <Form.Dropdown.Item value="login" title={t('catLoginForm')} icon={Icon.Globe} />
+        <Form.Dropdown.Item value="apikey" title={t('catApikeyForm')} icon={Icon.Key} />
+        <Form.Dropdown.Item value="server" title={t('catServerForm')} icon={Icon.Terminal} />
+        <Form.Dropdown.Item value="license" title={t('catLicenseForm')} icon={Icon.Document} />
       </Form.Dropdown>
       <Form.TextField
         id="username"
-        title="用户名 / 标识"
-        placeholder="账号、邮箱、Key 名称或 root"
+        title={t('fieldUsernameLabel')}
+        placeholder={t('fieldUsernamePlaceholder')}
         value={username}
         onChange={setUsername}
       />
       <Form.TextField
         id="endpoint"
-        title="网址 / 主机地址"
-        placeholder="例如：https://github.com 或 10.0.0.12:5432"
+        title={t('fieldEndpointLabel')}
+        placeholder={t('fieldEndpointPlaceholder')}
         value={endpoint}
         onChange={setEndpoint}
       />
       <Form.PasswordField
         id="secretPlain"
-        title="密码 / Secret"
-        placeholder="输入敏感密码、API Secret 或激活码（AES-256-GCM 加密存储）"
+        title={t('fieldSecretLabel')}
+        placeholder={t('fieldSecretPlaceholder')}
         value={secretPlain}
         onChange={setSecretPlain}
       />
       <Form.TextArea
         id="note"
-        title="加密备注"
-        placeholder="两步验证恢复码或到期提醒说明（随密文一同加密）"
+        title={t('fieldNoteLabel')}
+        placeholder={t('fieldNotePlaceholder')}
         value={note}
         onChange={setNote}
       />
@@ -188,6 +192,7 @@ export function PasswordVault({
   initialUnlockedEntries,
   initialMasterPassword
 }: PasswordVaultProps = {}) {
+  useLocale()
   const { push } = useNavigation()
   const [isLoading, setIsLoading] = useState<boolean>(!initialUnlockedEntries)
   const [hasExistingVault, setHasExistingVault] = useState<boolean>(false)
@@ -243,7 +248,7 @@ export function PasswordVault({
         readReadyRef.current = true
       } catch {
         if (active && mountedRef.current) {
-          setLoadError('无法读取保险箱，原数据未被修改。请重试；如果仍然失败，请先保留数据并联系支持。')
+          setLoadError(t('errLoadVaultFailed'))
         }
       } finally {
         if (active && mountedRef.current) {
@@ -257,22 +262,22 @@ export function PasswordVault({
   }, [initialUnlockedEntries, reloadCount])
 
   const persistEntries = useCallback(async (pwd: string, nextEntries: VaultEntry[], initialize = false) => {
-    if (!mountedRef.current || !readReadyRef.current) throw new Error('请重新读取并解锁保险箱')
-    if (mutatingRef.current) throw new Error('正在保存，请稍候')
+    if (!mountedRef.current || !readReadyRef.current) throw new Error(t('errReReadAndUnlock'))
+    if (mutatingRef.current) throw new Error(t('errSavingBusy'))
     const epoch = sessionEpoch.current, expected = initialize ? undefined : rawEnvelopeRef.current
-    if (!initialize && expected === undefined) throw new Error('保险箱状态已变化，请重新读取')
+    if (!initialize && expected === undefined) throw new Error(t('errStateChanged'))
     mutatingRef.current = true
     try {
       const envelope = await encryptVaultEntries(pwd, nextEntries), serialized = JSON.stringify(envelope)
-      if (!mountedRef.current || epoch !== sessionEpoch.current) throw new Error('保险箱已锁定或关闭，本次未写入')
+      if (!mountedRef.current || epoch !== sessionEpoch.current) throw new Error(t('errLockedNotWritten'))
       const saved = await LocalStorage.compareAndSet(VAULT_STORAGE_KEY, expected, serialized)
       if (!saved) {
         readReadyRef.current = false; sessionEpoch.current++
         if (mountedRef.current) {
           setIsUnlocked(false); setMasterPassword(''); setEntries([]); entriesRef.current = []
-          setLoadError('保险箱数据已变化，原数据未被覆盖。请重新读取并解锁后重试。')
+          setLoadError(t('errDataChangedRead'))
         }
-        throw new Error('保险箱数据已变化，原数据未被覆盖。请重新读取后重试。')
+        throw new Error(t('errDataChangedRetry'))
       }
       if (mountedRef.current && epoch === sessionEpoch.current) {
         rawEnvelopeRef.current = serialized
@@ -286,10 +291,10 @@ export function PasswordVault({
     setAuthError('')
     const check = validateMasterPassword(passwordInput, { isNewVault: !(hasExistingVault && storedEnvelope) })
     if (!check.valid) {
-      setAuthError(check.error || '主密码长度不足')
+      setAuthError(check.error || t('errMasterLengthShort'))
       await showToast({
         style: Toast.Style.Failure,
-        title: '主密码格式不合法',
+        title: t('toastInvalidMasterTitle'),
         message: check.error
       })
       return
@@ -307,8 +312,8 @@ export function PasswordVault({
         setPasswordInput('')
         await showToast({
           style: Toast.Style.Success,
-          title: '保险箱已解锁',
-          message: `成功解密 ${decrypted.length} 项凭据`
+          title: t('toastUnlockedTitle'),
+          message: t('toastUnlockedMsg', { count: decrypted.length })
         })
       } else {
         await persistEntries(passwordInput, [], true)
@@ -320,13 +325,13 @@ export function PasswordVault({
         setPasswordInput('')
         await showToast({
           style: Toast.Style.Success,
-          title: '加密保险箱初始化完成',
-          message: '所有凭据均使用 PBKDF2 + AES-256-GCM 离线加密存储'
+          title: t('toastInitTitle'),
+          message: t('toastInitMsg')
         })
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      const title = hasExistingVault ? '主密码错误或保险箱数据损坏，无法解锁' : '无法创建保险箱，原数据未被修改'
+      const title = hasExistingVault ? t('errUnlockFailedTitle') : t('errCreateFailedTitle')
       if (mountedRef.current) {
         setAuthError(title)
         if (!hasExistingVault) {
@@ -346,7 +351,7 @@ export function PasswordVault({
 
   const handleLockVault = useCallback(async () => {
     if (mutatingRef.current) {
-      await showToast({ style: Toast.Style.Failure, title: '正在保存，请完成后再锁定' })
+      await showToast({ style: Toast.Style.Failure, title: t('toastLockBusy') })
       return
     }
     sessionEpoch.current++; entriesRef.current = []
@@ -356,40 +361,40 @@ export function PasswordVault({
     setRevealedId(null)
     await showToast({
       style: Toast.Style.Success,
-      title: '保险箱已锁定，内存密钥已销毁'
+      title: t('toastLockedTitle')
     })
   }, [])
 
   const handleSaveEntry = useCallback(async (input: VaultNewEntryInput, existingId?: string) => {
-    if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error('保险箱已锁定，请重新解锁')
+    if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error(t('errLockedReunlock'))
     const created = createVaultEntry(input)
-    if (existingId && !entriesRef.current.some(entry => entry.id === existingId)) throw new Error('此凭据已不存在，请重新读取')
+    if (existingId && !entriesRef.current.some(entry => entry.id === existingId)) throw new Error(t('errEntryMissing'))
     const next = existingId ? entriesRef.current.map(entry => entry.id === existingId ? { ...created, id: existingId } : entry) : [created, ...entriesRef.current]
     await persistEntries(masterPassword, next)
     if (!mountedRef.current || currentSession !== sessionEpoch.current) return
     entriesRef.current = next; setEntries(next)
-    await showToast({ style: Toast.Style.Success, title: '凭据已加密保存', message: created.title })
+    await showToast({ style: Toast.Style.Success, title: t('toastEntrySaved'), message: created.title })
   }, [masterPassword, persistEntries, currentSession])
 
   const handleDeleteEntry = useCallback(async (id: string) => {
     const target = entriesRef.current.find(entry => entry.id === id)
     // 删除不可恢复：必须由用户明确确认，取消或无法弹出确认框时不删除
     const confirmed = await confirmAlert({
-      title: `删除凭据「${target?.title || '未命名'}」？`,
-      message: '删除后无法恢复，保险箱里不会留下副本。',
-      primaryAction: { title: '删除', style: 'destructive' },
-      dismissAction: { title: '取消' }
+      title: t('confirmDeleteTitle', { title: target?.title || t('unnamedEntry') }),
+      message: t('confirmDeleteMsg'),
+      primaryAction: { title: t('confirmDeletePrimary'), style: 'destructive' },
+      dismissAction: { title: t('confirmCancel') }
     })
     if (!confirmed) return
     try {
-      if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error('保险箱已锁定，请重新解锁')
+      if (!masterPassword || currentSession !== sessionEpoch.current) throw new Error(t('errLockedReunlock'))
       const next = entriesRef.current.filter(entry => entry.id !== id)
       await persistEntries(masterPassword, next)
       if (!mountedRef.current || currentSession !== sessionEpoch.current) return
       entriesRef.current = next; setEntries(next)
-      await showToast({ style: Toast.Style.Success, title: '已从加密保险箱中移除该凭据' })
+      await showToast({ style: Toast.Style.Success, title: t('toastEntryRemoved') })
     } catch (error) {
-      await showToast({ style: Toast.Style.Failure, title: '未删除，原数据保留', message: error instanceof Error ? error.message : String(error) })
+      await showToast({ style: Toast.Style.Failure, title: t('toastDeleteFailedKept'), message: error instanceof Error ? error.message : String(error) })
     }
   }, [masterPassword, persistEntries, currentSession])
 
@@ -397,8 +402,8 @@ export function PasswordVault({
     await copySecretWithAutoClear(item.secretPlain)
     await showToast({
       style: Toast.Style.Success,
-      title: '已复制密码 / Secret',
-      message: '将在 30 秒后自动清空剪贴板痕迹'
+      title: t('toastCopiedSecretTitle'),
+      message: t('toastAutoClearMsg')
     })
   }, [])
 
@@ -407,8 +412,8 @@ export function PasswordVault({
     await copySecretWithAutoClear(generated)
     await showToast({
       style: Toast.Style.Success,
-      title: '已生成 20 位高强度随机密码并复制',
-      message: '将在 30 秒后自动清空剪贴板痕迹'
+      title: t('toastQuickGenTitle'),
+      message: t('toastAutoClearMsg')
     })
   }, [])
 
@@ -432,10 +437,10 @@ export function PasswordVault({
     return (
       <Form
         isLoading={isLoading}
-        navigationTitle={isLoading ? '正在读取密码保险箱' : '保险箱暂不可用'}
+        navigationTitle={isLoading ? t('navLoadingVault') : t('navVaultUnavailable')}
         actions={!isLoading ? (
           <ActionPanel>
-            <Action title="重新读取保险箱" onAction={() => {
+            <Action title={t('actionReloadVault')} onAction={() => {
               readReadyRef.current = false
               setIsLoading(true)
               setLoadError('')
@@ -444,7 +449,7 @@ export function PasswordVault({
           </ActionPanel>
         ) : undefined}
       >
-        <Form.Description text={loadError || '读取完成后才能解锁或创建保险箱。'} />
+        <Form.Description text={loadError || t('loadDescDefault')} />
       </Form>
     )
   }
@@ -453,16 +458,16 @@ export function PasswordVault({
     return (
       <Form
         isLoading={isLoading}
-        navigationTitle={hasExistingVault ? '解锁密码保险箱' : '初始化密码保险箱'}
+        navigationTitle={hasExistingVault ? t('navUnlockVault') : t('navInitVault')}
         actions={
           <ActionPanel>
             <Action.SubmitForm
-              title={hasExistingVault ? '解锁保险箱' : '设置主密码并创建保险箱'}
+              title={hasExistingVault ? t('actionUnlockVault') : t('actionCreateVault')}
               icon={Icon.Lock}
               onSubmit={handleUnlockOrInitialize}
             />
             <Action
-              title="生成 20 位随机密码复制到剪贴板"
+              title={t('actionGenAndCopy20')}
               icon={Icon.Wand}
               onAction={handleQuickGeneratePassword}
             />
@@ -470,17 +475,13 @@ export function PasswordVault({
         }
       >
         <Form.Description
-          title="加密架构说明"
-          text={
-            hasExistingVault
-              ? '请输入主密码以派生 AES-256-GCM 密钥解密本地保险箱。主密码绝不落盘或上传。'
-              : '首次使用请设置至少 8 位的主密码（PBKDF2-SHA256 600,000 次迭代 + AES-256-GCM 本地加密）。'
-          }
+          title={t('descArchTitle')}
+          text={hasExistingVault ? t('descArchUnlock') : t('descArchInit')}
         />
         <Form.PasswordField
           id="masterPassword"
-          title="主密码"
-          placeholder="输入主密码以解锁或初始化本地保险箱..."
+          title={t('fieldMasterPwdTitle')}
+          placeholder={t('fieldMasterPwdPlaceholder')}
           value={passwordInput}
           onChange={setPasswordInput}
           error={authError || undefined}
@@ -494,22 +495,22 @@ export function PasswordVault({
       isLoading={isLoading}
       searchText={searchText}
       onSearchTextChange={setSearchText}
-      searchBarPlaceholder="搜索账号标题、用户名、网址域名或 API Key 名称..."
+      searchBarPlaceholder={t('searchPlaceholder')}
       searchBarAccessory={
-        <List.Dropdown value={categoryFilter} onChange={setCategoryFilter} tooltip="按凭据类型筛选">
-          <List.Dropdown.Item title="全部加密凭据" value="all" icon={Icon.Lock} />
-          <List.Dropdown.Item title="网站与应用账号" value="login" icon={Icon.Globe} />
-          <List.Dropdown.Item title="API Key 与访问令牌" value="apikey" icon={Icon.Key} />
-          <List.Dropdown.Item title="服务器与数据库密码" value="server" icon={Icon.Terminal} />
-          <List.Dropdown.Item title="软件激活码与备忘" value="license" icon={Icon.Document} />
+        <List.Dropdown value={categoryFilter} onChange={setCategoryFilter} tooltip={t('filterTooltip')}>
+          <List.Dropdown.Item title={t('filterAll')} value="all" icon={Icon.Lock} />
+          <List.Dropdown.Item title={t('catLoginForm')} value="login" icon={Icon.Globe} />
+          <List.Dropdown.Item title={t('catApikeyForm')} value="apikey" icon={Icon.Key} />
+          <List.Dropdown.Item title={t('catServerForm')} value="server" icon={Icon.Terminal} />
+          <List.Dropdown.Item title={t('catLicenseForm')} value="license" icon={Icon.Document} />
         </List.Dropdown>
       }
       filterBar={{
-        summaryText: `保险箱已解锁 (AES-256-GCM) · 共加密保管 ${entries.length} 项凭据 · 复制后 30 秒自动清剪贴板`,
+        summaryText: t('summaryUnlocked', { count: entries.length }),
         actions: [
           {
             id: 'new-entry',
-            title: '新建凭据',
+            title: t('btnNewEntry'),
             onAction: () =>
               push(
                 <VaultEntryForm
@@ -520,7 +521,7 @@ export function PasswordVault({
                 />
               )
           },
-          { id: 'lock-vault', title: '立即锁定', onAction: handleLockVault }
+          { id: 'lock-vault', title: t('btnLockVault'), onAction: handleLockVault }
         ]
       }}
     >
@@ -529,42 +530,42 @@ export function PasswordVault({
           key={item.id}
           id={item.id}
           title={item.title}
-          subtitle={`${item.username || item.endpoint || '私密条目'}${item.note ? (revealedId === item.id ? ` · ${item.note}` : ' · 有加密备注') : ''}`}
+          subtitle={`${item.username || item.endpoint || t('subtitlePrivateItem')}${item.note ? (revealedId === item.id ? ` · ${item.note}` : t('subtitleHasNote')) : ''}`}
           icon={getCategoryIcon(item.category)}
           accessories={[
-            { tag: item.categoryLabel },
+            { tag: getVaultCategoryLabel(item.category) },
             { text: revealedId === item.id ? item.secretPlain : '••••••••••••' },
             { text: item.updatedAtShort }
           ]}
           actions={
             <ActionPanel>
               <Action
-                title="复制密码 / Secret（30秒后自动清剪贴板）"
+                title={t('actionCopySecret')}
                 icon={Icon.Key}
                 onAction={() => handleCopySecretWithAutoClear(item)}
               />
               {item.username && (
-                <Action.CopyToClipboard title="复制用户名 / 账号" content={item.username} />
+                <Action.CopyToClipboard title={t('actionCopyUsername')} content={item.username} />
               )}
               <Action
-                title={revealedId === item.id ? '隐藏明文密码与备注' : '临时显示明文密码与备注'}
+                title={revealedId === item.id ? t('actionHidePlain') : t('actionRevealPlain')}
                 icon={Icon.Eye}
-                shortcut={{ modifiers: ['cmd'], key: 'e' }}
+                shortcut={{ modifiers: ['ctrl'], key: 'e' }}
                 onAction={() => setRevealedId((cur: string | null) => (cur === item.id ? null : item.id))}
               />
               <Action.Push
-                title="编辑此凭据"
+                title={t('actionEditEntry')}
                 icon={Icon.Pencil}
                 target={<VaultEntryForm initialEntry={item} onSave={input => handleSaveEntry(input, item.id)} />}
               />
               <Action
-                title="立即生成 20 位高强度随机密码并复制"
+                title={t('actionQuickGen20')}
                 icon={Icon.Wand}
-                shortcut={{ modifiers: ['cmd'], key: 'g' }}
+                shortcut={{ modifiers: ['ctrl'], key: 'g' }}
                 onAction={handleQuickGeneratePassword}
               />
               <Action
-                title="删除此凭据"
+                title={t('actionDeleteEntry')}
                 icon={Icon.Trash}
                 style={Action.Style.Destructive}
                 shortcut={{ modifiers: ['ctrl'], key: 'backspace' }}
@@ -582,16 +583,16 @@ export const PasswordVaultCommand = PasswordVault
 
 interface GeneratorPreset {
   id: string
-  title: string
+  titleKey: 'presetStrong20' | 'presetPlain20' | 'presetStrong32' | 'presetPlain16'
   length: number
   symbols: boolean
 }
 
 const GENERATOR_PRESETS: GeneratorPreset[] = [
-  { id: 'strong-20', title: '20 位 · 含符号', length: 20, symbols: true },
-  { id: 'plain-20', title: '20 位 · 仅字母数字', length: 20, symbols: false },
-  { id: 'strong-32', title: '32 位 · 含符号', length: 32, symbols: true },
-  { id: 'plain-16', title: '16 位 · 仅字母数字', length: 16, symbols: false }
+  { id: 'strong-20', titleKey: 'presetStrong20', length: 20, symbols: true },
+  { id: 'plain-20', titleKey: 'presetPlain20', length: 20, symbols: false },
+  { id: 'strong-32', titleKey: 'presetStrong32', length: 32, symbols: true },
+  { id: 'plain-16', titleKey: 'presetPlain16', length: 16, symbols: false }
 ]
 
 function generatePresetPasswords(): Record<string, string> {
@@ -605,6 +606,7 @@ function generatePresetPasswords(): Record<string, string> {
  * 只有选择「存入保险箱」时才进入解锁流程。
  */
 export function PasswordGenerator() {
+  useLocale()
   const [initial] = useState<{ passwords: Record<string, string>; error: string }>(() => {
     try {
       return { passwords: generatePresetPasswords(), error: '' }
@@ -627,9 +629,9 @@ export function PasswordGenerator() {
   const handleCopy = useCallback(async (password: string) => {
     try {
       await copySecretWithAutoClear(password)
-      await showToast({ style: Toast.Style.Success, title: '已复制随机密码', message: '将在 30 秒后自动清空剪贴板痕迹' })
+      await showToast({ style: Toast.Style.Success, title: t('toastCopiedRandomTitle'), message: t('toastAutoClearMsg') })
     } catch (error) {
-      await showToast({ style: Toast.Style.Failure, title: '复制失败', message: error instanceof Error ? error.message : String(error) })
+      await showToast({ style: Toast.Style.Failure, title: t('toastCopyFailedTitle'), message: error instanceof Error ? error.message : String(error) })
     }
   }, [])
 
@@ -638,12 +640,12 @@ export function PasswordGenerator() {
       <List>
         <List.Item
           id="generate-error"
-          title="无法生成随机密码"
+          title={t('genErrorTitle')}
           subtitle={generateError}
           icon={Icon.ExclamationMark}
           actions={
             <ActionPanel>
-              <Action title="重新生成" icon={Icon.ArrowClockwise} onAction={regenerate} />
+              <Action title={t('actionRegenerate')} icon={Icon.ArrowClockwise} onAction={regenerate} />
             </ActionPanel>
           }
         />
@@ -653,8 +655,8 @@ export function PasswordGenerator() {
 
   return (
     <List
-      searchBarPlaceholder="选择密码规格，回车复制"
-      filterBar={{ summaryText: '复制后 30 秒自动清除剪贴板' }}
+      searchBarPlaceholder={t('genSearchPlaceholder')}
+      filterBar={{ summaryText: t('genSummary') }}
     >
       {GENERATOR_PRESETS.map((preset) => {
         const password = passwords[preset.id] || ''
@@ -663,21 +665,21 @@ export function PasswordGenerator() {
             key={preset.id}
             id={preset.id}
             title={password}
-            subtitle={preset.title}
+            subtitle={t(preset.titleKey)}
             icon={Icon.Key}
             actions={
               <ActionPanel>
-                <Action title="复制密码" icon={Icon.Clipboard} onAction={() => handleCopy(password)} />
+                <Action title={t('actionCopyPassword')} icon={Icon.Clipboard} onAction={() => handleCopy(password)} />
                 <Action
-                  title="重新生成"
+                  title={t('actionRegenerate')}
                   icon={Icon.ArrowClockwise}
-                  shortcut={{ modifiers: ['cmd'], key: 'r' }}
+                  shortcut={{ modifiers: ['ctrl'], key: 'r' }}
                   onAction={regenerate}
                 />
                 <Action.Push
-                  title="存入保险箱…"
+                  title={t('actionSaveToVault')}
                   icon={Icon.Lock}
-                  shortcut={{ modifiers: ['cmd'], key: 's' }}
+                  shortcut={{ modifiers: ['ctrl'], key: 's' }}
                   target={<PasswordVault featureCode="vault-generator" prefillPassword={password} />}
                 />
               </ActionPanel>

@@ -1,15 +1,15 @@
 {
   "id": "browser-bookmarks",
   "name": "网页书签",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "只读聚合本机浏览器的多个配置，支持中文、拼音、网址与文件夹检索，打开或复制书签；无法读取的来源会明确提示",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "效率工具",
     "网络工具"
   ],
+  "categoryId": "network",
   "permissions": [
     "fs",
     "shell",
@@ -80,5 +80,61 @@
       "runtime": "electron",
       "arch": "any"
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Browser Bookmarks",
+      "description": "Read-only search across multiple local browser profiles by title, pinyin, URL, or folder to open or copy bookmarks, with clear notices for unreadable sources.",
+      "keywords": [
+        "bookmarks",
+        "browser",
+        "chrome",
+        "edge",
+        "firefox",
+        "favorites",
+        "search"
+      ],
+      "features": {
+        "bookmarks-all": {
+          "explain": "Search bookmarks across all detected local browsers",
+          "cmds": [
+            "bookmarks",
+            "browser bookmarks",
+            "search bookmarks",
+            "favorites"
+          ]
+        },
+        "bookmarks-edge": {
+          "explain": "Search bookmarks from Microsoft Edge only",
+          "cmds": [
+            "edge bookmarks",
+            "microsoft edge bookmarks"
+          ]
+        },
+        "bookmarks-chrome": {
+          "explain": "Search bookmarks from Google Chrome only",
+          "cmds": [
+            "chrome bookmarks",
+            "google chrome bookmarks"
+          ]
+        },
+        "bookmarks-domestic": {
+          "explain": "Search bookmarks from QQ Browser and 360 Browser",
+          "cmds": [
+            "qq bookmarks",
+            "360 bookmarks",
+            "chinese browser bookmarks"
+          ]
+        },
+        "bookmarks-firefox": {
+          "explain": "Search bookmarks from Mozilla Firefox only",
+          "cmds": [
+            "firefox bookmarks",
+            "mozilla bookmarks"
+          ]
+        }
+      }
+    }
+  }
 }

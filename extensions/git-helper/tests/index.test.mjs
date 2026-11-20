@@ -28,11 +28,33 @@ function fixture() {
   }
   return { root, git, shell, commits }
 }
+function clearReadOnlyTree(targetPath) {
+  const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false })
+  if (!stat || stat.isSymbolicLink()) return
+  if (stat.isDirectory()) {
+    try { fs.chmodSync(targetPath, 0o700) } catch { /* 忽略单目录权限异常 */ }
+    for (const name of fs.readdirSync(targetPath)) clearReadOnlyTree(path.join(targetPath, name))
+    return
+  }
+  try { fs.chmodSync(targetPath, 0o666) } catch { /* 忽略单文件权限异常 */ }
+}
+function cleanupRoots() {
+  for (const root of roots.splice(0)) {
+    try {
+      if (process.platform === 'win32') clearReadOnlyTree(root)
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+    } catch {
+      // 独立隔离每个临时仓库删除，避免单个句柄暂占中断其余清理
+    }
+  }
+}
+process.once('exit', cleanupRoots)
+
 async function open(component) { const view = await mount(component); views.push(view); await tick(); return view }
 test.beforeEach(() => host.reset())
 test.afterEach(() => {
   views.splice(0).forEach(view => view.unmount())
-  roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }))
+  cleanupRoots()
 })
 
 test('真实 Git：撤销只回退一次并保留恢复分支、暂存与未暂存内容', () => {

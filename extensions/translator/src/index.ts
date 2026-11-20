@@ -7,11 +7,13 @@ import {
   Clipboard,
   useState,
   useEffect,
+  useLocale,
   useRef,
   showToast,
   Toast,
   FilterBar
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   NOT_IN_CLIENT_MESSAGE,
   TranslationResult,
@@ -46,13 +48,13 @@ function quoteLines(text: string): string {
 
 function buildDetailMarkdown(result: TranslationResult): string {
   return [
-    '### 译文',
+    t('detailHeadingTrans'),
     '',
     quoteLines(result.translatedText),
     '',
     '---',
     '',
-    `### 原文（${languageName(result.sourceLanguage)}）`,
+    t('detailHeadingOrigWithLang', { lang: languageName(result.sourceLanguage) }),
     '',
     quoteLines(result.originalText)
   ].join('\n')
@@ -64,7 +66,7 @@ async function copyWithToast(text: string, successTitle: string, message?: strin
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('toastCopyFailed'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -78,19 +80,19 @@ function namingActions(english: string) {
   const constant = formatIdentifierCase(english, 'constant')
   return {
     camel: Action({
-      title: '复制 camelCase 变量名',
+      title: t('actionCopyCamel'),
       icon: Icon.Code,
-      onAction: () => copyWithToast(camel, '已复制 camelCase 变量名', camel)
+      onAction: () => copyWithToast(camel, t('toastCopiedCamel'), camel)
     }),
     snake: Action({
-      title: '复制 snake_case 变量名',
+      title: t('actionCopySnake'),
       icon: Icon.Code,
-      onAction: () => copyWithToast(snake, '已复制 snake_case 变量名', snake)
+      onAction: () => copyWithToast(snake, t('toastCopiedSnake'), snake)
     }),
     constant: Action({
-      title: '复制 CONSTANT_CASE 常量名',
+      title: t('actionCopyConstant'),
       icon: Icon.Code,
-      onAction: () => copyWithToast(constant, '已复制 CONSTANT_CASE 常量名', constant)
+      onAction: () => copyWithToast(constant, t('toastCopiedConstant'), constant)
     })
   }
 }
@@ -101,14 +103,14 @@ function buildResultItem(result: TranslationResult, namingMode: boolean) {
   const isDirect = result.sourceLanguage === result.targetLanguage
 
   const copyTranslation = Action({
-    title: isDirect ? '复制原文' : '复制译文',
+    title: isDirect ? t('actionCopyOriginal') : t('actionCopyTranslation'),
     icon: Icon.CopyClipboard,
-    onAction: () => copyWithToast(result.translatedText, isDirect ? '已复制原文' : '已复制译文', result.translatedText)
+    onAction: () => copyWithToast(result.translatedText, isDirect ? t('toastCopiedOriginal') : t('toastCopiedTranslation'), result.translatedText)
   })
   const copyBilingual = Action({
-    title: '复制原文与译文',
+    title: t('actionCopyBilingual'),
     icon: Icon.Clipboard,
-    onAction: () => copyWithToast(`${result.originalText}\n${result.translatedText}`, '已复制原文与译文')
+    onAction: () => copyWithToast(`${result.originalText}\n${result.translatedText}`, t('toastCopiedBilingual'))
   })
 
   const children: ReturnType<typeof Action>[] = []
@@ -129,10 +131,10 @@ function buildResultItem(result: TranslationResult, namingMode: boolean) {
 
   const metadata = [
     List.Item.Detail.Metadata.Label({
-      title: '方向',
+      title: t('metaDirection'),
       text: isDirect ? languageName(result.sourceLanguage) : `${languageName(result.sourceLanguage)} → ${languageName(result.targetLanguage)}`
     }),
-    List.Item.Detail.Metadata.Label({ title: '来源', text: result.engineLabel })
+    List.Item.Detail.Metadata.Label({ title: t('metaSource'), text: result.engineLabel })
   ]
   if (hasIdentifier) {
     metadata.push(
@@ -147,12 +149,12 @@ function buildResultItem(result: TranslationResult, namingMode: boolean) {
     title: namingMode && hasIdentifier ? formatIdentifierCase(english, 'camel') : result.translatedText,
     subtitle: result.originalText,
     icon: { source: Icon.Text, tintColor: Color.SecondaryText },
-    accessories: [{ tag: { value: isDirect ? '未翻译' : `${languageName(result.sourceLanguage)}→${languageName(result.targetLanguage)}` } }],
+    accessories: [{ tag: { value: isDirect ? t('tagDirect') : `${languageName(result.sourceLanguage)}→${languageName(result.targetLanguage)}` } }],
     detail: List.Item.Detail({
       markdown: buildDetailMarkdown(result),
       metadata: List.Item.Detail.Metadata({ children: metadata })
     }),
-    actions: ActionPanel({ title: '译文', children })
+    actions: ActionPanel({ title: t('panelTranslation'), children })
   })
 }
 
@@ -161,7 +163,7 @@ function buildHistoryItems(history: TranslationHistoryEntry[], historyError: str
     ? [
         List.Item({
           id: 'history-failed',
-          title: '读取翻译记录失败',
+          title: t('errReadHistoryFailed'),
           subtitle: historyError,
           icon: { source: Icon.ExclamationMark, tintColor: Color.SecondaryText }
         })
@@ -177,20 +179,20 @@ function buildHistoryItems(history: TranslationHistoryEntry[], historyError: str
             ...(h.timestampText ? [{ text: h.timestampText }] : [])
           ],
           detail: List.Item.Detail({
-            markdown: ['### 译文', '', quoteLines(h.translatedText), '', '---', '', '### 原文', '', quoteLines(h.originalText)].join('\n')
+            markdown: [t('detailHeadingTrans'), '', quoteLines(h.translatedText), '', '---', '', t('detailHeadingOrig'), '', quoteLines(h.originalText)].join('\n')
           }),
           actions: ActionPanel({
-            title: '翻译记录',
+            title: t('panelHistory'),
             children: [
               Action({
-                title: '复制译文',
+                title: t('actionCopyTranslation'),
                 icon: Icon.CopyClipboard,
-                onAction: () => copyWithToast(h.translatedText, '已复制译文', h.translatedText)
+                onAction: () => copyWithToast(h.translatedText, t('toastCopiedTranslation'), h.translatedText)
               }),
               Action({
-                title: '复制原文与译文',
+                title: t('actionCopyBilingual'),
                 icon: Icon.Clipboard,
-                onAction: () => copyWithToast(`${h.originalText}\n${h.translatedText}`, '已复制原文与译文')
+                onAction: () => copyWithToast(`${h.originalText}\n${h.translatedText}`, t('toastCopiedBilingual'))
               })
             ]
           })
@@ -199,6 +201,7 @@ function buildHistoryItems(history: TranslationHistoryEntry[], historyError: str
 }
 
 export function TranslatorCommand() {
+  useLocale()
   const inClient = isRealElectronHost()
   const namingMode = readLaunchFeature() === 'translate-naming'
   const [searchText, setSearchText] = useState('')
@@ -218,7 +221,7 @@ export function TranslatorCommand() {
         translatedText: r.translatedText,
         sourceLanguage: r.sourceLanguage,
         targetLanguage: r.targetLanguage,
-        timestampText: '刚刚'
+        timestampText: t('justNow')
       },
       ...prev.filter((h) => h.originalText !== r.originalText)
     ].slice(0, 15))
@@ -274,7 +277,7 @@ export function TranslatorCommand() {
         })
         setHistoryError('')
       } else {
-        setHistoryError(res.error || '读取翻译记录失败')
+        setHistoryError(res.error || t('errReadHistoryFailed'))
       }
     })()
   }, [])
@@ -290,13 +293,13 @@ export function TranslatorCommand() {
     } catch (err) {
       await showToast({
         style: Toast.Style.Failure,
-        title: '读取剪贴板失败',
+        title: t('toastClipboardReadFailed'),
         message: err instanceof Error ? err.message : String(err)
       })
       return
     }
     if (!clip) {
-      await showToast({ style: Toast.Style.Failure, title: '剪贴板里没有文字', message: '请先复制要翻译的文字' })
+      await showToast({ style: Toast.Style.Failure, title: t('toastClipboardEmpty'), message: t('toastClipboardEmptyMsg') })
       return
     }
     if (clip === searchText.trim()) {
@@ -306,19 +309,19 @@ export function TranslatorCommand() {
     setSearchText(clip)
   }
 
-  const placeholder = namingMode ? '输入中文，翻译成英文变量名（英文原文直接转换）' : '输入要翻译的中文或英文'
+  const placeholder = namingMode ? t('placeholderNaming') : t('placeholderDefault')
 
   if (!inClient) {
     return List({
       searchBarPlaceholder: placeholder,
       children: [
         List.Section({
-          title: '翻译',
+          title: t('sectionTranslate'),
           children: [
             List.Item({
               id: 'translator-client-required',
-              title: NOT_IN_CLIENT_MESSAGE,
-              subtitle: '翻译由 ZTools 客户端的翻译接口完成',
+              title: t('notInClient'),
+              subtitle: t('clientRequiredSub'),
               icon: { source: Icon.Info }
             })
           ]
@@ -333,19 +336,19 @@ export function TranslatorCommand() {
   } else if (errorText) {
     resultItem = List.Item({
       id: 'translation-failed',
-      title: '未能翻译',
+      title: t('failedTitle'),
       subtitle: describeTranslateError(errorText),
       icon: { source: Icon.ExclamationMark, tintColor: Color.SecondaryText },
-      detail: List.Item.Detail({ markdown: `### 未能翻译\n\n${describeTranslateError(errorText)}` })
+      detail: List.Item.Detail({ markdown: t('failedMarkdown', { reason: describeTranslateError(errorText) }) })
     })
   } else {
     resultItem = List.Item({
       id: 'translation-empty',
-      title: namingMode ? '输入中文，翻译成英文变量名' : '输入中文或英文开始翻译',
-      subtitle: '只查客户端内置的少量中英常用词与办公短语，也可以点“翻译剪贴板”',
+      title: namingMode ? t('emptyTitleNaming') : t('emptyTitleDefault'),
+      subtitle: t('emptySubtitle'),
       icon: { source: Icon.Info, tintColor: Color.SecondaryText },
       detail: List.Item.Detail({
-        markdown: '### 中英互译\n\n输入含中文时译为英语，其余译为中文。翻译只查客户端内置的离线词库，收录有限，未收录的内容会提示无法翻译。'
+        markdown: t('emptyDetailMarkdown')
       })
     })
   }
@@ -360,21 +363,21 @@ export function TranslatorCommand() {
     isLoading,
     filterBar: FilterBar({
       summaryText: result
-        ? `${result.sourceLanguage === result.targetLanguage ? '原文已是英文' : `${languageName(result.sourceLanguage)} → ${languageName(result.targetLanguage)}`} · ${result.engineLabel}`
-        : '中英互译 · 只查客户端内置的离线词库，收录有限',
+        ? `${result.sourceLanguage === result.targetLanguage ? t('summaryDirectEn') : `${languageName(result.sourceLanguage)} → ${languageName(result.targetLanguage)}`} · ${result.engineLabel}`
+        : t('summaryIdle'),
       actions: [
         {
           id: 'paste-translate-btn',
-          label: '翻译剪贴板',
+          label: t('actionTranslateClipboard'),
           style: 'secondary',
           onAction: handlePasteAndTranslate
         }
       ]
     }),
     children: [
-      List.Section({ title: namingMode ? '变量命名' : '翻译结果', children: [resultItem] }),
+      List.Section({ title: namingMode ? t('sectionNaming') : t('sectionResult'), children: [resultItem] }),
       ...(historyChildren.length > 0
-        ? [List.Section({ title: historyError ? '最近翻译' : `最近翻译（${history.length}）`, children: historyChildren })]
+        ? [List.Section({ title: historyError ? t('sectionHistory') : t('sectionHistoryCount', { count: history.length }), children: historyChildren })]
         : [])
     ]
   })

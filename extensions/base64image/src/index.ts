@@ -7,8 +7,11 @@ import {
   Toast,
   Clipboard,
   useState,
-  useRef
+  useEffect,
+  useRef,
+  useLocale
 } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   parseBase64Image,
   encodeSvgOrTextToBase64,
@@ -16,7 +19,8 @@ import {
   SAMPLE_PNG_DATA_URI,
   type ParsedImageResult
 } from "./logic.js";
-import { pickImageFile, readClipboardImage, readClipboardImageFile, saveEncodedText, HostError } from "./host.js";
+import { pickImageFile, readClipboardImage, readClipboardImageFile, readDroppedImageFile, saveEncodedText, HostError } from "./host.js";
+import { createCompatFileInputProps, isDeclarativeFileInputSupported } from "./host-compat.js";
 
 export const MAX_COPY_BYTES = 8 * 1024 * 1024;
 
@@ -26,6 +30,7 @@ interface LoadedSource {
 }
 
 export default function Base64ImageCommand() {
+  useLocale();
   const [inputText, setInputText] = useState<string>("");
   const [loaded, setLoaded] = useState<LoadedSource | null>(null);
   const [busy, setBusy] = useState(false);
@@ -39,26 +44,26 @@ export default function Base64ImageCommand() {
       ? encodeSvgOrTextToBase64(source)
       : /^\s*</.test(source)
         // XML / HTML 但根元素不是 <svg>：不能当成图片编码（否则会生成 text/plain 的“图片”写法）
-        ? { valid: false, error: "这段标记不是 SVG 图片（根元素需要是 <svg>），无法转成图片 Base64" }
+        ? { valid: false, error: t("notSvgError") }
         : parseBase64Image(source);
   }
 
   const handleCopy = async (content: string, label: string) => {
     try {
-      if (new TextEncoder().encode(content).byteLength > MAX_COPY_BYTES) throw new Error("结果超过 8 MiB，请使用保存为文本文件");
+      if (new TextEncoder().encode(content).byteLength > MAX_COPY_BYTES) throw new Error(t("overMaxCopyError"));
       await Clipboard.copy(content);
-      await showToast(Toast.Style.Success, `已复制 ${label}`);
+      await showToast(Toast.Style.Success, t("copiedToast", { label }));
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "复制失败", err instanceof Error ? err.message : String(err));
+      await showToast(Toast.Style.Failure, t("copyFailed"), err instanceof Error ? err.message : String(err));
     }
   };
 
   const handleSave = (content: string, name: string) => runExclusive(async () => {
     try {
       const path = await saveEncodedText(content, `${name}.txt`);
-      if (path) await showToast(Toast.Style.Success, "已保存转换结果", path);
+      if (path) await showToast(Toast.Style.Success, t("savedToast"), path);
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "保存失败", err instanceof Error ? err.message : String(err));
+      await showToast(Toast.Style.Failure, t("saveFailed"), err instanceof Error ? err.message : String(err));
     }
   });
 
@@ -66,12 +71,12 @@ export default function Base64ImageCommand() {
   const showImage = async (image: { name: string; base64: string }) => {
     const check = parseBase64Image(image.base64);
     if (!check.valid || !check.dataUri) {
-      await showToast(Toast.Style.Failure, "不是支持的图片", check.error);
+      await showToast(Toast.Style.Failure, t("unsupportedImage"), check.error);
       return;
     }
     setLoaded({ name: image.name, dataUri: check.dataUri });
     setInputText("");
-    await showToast(Toast.Style.Success, `已转换 ${image.name}`, check.formattedSize);
+    await showToast(Toast.Style.Success, t("convertedToast", { name: image.name }), check.formattedSize);
   };
 
   // 读取期间加锁，避免连按触发并发读取
@@ -93,9 +98,63 @@ export default function Base64ImageCommand() {
         const image = await pickImageFile();
         if (image) await showImage(image);
       } catch (err: unknown) {
-        await showToast(Toast.Style.Failure, "读取图片失败", err instanceof Error ? err.message : String(err));
+        await showToast(Toast.Style.Failure, t("readImgFailed"), err instanceof Error ? err.message : String(err));
       }
     });
+
+  useEffect(() => {
+    if (isDeclarativeFileInputSupported()) return () => {};
+    const events = (globalThis as {
+      window?: {
+        ztools?: {
+          events?: {
+            on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void;
+            off?: (event: string, cb: (payload: unknown) => void) => void;
+          };
+        };
+      };
+    }).window?.ztools?.events;
+    if (!events || typeof events.on !== "function") return undefined;
+    const handleFilesDropped = (envelopeOrPayload: unknown) => {
+      void runExclusive(async () => {
+        try {
+          const image = await readDroppedImageFile(envelopeOrPayload);
+          if (image) await showImage(image);
+        } catch (err: unknown) {
+          await showToast(Toast.Style.Failure, t("readDroppedFailed"), err instanceof Error ? err.message : String(err));
+        }
+      });
+    };
+    const dispose = events.on("plugin_files_dropped", handleFilesDropped);
+    return () => {
+      if (typeof dispose === "function") dispose();
+      else if (typeof events.off === "function") events.off("plugin_files_dropped", handleFilesDropped);
+    };
+  }, []);
+
+  const fileInputProps = createCompatFileInputProps(
+    (files, payload) => {
+      void runExclusive(async () => {
+        try {
+          const image = await readDroppedImageFile({ files });
+          if (image) await showImage(image);
+        } catch (err: unknown) {
+          const title = payload.source === "paste" ? t("readPastedFailed") : t("readDroppedFailed");
+          await showToast(Toast.Style.Failure, title, err instanceof Error ? err.message : String(err));
+        }
+      });
+    },
+    {
+      extensions: [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".ico", ".avif"],
+      allowClipboardImage: true,
+      onTextPaste: (text: string) => {
+        const trimmed = text.trim();
+        if (!trimmed) return;
+        setLoaded(null);
+        setInputText(trimmed);
+      }
+    }
+  );
 
   // 剪贴板读取顺序：复制的图片文件（保留原文件字节）→ 图片（截图）→ 文字（Base64 / Data URL / SVG 源码）。
   // 读文件或图片出错时直接提示真实原因，不再落到“没有图片或文字”。
@@ -105,7 +164,7 @@ export default function Base64ImageCommand() {
       try {
         image = await readClipboardImageFile();
       } catch (err: unknown) {
-        await showToast(Toast.Style.Failure, "读取复制的图片文件失败", err instanceof Error ? err.message : String(err));
+        await showToast(Toast.Style.Failure, t("readClipFileFailed"), err instanceof Error ? err.message : String(err));
         return;
       }
       if (!image) {
@@ -116,8 +175,8 @@ export default function Base64ImageCommand() {
           const detail = err instanceof Error ? err.message : String(err);
           await showToast(
             Toast.Style.Failure,
-            "读取剪贴板图片失败",
-            err instanceof HostError && err.code === "FILE_TOO_LARGE" ? `${detail}；原图文件可改用「选择图片文件」` : detail
+            t("readClipImgFailed"),
+            err instanceof HostError && err.code === "FILE_TOO_LARGE" ? t("clipImgTooLargeHint", { detail }) : detail
           );
           return;
         }
@@ -133,9 +192,9 @@ export default function Base64ImageCommand() {
           setInputText(text.trim());
           return;
         }
-        await showToast(Toast.Style.Failure, "剪贴板里没有图片或文字");
+        await showToast(Toast.Style.Failure, t("clipEmpty"));
       } catch (err: unknown) {
-        await showToast(Toast.Style.Failure, "读取剪贴板失败", err instanceof Error ? err.message : String(err));
+        await showToast(Toast.Style.Failure, t("readClipFailed"), err instanceof Error ? err.message : String(err));
       }
     });
 
@@ -145,14 +204,21 @@ export default function Base64ImageCommand() {
   };
 
   const sourceActions = [
-    Action({ title: "选择图片文件…", icon: Icon.Image, onAction: handlePickFile }),
-    Action({ title: "粘贴剪贴板图片或文字", icon: Icon.CopyClipboard, onAction: handlePaste }),
-    Action({ title: "清空", icon: Icon.Trash, onAction: clearAll })
+    Action({ title: t("pickFileAction"), icon: Icon.Image, onAction: handlePickFile }),
+    Action({ title: t("pasteAction"), icon: Icon.CopyClipboard, onAction: handlePaste }),
+    Action({ title: t("clearAction"), icon: Icon.Trash, onAction: clearAll })
   ];
 
   const previewDetail = parsed.valid && parsed.dataUri && parsed.format
     ? List.Item.Detail({
-        markdown: `![preview](${parsed.dataUri})\n\n**${loaded ? loaded.name : "输入内容"}**\n\n- 格式：${parsed.format.toUpperCase()}（${parsed.mimeType}）\n- 原始大小：${parsed.formattedSize}\n- Base64 长度：${parsed.base64Length} 字符`
+        markdown: t("previewMd", {
+          uri: parsed.dataUri,
+          name: loaded ? loaded.name : t("inputContentLabel"),
+          format: parsed.format.toUpperCase(),
+          mime: parsed.mimeType ?? "",
+          size: parsed.formattedSize ?? "",
+          len: parsed.base64Length ?? 0
+        })
       })
     : undefined;
 
@@ -161,12 +227,12 @@ export default function Base64ImageCommand() {
       ? List.Item({
           id,
           title,
-          subtitle: value.length > MAX_COPY_BYTES ? "结果超过剪贴板上限，按回车保存为文本文件" : value.length > 60 ? value.slice(0, 60) + "…" : value,
+          subtitle: value.length > MAX_COPY_BYTES ? t("overLimitSub") : value.length > 60 ? value.slice(0, 60) + "…" : value,
           icon,
           detail: previewDetail,
           actions: ActionPanel({ title: label }, [
-            ...(value.length <= MAX_COPY_BYTES ? [Action({ title: `复制${label}`, icon: Icon.CopyClipboard, onAction: () => handleCopy(value, label) })] : []),
-            Action({ title: "保存为文本文件…", icon: Icon.Document, onAction: () => handleSave(value, id) }),
+            ...(value.length <= MAX_COPY_BYTES ? [Action({ title: t("copyLabelAction", { label }), icon: Icon.CopyClipboard, onAction: () => handleCopy(value, label) })] : []),
+            Action({ title: t("saveTextFileAction"), icon: Icon.Document, onAction: () => handleSave(value, id) }),
             ...sourceActions
           ])
         })
@@ -175,50 +241,50 @@ export default function Base64ImageCommand() {
   let sections: ReturnType<typeof List.Section>[];
   if (parsed.valid) {
     sections = [
-      List.Section({ title: loaded ? `已载入 ${loaded.name}` : "转换结果（按回车复制）" }, [
+      List.Section({ title: loaded ? t("sectionLoaded", { name: loaded.name }) : t("sectionResults") }, [
         exportItem("export-datauri", "Data URL", parsed.dataUri, " Data URL", Icon.Globe),
-        exportItem("export-raw-base64", "纯 Base64", parsed.encoded, "纯 Base64", Icon.Terminal),
+        exportItem("export-raw-base64", t("rawBase64Title"), parsed.encoded, t("rawBase64Label"), Icon.Terminal),
         exportItem("export-markdown", "Markdown", parsed.markdown, " Markdown", Icon.Document),
         exportItem("export-html", "HTML <img>", parsed.html, " HTML", Icon.Code),
-        exportItem("export-css", "CSS 背景图", parsed.cssBackground, " CSS", Icon.Brush)
+        exportItem("export-css", t("cssBgTitle"), parsed.cssBackground, " CSS", Icon.Brush)
       ].filter((item): item is ReturnType<typeof List.Item> => item !== null))
     ];
   } else if (source) {
     sections = [
-      List.Section({ title: "无法识别" }, [
+      List.Section({ title: t("sectionInvalid") }, [
         List.Item({
           id: "item-error",
-          title: parsed.error || "无法识别的内容",
-          subtitle: "支持：图片文件、截图、Base64 字符串、data:image/... 链接、SVG 源码",
+          title: parsed.error || t("invalidFallback"),
+          subtitle: t("invalidSub"),
           icon: Icon.ExclamationMark,
-          actions: ActionPanel({ title: "操作" }, sourceActions)
+          actions: ActionPanel({ title: t("actionsTitle") }, sourceActions)
         })
       ])
     ];
   } else {
     sections = [
-      List.Section({ title: "开始" }, [
+      List.Section({ title: t("sectionStart") }, [
         List.Item({
           id: "start-pick",
-          title: busy ? "正在读取…" : "选择图片文件，转成 Base64",
-          subtitle: "PNG、JPG、GIF、WebP、SVG，单张不超过 10 MB",
+          title: busy ? t("loadingTitle") : t("pickStartTitle"),
+          subtitle: t("pickStartSub"),
           icon: Icon.Image,
-          actions: ActionPanel({ title: "开始" }, sourceActions)
+          actions: ActionPanel({ title: t("sectionStart") }, sourceActions)
         }),
         List.Item({
           id: "start-paste",
-          title: "粘贴截图或复制的图片",
-          subtitle: "也可以粘贴 Base64 字符串，还原成图片",
+          title: t("pasteStartTitle"),
+          subtitle: t("pasteStartSub"),
           icon: Icon.CopyClipboard,
-          actions: ActionPanel({ title: "开始" }, [sourceActions[1], sourceActions[0]])
+          actions: ActionPanel({ title: t("sectionStart") }, [sourceActions[1], sourceActions[0]])
         }),
         List.Item({
           id: "start-sample",
-          title: "看一个示例",
-          subtitle: "载入一张 1×1 的示例 PNG",
+          title: t("sampleStartTitle"),
+          subtitle: t("sampleStartSub"),
           icon: Icon.Eye,
-          actions: ActionPanel({ title: "示例" }, [
-            Action({ title: "载入示例", icon: Icon.Eye, onAction: () => { setLoaded({ name: "示例 PNG", dataUri: SAMPLE_PNG_DATA_URI }); setInputText(""); } })
+          actions: ActionPanel({ title: t("samplePanelTitle") }, [
+            Action({ title: t("loadSampleAction"), icon: Icon.Eye, onAction: () => { setLoaded({ name: t("sampleName"), dataUri: SAMPLE_PNG_DATA_URI }); setInputText(""); } })
           ])
         })
       ])
@@ -227,16 +293,17 @@ export default function Base64ImageCommand() {
 
   return List(
     {
-      navigationTitle: "Base64 图片编解码",
+      ...fileInputProps,
+      navigationTitle: t("navTitle"),
       isLoading: busy,
       isShowingDetail: Boolean(previewDetail),
-      searchBarPlaceholder: "粘贴 Base64 / Data URL / SVG 源码，或按回车选择图片文件…",
+      searchBarPlaceholder: t("searchPlaceholder"),
       searchText: inputText,
       onSearchTextChange: (text: string) => {
         setInputText(text);
         if (text) setLoaded(null);
       },
-      actions: ActionPanel({ title: "全局操作" }, sourceActions)
+      actions: ActionPanel({ title: t("globalActions") }, sourceActions)
     },
     sections
   );

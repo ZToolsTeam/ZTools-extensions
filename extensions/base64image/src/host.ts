@@ -5,6 +5,8 @@
  * 返回 `{ success, data | error }` 信封。宿主不存在（如单元测试）时抛出 HOST_UNAVAILABLE。
  */
 
+import { t } from "./i18n.js";
+
 let seq = 0;
 
 export class HostError extends Error {
@@ -22,11 +24,11 @@ export async function callHost<T = unknown>(method: string, params: Record<strin
   const root = globalThis as unknown as HostRoot;
   const methods = root.window?.__ztoolsElectron?.transport?.methods ?? root.__ztoolsElectron?.transport?.methods;
   const fn = methods?.[method];
-  if (typeof fn !== "function") throw new HostError("HOST_UNAVAILABLE", `当前环境不支持 ${method}`);
+  if (typeof fn !== "function") throw new HostError("HOST_UNAVAILABLE", t("errHostUnsupported", { method }));
   seq = (seq + 1) % 1_000_000;
   const envelope = await fn({ messageId: `b64_${Date.now()}_${seq}`, params });
-  if (!envelope || typeof envelope !== "object") throw new HostError("HOST_RESPONSE_INVALID", "宿主返回了无法识别的结果");
-  if (!envelope.success) throw new HostError(envelope.error?.code || "HOST_FAILED", envelope.error?.message || `${method} 调用失败`);
+  if (!envelope || typeof envelope !== "object") throw new HostError("HOST_RESPONSE_INVALID", t("errHostResponseInvalid"));
+  if (!envelope.success) throw new HostError(envelope.error?.code || "HOST_FAILED", envelope.error?.message || t("errHostCallFailed", { method }));
   return envelope.data as T;
 }
 
@@ -36,15 +38,15 @@ export const MAX_IMAGE_FILE_BYTES = 10 * 1024 * 1024;
 /** 保存转换后的文本；文件选择器授予当前会话写入权限，取消不创建文件。 */
 export async function saveEncodedText(content: string, defaultName: string): Promise<string | null> {
   const picked = await callHost<{ canceled: boolean; filePath?: string }>("window_show_save_dialog", {
-    title: "保存 Base64 转换结果", defaultName, filters: "文本文件|txt"
+    title: t("saveDialogTitle"), defaultName, filters: t("saveDialogFilter")
   });
   if (!picked || picked.canceled || !picked.filePath) return null;
   await callHost("filesystem_write_file", { path: picked.filePath, content, encoding: "utf8" });
   return picked.filePath;
 }
 
-const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
-const IMAGE_FILTER = `图片|${IMAGE_EXTENSIONS.join(";")}`;
+const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "avif"];
+const getImageFilter = () => t("imageDialogFilter", { exts: IMAGE_EXTENSIONS.join(";") });
 
 export interface LoadedImage {
   name: string;
@@ -63,14 +65,32 @@ export function hasImageExtension(filePath: string): boolean {
 }
 
 /** 读取一个图片文件的原始字节（Base64），先检查大小，避免把超大文件整段读进内存 */
-async function readImageFile(filePath: string): Promise<LoadedImage> {
+export async function readImageFile(filePath: string): Promise<LoadedImage> {
   const size = await callHost<{ size?: number } | number>("filesystem_get_file_size", { path: filePath });
   const bytes = typeof size === "number" ? size : Number(size?.size ?? 0);
   if (bytes > MAX_IMAGE_FILE_BYTES) {
-    throw new HostError("FILE_TOO_LARGE", `图片超过 10 MB（${formatMb(bytes)}），请先压缩`);
+    throw new HostError("FILE_TOO_LARGE", t("errFileTooLarge", { size: formatMb(bytes) }));
   }
   const read = await callHost<{ content: string }>("filesystem_read_file", { path: filePath, encoding: "base64" });
   return { name: baseName(filePath), base64: read.content };
+}
+
+/**
+ * 读取通过 plugin_files_dropped 拖入的图片文件
+ */
+export async function readDroppedImageFile(envelopeOrPayload: unknown): Promise<LoadedImage | null> {
+  if (!envelopeOrPayload || typeof envelopeOrPayload !== "object") return null;
+  const record = envelopeOrPayload as Record<string, unknown>;
+  const payload = record.payload && typeof record.payload === "object" ? (record.payload as Record<string, unknown>) : record;
+  const files = Array.isArray(payload.files)
+    ? payload.files.filter((f): f is string => typeof f === "string" && f.trim().length > 0).map(f => f.trim())
+    : [];
+  if (files.length === 0) return null;
+  const image = files.find(hasImageExtension);
+  if (!image) {
+    throw new HostError("NOT_IMAGE_FILE", t("errDroppedNotImage", { name: baseName(files[0]) }));
+  }
+  return readImageFile(image);
 }
 
 /**
@@ -78,8 +98,8 @@ async function readImageFile(filePath: string): Promise<LoadedImage> {
  */
 export async function pickImageFile(): Promise<LoadedImage | null> {
   const picked = await callHost<{ canceled: boolean; filePath?: string }>("window_show_open_dialog", {
-    title: "选择要转成 Base64 的图片",
-    filters: IMAGE_FILTER,
+    title: t("openDialogTitle"),
+    filters: getImageFilter(),
     properties: ["openFile"]
   });
   if (!picked || picked.canceled || !picked.filePath) return null;
@@ -103,7 +123,7 @@ export async function readClipboardImageFile(): Promise<LoadedImage | null> {
   if (files.length === 0) return null;
   const image = files.find(hasImageExtension);
   if (!image) {
-    throw new HostError("NOT_IMAGE_FILE", `复制的文件不是支持的图片（${baseName(files[0])}），仅支持 PNG、JPEG、GIF、WebP 与 SVG`);
+    throw new HostError("NOT_IMAGE_FILE", t("errCopiedNotImage", { name: baseName(files[0]) }));
   }
   return readImageFile(image);
 }
@@ -116,13 +136,13 @@ export async function readClipboardImage(): Promise<LoadedImage | null> {
   if (res?.useTempFile && typeof res.tempFile === "string") {
     const bytes = Number(res.size);
     if (bytes > MAX_IMAGE_FILE_BYTES) {
-      throw new HostError("FILE_TOO_LARGE", `剪贴板里的图片超过 10 MB（${formatMb(bytes)}），请先压缩`);
+      throw new HostError("FILE_TOO_LARGE", t("errClipboardImageTooLarge", { size: formatMb(bytes) }));
     }
     const read = await callHost<{ content: string }>("filesystem_read_file", { path: res.tempFile, encoding: "base64" });
-    return { name: "剪贴板图片.png", base64: read.content };
+    return { name: t("clipboardImageName"), base64: read.content };
   }
   const image = typeof res?.image === "string" ? res.image : "";
   if (!image) return null;
   const comma = image.indexOf(",");
-  return { name: "剪贴板图片.png", base64: comma >= 0 ? image.slice(comma + 1) : image };
+  return { name: t("clipboardImageName"), base64: comma >= 0 ? image.slice(comma + 1) : image };
 }

@@ -1,3 +1,5 @@
+import { t } from './i18n.js'
+
 export interface MacProbe {
   host: string; port: number; name: string; group: 'domestic' | 'global' | 'custom' | 'gateway'; protocol: 'TCP' | 'ICMP'
   checkedAt?: string; samplesMs: number[]; latencyMs: number | null; jitterMs: number | null; error: string | null
@@ -18,40 +20,58 @@ let serial = 0
 export const speedtestId = () => `speed_${Date.now()}_${++serial}`
 export async function speedtestInvoke(method: string, params: Record<string, unknown>) {
   const call = (globalThis as unknown as { __ztoolsElectron?: Bridge }).__ztoolsElectron?.transport?.methods?.[method]
-  if (!call) throw new Error('请升级客户端后使用 Mac 网络测速')
+  if (!call) throw new Error(t('upgradeClient'))
   const response = await call({ messageId: speedtestId(), params, timeoutMs: 30000 })
-  if (response?.success !== true || !object(response.data) || response.data.success !== true) throw new Error(response?.error?.message || '测速操作未确认成功')
+  if (response?.success !== true || !object(response.data) || response.data.success !== true) throw new Error(response?.error?.message || t('opNotConfirmed'))
   return response.data
 }
 export async function diagnoseNetwork(operationId: string, target?: string): Promise<MacDiagnosis> {
   const r = await speedtestInvoke('network_speedtest', { action: 'diagnose', operationId, ...(target ? { target } : {}) })
-  if (r.action !== 'diagnose' || !checkedAt(r.checkedAt) || !object(r.network) || !optionalText(r.network.interfaceName) || !optionalText(r.network.gateway) || !optionalText(r.network.warning) || !Array.isArray(r.network.localAddresses) || r.network.localAddresses.some(v => typeof v !== 'string') || !Array.isArray(r.nodes) || !r.nodes.length || r.nodes.length > 6) throw new Error('网络诊断回执不完整')
+  if (r.action !== 'diagnose' || !checkedAt(r.checkedAt) || !object(r.network) || !optionalText(r.network.interfaceName) || !optionalText(r.network.gateway) || !optionalText(r.network.warning) || !Array.isArray(r.network.localAddresses) || r.network.localAddresses.some(v => typeof v !== 'string') || !Array.isArray(r.nodes) || !r.nodes.length || r.nodes.length > 6) throw new Error(t('diagnoseIncompletePayload'))
   for (const n of r.nodes) {
-    if (!object(n) || typeof n.host !== 'string' || !n.host || typeof n.name !== 'string' || typeof n.group !== 'string' || !['domestic', 'global', 'custom', 'gateway'].includes(n.group) || typeof n.protocol !== 'string' || !['TCP', 'ICMP'].includes(n.protocol) || !Number.isInteger(n.port) || Number(n.port) < 0 || Number(n.port) > 65535 || !Array.isArray(n.samplesMs) || n.samplesMs.length > 3 || n.samplesMs.some(v => !finite(v)) || !optionalNumber(n.latencyMs) || !optionalNumber(n.jitterMs) || !optionalText(n.error)) throw new Error('网络节点回执无效')
+    if (!object(n) || typeof n.host !== 'string' || !n.host || typeof n.name !== 'string' || typeof n.group !== 'string' || !['domestic', 'global', 'custom', 'gateway'].includes(n.group) || typeof n.protocol !== 'string' || !['TCP', 'ICMP'].includes(n.protocol) || !Number.isInteger(n.port) || Number(n.port) < 0 || Number(n.port) > 65535 || !Array.isArray(n.samplesMs) || n.samplesMs.length > 3 || n.samplesMs.some(v => !finite(v)) || !optionalNumber(n.latencyMs) || !optionalNumber(n.jitterMs) || !optionalText(n.error)) throw new Error(t('invalidNodePayload'))
     const values = n.samplesMs as number[], mean = values.length ? values.reduce((a, b) => a + b, 0) / values.length : null
     const jitter = values.length > 1 ? values.slice(1).reduce((sum, value, i) => sum + Math.abs(value - values[i]!), 0) / (values.length - 1) : null
-    if ((mean === null ? n.latencyMs !== null : typeof n.latencyMs !== 'number' || Math.abs(mean - n.latencyMs) > 0.0001) || (jitter === null ? n.jitterMs !== null : typeof n.jitterMs !== 'number' || Math.abs(jitter - n.jitterMs) > 0.0001) || (!n.error && values.length !== 3)) throw new Error('节点结果与实测样本不一致')
+    if ((mean === null ? n.latencyMs !== null : typeof n.latencyMs !== 'number' || Math.abs(mean - n.latencyMs) > 0.0001) || (jitter === null ? n.jitterMs !== null : typeof n.jitterMs !== 'number' || Math.abs(jitter - n.jitterMs) > 0.0001) || (!n.error && values.length !== 3)) throw new Error(t('nodeSampleMismatch'))
   }
   return r as unknown as MacDiagnosis
 }
 export async function measureBandwidth(operationId: string): Promise<MacBandwidth> {
   const r = await speedtestInvoke('network_speedtest', { action: 'bandwidth', operationId })
-  if (r.action !== 'bandwidth' || !finite(r.downloadMbps) || !r.downloadMbps || !finite(r.uploadMbps) || !r.uploadMbps || !optionalNumber(r.baseRttMs) || !optionalNumber(r.responsivenessRpm) || !optionalNumber(r.downloadedBytes) || !optionalNumber(r.uploadedBytes) || typeof r.interfaceName !== 'string' || !r.interfaceName || !finite(r.durationMs) || !r.durationMs || !checkedAt(r.checkedAt)) throw new Error('测速未返回完整的真实数据')
+  if (r.action !== 'bandwidth' || !finite(r.downloadMbps) || !r.downloadMbps || !finite(r.uploadMbps) || !r.uploadMbps || !optionalNumber(r.baseRttMs) || !optionalNumber(r.responsivenessRpm) || !optionalNumber(r.downloadedBytes) || !optionalNumber(r.uploadedBytes) || typeof r.interfaceName !== 'string' || !r.interfaceName || !finite(r.durationMs) || !r.durationMs || !checkedAt(r.checkedAt)) throw new Error(t('bandwidthIncompletePayload'))
   return r as unknown as MacBandwidth
 }
 export async function stopSpeedtest(operationId: string) {
   const r = await speedtestInvoke('network_speedtest', { action: 'cancel', operationId })
-  if (typeof r.cancelled !== 'boolean') throw new Error('未确认测速已停止')
+  if (typeof r.cancelled !== 'boolean') throw new Error(t('stopNotConfirmed'))
 }
-const numberText = (v: number | null, unit: string) => v === null ? '未提供' : `${v.toFixed(2)} ${unit}`
+const numberText = (v: number | null, unit: string) => v === null ? t('notProvided') : `${v.toFixed(2)} ${unit}`
 export function networkReport(bandwidth: MacBandwidth | null, diagnosis: MacDiagnosis | null) {
-  const lines = ['ZTools 网络测速报告']
-  if (bandwidth) lines.push(`测速时间：${bandwidth.checkedAt}`, `测试：Apple networkQuality，15 秒样本，实际用时 ${(bandwidth.durationMs / 1000).toFixed(1)} 秒，网卡 ${bandwidth.interfaceName}`, `下载 ${numberText(bandwidth.downloadMbps, 'Mbps')}；上传 ${numberText(bandwidth.uploadMbps, 'Mbps')}`, `空闲延迟 ${numberText(bandwidth.baseRttMs, 'ms')}；负载响应 ${numberText(bandwidth.responsivenessRpm, 'RPM')}`, `下载流量 ${numberText(bandwidth.downloadedBytes === null ? null : bandwidth.downloadedBytes / 1e6, 'MB')}；上传流量 ${numberText(bandwidth.uploadedBytes === null ? null : bandwidth.uploadedBytes / 1e6, 'MB')}`)
+  const lines = [t('reportTitle')]
+  if (bandwidth) lines.push(
+    t('reportTime', { time: bandwidth.checkedAt }),
+    t('reportTest', { secs: (bandwidth.durationMs / 1000).toFixed(1), iface: bandwidth.interfaceName }),
+    t('reportSpeed', { down: numberText(bandwidth.downloadMbps, 'Mbps'), up: numberText(bandwidth.uploadMbps, 'Mbps') }),
+    t('reportLatency', { latency: numberText(bandwidth.baseRttMs, 'ms'), rpm: numberText(bandwidth.responsivenessRpm, 'RPM') }),
+    t('reportTraffic', { down: numberText(bandwidth.downloadedBytes === null ? null : bandwidth.downloadedBytes / 1e6, 'MB'), up: numberText(bandwidth.uploadedBytes === null ? null : bandwidth.uploadedBytes / 1e6, 'MB') })
+  )
   if (diagnosis) {
-    lines.push(`最近节点检测：${diagnosis.checkedAt}`, `默认网卡 ${diagnosis.network.interfaceName || '未提供'}；本机 ${diagnosis.network.localAddresses.join(' / ') || '未提供'}；网关 ${diagnosis.network.gateway || '未提供'}`)
+    lines.push(
+      t('reportRecentDiag', { time: diagnosis.checkedAt }),
+      t('reportNetwork', { iface: diagnosis.network.interfaceName || t('notProvided'), local: diagnosis.network.localAddresses.join(' / ') || t('notProvided'), gateway: diagnosis.network.gateway || t('notProvided') })
+    )
     if (diagnosis.network.warning) lines.push(diagnosis.network.warning)
-    for (const n of diagnosis.nodes) lines.push(`${n.name} (${n.host}${n.port ? ':' + n.port : ''}) ${n.protocol}：${n.samplesMs.length}/3 响应，平均 ${numberText(n.latencyMs, 'ms')}，抖动 ${numberText(n.jitterMs, 'ms')}${n.error ? '；' + n.error : ''}；检测时间 ${n.checkedAt || diagnosis.checkedAt}`)
+    for (const n of diagnosis.nodes) lines.push(t('reportNodeLine', {
+      name: n.name,
+      target: `${n.host}${n.port ? ':' + n.port : ''}`,
+      protocol: n.protocol,
+      count: n.samplesMs.length,
+      avg: numberText(n.latencyMs, 'ms'),
+      jitter: numberText(n.jitterMs, 'ms'),
+      err: n.error ? `；${n.error}` : '',
+      time: n.checkedAt || diagnosis.checkedAt
+    }))
   }
-  lines.push('节点检测仅验证连接，不代表网站业务可用；测速受当前网络、VPN 和测试服务影响。')
+  lines.push(t('reportFootnote'))
   return lines.join('\n')
 }

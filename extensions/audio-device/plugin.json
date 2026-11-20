@@ -1,15 +1,15 @@
 {
   "id": "audio-device",
   "name": "音频设备切换",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "秒级切换系统默认扬声器、耳机与麦克风，支持音量调节、快速静音，可按蓝牙、USB、显示器等连接方式搜索设备",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "audio",
     "system"
@@ -61,5 +61,51 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Audio Device Switcher",
+      "description": "Quickly switch default speakers, headphones, and microphones with volume control, instant mute, and search by Bluetooth, USB, or display connection.",
+      "keywords": [
+        "audio",
+        "speaker",
+        "headphone",
+        "microphone",
+        "volume",
+        "mute",
+        "sound"
+      ],
+      "features": {
+        "audio-switch": {
+          "explain": "View and switch system audio output (speakers/headphones) and input (microphone) devices",
+          "cmds": [
+            "audio",
+            "speaker",
+            "headphone",
+            "sound device",
+            "switch audio"
+          ]
+        },
+        "audio-input": {
+          "explain": "Quickly switch the default system microphone input device",
+          "cmds": [
+            "mic",
+            "microphone",
+            "audio input",
+            "recording device"
+          ]
+        },
+        "audio-mute-toggle": {
+          "explain": "Toggle mute for the current audio output device",
+          "cmds": [
+            "mute",
+            "unmute",
+            "toggle mute",
+            "silence"
+          ]
+        }
+      }
+    }
+  }
 }

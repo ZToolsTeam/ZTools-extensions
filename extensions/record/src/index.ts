@@ -14,14 +14,17 @@ import {
   useState,
   useEffect,
   useRef,
+  useLocale,
   showToast,
   Toast,
   FilterBar
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   RECORD_FORMAT_OPTIONS,
   RECORD_FPS_OPTIONS,
-  RECORD_LIMITATION_NOTE,
+  getRecordFormatOptions,
+  getRecordLimitationNote,
   RecordFormat,
   RecordFps,
   RecordWorkspaceSnapshot,
@@ -45,22 +48,22 @@ function errorText(err: unknown): string {
 
 async function handleOpen(item: RecordedVideoItem) {
   if (!(await openRecordedVideo(item.path))) {
-    showToast({ style: Toast.Style.Failure, title: '无法打开录制文件', message: item.path })
+    showToast({ style: Toast.Style.Failure, title: t('openFailedTitle'), message: item.path })
   }
 }
 
 async function handleReveal(item: RecordedVideoItem) {
   if (!(await openRecordFileLocation(item.path))) {
-    showToast({ style: Toast.Style.Failure, title: '无法在文件夹中显示', message: item.path })
+    showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: item.path })
   }
 }
 
 async function handleCopyPath(item: RecordedVideoItem) {
   try {
     await Clipboard.copy(item.path)
-    showToast({ style: Toast.Style.Success, title: '已复制文件路径' })
+    showToast({ style: Toast.Style.Success, title: t('copiedPathToast') })
   } catch (err) {
-    showToast({ style: Toast.Style.Failure, title: '复制失败', message: errorText(err) })
+    showToast({ style: Toast.Style.Failure, title: t('copyFailedToast'), message: errorText(err) })
   }
 }
 
@@ -72,22 +75,23 @@ function buildRecordingItem(item: RecordedVideoItem, toggleAction: ReturnType<ty
     subtitle: item.modifiedMs !== null ? formatRecordTime(item.modifiedMs) : undefined,
     icon: { source: item.extension === '.gif' ? Icon.Image : Icon.Video },
     accessories: [
-      { tag: item.extension.replace('.', '').toUpperCase() || '未知' },
-      { text: item.sizeBytes === null ? '大小未知' : formatBytes(item.sizeBytes) }
+      { tag: item.extension.replace('.', '').toUpperCase() || t('unknownExt') },
+      { text: item.sizeBytes === null ? t('sizeUnknown') : formatBytes(item.sizeBytes) }
     ],
     actions: ActionPanel({
       title: item.name,
       children: [
-        Action({ title: '打开录制文件', icon: Icon.Eye, onAction: () => handleOpen(item) }),
-        Action({ title: '在文件夹中显示', icon: Icon.Folder, onAction: () => handleReveal(item) }),
+        Action({ title: t('openRecording'), icon: Icon.Eye, onAction: () => handleOpen(item) }),
+        Action({ title: t('revealInFolder'), icon: Icon.Folder, onAction: () => handleReveal(item) }),
         toggleAction,
-        Action({ title: '复制文件路径', icon: Icon.CopyClipboard, onAction: () => handleCopyPath(item) })
+        Action({ title: t('copyFilePath'), icon: Icon.CopyClipboard, onAction: () => handleCopyPath(item) })
       ]
     })
   })
 }
 
 export function RecordCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [fps, setFps] = useState<RecordFps>('30')
   const [format, setFormat] = useState<RecordFormat>('mp4')
@@ -104,18 +108,18 @@ export function RecordCommand() {
       setWorkspace(ws)
       if (announce) {
         if (ws.listError) {
-          showToast({ style: Toast.Style.Failure, title: '读取录制文件失败', message: ws.listError })
+          showToast({ style: Toast.Style.Failure, title: t('readFilesFailed'), message: ws.listError })
         } else {
           showToast({
             style: Toast.Style.Success,
-            title: '已重新扫描',
-            message: `保存目录中有 ${ws.recordings.length} 个录制文件${ws.partial ? '（仅取回部分）' : ''}`
+            title: t('rescannedTitle'),
+            message: t('rescannedMsg', { count: ws.recordings.length, partial: ws.partial ? t('partialSuffix') : '' })
           })
         }
       }
     } catch (err) {
       if (seq !== refreshSeq.current) return
-      showToast({ style: Toast.Style.Failure, title: '读取录制信息失败', message: errorText(err) })
+      showToast({ style: Toast.Style.Failure, title: t('readInfoFailed'), message: errorText(err) })
     } finally {
       if (seq === refreshSeq.current) setIsLoading(false)
     }
@@ -132,14 +136,14 @@ export function RecordCommand() {
   async function handleStartRecording() {
     const res = await startScreenRecording({ fps, format, saveDir })
     if (!res.ok) {
-      showToast({ style: Toast.Style.Failure, title: '录制启动失败', message: res.message })
+      showToast({ style: Toast.Style.Failure, title: t('startFailedTitle'), message: res.message })
       await refreshWorkspace(false)
       return
     }
     showToast({
       style: Toast.Style.Success,
       title: res.message,
-      message: `正在写入 ${res.outputPath || res.saveDir || '默认保存目录'}。录制的是整个桌面，回到本插件停止并保存。`
+      message: t('writingMsg', { dir: res.outputPath || res.saveDir || t('defaultSaveDir') })
     })
     await refreshWorkspace(false)
   }
@@ -147,16 +151,16 @@ export function RecordCommand() {
   async function handleStopRecording() {
     const res = await stopScreenRecording()
     if (!res.ok) {
-      showToast({ style: Toast.Style.Failure, title: '停止录制失败', message: res.message })
+      showToast({ style: Toast.Style.Failure, title: t('stopFailedTitle'), message: res.message })
     } else {
-      const sizeText = typeof res.sizeBytes === 'number' ? `（${formatBytes(res.sizeBytes)}）` : ''
+      const sizeText = typeof res.sizeBytes === 'number' ? t('sizeParen', { size: formatBytes(res.sizeBytes) }) : ''
       showToast({ style: Toast.Style.Success, title: res.message, message: `${res.outputPath || saveDir}${sizeText}` })
     }
     await refreshWorkspace(false)
   }
 
   // 状态已确认在录制才是“停止”；状态未知时按“开始”处理，开始前会再向客户端确认，已在录制会如实提示
-  const toggleTitle = isRecording === true ? '停止录制并保存' : '开始录制'
+  const toggleTitle = isRecording === true ? t('stopRecordingSave') : t('startRecording')
   const handleToggle = () => (isRecording === true ? handleStopRecording() : handleStartRecording())
 
   const q = searchText.trim().toLowerCase()
@@ -174,26 +178,26 @@ export function RecordCommand() {
 
   const statusText =
     isRecording === true
-      ? '正在录制'
+      ? t('statusRecording')
       : isRecording === false
-        ? '未在录制'
+        ? t('statusIdle')
         : workspace?.statusError
-          ? `录制状态未知（${workspace.statusError}）`
-          : '正在读取录制状态'
+          ? t('statusUnknownErr', { error: workspace.statusError })
+          : t('statusLoading')
   const listText = workspace?.listError
-    ? `录制文件读取失败：${workspace.listError}`
-    : `${recordings.length} 个录制文件${workspace?.partial ? '（仅取回部分）' : ''}`
+    ? t('listReadFailed', { error: workspace.listError })
+    : t('listSummary', { count: recordings.length, partial: workspace?.partial ? t('partialSuffix') : '' })
 
   const emptyText = workspace?.listError
-    ? `读取保存目录失败：${workspace.listError}`
+    ? t('emptyReadFailed', { error: workspace.listError })
     : q && recordings.length > 0
-      ? '没有匹配的录制文件'
-      : '还没有录制文件，开始录制后会保存到这里'
+      ? t('emptyNoMatch')
+      : t('emptyNoRecordings')
 
   const currentSession = isRecording === true ? workspace?.sessions[0] : undefined
 
   return List({
-    searchBarPlaceholder: '搜索录制文件名...',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
@@ -211,8 +215,8 @@ export function RecordCommand() {
         },
         {
           id: 'rescan-record',
-          label: '重新扫描',
-          title: '重新扫描',
+          label: t('rescan'),
+          title: t('rescan'),
           style: 'secondary',
           onAction: () => {
             void refreshWorkspace(true)
@@ -221,12 +225,12 @@ export function RecordCommand() {
       ]
     }),
     workbenchPanel: {
-      title: '录制参数',
-      subtitle: '整个桌面 · 不录声音',
+      title: t('wbTitle'),
+      subtitle: t('wbSubtitle'),
       fields: [
         {
           id: 'wb-rec-fps',
-          label: '帧率',
+          label: t('wbFpsLabel'),
           type: 'select',
           value: fps,
           onChange: (val: string) => {
@@ -236,45 +240,45 @@ export function RecordCommand() {
         },
         {
           id: 'wb-rec-format',
-          label: '输出格式',
+          label: t('wbFormatLabel'),
           type: 'select',
           value: format,
           onChange: (val: string) => {
             if (RECORD_FORMAT_OPTIONS.some(o => o.value === val)) setFormat(val as RecordFormat)
           },
-          options: RECORD_FORMAT_OPTIONS.map(o => ({ label: o.label, value: o.value }))
+          options: getRecordFormatOptions().map(o => ({ label: o.label, value: o.value }))
         },
-        { id: 'wb-rec-scope', label: '录制范围', type: 'info', value: '整个桌面' },
-        { id: 'wb-rec-audio', label: '声音', type: 'info', value: '不录制' }
+        { id: 'wb-rec-scope', label: t('wbScopeLabel'), type: 'info', value: t('wbScopeValue') },
+        { id: 'wb-rec-audio', label: t('wbAudioLabel'), type: 'info', value: t('wbAudioValue') }
       ],
       previewCard: {
-        title: '录制说明',
-        badge: isRecording === true ? '录制中' : isRecording === false ? '未在录制' : '状态未知',
-        subtitle: RECORD_LIMITATION_NOTE,
+        title: t('wbCardTitle'),
+        badge: isRecording === true ? t('badgeRecording') : isRecording === false ? t('badgeIdle') : t('badgeUnknown'),
+        subtitle: getRecordLimitationNote(),
         metrics: currentSession
           ? [
-              { label: '开始时间', value: formatRecordTime(currentSession.startedAtMs) },
-              { label: '输出文件', value: currentSession.outputPath.split(/[\\/]/).pop() || '未知' }
+              { label: t('metricStartTime'), value: formatRecordTime(currentSession.startedAtMs) },
+              { label: t('metricOutputFile'), value: currentSession.outputPath.split(/[\\/]/).pop() || t('unknownValue') }
             ]
           : []
       }
     },
     subList: {
-      title: '录制文件（按时间倒序，↵ 打开）',
-      subtitle: `${filteredRecordings.length} 个 · ${formatBytes(knownBytes)} · 保存目录：${saveDir || '未知'}`,
+      title: t('subListTitle'),
+      subtitle: t('subListSubtitle', { count: filteredRecordings.length, size: formatBytes(knownBytes), dir: saveDir || t('unknownValue') }),
       emptyText,
       items
     },
     actions: ActionPanel({
-      title: '屏幕录制',
+      title: t('panelTitle'),
       children: [
         toggleAction(),
-        Action({ title: '重新扫描', icon: Icon.Repeat, onAction: () => refreshWorkspace(true) })
+        Action({ title: t('rescan'), icon: Icon.Repeat, onAction: () => refreshWorkspace(true) })
       ]
     }),
     children: [
       List.Section({
-        title: `录制文件 (${filteredRecordings.length})`,
+        title: t('sectionTitle', { count: filteredRecordings.length }),
         children: items
       })
     ]

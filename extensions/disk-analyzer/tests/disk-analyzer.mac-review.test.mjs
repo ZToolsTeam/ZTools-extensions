@@ -1,8 +1,11 @@
 // macOS 真机审查回归：分类标题、平台示例、计数不重复、分区分组不混入查看范围、详情不用 [!TIP] 写法
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyFileExtension, groupDescriptionFor, searchPlaceholderFor, OFFICIAL_FILE_TYPE_GROUPS } from '../dist/logic.js'
 import { readFileSync } from 'node:fs'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { classifyFileExtension, groupDescriptionFor, searchPlaceholderFor, OFFICIAL_FILE_TYPE_GROUPS } = await import('../dist/logic.js')
 
 test('按平台给搜索示例与分类说明：macOS 不出现 .dll / .exe', () => {
   assert.ok(!searchPlaceholderFor(true).includes('.dll'))

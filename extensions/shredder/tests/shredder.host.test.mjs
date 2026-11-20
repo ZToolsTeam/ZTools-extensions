@@ -1,12 +1,10 @@
-// 本插件现行代码的宿主集成测试（从 packages/declarative-ui/tests/real-layout2-plugins.test.mjs 按插件拆出，导入改为本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as shredder from '../dist/logic.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+setRuntimeLocale('zh-CN')
+
 function createRealHostStub(handlers = {}) {
   const calls = []
   const dispatch = async (method, params) => {
@@ -35,83 +33,98 @@ function createRealHostStub(handlers = {}) {
   return stub
 }
 
-test('shredder: 真实宿主下移除虚构机密文件并在粉碎失败时返回真实错误', async () => {
+test('shredder: 已移除所有自动扫盘与示例数据导出', () => {
+  assert.equal(typeof shredder.fetchShredCandidates, 'undefined')
+  assert.equal(typeof shredder.createInitialShredderSnapshot, 'undefined')
+  assert.equal(typeof shredder.createEmptyShredderSnapshot, 'undefined')
+  assert.equal(typeof shredder.SHRED_CATEGORIES, 'undefined')
+})
+
+test('shredder: 导入规则拦截 Windows 系统受保护路径，候选转换保留未知大小', () => {
+  assert.equal(shredder.SHRED_IMPORT_RULES.forbiddenPath.test('C:\\Windows\\System32\\ntoskrnl.exe'), true)
+  assert.equal(shredder.SHRED_IMPORT_RULES.forbiddenPath.test('C:\\Program Files\\App\\app.exe'), true)
+  assert.equal(shredder.SHRED_IMPORT_RULES.forbiddenPath.test('D:\\Secret\\report.docx'), false)
+
+  const a = shredder.toShredCandidate(
+    {
+      path: 'D:\\Secret\\Report.docx',
+      name: 'Report.docx',
+      parentDir: 'D:\\Secret',
+      extension: '.docx',
+      sizeBytes: null,
+      lastModifiedMs: null
+    },
+    'manual'
+  )
+  const b = shredder.toShredCandidate(
+    {
+      path: 'd:/secret/report.docx',
+      name: 'Report.docx',
+      parentDir: 'd:/secret',
+      extension: '.docx',
+      sizeBytes: 2048,
+      lastModifiedMs: null
+    },
+    'folder'
+  )
+  assert.equal(a.id, b.id)
+  assert.equal(a.sizeBytes, null)
+  assert.equal(shredder.formatSize(a.sizeBytes), '大小未识别')
+  assert.equal(shredder.sumKnownBytes([a, b]), 2048)
+
+  const unknownMsg = shredder.buildShredConfirmMessage([a], 'dod_3pass')
+  assert.match(unknownMsg, /大小未识别/)
+
+  const many = Array.from({ length: 12 }, (_, idx) =>
+    shredder.toShredCandidate(
+      {
+        path: `D:\\Temp\\f${idx}.bin`,
+        name: `f${idx}.bin`,
+        parentDir: 'D:\\Temp',
+        extension: '.bin',
+        sizeBytes: 1024,
+        lastModifiedMs: null
+      },
+      'folder'
+    )
+  )
+  const manyMsg = shredder.buildShredConfirmMessage(many, 'dod_3pass')
+  assert.match(manyMsg, /以及其余 2 个文件/)
+})
+
+test('shredder: 受保护系统路径与空目标列表一律拦截，绝不调用粉碎能力', async () => {
   const host = createRealHostStub({
-    system_list_common_folders: () => ({ folders: [{ id: 'temp', path: 'C:\\Users\\RealUser\\AppData\\Local\\Temp', exists: true }] }),
-    system_get_path: () => 'C:\\Users\\RealUser\\AppData\\Local\\Temp',
-    system_search_files: (payload) => {
-      if (String(payload.query).includes('Temp')) {
-        return {
-          files: [
-            {
-              name: 'real_trace.log',
-              path: 'C:\\Users\\RealUser\\AppData\\Local\\Temp\\real_trace.log',
-              is_dir: false,
-              size: 2048,
-              mtime: Math.floor(Date.now() / 1000)
-            }
-          ],
-          total_matches: 1,
-          total_bytes: 2048
-        }
-      }
-      return { files: [], total_matches: 0, total_bytes: 0 }
+    dllplugin_call: () => {
+      throw new Error('不应调用粉碎能力')
     }
   })
 
-  const snap = await shredder.fetchShredCandidates(host)
-  assert.equal(snap.candidates.some(f => f.name === 'decrypted_token_session_dump.tmp'), false)
-  assert.equal(snap.candidates.some(f => f.name === 'real_trace.log'), true)
-
-  // 异常边界：系统核心目录拦截与底层擦除失败时返回 ok: false
   const sysRes = await shredder.executeSecureShred(
     [
       {
         id: 'sys_locked',
         name: 'ntoskrnl.exe',
         path: 'C:\\Windows\\System32\\ntoskrnl.exe',
-        category: 'system_locked',
-        categoryName: '系统保护锁定',
-        sizeBytes: 1024,
-        isSystemLocked: true
+        source: 'manual',
+        sourceName: '手动添加',
+        sizeBytes: 1024
       }
     ],
     'dod_3pass',
     host
   )
   assert.equal(sysRes.ok, false)
+  assert.equal(sysRes.message, shredder.FORBIDDEN_REASON)
+  assert.equal(host.calls.length, 0)
 
-  const realTarget = snap.candidates.find(f => f.name === 'real_trace.log')
-  const failShred = await shredder.executeSecureShred([realTarget], 'dod_3pass', host)
-  assert.equal(failShred.ok, false)
-  assert.equal(failShred.shreddedCount, 0)
-})
-
-test('shredder: 不在客户端里运行时不返回示例文件，只给出需要在客户端中使用的提示', async () => {
-  const snap = await shredder.fetchShredCandidates()
-  assert.equal(snap.candidates.length, 0)
-  assert.equal(snap.error, shredder.NOT_IN_CLIENT_MESSAGE)
-  assert.equal(typeof shredder.createInitialShredderSnapshot, 'undefined')
-})
-
-test('shredder: 拿不到临时文件夹路径时如实报错，不扫描猜测的目录', async () => {
-  const host = createRealHostStub({
-    system_get_path: () => {
-      throw new Error('PATH_UNAVAILABLE')
-    },
-    system_search_files: () => {
-      throw new Error('不应扫描任何目录')
-    }
-  })
-  const snap = await shredder.fetchShredCandidates(host)
-  assert.equal(snap.candidates.length, 0)
-  assert.match(snap.error, /无法获取临时文件夹路径/)
-  assert.equal(host.calls.some((c) => c.channel === 'system_search_files'), false)
+  const empty = await shredder.executeSecureShred([], 'dod_3pass', host)
+  assert.equal(empty.ok, false)
+  assert.equal(empty.message, '请先勾选要粉碎的文件')
 })
 
 test('shredder: 部分文件粉碎失败时 ok 为 false 并列出失败原因，不改用普通删除', async () => {
-  const okPath = 'C:\\Users\\RealUser\\AppData\\Local\\Temp\\a.tmp'
-  const badPath = 'C:\\Users\\RealUser\\AppData\\Local\\Temp\\b.tmp'
+  const okPath = 'D:\\Scratch\\a.tmp'
+  const badPath = 'D:\\Scratch\\b.tmp'
   const host = createRealHostStub({
     dllplugin_call: (payload) => {
       if (payload.params.path === badPath) return { ok: false, success: false, error: '拒绝访问' }
@@ -125,10 +138,9 @@ test('shredder: 部分文件粉碎失败时 ok 为 false 并列出失败原因�
     id: `t${i}`,
     name: p.split('\\').pop(),
     path: p,
-    category: 'temp_zone',
-    categoryName: '临时文件夹',
-    sizeBytes: 1024,
-    isSystemLocked: false
+    source: 'manual',
+    sourceName: '手动添加',
+    sizeBytes: 1024
   }))
   const res = await shredder.executeSecureShred(items, 'zero_1pass', host)
   assert.equal(res.ok, false)
@@ -140,8 +152,4 @@ test('shredder: 部分文件粉碎失败时 ok 为 false 并列出失败原因�
   assert.equal(host.calls.some((c) => c.channel === 'filesystem_delete_file'), false)
   const wipe = host.calls.find((c) => c.channel === 'dllplugin_call')
   assert.equal(wipe.payload.params.passes, 1)
-
-  const empty = await shredder.executeSecureShred([], 'dod_3pass', host)
-  assert.equal(empty.ok, false)
-  assert.equal(empty.message, '请先勾选要粉碎的文件')
 })

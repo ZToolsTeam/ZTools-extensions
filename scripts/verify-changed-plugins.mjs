@@ -30,7 +30,7 @@ import { scanPluginSecurity } from './scan-plugin-security.mjs'
 import { describePlatforms, getManifestPlatforms } from '../packages/ztools-plugins-spec/src/validator.js'
 
 const SHARED_DIR = 'shared'
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'create-plugin', SHARED_DIR, 'scripts', 'packages'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', SHARED_DIR, 'scripts', 'packages'])
 
 /** 比较 x.y.z（忽略预发布后缀）；无法解析返回 null */
 export function compareVersions(a, b) {

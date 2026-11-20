@@ -1,9 +1,13 @@
 {
   "id": "docker-manager",
   "name": "容器管控",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "查看本机 Docker 容器、端口和资源采样，支持启停、日志与确认后清理停止容器；需已安装并启动 Docker 环境",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -54,5 +58,47 @@
         "docker清理"
       ]
     }
-  ]
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Docker Container Manager",
+      "description": "Inspect local Docker containers, port mappings, and resource usage. Start/stop containers, view logs, and prune stopped containers after confirmation (requires Docker).",
+      "keywords": [
+        "docker",
+        "containers",
+        "logs",
+        "ports",
+        "devops",
+        "prune"
+      ],
+      "features": {
+        "docker-all": {
+          "explain": "View all local Docker containers, port mappings, and recent logs",
+          "cmds": [
+            "docker",
+            "containers",
+            "docker ps",
+            "docker manager"
+          ]
+        },
+        "docker-running": {
+          "explain": "Filter running containers and inspect CPU and memory usage",
+          "cmds": [
+            "running containers",
+            "docker stats",
+            "active containers"
+          ]
+        },
+        "docker-clean-stopped": {
+          "explain": "List and remove stopped containers after confirmation while keeping volumes",
+          "cmds": [
+            "clean containers",
+            "prune docker",
+            "remove stopped containers"
+          ]
+        }
+      }
+    }
+  }
 }

@@ -1,16 +1,18 @@
 import React, {
-  Action, ActionPanel, Icon, List, Toast, showToast, useEffect, useMemo, useRef, useState
+  Action, ActionPanel, Icon, List, Toast, showToast, useEffect, useLocale, useMemo, useRef, useState
 } from '@ztools/declarative-ui'
 import {
-  CAFFEINE_PRESETS, getCaffeineStatus, getDefaultInactiveStatus,
+  formatRemainingDuration, getCaffeinePresets, getCaffeineStatus, getDefaultInactiveStatus,
   startCaffeineSession, stopCaffeineSession, toggleCaffeineSession
 } from './caffeine-service.js'
 import type { CaffeineActionResult, CaffeineMode } from './types.js'
+import { t } from './i18n.js'
 
 export * from './types.js'
 export * from './caffeine-service.js'
 
 export function CaffeineCommand(props: { featureCode?: string; hostOverride?: unknown } = {}) {
+  const locale = useLocale()
   const [mode, setMode] = useState<CaffeineMode>('display')
   const [status, setStatus] = useState(() => getDefaultInactiveStatus())
   const [statusError, setStatusError] = useState('')
@@ -23,7 +25,7 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
 
   const applyResult = (result: CaffeineActionResult, updateMode = false) => {
     if (!result.ok || !result.status) {
-      setStatusError(result.error || '无法获取系统电源状态')
+      setStatusError(result.error || t('statusUnavailable'))
       return false
     }
     setStatusError('')
@@ -58,14 +60,14 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
       const success = applyResult(result, true)
       await showToast({
         style: success ? Toast.Style.Success : Toast.Style.Failure,
-        title: success ? (result.status!.active ? '已开启防休眠' : '已停止防休眠') : '防休眠操作失败',
-        message: success ? (result.status!.active ? result.status!.remainingText : '已释放本插件的电源保持请求') : result.error
+        title: success ? (result.status!.active ? t('toastStarted') : t('toastStopped')) : t('toastFailed'),
+        message: success ? (result.status!.active ? result.status!.remainingText : t('toastReleased')) : result.error
       })
     } catch (error) {
       if (mounted.current && token === revision.current) {
         const message = error instanceof Error ? error.message : String(error)
         setStatusError(message)
-        await showToast({ style: Toast.Style.Failure, title: '防休眠操作失败', message })
+        await showToast({ style: Toast.Style.Failure, title: t('toastFailed'), message })
       }
     } finally {
       operationRunning.current = false
@@ -89,42 +91,47 @@ export function CaffeineCommand(props: { featureCode?: string; hostOverride?: un
 
   const filteredPresets = useMemo(() => {
     const q = searchText.trim().toLowerCase()
-    return CAFFEINE_PRESETS.filter(p => !q || `${p.title} ${p.subtitle} ${p.minutes}`.toLowerCase().includes(q))
-  }, [searchText])
+    return getCaffeinePresets().filter(p => !q || `${p.title} ${p.subtitle} ${p.minutes}`.toLowerCase().includes(q))
+  }, [searchText, locale])
+
+  const remainingText = formatRemainingDuration(status.active, status.durationMinutes, status.remainingMs)
 
   // 生效中的那一档在列表里可见时，它的主动作就是“停止防休眠”，顶部不再重复；被搜索过滤掉时才在顶部提供
   const activePresetVisible = status.active && filteredPresets.some(p => p.minutes === status.durationMinutes)
 
   return (
     <List isLoading={isLoading} searchText={searchText} onSearchTextChange={setSearchText}
-      searchBarPlaceholder="选择防休眠持续时间（回车立即生效）..."
+      searchBarPlaceholder={t('searchPlaceholder')}
       searchBarAccessory={
-        <List.Dropdown tooltip="下一次启动的防休眠模式" value={mode} onChange={value => setMode(value as CaffeineMode)}>
-          <List.Dropdown.Item title="保持屏幕常亮 + 防系统休眠" value="display" />
-          <List.Dropdown.Item title="允许息屏，仅保持系统运行" value="system" />
+        <List.Dropdown tooltip={t('modeTooltip')} value={mode} onChange={value => setMode(value as CaffeineMode)}>
+          <List.Dropdown.Item title={t('modeDisplay')} value="display" />
+          <List.Dropdown.Item title={t('modeSystem')} value="system" />
         </List.Dropdown>
       }
       filterBar={{
-        summaryText: statusError ? `状态无法确认：${statusError}` : isLoading ? '正在读取系统状态…' : status.active
-          ? `已开启${status.mode === 'display' ? '屏幕常亮' : '系统保活'} · ${status.durationMinutes === 0 || status.remainingMs === null ? status.remainingText : `剩余 ${status.remainingText}`}`
-          : '未开启 · 系统按默认电源策略运行',
+        summaryText: statusError ? t('summaryError', { error: statusError }) : isLoading ? t('summaryLoading') : status.active
+          ? t('summaryActive', {
+              mode: status.mode === 'display' ? t('summaryModeDisplay') : t('summaryModeSystem'),
+              remaining: status.durationMinutes === 0 || status.remainingMs === null ? remainingText : t('summaryRemaining', { text: remainingText })
+            })
+          : t('summaryInactive'),
         actions: [
-          ...(status.active && !activePresetVisible ? [{ id: 'stop', title: '停止防休眠', onAction: () => perform(() => stopCaffeineSession(props.hostOverride)) }] : []),
-          ...(statusError ? [{ id: 'retry', title: '重试查询', onAction: () => refresh() }] : [])
+          ...(status.active && !activePresetVisible ? [{ id: 'stop', title: t('stopAction'), onAction: () => perform(() => stopCaffeineSession(props.hostOverride)) }] : []),
+          ...(statusError ? [{ id: 'retry', title: t('retryAction'), onAction: () => refresh() }] : [])
         ]
       }}>
-      <List.Section title="防休眠时长" subtitle="到期或退出客户端后释放；不会阻止手动锁屏与合盖休眠">
+      <List.Section title={t('sectionTitle')} subtitle={t('sectionSubtitle')}>
         {filteredPresets.map(preset => (
           <List.Item key={preset.id} id={preset.id} title={preset.title} subtitle={preset.subtitle}
             icon={status.active && status.durationMinutes === preset.minutes ? Icon.CheckCircle : Icon.Clock}
             // 剩余时间只在顶部状态栏显示一次；未生效的时长项不加重复的说明标签
-            accessories={status.active && status.durationMinutes === preset.minutes ? [{ tag: '生效中' }] : []}
+            accessories={status.active && status.durationMinutes === preset.minutes ? [{ tag: t('activeTag') }] : []}
             actions={status.active && status.durationMinutes === preset.minutes
               // 正在生效的这一项：回车停止，而不是重复开启同一档
-              ? <ActionPanel><Action title="停止防休眠" icon={Icon.Stop}
+              ? <ActionPanel><Action title={t('stopAction')} icon={Icon.Stop}
                 onAction={() => perform(() => stopCaffeineSession(props.hostOverride))} /></ActionPanel>
               // 各档时长由条目标题区分，动作名保持简短，避免在底部操作栏被截断
-              : <ActionPanel><Action title={status.active ? '改为此时长' : '开启防休眠'} icon={Icon.Bolt}
+              : <ActionPanel><Action title={status.active ? t('switchDurationAction') : t('startAction')} icon={Icon.Bolt}
                 onAction={() => perform(() => startCaffeineSession(preset.minutes, mode, props.hostOverride))} /></ActionPanel>}
           />
         ))}

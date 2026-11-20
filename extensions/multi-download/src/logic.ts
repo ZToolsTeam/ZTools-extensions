@@ -5,25 +5,26 @@
  * - 发起下载：先交给本机 aria2 JSON-RPC 服务 (`http://127.0.0.1:6800/jsonrpc`) 多线程下载；
  *   连不上 aria2 时，HTTP / HTTPS 链接在用户选好保存位置后由客户端单连接下载，FTP 与磁力链接直接报错
  * - 可把对应的 aria2c 命令复制到剪贴板，由用户自行运行
- * - 从剪贴板识别 HTTP/HTTPS/FTP/Magnet 下载链接
- * - 扫描本机「下载」文件夹（安装包、压缩包、音视频、镜像与文档），读取所在磁盘的剩余空间
- * - 打开文件、在资源管理器中定位，以及在用户确认后把已勾选的文件移入回收站
+ * - 从剪贴板识别 HTTP/HTTPS/FTP/Magnet 下载链接，读取下载盘的剩余空间
+ * - 支持通过「选择文件」「选择文件夹」或拖入导入文件并按类型归类，客户端单连接下载完成后也会追加进列表
+ * - 打开文件、在资源管理器中定位、从列表移除，以及在用户确认后把已勾选的文件移入回收站
  */
 
 import { getHostTransport } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   callHostTransport,
   getRealFileSize,
+  getRealSystemPath,
   invokeHostCapability,
   openRealPath,
-  resolveRealSpecialPaths,
-  scanRealDirectoryTree,
   showRealItemInFolder,
   trashRealItem,
   writeRealClipboardText,
   formatBytes,
   type NativeInvocationResult
 } from "./native-ipc.js";
+import type { FileImportRules, FileImportTransport, ImportedFile } from "./file-import.js";
 
 export { formatBytes };
 export type { NativeInvocationResult };
@@ -53,50 +54,54 @@ export interface DownloadCategoryMeta {
   exts: string[];
 }
 
-export const DOWNLOAD_CATEGORIES: DownloadCategoryMeta[] = [
-  {
-    id: "installer",
-    name: "应用安装包",
-    icon: "Icon.Box",
-    color: "#3b82f6",
-    exts: [".exe", ".msi", ".msix", ".appx", ".dmg", ".deb", ".rpm"]
-  },
-  {
-    id: "archive",
-    name: "压缩归档包",
-    icon: "Icon.Archive",
-    color: "#f59e0b",
-    exts: [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".tgz"]
-  },
-  {
-    id: "media",
-    name: "音视频与图像",
-    icon: "Icon.Video",
-    color: "#ec4899",
-    exts: [".mp4", ".mkv", ".mov", ".webm", ".avi", ".mp3", ".flac", ".wav", ".png", ".jpg", ".webp"]
-  },
-  {
-    id: "iso_image",
-    name: "系统镜像与模型",
-    icon: "Icon.Disc",
-    color: "#8b5cf6",
-    exts: [".iso", ".img", ".vhd", ".vhdx", ".gguf", ".safetensors", ".onnx", ".bin"]
-  },
-  {
-    id: "document",
-    name: "办公文档与脚本",
-    icon: "Icon.Document",
-    color: "#10b981",
-    exts: [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".txt", ".md", ".csv", ".json", ".sql"]
-  },
-  {
-    id: "other",
-    name: "其他下载文件",
-    icon: "Icon.Folder",
-    color: "#64748b",
-    exts: []
-  }
-];
+export function getDownloadCategories(): DownloadCategoryMeta[] {
+  return [
+    {
+      id: "installer",
+      name: t("catInstaller"),
+      icon: "Icon.Box",
+      color: "#3b82f6",
+      exts: [".exe", ".msi", ".msix", ".appx", ".dmg", ".deb", ".rpm"]
+    },
+    {
+      id: "archive",
+      name: t("catArchive"),
+      icon: "Icon.Archive",
+      color: "#f59e0b",
+      exts: [".zip", ".7z", ".rar", ".tar", ".gz", ".bz2", ".xz", ".tgz"]
+    },
+    {
+      id: "media",
+      name: t("catMedia"),
+      icon: "Icon.Video",
+      color: "#ec4899",
+      exts: [".mp4", ".mkv", ".mov", ".webm", ".avi", ".mp3", ".flac", ".wav", ".png", ".jpg", ".webp"]
+    },
+    {
+      id: "iso_image",
+      name: t("catIsoImage"),
+      icon: "Icon.Disc",
+      color: "#8b5cf6",
+      exts: [".iso", ".img", ".vhd", ".vhdx", ".gguf", ".safetensors", ".onnx", ".bin"]
+    },
+    {
+      id: "document",
+      name: t("catDocument"),
+      icon: "Icon.Document",
+      color: "#10b981",
+      exts: [".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".txt", ".md", ".csv", ".json", ".sql"]
+    },
+    {
+      id: "other",
+      name: t("catOther"),
+      icon: "Icon.Folder",
+      color: "#64748b",
+      exts: []
+    }
+  ];
+}
+
+export const DOWNLOAD_CATEGORIES: DownloadCategoryMeta[] = getDownloadCategories();
 
 export type ThreadSplitPresetId = "threads_16" | "threads_8" | "threads_4" | "threads_1";
 
@@ -110,47 +115,51 @@ export interface ThreadSplitPreset {
 }
 
 /** 线程档位只在交给 aria2 时生效；客户端单连接下载不分块 */
-export const THREAD_SPLIT_PRESETS: ThreadSplitPreset[] = [
-  {
-    id: "threads_16",
-    name: "16 线程",
-    threads: 16,
-    splitSize: "1M",
-    aria2Flags: "--max-connection-per-server=16 --split=16 --min-split-size=1M --continue=true",
-    description: "16 路并发连接、1MB 最小分块，适合支持分块下载的大文件直链"
-  },
-  {
-    id: "threads_8",
-    name: "8 线程",
-    threads: 8,
-    splitSize: "2M",
-    aria2Flags: "--max-connection-per-server=8 --split=8 --min-split-size=2M --continue=true",
-    description: "8 路并发连接，服务器限制连接数时比 16 线程稳妥"
-  },
-  {
-    id: "threads_4",
-    name: "4 线程",
-    threads: 4,
-    splitSize: "4M",
-    aria2Flags: "--max-connection-per-server=4 --split=4 --min-split-size=4M --continue=true",
-    description: "适合严格限制单 IP 连接数的镜像站与网盘直链"
-  },
-  {
-    id: "threads_1",
-    name: "单线程",
-    threads: 1,
-    splitSize: "10M",
-    aria2Flags: "--max-connection-per-server=1 --split=1 --continue=true",
-    description: "适合不支持分块请求（Range）的链接"
-  }
-];
+export function getThreadSplitPresets(): ThreadSplitPreset[] {
+  return [
+    {
+      id: "threads_16",
+      name: t("preset16Name"),
+      threads: 16,
+      splitSize: "1M",
+      aria2Flags: "--max-connection-per-server=16 --split=16 --min-split-size=1M --continue=true",
+      description: t("preset16Desc")
+    },
+    {
+      id: "threads_8",
+      name: t("preset8Name"),
+      threads: 8,
+      splitSize: "2M",
+      aria2Flags: "--max-connection-per-server=8 --split=8 --min-split-size=2M --continue=true",
+      description: t("preset8Desc")
+    },
+    {
+      id: "threads_4",
+      name: t("preset4Name"),
+      threads: 4,
+      splitSize: "4M",
+      aria2Flags: "--max-connection-per-server=4 --split=4 --min-split-size=4M --continue=true",
+      description: t("preset4Desc")
+    },
+    {
+      id: "threads_1",
+      name: t("preset1Name"),
+      threads: 1,
+      splitSize: "10M",
+      aria2Flags: "--max-connection-per-server=1 --split=1 --continue=true",
+      description: t("preset1Desc")
+    }
+  ];
+}
+
+export const THREAD_SPLIT_PRESETS: ThreadSplitPreset[] = getThreadSplitPresets();
 
 export interface DownloadedFileItem {
   id: string;
   name: string;
   path: string;
   ext: string;
-  sizeBytes: number;
+  sizeBytes: number | null;
   mtimeMs: number;
   category: DownloadFileCategory;
   categoryName: string;
@@ -202,12 +211,13 @@ export interface Aria2Options {
 
 export function classifyDownloadedExtension(extRaw: string): DownloadCategoryMeta {
   const ext = String(extRaw || "").toLowerCase();
-  for (const cat of DOWNLOAD_CATEGORIES) {
+  const categories = getDownloadCategories();
+  for (const cat of categories) {
     if (cat.id !== "other" && cat.exts.includes(ext)) {
       return cat;
     }
   }
-  return DOWNLOAD_CATEGORIES[DOWNLOAD_CATEGORIES.length - 1];
+  return categories[categories.length - 1];
 }
 
 function safeDecode(segment: string): string {
@@ -224,13 +234,13 @@ export function detectDownloadUrlFromText(rawText: string): {
   suggestedFileName: string;
 } {
   const text = String(rawText || "").trim();
-  if (!text) return { url: "", protocol: "无链接", suggestedFileName: "" };
+  if (!text) return { url: "", protocol: t("protocolNone"), suggestedFileName: "" };
 
   const magnetMatch = text.match(/magnet:\?xt=urn:[a-z0-9]+:[a-zA-Z0-9]{32,}/i);
   if (magnetMatch) {
     return {
       url: magnetMatch[0],
-      protocol: "磁力链接",
+      protocol: t("protocolMagnet"),
       suggestedFileName: ""
     };
   }
@@ -240,7 +250,7 @@ export function detectDownloadUrlFromText(rawText: string): {
     const url = httpMatch[0];
     const cleanPath = url.split("?")[0].split("#")[0];
     const lastSeg = cleanPath.substring(cleanPath.lastIndexOf("/") + 1);
-    const protocol = url.toLowerCase().startsWith("ftp") ? "FTP 链接" : "HTTP(S) 链接";
+    const protocol = url.toLowerCase().startsWith("ftp") ? t("protocolFtp") : t("protocolHttp");
     const fileName = safeDecode(lastSeg)
       .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "_")
       .trim()
@@ -248,7 +258,7 @@ export function detectDownloadUrlFromText(rawText: string): {
     return { url, protocol, suggestedFileName: fileName };
   }
 
-  return { url: "", protocol: "剪贴板未检测到下载链接", suggestedFileName: "" };
+  return { url: "", protocol: t("protocolClipboardEmpty"), suggestedFileName: "" };
 }
 
 function failure(error: string, message: string): NativeInvocationResult {
@@ -268,7 +278,7 @@ async function callAria2(
 ): Promise<Aria2CallResult> {
   const doFetch: FetchLike | null =
     fetchImpl ?? (typeof fetch === "function" ? (fetch as unknown as FetchLike) : null);
-  if (!doFetch) return { reachable: false, error: "当前环境不能发起网络请求" };
+  if (!doFetch) return { reachable: false, error: t("errNoFetch") };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -286,10 +296,10 @@ async function callAria2(
     }
     const rpc = body && typeof body === "object" ? (body as { result?: unknown; error?: { message?: unknown } }) : null;
     if (rpc?.error) {
-      return { reachable: true, error: String(rpc.error.message || "aria2 返回错误") };
+      return { reachable: true, error: String(rpc.error.message || t("errAria2RpcError")) };
     }
-    if (!resp.ok) return { reachable: true, error: `aria2 返回 HTTP ${resp.status}` };
-    if (!rpc || rpc.result === undefined) return { reachable: true, error: "aria2 返回的结果无法识别" };
+    if (!resp.ok) return { reachable: true, error: t("errAria2Http", { status: resp.status }) };
+    if (!rpc || rpc.result === undefined) return { reachable: true, error: t("errAria2Unrecognized") };
     return { reachable: true, result: rpc.result };
   } catch (err) {
     return { reachable: false, error: err instanceof Error ? err.message : String(err) };
@@ -303,7 +313,7 @@ export async function probeAria2JsonRpc(options: Aria2Options = {}): Promise<Ari
   if (!res.reachable) return { online: false, error: res.error };
   if (res.error) return { online: false, error: res.error };
   const version = (res.result as { version?: unknown } | undefined)?.version;
-  return typeof version === "string" ? { online: true, version } : { online: false, error: "aria2 返回的结果无法识别" };
+  return typeof version === "string" ? { online: true, version } : { online: false, error: t("errAria2Unrecognized") };
 }
 
 export async function readClipboardDownloadUrl(hostBridge?: unknown): Promise<{
@@ -322,25 +332,108 @@ export async function readClipboardDownloadUrl(hostBridge?: unknown): Promise<{
           : "";
     return detectDownloadUrlFromText(txt);
   }
-  return { url: "", protocol: "剪贴板未检测到下载链接", suggestedFileName: "" };
+  return { url: "", protocol: t("protocolClipboardEmpty"), suggestedFileName: "" };
 }
 
+export const MULTI_DOWNLOAD_IMPORT_RULES: FileImportRules = {
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+};
+
+export function createMultiDownloadImportTransport(hostBridge?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport(method, params, hostBridge);
+}
+
+export function toDownloadedFileItem(file: ImportedFile): DownloadedFileItem {
+  const catMeta = classifyDownloadedExtension(file.extension);
+  return {
+    id: file.path,
+    name: file.name,
+    path: file.path,
+    ext: file.extension,
+    sizeBytes: file.sizeBytes,
+    mtimeMs: file.lastModifiedMs ?? 0,
+    category: catMeta.id,
+    categoryName: catMeta.name,
+    categoryColor: catMeta.color,
+    categoryIcon: catMeta.icon
+  };
+}
+
+export function createClientDownloadedItem(filePath: string, sizeBytes?: number): DownloadedFileItem {
+  const name = filePath.split(/[\\/]/).pop() || filePath;
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot).toLowerCase() : "";
+  const catMeta = classifyDownloadedExtension(ext);
+  const validSize = typeof sizeBytes === "number" && Number.isFinite(sizeBytes) && sizeBytes >= 0 ? sizeBytes : null;
+  return {
+    id: filePath,
+    name,
+    path: filePath,
+    ext,
+    sizeBytes: validSize,
+    mtimeMs: Date.now(),
+    category: catMeta.id,
+    categoryName: catMeta.name,
+    categoryColor: catMeta.color,
+    categoryIcon: catMeta.icon
+  };
+}
+
+export function computeDownloadStats(files: readonly DownloadedFileItem[]): {
+  totalSizeBytes: number;
+  categoryStats: MultiDownloadSnapshot["categoryStats"];
+} {
+  let totalSizeBytes = 0;
+  const categories = getDownloadCategories();
+  const catMap = new Map<DownloadFileCategory, { sizeBytes: number; count: number }>();
+  for (const cat of categories) {
+    catMap.set(cat.id, { sizeBytes: 0, count: 0 });
+  }
+  for (const file of files) {
+    const sz = typeof file.sizeBytes === "number" && Number.isFinite(file.sizeBytes) && file.sizeBytes > 0 ? file.sizeBytes : 0;
+    totalSizeBytes += sz;
+    const stat = catMap.get(file.category);
+    if (stat) {
+      stat.sizeBytes += sz;
+      stat.count += 1;
+    }
+  }
+  const categoryStats = categories.map((c) => {
+    const st = catMap.get(c.id) || { sizeBytes: 0, count: 0 };
+    return {
+      category: c.id,
+      name: c.name,
+      color: c.color,
+      sizeBytes: st.sizeBytes,
+      count: st.count
+    };
+  }).filter((s) => s.count > 0);
+  return { totalSizeBytes, categoryStats };
+}
+
+/**
+ * 读取下载目录路径、磁盘剩余空间、aria2 状态与剪贴板下载链接（不扫描目录文件）
+ */
 export async function fetchMultiDownloadSnapshot(
   hostBridge?: unknown,
   options: Aria2Options = {}
 ): Promise<MultiDownloadSnapshot> {
-  const paths = await resolveRealSpecialPaths(hostBridge);
-  const downloadDir = paths.downloads || `${paths.userProfile}\\Downloads`;
-  const driveLetter = (downloadDir.match(/^[A-Za-z]:/) || ["C:"])[0].toUpperCase();
+  const downloadDir = await getRealSystemPath("downloads", hostBridge);
+  const winDrive = downloadDir.match(/^[A-Za-z]:/)?.[0]?.toUpperCase() || "";
+  const driveLetter = winDrive || (downloadDir.startsWith("/") ? "/" : "");
+  const driveParam = winDrive ? `${winDrive}\\` : driveLetter;
 
-  const [diskRes, sysRes, rawEntries, aria2Status, clipInfo] = await Promise.all([
-    callHostTransport<{ total?: number; used?: number; available?: number; free?: number }>(
-      "system_get_disk_usage",
-      { drive: `${driveLetter}\\` },
-      hostBridge
-    ),
-    invokeHostCapability<Record<string, unknown>>("system.info", { includeStorage: true }, hostBridge),
-    scanRealDirectoryTree(downloadDir, { maxDepth: 2, maxFiles: 220, hostOverride: hostBridge }),
+  const [diskRes, sysRes, aria2Status, clipInfo] = await Promise.all([
+    driveParam
+      ? callHostTransport<{ total?: number; used?: number; available?: number; free?: number }>(
+          "system_get_disk_usage",
+          { drive: driveParam },
+          hostBridge
+        )
+      : Promise.resolve({ ok: false, data: undefined }),
+    driveParam
+      ? invokeHostCapability<Record<string, unknown>>("system.info", { includeStorage: true }, hostBridge)
+      : Promise.resolve({ ok: false, code: -1, message: "", data: undefined }),
     probeAria2JsonRpc(options),
     readClipboardDownloadUrl(hostBridge)
   ]);
@@ -353,7 +446,7 @@ export async function fetchMultiDownloadSnapshot(
     driveFreeBytes = Number(
       diskRes.data.available ?? diskRes.data.free ?? Math.max(0, driveTotalBytes - used)
     );
-  } else if (sysRes.ok && sysRes.data) {
+  } else if (sysRes.ok && sysRes.data && driveLetter) {
     const storageArr = Array.isArray((sysRes.data as { storage?: unknown }).storage)
       ? ((sysRes.data as { storage: Array<Record<string, unknown>> }).storage)
       : [];
@@ -369,52 +462,6 @@ export async function fetchMultiDownloadSnapshot(
   if (!Number.isFinite(driveFreeBytes) || driveFreeBytes < 0) driveFreeBytes = 0;
   if (!Number.isFinite(driveTotalBytes) || driveTotalBytes < 0) driveTotalBytes = 0;
 
-  const files: DownloadedFileItem[] = [];
-  let totalSizeBytes = 0;
-  const catMap = new Map<DownloadFileCategory, { sizeBytes: number; count: number }>();
-  for (const cat of DOWNLOAD_CATEGORIES) {
-    catMap.set(cat.id, { sizeBytes: 0, count: 0 });
-  }
-
-  for (const entry of rawEntries.files) {
-    const sz = Number(entry.sizeBytes ?? entry.size ?? 0);
-    if (entry.isDirectory || sz <= 0) continue;
-    const ext = String(entry.ext || "").toLowerCase();
-    const catMeta = classifyDownloadedExtension(ext);
-    totalSizeBytes += sz;
-    const stat = catMap.get(catMeta.id);
-    if (stat) {
-      stat.sizeBytes += sz;
-      stat.count += 1;
-    }
-
-    files.push({
-      id: entry.path,
-      name: entry.name,
-      path: entry.path,
-      ext,
-      sizeBytes: sz,
-      mtimeMs: Number(entry.mtimeMs || 0),
-      category: catMeta.id,
-      categoryName: catMeta.name,
-      categoryColor: catMeta.color,
-      categoryIcon: catMeta.icon
-    });
-  }
-
-  files.sort((a, b) => b.mtimeMs - a.mtimeMs || b.sizeBytes - a.sizeBytes);
-
-  const categoryStats = DOWNLOAD_CATEGORIES.map((c) => {
-    const st = catMap.get(c.id) || { sizeBytes: 0, count: 0 };
-    return {
-      category: c.id,
-      name: c.name,
-      color: c.color,
-      sizeBytes: st.sizeBytes,
-      count: st.count
-    };
-  }).filter((s) => s.sizeBytes > 0);
-
   return {
     downloadDir,
     driveLetter,
@@ -426,9 +473,9 @@ export async function fetchMultiDownloadSnapshot(
     aria2Endpoint: ARIA2_ENDPOINT,
     sniffedClipboardUrl: clipInfo.url,
     sniffedProtocol: clipInfo.protocol,
-    files,
-    totalSizeBytes,
-    categoryStats,
+    files: [],
+    totalSizeBytes: 0,
+    categoryStats: [],
     updatedAt: new Date().toLocaleTimeString()
   };
 }
@@ -493,22 +540,22 @@ async function downloadViaClient(
   const dialogRes = await callHostTransport<SaveDialogResult>(
     "window_show_save_dialog",
     {
-      title: "保存下载文件",
+      title: t("saveDialogTitle"),
       ...(downloadDir ? { defaultPath: downloadDir } : {}),
       defaultName: parsed.suggestedFileName || "download",
-      ...(ext ? { filters: `${ext.toUpperCase()} 文件|${ext}|所有文件|*` } : {})
+      ...(ext ? { filters: `${t("saveFilterType", { ext: ext.toUpperCase() })}|${ext}|${t("saveFilterAll")}|*` } : {})
     },
     hostBridge
   );
   if (!dialogRes.ok) {
-    return failure("SAVE_DIALOG_FAILED", `无法打开保存对话框：${dialogRes.error || "客户端未返回原因"}`);
+    return failure("SAVE_DIALOG_FAILED", t("errSaveDialogFailed", { reason: dialogRes.error || t("errNoReason") }));
   }
   const savePath = typeof dialogRes.data?.filePath === "string" ? dialogRes.data.filePath : "";
   if (dialogRes.data?.canceled || !savePath) {
-    return failure("CANCELED", "已取消下载");
+    return failure("CANCELED", t("errDownloadCanceled"));
   }
   if (FORBIDDEN_TARGET_PATTERN.test(savePath)) {
-    return failure("FORBIDDEN_TARGET", FORBIDDEN_REASON);
+    return failure("FORBIDDEN_TARGET", t("forbiddenReason"));
   }
 
   const dl = await callHostLongRunning<HttpDownloadResult>(
@@ -518,7 +565,7 @@ async function downloadViaClient(
     hostBridge
   );
   if (!dl.ok) {
-    return failure("DOWNLOAD_FAILED", `下载失败：${dl.error || "客户端未返回原因"}`);
+    return failure("DOWNLOAD_FAILED", t("errDownloadFailed", { reason: dl.error || t("errNoReason") }));
   }
   const finalPath = typeof dl.data?.path === "string" && dl.data.path ? dl.data.path : savePath;
   const size = Number(dl.data?.size);
@@ -526,7 +573,7 @@ async function downloadViaClient(
   return {
     ok: true,
     code: 0,
-    message: `未连接到本机 aria2（${aria2Reason}），已用客户端单连接下载到 ${finalPath}${sizeText}，线程档位未生效`,
+    message: t("msgClientDownloaded", { reason: aria2Reason, path: finalPath, sizeText }),
     data: { engine: "client", path: finalPath, size: Number.isFinite(size) ? size : undefined }
   };
 }
@@ -544,7 +591,7 @@ export async function startMultiThreadDownloadTask(
 ): Promise<NativeInvocationResult> {
   const trimmed = String(url || "").trim();
   if (!trimmed || !isSupportedDownloadUrl(trimmed)) {
-    return failure("INVALID_URL", "未提供有效的 HTTP/HTTPS/FTP/磁力链接，请先复制下载链接到剪贴板，或粘贴到搜索框");
+    return failure("INVALID_URL", t("errInvalidUrlPrompt"));
   }
 
   const aria2 = await callAria2(
@@ -564,22 +611,25 @@ export async function startMultiThreadDownloadTask(
   );
   if (aria2.reachable) {
     if (aria2.error) {
-      return failure("ARIA2_REJECTED", `aria2 没有接受这个任务：${aria2.error}`);
+      return failure("ARIA2_REJECTED", t("errAria2Rejected", { error: aria2.error }));
     }
     const gid = typeof aria2.result === "string" ? aria2.result : "";
     return {
       ok: true,
       code: 0,
-      message: `已添加到本机 aria2（${preset.threads} 线程${gid ? `，任务 ${gid}` : ""}），下载进度请在 aria2 中查看`,
+      message: t("msgAria2Added", {
+        threads: preset.threads,
+        gidText: gid ? t("msgAria2Gid", { gid }) : ""
+      }),
       data: { engine: "aria2", gid }
     };
   }
 
   if (!/^https?:/i.test(trimmed)) {
-    const kind = /^magnet:/i.test(trimmed) ? "磁力链接" : "FTP 链接";
+    const kind = /^magnet:/i.test(trimmed) ? t("kindMagnet") : t("kindFtp");
     return failure(
       "ARIA2_REQUIRED",
-      `${kind}需要本机运行 aria2 并开启 RPC（未连接：${aria2.error}）；可在 Ctrl+K 中复制 aria2c 命令自行运行`
+      t("errAria2Required", { kind, error: aria2.error })
     );
   }
   return downloadViaClient(trimmed, downloadDir, aria2.error, hostBridge);
@@ -599,17 +649,17 @@ export async function copyAria2cCommand(
 ): Promise<NativeInvocationResult> {
   const trimmed = String(url || "").trim();
   if (!trimmed || !isSupportedDownloadUrl(trimmed)) {
-    return failure("INVALID_URL", "未识别到下载链接");
+    return failure("INVALID_URL", t("errInvalidUrl"));
   }
   const command = buildAria2cCommand(trimmed, downloadDir, preset);
   const copied = await writeRealClipboardText(command, hostBridge);
   if (!copied) {
-    return failure("CLIPBOARD_WRITE_FAILED", "复制 aria2c 命令失败：无法写入剪贴板");
+    return failure("CLIPBOARD_WRITE_FAILED", t("errClipboardWriteFailed"));
   }
   return {
     ok: true,
     code: 0,
-    message: `已复制 aria2c 命令（${preset.name}）。插件不会运行它，请在已安装 aria2 的终端中运行`,
+    message: t("msgCopiedCommand", { name: preset.name }),
     data: { command }
   };
 }
@@ -631,15 +681,15 @@ export async function deleteDownloadedFiles(
   const failed: TrashDownloadsResult["failed"] = [];
   const sizeMap = new Map<string, number>();
   for (const item of knownFiles) {
-    if (item && item.path) {
-      sizeMap.set(item.path, Number(item.sizeBytes || 0));
+    if (item && item.path && typeof item.sizeBytes === "number" && Number.isFinite(item.sizeBytes)) {
+      sizeMap.set(item.path, item.sizeBytes);
     }
   }
 
   for (const targetPath of paths) {
     if (!targetPath) continue;
     if (FORBIDDEN_TARGET_PATTERN.test(targetPath)) {
-      failed.push({ path: targetPath, reason: FORBIDDEN_REASON });
+      failed.push({ path: targetPath, reason: t("forbiddenReason") });
       continue;
     }
     const knownSize = sizeMap.get(targetPath) ?? (await getRealFileSize(targetPath, hostBridge));
@@ -648,7 +698,7 @@ export async function deleteDownloadedFiles(
       deletedCount += 1;
       freedBytes += knownSize;
     } else {
-      failed.push({ path: targetPath, reason: res.error || "移入回收站失败" });
+      failed.push({ path: targetPath, reason: res.error || t("errTrashFailed") });
     }
   }
   return { deletedCount, freedBytes, failed };
@@ -658,20 +708,20 @@ export async function openDownloadedFileLocation(
   targetPath: string,
   hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
-  if (!targetPath) return failure("EMPTY_PATH", "路径为空");
+  if (!targetPath) return failure("EMPTY_PATH", t("errEmptyPath"));
   const ok = await showRealItemInFolder(targetPath, hostBridge);
   return ok
-    ? { ok: true, code: 0, message: `已在资源管理器中定位: ${targetPath}` }
-    : failure("SHOW_IN_FOLDER_FAILED", `定位失败: ${targetPath}`);
+    ? { ok: true, code: 0, message: t("msgRevealed", { path: targetPath }) }
+    : failure("SHOW_IN_FOLDER_FAILED", t("errRevealFailed", { path: targetPath }));
 }
 
 export async function openDownloadedFile(
   targetPath: string,
   hostBridge?: unknown
 ): Promise<NativeInvocationResult> {
-  if (!targetPath) return failure("EMPTY_PATH", "路径为空");
+  if (!targetPath) return failure("EMPTY_PATH", t("errEmptyPath"));
   const ok = await openRealPath(targetPath, hostBridge);
   return ok
-    ? { ok: true, code: 0, message: `已打开: ${targetPath}` }
-    : failure("OPEN_FAILED", `打开失败: ${targetPath}`);
+    ? { ok: true, code: 0, message: t("msgOpened", { path: targetPath }) }
+    : failure("OPEN_FAILED", t("errOpenFailed", { path: targetPath }));
 }
