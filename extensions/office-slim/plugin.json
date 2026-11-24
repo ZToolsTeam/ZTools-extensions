@@ -1,15 +1,15 @@
 {
   "id": "office-slim",
   "name": "办公文档瘦身",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "本地重新压缩 Word、PPT、Excel 文档，保留图片原字节，可移除作者属性与批注、导出原图 ZIP；只另存新副本",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "办公工具",
-    "效率工具"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "permissions": [
     "fs",
     "shell",
@@ -65,5 +65,61 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Office Document Slimmer",
+      "description": "Recompress Word, PowerPoint, and Excel files locally while preserving original image bytes, strip author metadata and comments, or extract embedded images as ZIP.",
+      "keywords": [
+        "office",
+        "compress",
+        "docx",
+        "pptx",
+        "xlsx",
+        "slim",
+        "metadata"
+      ],
+      "features": {
+        "office-slim-workbench": {
+          "explain": "Recompress Office document structure while keeping original images, saving as a new copy",
+          "cmds": [
+            "office slim",
+            "compress ppt",
+            "compress word",
+            "compress excel"
+          ]
+        },
+        "office-extract-images": {
+          "explain": "Extract embedded original images from Office documents into a ZIP archive",
+          "cmds": [
+            "extract doc images",
+            "extract ppt images",
+            "export word images"
+          ]
+        },
+        "office-clean-metadata": {
+          "explain": "Remove author properties and comments while keeping content, saving as a new copy",
+          "cmds": [
+            "clean office metadata",
+            "strip doc privacy",
+            "remove comments"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

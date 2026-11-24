@@ -5,7 +5,7 @@
  * ZTools 声明式插件脚手架
  *
  * 生成的工程与插件仓库里的现有插件结构一致：
- * 1. plugin.json：只写宿主实际读取的字段（id、name、version、description、author、entry、icon、mode、
+ * 1. plugin.json：只写宿主实际读取的字段（id、name、version、description、author、category、entry、icon、mode、
  *    permissions、targets、nativeComponents），符合 packages/ztools-plugins-spec/plugin.schema.json；
  * 2. src/：源码，SDK 一律从 '@ztools/declarative-ui' 引入；
  * 3. 不单独装 TypeScript，统一用仓库的 scripts/build-declarative.mjs 编译到 dist/（dist/ 不提交）；
@@ -17,7 +17,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import readline from 'node:readline/promises'
-import { buildPlatformTargets, describePlatforms, SUPPORTED_PLATFORMS } from '../packages/ztools-plugins-spec/src/validator.js'
+import {
+  buildPlatformTargets,
+  describePlatforms,
+  normalizeCategoryId,
+  PLUGIN_CATEGORIES,
+  PLUGIN_CATEGORY_IDS,
+  resolveCategoryLabel,
+  SUPPORTED_PLATFORMS
+} from '../packages/ztools-plugins-spec/src/validator.js'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -27,7 +35,18 @@ const rootDir = path.resolve(__dirname, '..')
 export const PLUGIN_ID_REGEX = /^[a-z][a-z0-9-]{1,63}$/
 
 export const DEFAULT_AUTHOR = 'ZTools Developer'
-const DEFAULT_DESCRIPTION = '一个 ZTools 声明式插件'
+const DEFAULT_DESCRIPTION = 'A ZTools declarative plugin'
+const DEFAULT_EN_DESCRIPTION = 'A ZTools declarative plugin'
+const CJK_REGEX = /[\u4e00-\u9fa5]/
+
+/** Convert kebab-case plugin ID into readable English display title (e.g. 'quick-notes' -> 'Quick Notes') */
+function formatPluginIdAsTitle(pluginId) {
+  return String(pluginId)
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
 
 /**
  * 默认生成目录：仓库里有 extensions/ 时生成到 extensions/，否则生成到 plugins/
@@ -44,19 +63,19 @@ export function defaultTargetDir(repoRoot = rootDir) {
  */
 export function validatePluginId(pluginId) {
   if (!pluginId || typeof pluginId !== 'string') {
-    return { valid: false, error: '插件 ID 不能为空，且必须为字符串' }
+    return { valid: false, error: 'Plugin ID must be a non-empty string' }
   }
   const trimmed = pluginId.trim()
   if (trimmed !== pluginId) {
-    return { valid: false, error: '插件 ID 首尾不能包含空格' }
+    return { valid: false, error: 'Plugin ID must not have leading or trailing whitespace' }
   }
   if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..')) {
-    return { valid: false, error: '插件 ID 不能包含路径分隔符或上级目录引用 (..)' }
+    return { valid: false, error: 'Plugin ID must not contain path separators or parent directory references (..)' }
   }
   if (!PLUGIN_ID_REGEX.test(trimmed)) {
     return {
       valid: false,
-      error: `插件 ID 格式不符合规范: "${trimmed}"（必须以小写字母开头，只能用小写字母、数字和短横线，长度 2-64 字符，例如: 'quick-notes'）`
+      error: `Invalid plugin ID format: "${trimmed}" (must start with a lowercase letter and contain only lowercase letters, digits, and hyphens; length 2-64, e.g. 'quick-notes')`
     }
   }
   return { valid: true }
@@ -74,9 +93,43 @@ export function parsePlatformOption(value) {
   const parts = raw.split(',').map((part) => part.trim()).filter(Boolean)
   const platforms = parts.map((part) => aliases[part])
   if (platforms.length === 0 || platforms.some((p) => !p)) {
-    throw new Error(`无法识别的平台选项: "${value}"（可选 cross / windows / macos）`)
+    throw new Error(`Unrecognized platform option: "${value}" (allowed: cross / windows / macos)`)
   }
   return [...new Set(platforms)]
+}
+
+/**
+ * 解析插件分类选项：默认 ['办公效率']，支持逗号或斜杠分隔 1-2 个标准分类（同时接受中文标准名与英文 slug）
+ * @param {string | string[] | undefined} value
+ * @returns {string[]} 归一化后的标准中文分类标签数组
+ */
+export function parseCategoryOption(value) {
+  const parts = Array.isArray(value)
+    ? value.map((item) => String(item ?? '').trim()).filter(Boolean)
+    : String(value ?? '').split(/[,，/]/).map((item) => item.trim()).filter(Boolean)
+  if (parts.length === 0) return [resolveCategoryLabel('productivity')]
+
+  const invalid = []
+  const normalized = []
+  for (const rawCat of parts) {
+    const label = resolveCategoryLabel(rawCat)
+    if (!label) {
+      invalid.push(rawCat)
+      continue
+    }
+    if (!normalized.includes(label)) {
+      normalized.push(label)
+    }
+  }
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unrecognized plugin category: "${invalid.join(', ')}" (allowed slugs: ${PLUGIN_CATEGORY_IDS.join(' / ')}, or labels: ${PLUGIN_CATEGORIES.join(' / ')})`
+    )
+  }
+  if (normalized.length > 2) {
+    throw new Error(`At most 2 plugin categories are allowed (received ${normalized.length})`)
+  }
+  return normalized
 }
 
 function cleanText(value, fallback) {
@@ -128,12 +181,14 @@ export async function createPlugin({
   title,
   description,
   author,
+  category,
   targetDir = defaultTargetDir(),
   force = false,
   platforms = [...SUPPORTED_PLATFORMS]
 }) {
-  // 平台声明非法时直接报错，不生成半成品目录
+  // 平台与分类声明非法时直接报错，不生成半成品目录
   const targets = buildPlatformTargets(platforms)
+  const normalizedCategory = parseCategoryOption(category)
   // 1. 校验 ID
   const idCheck = validatePluginId(pluginId)
   if (!idCheck.valid) {
@@ -141,18 +196,29 @@ export async function createPlugin({
   }
 
   const normalizedTitle = cleanText(title, pluginId)
-  const normalizedDesc = cleanText(description, DEFAULT_DESCRIPTION)
+  const hasCustomDesc = typeof description === 'string' && description.trim().length > 0
+  const normalizedDesc = hasCustomDesc ? description.trim() : DEFAULT_DESCRIPTION
+  // 严禁将中文标题或描述倒灌进 i18n['en-US']，含中文时英文条目自动回退为英文标题与默认英文描述
+  const normalizedEnTitle = CJK_REGEX.test(normalizedTitle)
+    ? formatPluginIdAsTitle(pluginId)
+    : normalizedTitle
+  const normalizedEnDesc = hasCustomDesc && !CJK_REGEX.test(normalizedDesc)
+    ? normalizedDesc
+    : DEFAULT_EN_DESCRIPTION
   const normalizedAuthor = cleanText(author, DEFAULT_AUTHOR)
-  if (normalizedTitle.length > 50) throw new Error(`插件名称不能超过 50 个字符（当前 ${normalizedTitle.length} 个）`)
-  if (normalizedDesc.length > 500) throw new Error(`插件描述不能超过 500 个字符（当前 ${normalizedDesc.length} 个）`)
-  if (normalizedAuthor.length > 100) throw new Error(`作者不能超过 100 个字符（当前 ${normalizedAuthor.length} 个）`)
+  if (normalizedTitle.length > 50) throw new Error(`Plugin name must not exceed 50 characters (received ${normalizedTitle.length})`)
+  if (normalizedDesc.length > 500) throw new Error(`Plugin description must not exceed 500 characters (received ${normalizedDesc.length})`)
+  if (normalizedAuthor.length > 100) throw new Error(`Plugin author must not exceed 100 characters (received ${normalizedAuthor.length})`)
+
+  const categorySlugs = normalizedCategory.map((cat) => normalizeCategoryId(cat))
+  const categoryId = categorySlugs.length === 1 ? categorySlugs[0] : categorySlugs
 
   // 2. 目标路径与冲突保护
   const absTargetDir = path.isAbsolute(targetDir) ? targetDir : path.resolve(rootDir, targetDir)
   const pluginDir = path.join(absTargetDir, pluginId)
 
   if (fs.existsSync(pluginDir) && !force) {
-    throw new Error(`目标插件目录已存在: "${pluginDir}"。若要强制覆盖，请指定 --force 标志。`)
+    throw new Error(`Target plugin directory already exists: "${pluginDir}". Pass --force to overwrite.`)
   }
 
   // 3. 创建目录（覆盖时清掉旧的 dist/，避免残留旧产物）
@@ -168,13 +234,22 @@ export async function createPlugin({
     createdFiles.push(relPath)
   }
 
-  // 4. plugin.json（只写宿主读取的字段；单命令插件不需要 features，默认导出就是入口）
+  // 4. plugin.json（包含多语言元数据与标准分类 slug；单命令插件不需要 features，默认导出就是入口）
   const manifest = {
     id: pluginId,
     name: normalizedTitle,
     version: '1.0.0',
     description: normalizedDesc,
     author: normalizedAuthor,
+    category: normalizedCategory,
+    categoryId,
+    defaultLocale: 'en-US',
+    i18n: {
+      'en-US': {
+        name: normalizedEnTitle,
+        description: normalizedEnDesc
+      }
+    },
     entry: 'dist/index.js',
     icon: 'icon.svg',
     mode: 'view',
@@ -236,14 +311,14 @@ export async function createPlugin({
   category: string;
 }
 
-// 示例数据，换成插件自己的内容
+// Sample items — replace with your own plugin data
 export const SAMPLE_ITEMS: readonly Phrase[] = [
-  { id: "thanks", title: "收到，谢谢", content: "收到，谢谢！", category: "回复" },
-  { id: "later", title: "稍后回复", content: "我稍后回复你。", category: "回复" },
-  { id: "signature", title: "邮件落款", content: "祝好\\n张三", category: "签名" }
+  { id: "thanks", title: "Got it, thanks", content: "Got it, thanks!", category: "Reply" },
+  { id: "later", title: "Reply later", content: "I will get back to you shortly.", category: "Reply" },
+  { id: "signature", title: "Email signature", content: "Best regards,\\nAlex", category: "Signature" }
 ];
 
-/** 按标题、内容、分类过滤；关键字为空或不是字符串时返回全部 */
+/** Filter by title, content, or category; returns all items when query is empty or non-string */
 export function filterItems(items: readonly Phrase[], query: unknown): Phrase[] {
   const keyword = typeof query === "string" ? query.trim().toLowerCase() : "";
   if (!keyword) return [...items];
@@ -254,20 +329,53 @@ export function filterItems(items: readonly Phrase[], query: unknown): Phrase[] 
 `
   )
 
-  // 9. src/index.tsx：单栏列表；第 1 个 Action 是回车主动作，第 2 个是次动作，其余进动作面板
+  // 8b. src/i18n.ts：双语词典，支持 zh-CN 与 en-US 自动随宿主语言切换
+  const i18nMessages = {
+    'zh-CN': {
+      navigationTitle: normalizedTitle,
+      searchPlaceholder: '搜索短语',
+      copyContent: '复制内容',
+      copyTitle: '复制标题',
+      copiedTitle: '已复制标题'
+    },
+    'en-US': {
+      navigationTitle: normalizedEnTitle,
+      searchPlaceholder: 'Search phrases',
+      copyContent: 'Copy Content',
+      copyTitle: 'Copy Title',
+      copiedTitle: 'Title copied'
+    }
+  }
+  writeFileLf(
+    'src/i18n.ts',
+    `import { createTranslator } from "@ztools/declarative-ui";
+
+export const t = createTranslator(
+${JSON.stringify(i18nMessages, null, 2)
+  .split('\n')
+  .map((line) => `  ${line}`)
+  .join('\n')},
+  { defaultLocale: "en-US" }
+);
+`
+  )
+
+  // 9. src/index.tsx：单栏列表；调用 useLocale() 订阅宿主语言切换，第 1 个 Action 是回车主动作，第 2 个是次动作，其余进动作面板
   writeFileLf(
     'src/index.tsx',
-    `import React, { List, ActionPanel, Action, Icon, Clipboard, showToast, Toast, useState } from "@ztools/declarative-ui";
+    `import React, { List, ActionPanel, Action, Icon, Clipboard, showToast, Toast, useState, useLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import { SAMPLE_ITEMS, filterItems } from "./items.js";
 
 export default function Command() {
+  useLocale();
   const [searchText, setSearchText] = useState<string>("");
   const items = filterItems(SAMPLE_ITEMS, searchText);
 
   return (
     <List
-      navigationTitle={${JSON.stringify(normalizedTitle)}}
-      searchBarPlaceholder="搜索短语"
+      navigationTitle={t("navigationTitle")}
+      searchBarPlaceholder={t("searchPlaceholder")}
       searchText={searchText}
       onSearchTextChange={setSearchText}
     >
@@ -281,13 +389,13 @@ export default function Command() {
           accessories={[{ tag: item.category }]}
           actions={
             <ActionPanel>
-              <Action.CopyToClipboard title="复制内容" content={item.content} />
+              <Action.CopyToClipboard title={t("copyContent")} content={item.content} />
               <Action
-                title="复制标题"
+                title={t("copyTitle")}
                 icon={Icon.CopyClipboard}
                 onAction={async () => {
                   await Clipboard.copy(item.title);
-                  await showToast(Toast.Style.Success, "已复制标题");
+                  await showToast(Toast.Style.Success, t("copiedTitle"));
                 }}
               />
             </ActionPanel>
@@ -308,59 +416,73 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { renderDeclarativeRoot } from "@ztools/declarative-ui";
+import { getLocale, renderDeclarativeRoot, setRuntimeLocale } from "@ztools/declarative-ui";
 
 const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(fs.readFileSync(path.join(pluginDir, "plugin.json"), "utf8"));
 
 async function load(rel) {
   const file = path.join(pluginDir, "dist", rel);
-  assert.ok(fs.existsSync(file), \`缺少 dist/\${rel}，请先在仓库根目录运行 node scripts/build-declarative.mjs \${manifest.id}\`);
+  assert.ok(fs.existsSync(file), \`Missing dist/\${rel}; run node scripts/build-declarative.mjs \${manifest.id} from the repository root first\`);
   return import(pathToFileURL(file).href);
 }
 
-test("清单：id 与目录名一致，入口和图标文件存在", () => {
+test("manifest: id matches directory name and required/i18n metadata exist", () => {
   assert.equal(manifest.id, path.basename(pluginDir));
-  for (const key of ["name", "version", "description", "author", "entry", "icon"]) assert.ok(manifest[key], \`缺少 \${key}\`);
+  for (const key of ["name", "version", "description", "author", "entry", "icon", "defaultLocale", "categoryId"]) {
+    assert.ok(manifest[key], \`Missing \${key}\`);
+  }
+  assert.ok(manifest.i18n?.["en-US"]?.name, "Missing i18n[en-US].name");
+  assert.ok(manifest.i18n?.["en-US"]?.description, "Missing i18n[en-US].description");
   assert.ok(Array.isArray(manifest.permissions));
-  assert.ok(Array.isArray(manifest.targets) && manifest.targets.length > 0, "targets 至少声明一个平台");
-  assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)), "图标文件不存在");
-  assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)), "入口文件不存在，请先编译");
+  assert.ok(Array.isArray(manifest.targets) && manifest.targets.length > 0, "targets must declare at least one platform");
+  assert.ok(fs.existsSync(path.join(pluginDir, manifest.icon)), "icon file does not exist");
+  assert.ok(fs.existsSync(path.join(pluginDir, manifest.entry)), "entry file does not exist; build first");
 });
 
-test("过滤：空关键字返回全部，大小写不敏感，无匹配返回空数组", async () => {
+test("filter: empty query returns all items, case-insensitive, unmatched returns empty array", async () => {
   const { SAMPLE_ITEMS, filterItems } = await load("items.js");
   assert.equal(filterItems(SAMPLE_ITEMS, "").length, SAMPLE_ITEMS.length);
   assert.equal(filterItems(SAMPLE_ITEMS, "   ").length, SAMPLE_ITEMS.length);
-  assert.notEqual(filterItems(SAMPLE_ITEMS, ""), SAMPLE_ITEMS, "返回新数组，不能把原数组交出去");
-  assert.deepEqual(filterItems(SAMPLE_ITEMS, "签名").map((item) => item.id), ["signature"]);
+  assert.notEqual(filterItems(SAMPLE_ITEMS, ""), SAMPLE_ITEMS, "must return a new array copy");
+  assert.deepEqual(filterItems(SAMPLE_ITEMS, "signature").map((item) => item.id), ["signature"]);
   assert.deepEqual(filterItems([{ id: "a", title: "Hello", content: "", category: "" }], "HELLO").map((item) => item.id), ["a"]);
-  assert.deepEqual(filterItems(SAMPLE_ITEMS, "不存在的关键字"), []);
+  assert.deepEqual(filterItems(SAMPLE_ITEMS, "nonexistent-keyword"), []);
 });
 
-test("[异常输入] 关键字不是字符串时不报错，按空关键字处理", async () => {
+test("[invalid input] non-string query does not throw and behaves as empty query", async () => {
   const { SAMPLE_ITEMS, filterItems } = await load("items.js");
-  for (const bad of [undefined, null, 42, {}, ["签名"]]) {
+  for (const bad of [undefined, null, 42, {}, ["signature"]]) {
     assert.equal(filterItems(SAMPLE_ITEMS, bad).length, SAMPLE_ITEMS.length, String(bad));
   }
-  assert.deepEqual(filterItems([], "任意"), []);
+  assert.deepEqual(filterItems([], "any"), []);
 });
 
-test("渲染：顶层是 List，每条都有回车主动作", async () => {
+test("render: root is List, each row has primary action, and copy updates on locale switch", async () => {
   const { default: Command } = await load("index.js");
   const { SAMPLE_ITEMS } = await load("items.js");
+  const prevLocale = getLocale();
+  setRuntimeLocale("zh-CN");
   const root = renderDeclarativeRoot(Command);
   try {
-    const view = root.getLatest();
-    assert.equal(view.type, "List");
-    assert.equal(view.props.navigationTitle, manifest.name);
-    const rows = view.children.filter((child) => child && child.type === "List.Item");
+    const zhView = root.getLatest();
+    assert.equal(zhView.type, "List");
+    assert.equal(zhView.props.navigationTitle, manifest.name);
+    assert.equal(zhView.props.searchBarPlaceholder, ${JSON.stringify(i18nMessages['zh-CN'].searchPlaceholder)});
+    const rows = zhView.children.filter((child) => child && child.type === "List.Item");
     assert.equal(rows.length, SAMPLE_ITEMS.length);
     const firstAction = rows[0].props.actions.children[0];
     assert.equal(firstAction.type, "Action.CopyToClipboard");
     assert.equal(firstAction.props.content, SAMPLE_ITEMS[0].content);
+
+    setRuntimeLocale("en-US");
+    await new Promise((resolve) => queueMicrotask(resolve));
+    const enView = root.getLatest();
+    assert.equal(enView.props.navigationTitle, manifest.i18n["en-US"].name);
+    assert.equal(enView.props.searchBarPlaceholder, ${JSON.stringify(i18nMessages['en-US'].searchPlaceholder)});
   } finally {
     root.unmount();
+    setRuntimeLocale(prevLocale);
   }
 });
 `
@@ -373,21 +495,22 @@ test("渲染：顶层是 List，每条都有回车主动作", async () => {
 
 ${normalizedDesc}
 
-## 目录
+## Structure
 
-| 路径 | 说明 |
+| Path | Description |
 | --- | --- |
-| \`plugin.json\` | 插件清单：名称、版本、入口、图标、权限、支持的平台 |
-| \`src/index.tsx\` | 界面（声明式组件，从 \`@ztools/declarative-ui\` 引入） |
-| \`src/items.ts\` | 数据与过滤逻辑 |
-| \`tests/index.test.mjs\` | 测试，运行前先编译 |
-| \`icon.svg\` | 图标 |
+| \`plugin.json\` | Plugin manifest: name, version, category, i18n metadata, entry, icon, permissions, targets |
+| \`src/index.tsx\` | Declarative UI view (imported from \`@ztools/declarative-ui\`) |
+| \`src/i18n.ts\` | Bilingual dictionary (\`zh-CN\` / \`en-US\`, created via \`createTranslator\`) |
+| \`src/items.ts\` | Sample data and filtering logic |
+| \`tests/index.test.mjs\` | Unit tests (build first before running) |
+| \`icon.svg\` | Plugin icon |
 
-\`dist/\` 是编译产物，不提交。
+\`dist/\` contains build artifacts and should not be committed.
 
-## 编译与检查
+## Build and Verify
 
-在插件仓库根目录执行：
+Run from the extensions repository root:
 
 \`\`\`bash
 node scripts/build-declarative.mjs ${pluginId}
@@ -395,7 +518,7 @@ node scripts/scan-plugin-security.mjs extensions/${pluginId}
 node --test extensions/${pluginId}/tests/*.test.mjs
 \`\`\`
 
-在 ZTools 客户端里试用、界面规范和提交流程见 [开发入门](https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/getting-started.md)。
+See [Getting Started](https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/en/getting-started.md) for testing in ZTools, UI guidelines, and submission workflow.
 `
   )
 
@@ -423,35 +546,41 @@ async function runCli() {
 
   if (args.includes('--help') || args.includes('-h')) {
     console.log(`
-ZTools 插件脚手架
+ZTools Plugin Scaffold
 
-用法:
-  node scripts/create-plugin.mjs <plugin-id> [title] [description] [选项]
+Usage:
+  node scripts/create-plugin.mjs <plugin-id> [title] [description] [options]
 
-参数:
-  <plugin-id>       插件 ID（小写字母开头，只能用小写字母、数字和短横线，2-64 位）
-  [title]           插件显示名称（可选，默认为插件 ID）
-  [description]     插件功能描述（可选）
+Arguments:
+  <plugin-id>       Plugin ID (lowercase letter start, lowercase letters/digits/hyphens only, 2-64 chars)
+  [title]           Plugin display name (optional, defaults to plugin ID)
+  [description]     Plugin description (optional)
 
-选项:
-  --platform <p>     支持的平台：cross（跨平台，默认）/ windows / macos
-  --author <name>    作者（默认 "${DEFAULT_AUTHOR}"）
-  --target-dir <dir> 生成到哪个目录（默认 "${defaultTargetDir()}"）
-  --force, -f        目标目录已存在时覆盖
-  --help, -h         显示此帮助信息
+Options:
+  --platform <p>     Supported platforms: cross (default) / windows / macos
+  --category <c>     Plugin category (1-2 comma-separated items, default "productivity"; slugs: ${PLUGIN_CATEGORY_IDS.join(' / ')})
+  --author <name>    Author name (default "${DEFAULT_AUTHOR}")
+  --target-dir <dir> Output parent directory (default "${defaultTargetDir()}")
+  --force, -f        Overwrite target directory if it already exists
+  --help, -h         Show this help message
 
-示例:
-  npm run create-plugin -- quick-notes "便签" "记录一段文字"
-  npm run create-plugin -- wifi-tool "Wi-Fi 工具" --platform windows
+Examples:
+  npm run create-plugin -- quick-notes "Quick Notes" "Capture short snippets" --category productivity
+  npm run create-plugin -- wifi-tool "Wi-Fi Tool" --platform windows --category network
     `.trim())
     process.exit(0)
   }
 
   const force = args.includes('--force') || args.includes('-f')
-  const options = { '--target-dir': readOption(args, '--target-dir'), '--platform': readOption(args, '--platform'), '--author': readOption(args, '--author') }
+  const options = {
+    '--target-dir': readOption(args, '--target-dir'),
+    '--platform': readOption(args, '--platform'),
+    '--category': readOption(args, '--category'),
+    '--author': readOption(args, '--author')
+  }
   for (const [flag, opt] of Object.entries(options)) {
     if (opt.missing) {
-      console.error(flag === '--platform' ? '错误: --platform 需要指定 cross / windows / macos' : `错误: ${flag} 需要一个值`)
+      console.error(flag === '--platform' ? 'Error: --platform requires cross / windows / macos' : `Error: ${flag} requires a value`)
       process.exit(1)
     }
   }
@@ -468,52 +597,54 @@ ZTools 插件脚手架
     if (process.stdin.isTTY) {
       const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
       try {
-        pluginId = (await rl.question('? 插件 ID（如 my-tool，必填）: ')).trim()
-        title = (await rl.question('? 显示名称（留空则使用 ID）: ')).trim() || pluginId
-        description = (await rl.question('? 功能描述（可留空）: ')).trim()
+        pluginId = (await rl.question('? Plugin ID (e.g. my-tool, required): ')).trim()
+        title = (await rl.question('? Display name (defaults to ID if blank): ')).trim() || pluginId
+        description = (await rl.question('? Description (optional): ')).trim()
         if (platformOption === undefined) {
-          platformOption = (await rl.question('? 支持哪些平台？[1] 跨平台（默认）[2] 仅 Windows [3] 仅 macOS: ')).trim()
+          platformOption = (await rl.question('? Supported platforms? [1] Cross-platform (default) [2] Windows only [3] macOS only: ')).trim()
         }
       } finally {
         rl.close()
       }
     } else {
-      console.error('错误: 缺少必填参数 <plugin-id>')
-      console.error('用法: node scripts/create-plugin.mjs <plugin-id> [title] [description]')
-      console.error('查看帮助: node scripts/create-plugin.mjs --help\n')
+      console.error('Error: Missing required argument <plugin-id>')
+      console.error('Usage: node scripts/create-plugin.mjs <plugin-id> [title] [description]')
+      console.error('Help: node scripts/create-plugin.mjs --help\n')
       process.exit(1)
     }
   }
 
   try {
     const platforms = parsePlatformOption(platformOption)
-    console.log(`\n正在生成插件工程: "${pluginId}"（${describePlatforms(platforms)}）...`)
+    const category = parseCategoryOption(options['--category'].value)
+    console.log(`\nScaffolding plugin project: "${pluginId}" (${describePlatforms(platforms)})...`)
     const result = await createPlugin({
       pluginId,
       title,
       description,
       author: options['--author'].value,
+      category,
       targetDir: options['--target-dir'].value ?? defaultTargetDir(),
       force,
       platforms
     })
 
-    console.log('\n插件工程创建成功')
-    console.log(`目录: ${result.pluginDir}`)
-    console.log(`文件: ${result.createdFiles.join(', ')}`)
+    console.log('\nPlugin project created successfully')
+    console.log(`Directory: ${result.pluginDir}`)
+    console.log(`Files: ${result.createdFiles.join(', ')}`)
     const next = describeNextSteps(result.pluginDir)
     if (next.inRepo) {
-      console.log('\n下一步（在仓库根目录执行）:')
-      console.log(`  1. ${next.commands[0]}    # 编译到 dist/`)
-      console.log(`  2. ${next.commands[1]}    # 清单校验与安全扫描`)
-      console.log(`  3. ${next.commands[2]}    # 运行插件测试`)
+      console.log('\nNext steps (run from repository root):')
+      console.log(`  1. ${next.commands[0]}    # Build to dist/`)
+      console.log(`  2. ${next.commands[1]}    # Manifest validation & security scan`)
+      console.log(`  3. ${next.commands[2]}    # Run plugin tests`)
     } else {
-      console.log('\n提示: 这个目录不在仓库的插件目录下，构建脚本找不到它；把它移到 extensions/ 下再编译。')
+      console.log('\nNote: This directory is outside the repository plugins folder; move it into extensions/ before building.')
     }
-    console.log('详细说明: https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/getting-started.md\n')
+    console.log('Guide: https://github.com/ZToolsTeam/ZTools-extensions/blob/main/docs/en/getting-started.md\n')
     process.exit(0)
   } catch (err) {
-    console.error(`\n创建插件失败: ${err.message}\n`)
+    console.error(`\nFailed to create plugin: ${err.message}\n`)
     process.exit(1)
   }
 }

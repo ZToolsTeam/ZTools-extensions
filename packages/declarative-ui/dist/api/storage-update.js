@@ -1,3 +1,4 @@
+import { tApiError } from "./error-messages.js";
 import { ZToolsHostError } from "./host-error.js";
 /** 更新函数只描述本次修改；冲突后会重新执行，不应有外部副作用。 */
 export async function updateStoredItem(storage, key, update) {
@@ -11,5 +12,5 @@ export async function updateStoredItem(storage, key, update) {
         if (await storage.compareAndSet(key, expected, next))
             return next;
     }
-    throw new ZToolsHostError("STORAGE_CONFLICT", "数据正在被其他窗口修改，请重试");
+    throw new ZToolsHostError("STORAGE_CONFLICT", tApiError("storageConflict"));
 }

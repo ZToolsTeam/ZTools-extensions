@@ -8,17 +8,20 @@
  *
  * 用法见各插件 tests/*.test.mjs。
  */
-import { Clipboard, getComponentFactory, renderDeclarativeRoot, setDeclarativeBridge } from '@ztools/declarative-ui'
+import { Clipboard, getComponentFactory, renderDeclarativeRoot, setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
 
 let lastHost = null
 
-export function createHost() {
+export function createHost(options = {}) {
+  const defaultLocale = options.locale || 'zh-CN'
+  setRuntimeLocale(defaultLocale)
   const storage = new Map()
   const toasts = []
-  const clipboard = { text: '', image: null, pasted: [] }
+  const clipboard = { text: '', image: null, files: [], pasted: [] }
   const pushed = []
   const ipcCalls = []
   const ipcHandlers = {}
+  const eventListeners = new Map()
   const faults = { storageRead: null, storageWrite: null }
   let confirmAnswer = true
   const confirms = []
@@ -39,6 +42,12 @@ export function createHost() {
     },
     async readClipboardText() {
       return clipboard.text
+    },
+    async readClipboardFiles() {
+      return Array.isArray(clipboard.files) ? [...clipboard.files] : []
+    },
+    async readClipboardImage() {
+      return clipboard.image
     },
     async pasteToActive(text) {
       await this.copyToClipboard(text)
@@ -79,7 +88,22 @@ export function createHost() {
 
   let seq = 0
   globalThis.window = globalThis.window || globalThis
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+  globalThis.window.ztools = {
+    ...(globalThis.window.ztools || {}),
+    events: {
+      on(event, cb) {
+        if (!eventListeners.has(event)) eventListeners.set(event, new Set())
+        eventListeners.get(event).add(cb)
+        return () => eventListeners.get(event)?.delete(cb)
+      },
+      off(event, cb) {
+        eventListeners.get(event)?.delete(cb)
+      }
+    }
+  }
   globalThis.__ztoolsElectron = {
+    setFileInputInterception() {},
     transport: {
       methods: new Proxy(
         {},
@@ -114,16 +138,29 @@ export function createHost() {
     setConfirm(answer) {
       confirmAnswer = answer
     },
+    setLocale(locale) {
+      setRuntimeLocale(locale)
+    },
     lastToast() {
       return toasts[toasts.length - 1]
     },
+    emitEvent(event, payload) {
+      const set = eventListeners.get(event)
+      if (!set) return
+      for (const cb of [...set]) cb(payload)
+    },
     reset() {
+      setRuntimeLocale(defaultLocale)
       storage.clear()
       toasts.length = 0
       pushed.length = 0
       ipcCalls.length = 0
       confirms.length = 0
       clipboard.text = ''
+      clipboard.image = null
+      clipboard.files = []
+      clipboard.pasted.length = 0
+      eventListeners.clear()
       faults.storageRead = null
       faults.storageWrite = null
       confirmAnswer = true
@@ -168,6 +205,14 @@ export async function mount(Command, host = lastHost) {
       })
       return out
     },
+    /** 列表声明的空状态（List.EmptyView），没有时返回 null */
+    emptyView() {
+      let found = null
+      walk(api.tree(), (n) => {
+        if (!found && n.type === 'List.EmptyView') found = n
+      })
+      return found
+    },
     item(predicate) {
       const found = api.items().find((it) => (typeof predicate === 'string' ? it.props.id === predicate : predicate(it)))
       if (!found) throw new Error(`找不到列表项：${predicate}；现有：${api.items().map((i) => i.props.id + '|' + i.props.title).join(', ')}`)
@@ -211,6 +256,68 @@ export async function mount(Command, host = lastHost) {
       }
       await tick()
       return action
+    },
+    async pasteFiles(files, options = {}) {
+      return api._dispatchFileInput(files, 'paste', options)
+    },
+    async dropFiles(files, options = {}) {
+      return api._dispatchFileInput(files, 'drop', options)
+    },
+    async pasteText(text) {
+      const t = api.tree()
+      const onTextPaste = t?.props?.fileInput?.onTextPaste
+      if (typeof onTextPaste === 'function') {
+        await onTextPaste(String(text ?? ''))
+      }
+      await tick()
+    },
+    async _dispatchFileInput(rawFiles, source = 'paste', options = {}) {
+      const list = (Array.isArray(rawFiles) ? rawFiles : [rawFiles])
+        .map((f) => String(f || '').trim())
+        .filter(Boolean)
+      const t = api.tree()
+      const onFileInput = t?.props?.onFileInput
+      const cfg = t?.props?.fileInput || {}
+      if (typeof onFileInput === 'function') {
+        const exts = Array.isArray(cfg.extensions)
+          ? cfg.extensions.map((e) => (String(e).startsWith('.') ? String(e).toLowerCase() : `.${String(e).toLowerCase()}`))
+          : []
+        let rejectedCount = 0
+        const accepted = list.filter((p) => {
+          if (exts.length === 0) return true
+          const base = p.split(/[\\/]/).pop() || ''
+          const dot = base.lastIndexOf('.')
+          if (dot <= 0) return Boolean(cfg.allowDirectories)
+          const ok = exts.some((ext) => base.toLowerCase().endsWith(ext))
+          if (!ok) rejectedCount++
+          return ok
+        })
+        if (accepted.length === 0 && rejectedCount > 0) {
+          host?.toasts?.push({
+            title: '文件格式不匹配',
+            message: `当前工具仅支持 ${cfg.extensions.join(' / ')} 格式`,
+            style: 'FAILURE'
+          })
+          await tick()
+          return { accepted: [], rejectedCount }
+        }
+        await onFileInput({
+          files: accepted,
+          source,
+          ...(options.targetFieldId ? { targetFieldId: options.targetFieldId } : {}),
+          // 模拟新版宿主下发的已确认文件夹列表；不传表示旧版宿主
+          ...(Array.isArray(options.directories) ? { directories: options.directories } : {}),
+          rejectedCount
+        })
+      } else {
+        host?.emitEvent?.('plugin_files_dropped', {
+          files: list,
+          source,
+          ...(options.targetFieldId ? { targetFieldId: options.targetFieldId } : {})
+        })
+      }
+      await tick()
+      return { accepted: list, rejectedCount: 0 }
     },
     unmount() {
       root.unmount()

@@ -1,9 +1,13 @@
 {
   "id": "kill-process",
   "name": "结束进程",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "description": "按内存或 CPU 占用列出正在运行的进程，确认后结束单个进程或整个进程树，可用于关闭无响应的程序",
   "author": "ZTools Team",
+  "category": [
+    "系统工具"
+  ],
+  "categoryId": "system",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -20,5 +24,30 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Kill Process",
+      "description": "List running processes sorted by memory or CPU usage and terminate a single process or entire process tree after confirmation to close unresponsive apps.",
+      "keywords": [
+        "kill",
+        "process",
+        "task manager",
+        "terminate",
+        "cpu",
+        "memory"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
+    }
+  ]
 }

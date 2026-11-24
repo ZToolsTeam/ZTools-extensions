@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { getDeclarativeBridge } from '@ztools/declarative-ui'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import MemoCommand from '../dist/index.js'
 import { readLegacyMemos, readLegacyNotes, sanitizeStoredMemos, MEMOS_STORAGE_KEY, LEGACY_LOCALSTORAGE_KEY, LEGACY_NOTES_LOCALSTORAGE_KEY, createMemo } from '../dist/logic.js'
@@ -322,4 +323,55 @@ test('[竞态] 同一窗口两次保存同时发起会排队执行，两条都�
   await Promise.all([s1, s2])
   await tick()
   assert.deepEqual(stored().map((m) => m.title).sort(), ['并发一', '并发二'])
+})
+
+test('便签置顶/取消置顶：持久化 pinned 字段、排在最前并带状态标识，取消后恢复原顺序', async () => {
+  seed([memoOf('old', '较早便签', 1000), memoOf('new', '最新便签', 2000)])
+  const view = await mount(MemoCommand)
+  await tick()
+  assert.deepEqual(view.items().map((i) => i.props.id), ['new', 'old'])
+
+  await view.run(view.item('old'), '置顶便签')
+  await tick()
+  assert.deepEqual(view.items().map((i) => i.props.id), ['old', 'new'])
+  assert.equal(stored().find((m) => m.id === 'old').pinned, true)
+  assert.ok(view.item('old').props.accessories.some((a) => a.tag === '置顶'))
+  assert.equal(view.item('old').props.icon, 'pin')
+
+  // 取消置顶后按原 updateTime 恢复排序
+  await view.run(view.item('old'), '取消置顶')
+  await tick()
+  assert.deepEqual(view.items().map((i) => i.props.id), ['new', 'old'])
+  assert.equal(stored().find((m) => m.id === 'old').pinned, undefined)
+  view.unmount()
+})
+
+test('直接粘贴正文回前台：调用 Clipboard.paste，空正文或宿主报错时如实提示失败', async () => {
+  seed([memoOf('a', '有正文', 2000), { id: 'b', title: '无正文', content: '', tag: '', createTime: 1, updateTime: 1000 }])
+  const view = await mount(MemoCommand)
+  await tick()
+  const bridge = getDeclarativeBridge()
+  const pasted = []
+  const origPaste = bridge.pasteToActive
+  bridge.pasteToActive = async (text) => { pasted.push(text) }
+  try {
+    await view.run(view.item('a'), '直接粘贴正文回前台')
+    assert.deepEqual(pasted, ['有正文的正文'])
+    assert.equal(host.lastToast().title, '已粘贴正文回前台')
+
+    // 无正文不调用 paste
+    await view.run(view.item('b'), '直接粘贴正文回前台')
+    assert.equal(pasted.length, 1)
+    assert.equal(host.lastToast().title, '粘贴失败')
+    assert.match(String(host.lastToast().message), /没有正文/)
+
+    // 宿主 paste 报错
+    bridge.pasteToActive = async () => { throw new Error('无辅助功能权限') }
+    await view.run(view.item('a'), '直接粘贴正文回前台')
+    assert.equal(host.lastToast().title, '粘贴失败')
+    assert.match(String(host.lastToast().message), /无辅助功能权限/)
+  } finally {
+    bridge.pasteToActive = origPaste
+    view.unmount()
+  }
 })

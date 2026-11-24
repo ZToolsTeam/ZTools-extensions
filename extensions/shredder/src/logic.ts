@@ -1,35 +1,48 @@
 type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
- * 文件粉碎：列出临时文件夹与崩溃转储目录里的文件，勾选后由客户端多次覆写文件内容，再改成随机文件名删除。
+ * 文件粉碎：用户选择文件或文件夹导入待粉碎列表，勾选后由客户端多次覆写文件内容，再改成随机文件名删除。
  *
  * - 覆写方式：1 次（全 0）、3 次（全 0、全 1、随机）、7 次（全 0、全 1、5 次随机），覆写图样由客户端决定
- * - 候选文件只来自 %TEMP% 与 %LOCALAPPDATA%\CrashDumps；Windows 系统目录下的路径一律拒绝
- * - 不在客户端里运行时不显示任何示例文件，只提示需要在客户端中使用
+ * - 不主动扫描任何目录；Windows 系统目录下的路径在导入与粉碎时一律拒绝
  * - 任何一个文件粉碎失败都如实返回，不改用普通删除顶替
  */
 
+import { t } from "./i18n.js";
 import {
   callHostTransport,
   formatBytes,
-  getRealSystemPath,
   invokeHostCapability,
-  isRealElectronHost,
-  createDirectoryScanner,
   showRealItemInFolder,
   type NativeInvocationResult
 } from "./native-ipc.js";
+import {
+  pathKey,
+  type FileImportRules,
+  type FileImportTransport,
+  type ImportedFile
+} from "./file-import.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes };
-export type { NativeInvocationResult };
+export type { FileImportTransport, NativeInvocationResult };
+
+/** 构建供共享导入模块使用的宿主传输适配器 */
+export function createShredImportTransport(hostOverride?: DynamicBridge): FileImportTransport {
+  return (method, params) => callHostTransport(method, params, hostOverride);
+}
 
 export const FORBIDDEN_TARGET_PATTERN =
   /(^|[\\/])(Windows|System32|SysWOW64|Program Files|Program Files \(x86\)|Boot|ntoskrnl\.exe|pagefile\.sys|\.\.)($|[\\/])/i;
-export const FORBIDDEN_REASON = "不能粉碎 Windows 系统目录下的文件";
-export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
-/** 单次最多列出的候选文件数 */
-export const MAX_CANDIDATES = 30;
 /** 确认框里最多逐个列出的文件数 */
 export const CONFIRM_LIST_LIMIT = 10;
+export const getForbiddenReason = () => t("forbiddenReason");
+export const getNotInClientMessage = () => t("notInClient");
+export const getShredSupportedText = () => t("supportedText");
+
+/** 导入规则：任意非空普通文件，系统保护路径一律跳过 */
+export const SHRED_IMPORT_RULES: FileImportRules = {
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+};
 
 export type ShredStandardId = "dod_3pass" | "seven_pass" | "zero_1pass";
 
@@ -41,68 +54,46 @@ export interface ShredStandardMeta {
   description: string;
 }
 
-export const SHRED_STANDARDS: ShredStandardMeta[] = [
+export const getShredStandards = (): ShredStandardMeta[] => [
   {
     id: "dod_3pass",
-    name: "3 次覆写（全 0、全 1、随机）",
+    name: t("std3Name"),
     passes: 3,
-    badge: "3 次覆写",
-    description: "参照 DoD 5220.22-M 的三次覆写：依次写入全 0、全 1、随机数据"
+    badge: t("std3Badge"),
+    description: t("std3Desc")
   },
   {
     id: "seven_pass",
-    name: "7 次覆写（全 0、全 1、5 次随机）",
+    name: t("std7Name"),
     passes: 7,
-    badge: "7 次覆写",
-    description: "依次写入全 0、全 1，再写 5 次随机数据"
+    badge: t("std7Badge"),
+    description: t("std7Desc")
   },
   {
     id: "zero_1pass",
-    name: "1 次覆写（全 0）",
+    name: t("std1Name"),
     passes: 1,
-    badge: "1 次覆写",
-    description: "写入一次全 0，适合体积较大的普通临时文件"
+    badge: t("std1Badge"),
+    description: t("std1Desc")
   }
 ];
 
-export type ShredCategory = "all" | "temp_zone" | "crash_dumps";
+/** 文件来源：手动选择 / 拖入的单个文件，或从文件夹导入 */
+export type ShredSource = "manual" | "folder";
 
-export interface ShredCategoryMeta {
-  id: Exclude<ShredCategory, "all">;
-  name: string;
-  subtitle: string;
-}
-
-export const SHRED_CATEGORIES: ShredCategoryMeta[] = [
-  {
-    id: "temp_zone",
-    name: "临时文件夹",
-    subtitle: "%TEMP% 及其子目录里的文件"
-  },
-  {
-    id: "crash_dumps",
-    name: "崩溃转储",
-    subtitle: "%LOCALAPPDATA%\\CrashDumps 里的转储文件"
-  }
+export const getShredSources = (): Array<{ id: ShredSource; name: string; subtitle: string }> => [
+  { id: "manual", name: t("srcManualName"), subtitle: t("srcManualSub") },
+  { id: "folder", name: t("srcFolderName"), subtitle: t("srcFolderSub") }
 ];
 
 export interface ShredCandidateItem {
   id: string;
   name: string;
   path: string;
-  category: Exclude<ShredCategory, "all">;
-  categoryName: string;
-  sizeBytes: number;
-  isSystemLocked: boolean;
-  lockedReason?: string;
-}
-
-export interface ShredderSnapshot {
-  candidates: ShredCandidateItem[];
-  totalShreddableBytes: number;
-  updatedAt: string;
-  /** 读取失败或不在客户端中运行时的原因；有值时界面直接显示它 */
-  error?: string;
+  source: ShredSource;
+  sourceName: string;
+  /** 字节数；宿主没有返回时为 null（显示“大小未识别”，不填默认值） */
+  sizeBytes: number | null;
 }
 
 export interface ShredFailure {
@@ -120,99 +111,49 @@ export interface ShredResult {
   message: string;
 }
 
-export function createEmptyShredderSnapshot(error?: string): ShredderSnapshot {
+/** 体积文案：大小未知时如实显示 */
+export function formatSize(sizeBytes: number | null): string {
+  return sizeBytes === null ? t("sizeUnknown") : formatBytes(sizeBytes);
+}
+
+/** 已知体积之和（未知大小的文件不计入） */
+export function sumKnownBytes(items: ShredCandidateItem[]): number {
+  return items.reduce((acc, item) => acc + (item.sizeBytes ?? 0), 0);
+}
+
+/** 把导入结果转换成待粉碎条目（id 由规范化路径生成，同一文件重复导入时 id 不变） */
+export function toShredCandidate(file: ImportedFile, source: ShredSource): ShredCandidateItem {
+  const sources = getShredSources();
+  const meta = sources.find((s) => s.id === source) || sources[0];
   return {
-    candidates: [],
-    totalShreddableBytes: 0,
-    updatedAt: "",
-    ...(error ? { error } : {})
+    id: `shred_${pathKey(file.path)}`,
+    name: file.name,
+    path: file.path,
+    source: meta.id,
+    sourceName: meta.name,
+    sizeBytes: file.sizeBytes
   };
-}
-
-function hasClientHost(hostBridge?: DynamicBridge): boolean {
-  return Boolean(hostBridge) || isRealElectronHost();
-}
-
-function comparablePath(p: string): string {
-  return String(p || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
-}
-
-function isUnder(dir: string, target: string): boolean {
-  if (!dir) return false;
-  const base = comparablePath(dir);
-  const t = comparablePath(target);
-  return t.startsWith(`${base}\\`);
-}
-
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-export async function fetchShredCandidates(hostBridge?: DynamicBridge): Promise<ShredderSnapshot> {
-  const scanner = createDirectoryScanner(hostBridge);
-  if (!hasClientHost(hostBridge)) {
-    return createEmptyShredderSnapshot(NOT_IN_CLIENT_MESSAGE);
-  }
-  try {
-    const [folders, home] = await Promise.all([
-      callHostTransport<{ folders?: Array<{ id: string; path: string; exists: boolean }> }>("system_list_common_folders", {}, hostBridge),
-      getRealSystemPath("home", hostBridge)
-    ]);
-    const temp = folders.data?.folders?.find(folder => folder.id === "temp" && folder.exists)?.path;
-    if (!folders.ok || !temp) {
-      return createEmptyShredderSnapshot("无法获取临时文件夹路径，没有扫描任何文件");
-    }
-    const crashDumpDir = home ? `${home.replace(/[\\/]+$/, "")}\\AppData\\Local\\CrashDumps` : "";
-    const [tempScan, dumpScan] = await Promise.all([
-      scanner.scan(temp, { maxFiles: MAX_CANDIDATES }),
-      crashDumpDir ? scanner.scan(crashDumpDir, { maxFiles: 15 }) : Promise.resolve(null)
-    ]);
-
-    const seen = new Set<string>();
-    const candidates: ShredCandidateItem[] = [];
-    for (const entry of [...tempScan.files, ...(dumpScan ? dumpScan.files : [])]) {
-      if (!entry || entry.isDirectory || !(entry.sizeBytes > 0) || !entry.path) continue;
-      if (FORBIDDEN_TARGET_PATTERN.test(entry.path)) continue;
-      const key = comparablePath(entry.path);
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const category = isUnder(crashDumpDir, entry.path) ? "crash_dumps" : "temp_zone";
-      const meta = SHRED_CATEGORIES.find((c) => c.id === category)!;
-      candidates.push({
-        id: `shred_${candidates.length}_${key}`,
-        name: entry.name,
-        path: entry.path,
-        category,
-        categoryName: meta.name,
-        sizeBytes: entry.sizeBytes,
-        isSystemLocked: false
-      });
-      if (candidates.length >= MAX_CANDIDATES) break;
-    }
-
-    return {
-      candidates,
-      totalShreddableBytes: candidates.reduce((acc, item) => acc + item.sizeBytes, 0),
-      error: scanner.error,
-      updatedAt: new Date().toLocaleTimeString()
-    };
-  } catch (err) {
-    return createEmptyShredderSnapshot(`扫描失败：${errorText(err)}`);
-  }
 }
 
 /** 粉碎前确认框的正文：逐个列出将被粉碎的文件（超过上限时注明其余数量） */
 export function buildShredConfirmMessage(items: ShredCandidateItem[], standardId: ShredStandardId): string {
-  const standard = SHRED_STANDARDS.find((s) => s.id === standardId) || SHRED_STANDARDS[0];
-  const listed = items.slice(0, CONFIRM_LIST_LIMIT).map((item) => `${item.path}（${formatBytes(item.sizeBytes)}）`);
+  const standards = getShredStandards();
+  const standard = standards.find((s) => s.id === standardId) || standards[0];
+  const listed = items.slice(0, CONFIRM_LIST_LIMIT).map((item) => t("confirmItemLine", { path: item.path, size: formatSize(item.sizeBytes) }));
   const rest = items.length - listed.length;
-  const totalBytes = items.reduce((acc, item) => acc + item.sizeBytes, 0);
+  const knownCount = items.filter((item) => item.sizeBytes !== null).length;
+  const sizeSummary =
+    knownCount === 0
+      ? t("sizeSummaryUnknown")
+      : knownCount < items.length
+        ? t("sizeSummaryPartial", { bytes: formatBytes(sumKnownBytes(items)) })
+        : t("sizeSummaryFull", { bytes: formatBytes(sumKnownBytes(items)) });
   return [
-    `将按「${standard.name}」粉碎以下 ${items.length} 个文件，共 ${formatBytes(totalBytes)}：`,
+    t("confirmHeader", { standard: standard.name, count: items.length, sizeSummary }),
     ...listed,
-    ...(rest > 0 ? [`以及其余 ${rest} 个文件`] : []),
+    ...(rest > 0 ? [t("confirmMoreFiles", { count: rest })] : []),
     "",
-    "粉碎后无法从回收站找回。固态硬盘、系统还原点或卷影副本中仍可能留有副本。"
+    t("confirmWarning")
   ].join("\n");
 }
 
@@ -221,10 +162,9 @@ export async function executeSecureShred(
   standardId: ShredStandardId,
   hostOverride?: DynamicBridge
 ): Promise<ShredResult> {
-  const standard = SHRED_STANDARDS.find((s) => s.id === standardId) || SHRED_STANDARDS[0];
-  const safeTargets = (items || []).filter(
-    (item) => item && item.path && !item.isSystemLocked && !FORBIDDEN_TARGET_PATTERN.test(item.path)
-  );
+  const standards = getShredStandards();
+  const standard = standards.find((s) => s.id === standardId) || standards[0];
+  const safeTargets = (items || []).filter((item) => item && item.path && !FORBIDDEN_TARGET_PATTERN.test(item.path));
   if (safeTargets.length === 0) {
     return {
       ok: false,
@@ -233,7 +173,7 @@ export async function executeSecureShred(
       shreddedPaths: [],
       failed: [],
       failedPaths: [],
-      message: (items || []).length > 0 ? FORBIDDEN_REASON : "请先勾选要粉碎的文件"
+      message: (items || []).length > 0 ? getForbiddenReason() : t("selectFilesFirst")
     };
   }
 
@@ -254,9 +194,9 @@ export async function executeSecureShred(
     );
     if (wipeRes.ok) {
       shreddedPaths.push(item.path);
-      shreddedBytes += item.sizeBytes;
+      shreddedBytes += item.sizeBytes ?? 0;
     } else {
-      failed.push({ path: item.path, error: wipeRes.error || wipeRes.message || "粉碎失败" });
+      failed.push({ path: item.path, error: resolveErrorMessage(wipeRes, t("shredFailed")) });
     }
   }
 
@@ -267,11 +207,11 @@ export async function executeSecureShred(
     : "";
   let message: string;
   if (failed.length === 0) {
-    message = `已按「${standard.name}」粉碎 ${shreddedPaths.length} 个文件（${formatBytes(shreddedBytes)}）`;
+    message = t("shredAllSuccess", { standard: standard.name, count: shreddedPaths.length, bytes: formatBytes(shreddedBytes) });
   } else if (shreddedPaths.length === 0) {
-    message = `粉碎失败，${failed.length} 个文件均未处理。${failureText}`;
+    message = t("shredAllFailed", { count: failed.length, detail: failureText });
   } else {
-    message = `已粉碎 ${shreddedPaths.length} 个文件（${formatBytes(shreddedBytes)}），${failed.length} 个失败。${failureText}`;
+    message = t("shredPartialResult", { okCount: shreddedPaths.length, bytes: formatBytes(shreddedBytes), failCount: failed.length, detail: failureText });
   }
 
   return {

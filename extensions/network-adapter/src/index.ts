@@ -4,6 +4,7 @@ import {
   Action,
   Icon,
   Clipboard,
+  useLocale,
   useState,
   useEffect,
   useRef,
@@ -12,6 +13,7 @@ import {
   type ActionProps,
   type KeyboardShortcut
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   type NetworkAdapterItem,
   type NetworkAdapterSnapshot,
@@ -27,14 +29,13 @@ import {
 
 export * from './logic.js'
 
-const UNKNOWN = '未识别'
 /** 一键设置的公共 DNS（阿里公共 DNS） */
 export const PUBLIC_DNS_PRESET = '223.5.5.5'
 
 function statusText(status: NetworkAdapterItem['status']): string {
-  if (status === 'up') return '已连接'
-  if (status === 'down') return '未连接'
-  return '状态未知'
+  if (status === 'up') return t('statusConnected')
+  if (status === 'down') return t('statusDisconnected')
+  return t('statusUnknown')
 }
 
 function speedText(mbps: number): string {
@@ -42,15 +43,21 @@ function speedText(mbps: number): string {
 }
 
 function errorDetail(error: string): string {
-  return error.replace(new RegExp(`^${ADAPTER_LIST_ERROR_PREFIX}[：:]\\s*`), '')
+  const prefix = t('adapterListErrorPrefix')
+  return error.replace(new RegExp(`^${prefix}[：:]\\s*`), '').replace(new RegExp(`^${ADAPTER_LIST_ERROR_PREFIX}[：:]\\s*`), '')
 }
 
 function summaryText(snapshot: NetworkAdapterSnapshot | null, isLoading: boolean): string {
-  if (!snapshot) return isLoading ? '正在读取本机网卡...' : ''
-  if (!snapshot.ok) return `${ADAPTER_LIST_ERROR_PREFIX}，可点击「刷新网卡」重试`
-  const head = `活动接口 ${snapshot.activeCount}/${snapshot.adapters.length} 个`
-  if (!snapshot.primaryIpv4) return `${head} · 主网卡: ${UNKNOWN}`
-  return `${head} · 主 IPv4: ${snapshot.primaryIpv4} · 默认网关: ${snapshot.primaryGateway || '无'} · 首选 DNS: ${snapshot.primaryDns || '未配置'}`
+  if (!snapshot) return isLoading ? t('loadingAdapters') : ''
+  if (!snapshot.ok) return t('summaryLoadError', { prefix: t('adapterListErrorPrefix') })
+  const head = t('summaryActiveCount', { active: snapshot.activeCount, total: snapshot.adapters.length })
+  if (!snapshot.primaryIpv4) return t('summaryNoPrimary', { head, unknown: t('unknown') })
+  return t('summaryWithPrimary', {
+    head,
+    ipv4: snapshot.primaryIpv4,
+    gateway: snapshot.primaryGateway || t('noneWord'),
+    dns: snapshot.primaryDns || t('dnsUnconfigured')
+  })
 }
 
 function copyAction(
@@ -77,10 +84,11 @@ function renderAdapterItem(
   maxSpeed: number,
   onApplyDns: (item: NetworkAdapterItem, primaryDns: string) => Promise<void>
 ) {
-  const subtitleParts = [`MAC: ${item.mac || UNKNOWN}`]
-  if (item.ipv4) subtitleParts.push(`掩码: ${item.netmask || UNKNOWN}`)
-  subtitleParts.push(`网关: ${item.gateway || '无'}`)
-  subtitleParts.push(`DNS: ${item.dnsServers.length > 0 ? item.dnsServers.join(', ') : '未配置'}`)
+  const unknown = t('unknown')
+  const subtitleParts = [`MAC: ${item.mac || unknown}`]
+  if (item.ipv4) subtitleParts.push(t('subtitleNetmask', { value: item.netmask || unknown }))
+  subtitleParts.push(t('subtitleGateway', { value: item.gateway || t('noneWord') }))
+  subtitleParts.push(t('subtitleDns', { value: item.dnsServers.length > 0 ? item.dnsServers.join(', ') : t('dnsUnconfigured') }))
   if (item.description) subtitleParts.push(item.description)
 
   const accessories: Record<string, unknown>[] = []
@@ -96,15 +104,15 @@ function renderAdapterItem(
   // 没有值的字段不提供复制动作（Clipboard.copy 失败会抛错，客户端显示操作失败，不会提示已复制）
   const actions = []
   if (item.ipv4) {
-    actions.push(copyAction(`复制 IPv4 地址 (${item.ipv4})`, Icon.Clipboard, copyAdapterInfo(item, 'ipv4'), '已复制 IPv4 地址'))
+    actions.push(copyAction(t('actionCopyIpv4', { ip: item.ipv4 }), Icon.Clipboard, copyAdapterInfo(item, 'ipv4'), t('toastCopiedIpv4')))
   }
   if (item.mac) {
-    actions.push(copyAction(`复制 MAC 地址 (${item.mac})`, Icon.Key, copyAdapterInfo(item, 'mac'), '已复制 MAC 地址'))
+    actions.push(copyAction(t('actionCopyMac', { mac: item.mac }), Icon.Key, copyAdapterInfo(item, 'mac'), t('toastCopiedMac')))
   }
   const summary = copyAdapterInfo(item, 'summary')
   actions.push(
-    copyAction('复制单行网络摘要', Icon.Document, summary, '已复制网卡摘要', summary, { modifiers: ['ctrl'], key: 'c' }),
-    copyAction('复制完整网卡配置 JSON', Icon.Code, copyAdapterInfo(item, 'json'), '已复制网卡 JSON 配置', item.name, {
+    copyAction(t('actionCopySummary'), Icon.Document, summary, t('toastCopiedSummary'), summary, { modifiers: ['ctrl'], key: 'c' }),
+    copyAction(t('actionCopyJson'), Icon.Code, copyAdapterInfo(item, 'json'), t('toastCopiedJson'), item.name, {
       modifiers: ['ctrl', 'shift'],
       key: 'c'
     })
@@ -112,13 +120,13 @@ function renderAdapterItem(
   if (item.category !== 'loopback') {
     actions.push(
       Action({
-        title: `将 DNS 设为 ${PUBLIC_DNS_PRESET}（阿里公共 DNS，替换现有 DNS，需管理员权限）`,
+        title: t('actionSetPublicDns', { dns: PUBLIC_DNS_PRESET }),
         icon: Icon.Globe,
         shortcut: { modifiers: ['ctrl'], key: 'p' },
         onAction: () => onApplyDns(item, PUBLIC_DNS_PRESET)
       }),
       Action({
-        title: '恢复自动获取 DNS（需管理员权限）',
+        title: t('actionRestoreDhcpDns'),
         icon: Icon.ArrowClockwise,
         shortcut: { modifiers: ['ctrl', 'shift'], key: 'd' },
         onAction: () => onApplyDns(item, 'dhcp')
@@ -128,18 +136,19 @@ function renderAdapterItem(
 
   return List.Item({
     id: item.id,
-    title: `${item.name} (${item.ipv4 || item.ipv6 || '未分配 IP'})`,
+    title: `${item.name} (${item.ipv4 || item.ipv6 || t('ipNone')})`,
     subtitle: subtitleParts.join(' · '),
     icon: item.category === 'physical' ? Icon.Wifi : Icon.Globe,
     accessories,
     actions: ActionPanel({
-      title: `${item.name} (${item.ipv4 || '未分配 IPv4'})`,
+      title: `${item.name} (${item.ipv4 || t('ipv4Unassigned')})`,
       children: actions
     })
   })
 }
 
 export function NetworkAdapterCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [filterMode, setFilterMode] = useState<AdapterFilterMode>('all')
   const [snapshot, setSnapshot] = useState<NetworkAdapterSnapshot | null>(null)
@@ -161,15 +170,15 @@ export function NetworkAdapterCommand() {
     setIsLoading(false)
     if (!snap.ok) {
       if (showNotice) {
-        showToast({ style: Toast.Style.Failure, title: ADAPTER_LIST_ERROR_PREFIX, message: errorDetail(snap.error) })
+        showToast({ style: Toast.Style.Failure, title: t('adapterListErrorPrefix'), message: errorDetail(snap.error) })
       }
       return
     }
     if (showNotice) {
       showToast({
         style: Toast.Style.Success,
-        title: '本机网卡状态已刷新',
-        message: `共 ${snap.adapters.length} 个接口 · 主 IPv4: ${snap.primaryIpv4 || UNKNOWN}`
+        title: t('toastRefreshedTitle'),
+        message: t('toastRefreshedMessage', { count: snap.adapters.length, ipv4: snap.primaryIpv4 || t('unknown') })
       })
     }
   }
@@ -182,7 +191,7 @@ export function NetworkAdapterCommand() {
     const res = await flushDnsCache()
     showToast({
       style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-      title: res.ok ? 'DNS 缓存已刷新' : 'DNS 刷新失败',
+      title: res.ok ? t('toastDnsFlushedTitle') : t('toastDnsFlushFailedTitle'),
       message: res.message
     })
   }
@@ -191,7 +200,7 @@ export function NetworkAdapterCommand() {
     const res = await applyDnsPreset(item.name, primary)
     showToast({
       style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-      title: res.ok ? '网卡 DNS 已修改' : '修改网卡 DNS 失败',
+      title: res.ok ? t('toastDnsSetTitle') : t('toastDnsSetFailedTitle'),
       message: res.message
     })
     // 成功后重新读取系统里的实际配置，不在本地拼写结果
@@ -206,11 +215,11 @@ export function NetworkAdapterCommand() {
   if (snapshot && !snapshot.ok) {
     children.push(
       List.Section({
-        title: '读取失败',
+        title: t('sectionLoadError'),
         children: [
           List.Item({
             id: 'nic-load-error',
-            title: ADAPTER_LIST_ERROR_PREFIX,
+            title: t('adapterListErrorPrefix'),
             subtitle: errorDetail(snapshot.error),
             icon: Icon.ExclamationMark
           })
@@ -220,27 +229,27 @@ export function NetworkAdapterCommand() {
   } else {
     children.push(
       List.Section({
-        title: `本机网络接口 (${filtered.length})`,
+        title: t('sectionAdapters', { count: filtered.length }),
         children: filtered.map((item) => renderAdapterItem(item, maxSpeed, handleApplyDns))
       })
     )
   }
 
   return List({
-    navigationTitle: '网络接口与网卡配置',
-    searchBarPlaceholder: '搜索网卡名称、IPv4/IPv6 地址、MAC 地址、DNS 或网卡型号...',
+    navigationTitle: t('navTitle'),
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按网卡类型筛选',
+      tooltip: t('filterTooltip'),
       value: filterMode,
       onChange: (val: string) => setFilterMode(val as AdapterFilterMode),
       children: [
-        List.Dropdown.Item({ title: '全部网络接口', value: 'all' }),
-        List.Dropdown.Item({ title: '物理网卡', value: 'physical' }),
-        List.Dropdown.Item({ title: '虚拟与回环网卡', value: 'virtual' }),
-        List.Dropdown.Item({ title: '仅已连接接口', value: 'connected' })
+        List.Dropdown.Item({ title: t('filterAll'), value: 'all' }),
+        List.Dropdown.Item({ title: t('filterPhysical'), value: 'physical' }),
+        List.Dropdown.Item({ title: t('filterVirtual'), value: 'virtual' }),
+        List.Dropdown.Item({ title: t('filterConnected'), value: 'connected' })
       ]
     }),
     filterBar: {
@@ -248,15 +257,15 @@ export function NetworkAdapterCommand() {
       actions: [
         {
           id: 'refresh-nic',
-          label: '刷新网卡',
-          title: '刷新网卡',
+          label: t('btnRefreshNic'),
+          title: t('btnRefreshNic'),
           style: 'secondary',
           onAction: () => void refreshAdapters(true)
         },
         {
           id: 'flush-dns',
-          label: '刷新DNS缓存',
-          title: '刷新DNS缓存',
+          label: t('btnFlushDns'),
+          title: t('btnFlushDns'),
           style: 'secondary',
           onAction: () => void handleFlushDns()
         }

@@ -1,8 +1,9 @@
 // 流水粘贴：宿主已取到条目但粘贴失败（如 macOS 未授权辅助功能）时必须如实报告失败，不能走本地回退报成功
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import { pasteSequentialClipboard, resetPasteSequence, sequencePosition } from '../dist/clipboard-storage.js'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
+const { pasteSequentialClipboard, resetPasteSequence, sequencePosition } = await import('../dist/clipboard-storage.js')
 
 const items = [
   { id: 'a', content: 'alpha', pinned: false, createdAt: 2 },

@@ -2,14 +2,14 @@
   "id": "startup-manager",
   "name": "启动管理",
   "description": "查看启动应用、后台服务与计划任务，管理自启状态；Mac 修改前保留可恢复的配置记录",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system",
     "shell",
@@ -64,5 +64,56 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Startup Manager",
+      "description": "Inspect and toggle startup apps, background services, and scheduled tasks, preserving restorable configuration snapshots on macOS.",
+      "keywords": [
+        "startup",
+        "autoruns",
+        "services",
+        "scheduled tasks",
+        "boot"
+      ],
+      "features": {
+        "startup-all": {
+          "explain": "Manage all startup applications, third-party services, and boot tasks",
+          "cmds": [
+            "startup",
+            "autoruns",
+            "startup manager",
+            "boot items"
+          ]
+        },
+        "startup-services": {
+          "explain": "Inspect and disable third-party background startup services",
+          "cmds": [
+            "background services",
+            "startup services",
+            "disable services"
+          ]
+        },
+        "startup-tasks": {
+          "explain": "Inspect and disable scheduled startup tasks",
+          "cmds": [
+            "scheduled tasks",
+            "startup tasks",
+            "boot tasks"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
+    }
+  ]
 }

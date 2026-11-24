@@ -111,3 +111,27 @@ test('输入无法解析时显示解析错误，副标题不带内部错误码',
   assert.doesNotMatch(String(item.props.subtitle), /^[A-Z_]+:/)
   view.unmount()
 })
+
+test('续行与复制格式说明按平台给：macOS 不提 cmd / PowerShell，Windows 保留，支持中英文切换', async () => {
+  const { copyFormatHint } = await import('../dist/index.js')
+  const mac = copyFormatHint(true)
+  assert.doesNotMatch(mac, /cmd|PowerShell|\^/)
+  assert.match(mac, /Copy as cURL/)
+  assert.match(mac, /`\\`/)
+  const win = copyFormatHint(false)
+  assert.match(win, /Copy as cURL \(cmd\)/)
+  assert.match(win, /PowerShell/)
+
+  host.setLocale('en-US')
+  try {
+    const macEn = copyFormatHint(true)
+    const winEn = copyFormatHint(false)
+    assert.doesNotMatch(macEn, /cmd|PowerShell|\^|[\u4e00-\u9fa5]/)
+    assert.match(macEn, /Copy as cURL/)
+    assert.doesNotMatch(winEn, /[\u4e00-\u9fa5]/)
+    assert.match(winEn, /Copy as cURL \(cmd\)/)
+    assert.match(winEn, /PowerShell/)
+  } finally {
+    host.setLocale('zh-CN')
+  }
+})

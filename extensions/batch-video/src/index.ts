@@ -9,46 +9,49 @@ import {
   useRef,
   showToast,
   Toast,
-  FilterBar
+  confirmAlert,
+  FilterBar,
+  useLocale
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   RealVideoFileItem,
   VideoProcessOutcome,
   VideoTaskId,
   HOST_FFMPEG_LIMIT_SECONDS,
   OUTPUT_SUFFIX,
-  SCAN_TOP_N_PER_DIR,
-  VIDEO_TASKS,
+  VIDEO_IMPORT_RULES,
+  VIDEO_IMPORT_SUPPORTED_TEXT,
   buildFfmpegCommand,
+  createVideoImportTransport,
   describeOutcomeSubtitle,
   describeOutcomeTag,
-  fetchRealVideoWorkspace,
   fileNameOf,
   formatBytes,
   getVideoTask,
-  makeVideoItem,
+  getVideoTasks,
+  pickVideoFolderWithConfirm,
   processVideoBatch,
   resolveOutputFormat,
   revealVideoInFolder,
-  summarizeOutcomes
+  selectVideoFiles,
+  summarizeOutcomes,
+  toVideoItem
 } from './logic.js'
 import { isRealElectronHost } from './native-ipc.js'
+import { isDeclarativeFileInputSupported } from './host-compat.js'
+import {
+  FileImportResult,
+  NormalizedFileInput,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  mergeByPath,
+  normalizeFileInput,
+  summarizeImport
+} from './file-import.js'
 
 export * from './logic.js'
-
-const MB = 1024 * 1024
-
-/** 未连接 ZTools 客户端（例如在浏览器里预览布局）时显示的示例文件；界面状态条会注明这是示例 */
-const PREVIEW_SAMPLE_VIDEOS: RealVideoFileItem[] = [
-  makeVideoItem('vid-preview-1', 'D:\\Videos\\Captures\\Product_Launch_4K_60fps.mp4', 1420 * MB),
-  makeVideoItem('vid-preview-2', 'D:\\Videos\\Recordings\\Screen_Recording_2026-10-18.mkv', 860 * MB),
-  makeVideoItem('vid-preview-3', 'D:\\Videos\\Projects\\Demo_Walkthrough_Raw.mov', 640 * MB),
-  makeVideoItem('vid-preview-4', 'D:\\Videos\\Meetings\\Team_Meeting_Recording_1080P.mp4', 512 * MB),
-  makeVideoItem('vid-preview-5', 'D:\\Videos\\Captures\\UI_Interaction_Showcase.mp4', 328 * MB),
-  makeVideoItem('vid-preview-6', 'D:\\Videos\\Tests\\Performance_Test_Capture.webm', 215 * MB),
-  makeVideoItem('vid-preview-7', 'D:\\Downloads\\Layout_Tutorial.mp4', 184 * MB),
-  makeVideoItem('vid-preview-8', 'D:\\Videos\\Exports\\Animation_Export.mov', 146 * MB)
-]
 
 const DEFAULT_FORMATS: Record<VideoTaskId, string> = {
   'convert-video': 'mp4',
@@ -61,86 +64,173 @@ function errorText(err: unknown): string {
 }
 
 export function BatchVideoCommand() {
-  const isRealHost = isRealElectronHost()
-  const initialVideos = isRealHost ? [] : PREVIEW_SAMPLE_VIDEOS
+  useLocale()
+  const videoTasks = getVideoTasks()
+  const transport = createVideoImportTransport()
   const [searchText, setSearchText] = useState('')
-  const [taskId, setTaskId] = useState<VideoTaskId>(VIDEO_TASKS[0]!.id)
+  const [taskId, setTaskId] = useState<VideoTaskId>(videoTasks[0]!.id)
   const [formatByTask, setFormatByTask] = useState<Record<VideoTaskId, string>>(DEFAULT_FORMATS)
-  const [files, setFiles] = useState<RealVideoFileItem[]>(initialVideos)
-  const [checkedIds, setCheckedIds] = useState<string[]>(initialVideos.map(f => f.id))
-  const [isLoading, setIsLoading] = useState(false)
+  const [files, setFiles] = useState<RealVideoFileItem[]>([])
+  const [checkedIds, setCheckedIds] = useState<string[]>([])
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ visitedDirs: number; matchedFiles: number } | null>(null)
   const [running, setRunning] = useState(false)
+  const [runningIds, setRunningIds] = useState<string[]>([])
 
   const runningRef = useRef(false)
   const stopRef = useRef(false)
-  const scanningRef = useRef(false)
+  const importTicketRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
+  const filesRef = useRef<RealVideoFileItem[]>(files)
+  filesRef.current = files
   const stopToastRef = useRef<{ hide: () => Promise<void> | void } | null>(null)
 
-  async function refreshWorkspace(showIndicator = false) {
-    if (scanningRef.current) return
-    if (runningRef.current) {
-      await showToast({ style: Toast.Style.Failure, title: '正在处理视频，完成后再重新扫描' })
-      return
-    }
-    scanningRef.current = true
-    setIsLoading(true)
+  async function importWithTicket(
+    executor: (
+      signal: AbortSignal,
+      onProgress: (progress: { visitedDirs: number; matchedFiles: number }) => void
+    ) => Promise<FileImportResult>
+  ) {
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    const ticket = ++importTicketRef.current
+    setIsImporting(true)
+    setImportProgress(null)
     try {
-      const ws = await fetchRealVideoWorkspace()
-      const connected = isRealElectronHost()
-      const nextFiles = connected || ws.files.length > 0 ? ws.files : PREVIEW_SAMPLE_VIDEOS
-      setFiles(nextFiles)
-      setCheckedIds(nextFiles.map(f => f.id))
-      if (showIndicator) {
-        await showToast({
-          style: Toast.Style.Success,
-          title: '视频队列已刷新',
-          message: connected || ws.files.length > 0 ? `找到 ${nextFiles.length} 个视频文件` : '未连接 ZTools 客户端，显示的是示例文件'
+      const result = await executor(controller.signal, progress => {
+        if (ticket === importTicketRef.current) setImportProgress(progress)
+      })
+      if (ticket !== importTicketRef.current) return
+      const incoming = result.files.map(toVideoItem)
+      const { merged, added, duplicates } = mergeByPath(filesRef.current, incoming, item => item.path)
+      if (added.length > 0) {
+        filesRef.current = merged
+        setFiles(merged)
+        setCheckedIds(prev => Array.from(new Set([...prev, ...added.map(item => item.id)])))
+      }
+      const notice = summarizeImport(result, { added: added.length, duplicates }, VIDEO_IMPORT_SUPPORTED_TEXT)
+      if (notice) {
+        void showToast({
+          style: notice.ok ? Toast.Style.Success : Toast.Style.Failure,
+          title: notice.title,
+          message: notice.message
         })
       }
     } catch (err) {
-      await showToast({ style: Toast.Style.Failure, title: '扫描视频失败', message: errorText(err) })
+      if (ticket !== importTicketRef.current) return
+      void showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: friendlyFileError(err) })
     } finally {
-      scanningRef.current = false
-      setIsLoading(false)
+      if (ticket === importTicketRef.current) {
+        importAbortRef.current = null
+        setIsImporting(false)
+        setImportProgress(null)
+      }
     }
   }
 
+  function handleAddVideoFiles() {
+    void importWithTicket(() => selectVideoFiles())
+  }
+
+  function handleAddVideoFolder() {
+    void importWithTicket((signal, onProgress) =>
+      pickVideoFolderWithConfirm(
+        transport,
+        folderPath =>
+          confirmAlert({
+            title: t('confirmRootTitle', { path: folderPath }),
+            message: t('confirmRootMsg'),
+            primaryAction: { title: t('confirmRootAction'), style: 'default' }
+          }),
+        { signal, onProgress }
+      )
+    )
+  }
+
+  function handleVideoFileInput(input: NormalizedFileInput) {
+    void importWithTicket((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, VIDEO_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    )
+  }
+
   useEffect(() => {
-    refreshWorkspace(false)
+    let disposeDrop: (() => void) | undefined
+    if (!isDeclarativeFileInputSupported()) {
+      const w = typeof window !== 'undefined' ? (window as { ztools?: { events?: { on?: (event: string, cb: (env: unknown) => void) => (() => void) | void; off?: (event: string, cb: (env: unknown) => void) => void } } }) : null
+      const eventsApi = w?.ztools?.events
+      if (eventsApi && typeof eventsApi.on === 'function') {
+        const onDrop = (envelope: unknown) => {
+          const parsed = normalizeFileInput(envelope)
+          if (parsed.paths.length > 0) handleVideoFileInput(parsed)
+        }
+        const off = eventsApi.on('plugin_files_dropped', onDrop)
+        disposeDrop = () => {
+          if (typeof off === 'function') off()
+          else if (typeof eventsApi.off === 'function') eventsApi.off('plugin_files_dropped', onDrop)
+        }
+      }
+    }
+    return () => {
+      importTicketRef.current += 1
+      importAbortRef.current?.abort()
+      disposeDrop?.()
+    }
   }, [])
+
+  const fileInputProps = createImportInputProps(handleVideoFileInput, {
+    dropTitle: t('dropTitle'),
+    dropSubtitle: t('dropSubtitle')
+  })
 
   const activeTask = getVideoTask(taskId)
   const activeFormat = resolveOutputFormat(activeTask, formatByTask[taskId]) || activeTask.formats[0]!.value
 
   async function executeBatch(targets: RealVideoFileItem[]) {
     if (runningRef.current) {
-      await showToast({ style: Toast.Style.Failure, title: '正在处理视频，请等当前任务完成或先停止' })
+      await showToast({ style: Toast.Style.Failure, title: t('busyWait') })
       return
     }
     if (targets.length === 0) {
-      await showToast({ style: Toast.Style.Failure, title: '请先勾选要处理的视频' })
+      await showToast({ style: Toast.Style.Failure, title: t('selectVideoFirst') })
       return
     }
     const settings = { taskId, format: activeFormat }
     runningRef.current = true
     stopRef.current = false
     setRunning(true)
-    setIsLoading(true)
     let progressToast: { hide: () => Promise<void> | void } | null = null
+    const appliedOutcomes = new Map<string, VideoProcessOutcome>()
     try {
       progressToast = await showToast({
         style: Toast.Style.Animated,
-        title: `正在处理 ${targets.length} 个视频...`,
-        message: `${activeTask.title} · ${activeFormat.toUpperCase()}，单个文件最长 ${HOST_FFMPEG_LIMIT_SECONDS} 秒`
+        title: t('processingTitle', { count: targets.length }),
+        message: t('processingMsg', {
+          title: activeTask.title,
+          format: activeFormat.toUpperCase(),
+          seconds: HOST_FFMPEG_LIMIT_SECONDS
+        })
       })
-      const outcomes = await processVideoBatch(targets, settings, {
+      await processVideoBatch(targets, settings, {
+        shouldSkip: id => !filesRef.current.some(item => item.id === id),
+        onStart: id => setRunningIds([id]),
         onItem: (id: string, outcome: VideoProcessOutcome) => {
-          setFiles(prev => prev.map(item => (item.id === id ? { ...item, result: outcome } : item)))
+          setRunningIds(prev => prev.filter(item => item !== id))
+          if (!filesRef.current.some(item => item.id === id)) return
+          appliedOutcomes.set(id, outcome)
+          const next = filesRef.current.map(item => (item.id === id ? { ...item, result: outcome } : item))
+          filesRef.current = next
+          setFiles(next)
         },
         shouldStop: () => stopRef.current
       })
       await progressToast?.hide()
-      const summary = summarizeOutcomes(outcomes.values())
+      if (appliedOutcomes.size === 0 && !stopRef.current) return
+      const summary = summarizeOutcomes(appliedOutcomes.values())
       const notStarted = targets.length - summary.total
 
       if (summary.done === 0) {
@@ -148,56 +238,86 @@ export function BatchVideoCommand() {
           style: Toast.Style.Failure,
           title:
             summary.total === 0
-              ? '已停止，没有处理任何视频'
+              ? t('stoppedNoProcessed')
               : summary.total > 1
-                ? `${summary.total} 个视频全部处理失败`
-                : '视频处理失败',
-          message: summary.firstError || '已按要求停止'
+                ? t('allFailedTitle', { total: summary.total })
+                : t('singleFailedTitle'),
+          message: summary.firstError || t('stoppedDefaultMsg')
         })
         return
       }
       if (summary.failed > 0 || notStarted > 0) {
         await showToast({
           style: Toast.Style.Failure,
-          title: `已输出 ${summary.done} 个，失败 ${summary.failed} 个${notStarted > 0 ? `，未处理 ${notStarted} 个` : ''}`,
-          message: summary.firstError || '已按要求停止'
+          title: t('partialTitle', {
+            done: summary.done,
+            failed: summary.failed,
+            notStarted: notStarted > 0 ? t('partialNotStarted', { count: notStarted }) : ''
+          }),
+          message: summary.firstError || t('stoppedDefaultMsg')
         })
         return
       }
       await showToast({
         style: Toast.Style.Success,
-        title: `已输出 ${summary.done} 个文件`,
-        message: `共 ${formatBytes(summary.outputBytes)}，另存到源文件所在目录（*${OUTPUT_SUFFIX}*），原文件未改动`
+        title: t('successTitle', { done: summary.done }),
+        message: t('successMsg', { size: formatBytes(summary.outputBytes), suffix: OUTPUT_SUFFIX })
       })
     } catch (err) {
-      await showToast({ style: Toast.Style.Failure, title: '视频处理异常', message: errorText(err) })
+      await showToast({ style: Toast.Style.Failure, title: t('processErrorTitle'), message: friendlyFileError(err) })
     } finally {
       await progressToast?.hide()
       await stopToastRef.current?.hide()
       stopToastRef.current = null
+      setRunningIds([])
       runningRef.current = false
       stopRef.current = false
       setRunning(false)
-      setIsLoading(false)
     }
   }
 
   async function requestStop() {
     if (!runningRef.current) return
     stopRef.current = true
-    stopToastRef.current = await showToast({ style: Toast.Style.Animated, title: '将在当前文件处理完成后停止' })
+    stopToastRef.current = await showToast({ style: Toast.Style.Animated, title: t('stoppingTitle') })
+  }
+
+  function handleRemoveVideo(file: RealVideoFileItem) {
+    if (runningIds.includes(file.id)) {
+      void showToast({ style: Toast.Style.Failure, title: t('removeBusy') })
+      return
+    }
+    const next = filesRef.current.filter(item => item.id !== file.id)
+    filesRef.current = next
+    setFiles(next)
+    setCheckedIds(prev => prev.filter(id => id !== file.id))
+  }
+
+  function handleClearVideos() {
+    if (runningRef.current) {
+      void showToast({ style: Toast.Style.Failure, title: t('clearBusy') })
+      return
+    }
+    importTicketRef.current += 1
+    importAbortRef.current?.abort()
+    importAbortRef.current = null
+    setIsImporting(false)
+    setImportProgress(null)
+    filesRef.current = []
+    setFiles([])
+    setCheckedIds([])
   }
 
   async function handleReveal(file: RealVideoFileItem) {
     const shown = await revealVideoInFolder(file)
     if (shown === 'failed') {
-      await showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中显示', message: file.path })
+      await showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: file.path })
       return
     }
     if (shown === 'source' && file.result?.status === 'done') {
       await showToast({
         style: Toast.Style.Success,
-        title: '已显示源文件，输出文件在同一目录',
+        title: t('revealSourceToastTitle'),
         message: fileNameOf(file.result.outputPath)
       })
     }
@@ -208,22 +328,27 @@ export function BatchVideoCommand() {
       await Clipboard.copy(text)
       await showToast({ style: Toast.Style.Success, title, message: text })
     } catch (err) {
-      await showToast({ style: Toast.Style.Failure, title: '复制失败', message: errorText(err) })
+      await showToast({ style: Toast.Style.Failure, title: t('copyFailedTitle'), message: errorText(err) })
     }
   }
 
   const q = searchText.trim().toLowerCase()
   const filteredFiles = files.filter(f => !q || f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
   const selectedFiles = files.filter(f => checkedIds.includes(f.id))
-  const selectedBytes = selectedFiles.reduce((sum, f) => sum + f.sizeBytes, 0)
+  const selectedKnownBytes = selectedFiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
+  const selectedUnknownCount = selectedFiles.filter(f => f.sizeBytes === null).length
+  const selectedBytesText =
+    selectedFiles.length > 0 && selectedUnknownCount === selectedFiles.length
+      ? t('sizeUnknown')
+      : `${formatBytes(selectedKnownBytes)}${selectedUnknownCount > 0 ? t('unknownSizePart', { count: selectedUnknownCount }) : ''}`
   const doneFiles = files.filter(f => f.result?.status === 'done')
-  const doneSourceBytes = doneFiles.reduce((sum, f) => sum + f.sizeBytes, 0)
+  const doneKnownSourceBytes = doneFiles.reduce((sum, f) => sum + (f.sizeBytes ?? 0), 0)
   const resultSummary = summarizeOutcomes(
     files.map(f => f.result).filter((r): r is VideoProcessOutcome => Boolean(r))
   )
   const hasResults = resultSummary.total > 0
   const allFilteredChecked = filteredFiles.length > 0 && filteredFiles.every(f => checkedIds.includes(f.id))
-  const maxVideoBytes = Math.max(1, ...files.map(f => f.sizeBytes))
+  const maxVideoBytes = Math.max(1, ...files.map(f => f.sizeBytes ?? 0))
 
   /** 勾选 / 取消勾选当前搜索结果里的全部视频，不影响搜索结果以外已勾选的项 */
   function setFilteredChecked(checked: boolean) {
@@ -233,50 +358,99 @@ export function BatchVideoCommand() {
     )
   }
 
+  const pickFilesAction = () =>
+    Action({
+      title: t('actionPickFilesEllipsis'),
+      icon: Icon.Plus,
+      shortcut: { modifiers: ['ctrl'], key: 'o' },
+      onAction: handleAddVideoFiles
+    })
+  const pickFolderAction = () =>
+    Action({
+      title: t('actionPickFolderEllipsis'),
+      icon: Icon.Folder,
+      shortcut: { modifiers: ['ctrl', 'shift'], key: 'o' },
+      onAction: handleAddVideoFolder
+    })
+
   const rightQueueItems = filteredFiles.map(f => {
     const doneResult = f.result?.status === 'done' ? f.result : null
-    const actionChildren = [
+    const isItemRunning = runningIds.includes(f.id)
+    const accessories: Array<Record<string, unknown>> = []
+    if (f.sizeBytes !== null) {
+      accessories.push({ progress: { value: Math.max(8, Math.min(100, Math.round((f.sizeBytes / maxVideoBytes) * 100))) } })
+    }
+    accessories.push({ tag: { value: describeOutcomeTag(f.result) } })
+    accessories.push({ text: f.sizeBytes === null ? t('sizeUnknown') : formatBytes(f.sizeBytes) })
+
+    const actionChildren: Array<ReturnType<typeof Action> | ReturnType<typeof ActionPanel.Section>> = [
       running
         ? Action({
-            title: '停止处理（当前文件完成后停止）',
+            title: t('actionStopProcessing'),
             icon: Icon.Stop,
             onAction: requestStop
           })
         : Action({
-            title: `开始处理已选视频 (${selectedFiles.length} 个)`,
+            title: t('actionStartSelected', { count: selectedFiles.length }),
             icon: Icon.Bolt,
             onAction: () => executeBatch(selectedFiles)
           }),
       Action({
-        title: doneResult ? '在资源管理器中显示输出文件' : '在资源管理器中显示',
+        title: doneResult ? t('actionRevealOutput') : t('actionReveal'),
         icon: Icon.Folder,
+        shortcut: { modifiers: ['ctrl'], key: 'enter' },
         onAction: () => handleReveal(f)
       }),
       Action({
-        title: '仅处理此文件',
+        title: t('actionRunSingle'),
         icon: Icon.Play,
         onAction: () => executeBatch([f])
       }),
       Action({
-        title: '复制等效 ffmpeg 命令',
+        title: t('actionCopyFfmpeg'),
         icon: Icon.Terminal,
-        onAction: () => copyText(buildFfmpegCommand(f.path, activeFormat), '已复制 ffmpeg 命令')
+        onAction: () => copyText(buildFfmpegCommand(f.path, activeFormat), t('copiedFfmpegTitle'))
       })
     ]
     if (doneResult) {
       actionChildren.push(
         Action({
-          title: '复制输出文件路径',
+          title: t('actionCopyOutputPath'),
           icon: Icon.CopyClipboard,
-          onAction: () => copyText(doneResult.outputPath, '已复制输出文件路径')
+          onAction: () => copyText(doneResult.outputPath, t('copiedOutputPathTitle'))
         })
       )
     }
     actionChildren.push(
-      Action({
-        title: allFilteredChecked ? '取消全选当前列表' : '全选当前列表',
-        icon: Icon.CheckCircle,
-        onAction: () => setFilteredChecked(!allFilteredChecked)
+      ActionPanel.Section({
+        title: t('sectionList'),
+        children: [
+          ...(isItemRunning
+            ? []
+            : [
+                Action({
+                  title: t('actionRemove'),
+                  icon: Icon.Minus,
+                  shortcut: { modifiers: ['ctrl'], key: 'backspace' },
+                  onAction: () => handleRemoveVideo(f)
+                })
+              ]),
+          pickFilesAction(),
+          pickFolderAction(),
+          Action({
+            title: allFilteredChecked ? t('actionDeselectAll') : t('actionSelectAll'),
+            icon: Icon.CheckCircle,
+            shortcut: { modifiers: ['ctrl'], key: 'a' },
+            onAction: () => setFilteredChecked(!allFilteredChecked)
+          }),
+          Action({
+            title: t('actionClearList'),
+            icon: Icon.Trash,
+            style: Action.Style.Destructive,
+            shortcut: { modifiers: ['ctrl', 'shift'], key: 'backspace' },
+            onAction: handleClearVideos
+          })
+        ]
       })
     )
 
@@ -292,11 +466,7 @@ export function BatchVideoCommand() {
       icon: {
         source: Icon.Video
       },
-      accessories: [
-        { progress: { value: Math.max(8, Math.min(100, Math.round((f.sizeBytes / maxVideoBytes) * 100))) } },
-        { tag: { value: describeOutcomeTag(f.result) } },
-        { text: formatBytes(f.sizeBytes) }
-      ],
+      accessories,
       actions: ActionPanel({
         title: f.name,
         children: actionChildren
@@ -304,44 +474,74 @@ export function BatchVideoCommand() {
     })
   })
 
-  const previewNote = isRealHost ? '' : '未连接 ZTools 客户端，以下为示例文件 · '
-  const resultText = hasResults ? ` · 已输出 ${resultSummary.done} 个，失败 ${resultSummary.failed} 个` : ''
+  const inClient = isRealElectronHost()
+  const resultText = hasResults ? t('resultSummaryPart', { done: resultSummary.done, failed: resultSummary.failed }) : ''
+  const summaryText = isImporting
+    ? t('summaryImporting', { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
+    : files.length === 0
+      ? inClient
+        ? t('summaryEmptyClient')
+        : t('hostRequired')
+      : t('summaryNormal', {
+          selected: selectedFiles.length,
+          total: files.length,
+          bytes: selectedBytesText,
+          result: resultText
+        })
+
+  const emptyText = !inClient
+    ? t('hostRequired')
+    : q && files.length > 0
+      ? t('emptyNoMatch')
+      : t('summaryEmptyClient')
 
   return List({
-    searchBarPlaceholder: '搜索队列中的视频文件名或目录...',
+    ...fileInputProps,
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    isLoading,
+    isLoading: isImporting || running,
+    actions: ActionPanel({
+      children: [pickFilesAction(), pickFolderAction()]
+    }),
     searchBarAccessory: List.Dropdown({
-      tooltip: '选择处理任务',
+      tooltip: t('dropdownTooltip'),
       value: taskId,
       onChange: val => setTaskId(getVideoTask(val).id),
-      children: VIDEO_TASKS.map(task =>
+      children: videoTasks.map(task =>
         List.Dropdown.Item({
-          title: `任务：${task.tag}`,
+          title: t('dropdownItemTitle', { tag: task.tag }),
           value: task.id
         })
       )
     }),
     filterBar: FilterBar({
-      summaryText: `${previewNote}已选 ${selectedFiles.length}/${files.length} 个视频（${formatBytes(selectedBytes)}）${resultText}`,
+      summaryText,
       actions: [
         {
-          id: 'rescan-video',
-          label: '重新扫描',
+          id: 'pick-files',
+          label: t('btnPickFiles'),
+          title: t('btnPickFiles'),
           style: 'secondary',
-          onAction: () => refreshWorkspace(true)
+          onAction: handleAddVideoFiles
+        },
+        {
+          id: 'pick-folder',
+          label: t('btnPickFolder'),
+          title: t('btnPickFolder'),
+          style: 'secondary',
+          onAction: handleAddVideoFolder
         }
       ]
     }),
     workbenchPanel: {
-      title: '处理参数',
+      title: t('wbTitle'),
       subtitle: activeTask.tag,
       fields: [
         activeTask.formats.length > 1
           ? {
               id: 'wb-format',
-              label: '输出格式',
+              label: t('wbFormatLabel'),
               type: 'select',
               value: activeFormat,
               onChange: val => {
@@ -352,44 +552,47 @@ export function BatchVideoCommand() {
             }
           : {
               id: 'wb-format',
-              label: '输出格式',
+              label: t('wbFormatLabel'),
               type: 'info',
               value: activeTask.formats[0]!.label
             },
         {
           id: 'wb-codec',
-          label: '编码参数',
+          label: t('wbCodecLabel'),
           type: 'info',
-          value: 'ffmpeg 默认'
+          value: t('wbCodecValue')
         },
         {
           id: 'wb-outdir',
-          label: '输出位置',
+          label: t('wbOutdirLabel'),
           type: 'info',
-          value: `源目录 *${OUTPUT_SUFFIX}*.${activeFormat}`
+          value: t('wbOutdirValue', { suffix: OUTPUT_SUFFIX, ext: activeFormat })
         },
         {
           id: 'wb-limit',
-          label: '单个文件时限',
+          label: t('wbLimitLabel'),
           type: 'info',
-          value: `${HOST_FFMPEG_LIMIT_SECONDS} 秒`
+          value: t('wbLimitValue', { seconds: HOST_FFMPEG_LIMIT_SECONDS })
         }
       ],
       previewCard: {
-        title: hasResults ? '处理结果' : '处理说明',
-        badge: hasResults ? `成功 ${resultSummary.done} / 失败 ${resultSummary.failed}` : '尚未处理',
-        subtitle: `${activeTask.subtitle}。需要本机已安装 ffmpeg。输出文件名为「原名${OUTPUT_SUFFIX}」，同名文件已存在或无法确认时自动加序号或时间，不覆盖已有文件，也不修改原文件。`,
+        title: hasResults ? t('previewTitleResults') : t('previewTitleInfo'),
+        badge: hasResults ? t('previewBadgeResults', { done: resultSummary.done, failed: resultSummary.failed }) : t('previewBadgePending'),
+        subtitle: t('previewSubtitle', { subtitle: activeTask.subtitle, suffix: OUTPUT_SUFFIX }),
         metrics: [
-          { label: '已输出', value: `${resultSummary.done} 个` },
-          { label: '失败', value: `${resultSummary.failed} 个` },
-          { label: '输出总大小', value: resultSummary.done > 0 ? formatBytes(resultSummary.outputBytes) : '—' },
-          { label: '对应原文件', value: resultSummary.done > 0 ? formatBytes(doneSourceBytes) : '—' }
+          { label: t('metricDone'), value: t('metricCountVal', { count: resultSummary.done }) },
+          { label: t('metricFailed'), value: t('metricCountVal', { count: resultSummary.failed }) },
+          { label: t('metricOutSize'), value: resultSummary.done > 0 ? formatBytes(resultSummary.outputBytes) : '—' },
+          {
+            label: t('metricSourceSize'),
+            value: resultSummary.done > 0 && doneKnownSourceBytes > 0 ? formatBytes(doneKnownSourceBytes) : '—'
+          }
         ]
       }
     },
     subList: {
-      title: '待处理视频（勾选后按 ↵ 开始处理）',
-      subtitle: `${filteredFiles.length} 个 · 每个目录最多列出体积最大的 ${SCAN_TOP_N_PER_DIR} 个`,
+      title: t('subListTitle'),
+      subtitle: t('metricCountVal', { count: filteredFiles.length }),
       checkable: filteredFiles.length > 0,
       checked: allFilteredChecked
         ? true
@@ -397,12 +600,12 @@ export function BatchVideoCommand() {
           ? 'indeterminate'
           : false,
       onCheckChange: checked => setFilteredChecked(Boolean(checked)),
-      emptyText: isRealHost && !q ? '在视频、下载、桌面目录中没有找到视频文件' : '当前没有匹配的视频文件',
+      emptyText,
       items: rightQueueItems
     },
     children: [
       List.Section({
-        title: `待处理视频 (${filteredFiles.length})`,
+        title: t('sectionQueueTitle', { count: filteredFiles.length }),
         children: rightQueueItems
       })
     ]

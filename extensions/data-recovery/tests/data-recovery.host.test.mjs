@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as dataRecovery from '../dist/logic.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const dataRecovery = await import('../dist/logic.js')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function createRealHostStub(handlers = {}) {
@@ -70,7 +73,7 @@ function pathHandler({ name }) {
 test('data-recovery: 不在客户端里运行时不显示示例文件', async () => {
   const snap = await dataRecovery.fetchRecoverableFiles()
   assert.equal(snap.items.length, 0)
-  assert.equal(snap.error, dataRecovery.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(snap.error, dataRecovery.getNotInClientMessage())
   assert.equal(typeof dataRecovery.createInitialRecoverySnapshot, 'undefined')
   assert.equal(typeof dataRecovery.SCAN_DEPTH_MODES, 'undefined', '不再提供客户端做不到的扫描模式')
 })

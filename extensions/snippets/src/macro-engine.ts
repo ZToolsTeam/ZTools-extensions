@@ -1,20 +1,19 @@
 import type { MacroResolveResult, SnippetCategory, SnippetFormInput, SnippetItem } from './types'
+import { t } from './i18n.js'
 
 const MAX_CLIPBOARD_EMBED_LEN = 32768
 
+const CATEGORY_LABEL_KEYS: Record<SnippetCategory, 'catGeneral' | 'catInvoice' | 'catAddress' | 'catCustomerService' | 'catCode'> = {
+  general: 'catGeneral',
+  invoice: 'catInvoice',
+  address: 'catAddress',
+  customer_service: 'catCustomerService',
+  code: 'catCode'
+}
+
 export function getSnippetCategoryLabel(category: SnippetCategory): string {
-  switch (category) {
-    case 'invoice':
-      return '发票与开票信息'
-    case 'address':
-      return '常用地址与联系人'
-    case 'customer_service':
-      return '客服与商务话术'
-    case 'code':
-      return '开发与代码片段'
-    default:
-      return '通用短语'
-  }
+  const key = CATEGORY_LABEL_KEYS[category] ?? 'catGeneral'
+  return t(key)
 }
 
 export function formatMacroDateParts(now = new Date()): {
@@ -73,13 +72,13 @@ export function validateSnippetInput(input: SnippetFormInput): {
   if (!input || !String(input.title || '').trim()) {
     return {
       valid: false,
-      error: 'SNIPPET_INVALID_INPUT: 短语标题不能为空'
+      error: t('errTitleEmpty')
     }
   }
   if (!String(input.content || '').trim()) {
     return {
       valid: false,
-      error: 'SNIPPET_INVALID_INPUT: 短语模板内容不能为空'
+      error: t('errContentEmpty')
     }
   }
   return { valid: true }

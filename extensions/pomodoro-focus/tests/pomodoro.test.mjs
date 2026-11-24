@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import Command, { commands, localDay } from '../dist/index.js'
 import { COUNTDOWN_STORAGE_KEY, loadCountdowns, changeCountdown } from '../dist/countdown-storage.js'
-import { calculateDaysLeft, validateCountdownInput } from '../dist/pomodoro-service.js'
+import { calculateDaysLeft, parseCustomFocusMinutes, validateCountdownInput } from '../dist/pomodoro-service.js'
 let host, views, state
 const fresh = () => ({ id: 'session-1', title: '25 分钟深度专注', status: 'running', mode: 'pomodoro', phase: 'focus', totalDurationMs: 1_500_000, remainingMs: 1_500_000, completedCycles: 0 })
 beforeEach(() => {
@@ -140,4 +140,57 @@ test('普通入口在休息中只把“结束休息并开始专注”作为次�
   await open(commands['pomodoro-start'])
   assert.match(host.lastToast().title, /已有进行中的专注/)
   assert.equal(host.ipcCalls.filter(([m]) => m === 'focus_start').length, 0)
+})
+
+test('按年循环 (yearly) 正确计算跨年与闰日 02-29，表单可创建并持久化 yearly 倒数日', async () => {
+  // 闰日生日 2000-02-29
+  assert.equal(calculateDaysLeft('2000-02-29', 'yearly', '2026-02-01').resolvedDate, '2026-02-28')
+  assert.equal(calculateDaysLeft('2000-02-29', 'yearly', '2026-03-01').resolvedDate, '2027-02-28')
+  assert.equal(calculateDaysLeft('2000-02-29', 'yearly', '2027-03-01').resolvedDate, '2028-02-29')
+  // 跨年普通日期与当天
+  assert.equal(calculateDaysLeft('2020-01-01', 'yearly', '2026-12-31').resolvedDate, '2027-01-01')
+  assert.equal(calculateDaysLeft('2020-01-01', 'yearly', '2026-12-31').days, 1)
+  assert.equal(calculateDaysLeft('2020-06-15', 'yearly', '2026-06-15').days, 0)
+
+  const v = await open()
+  await v.tree().props.filterBar.actions[1].onAction()
+  const form = await mountPushed(host); views.push(form)
+  await form.fill('title', '闰年生日')
+  await form.fill('targetDate', '2000-02-29')
+  await form.fill('repeat', 'yearly')
+  await save(form)
+  const saved = await loadCountdowns()
+  assert.equal(saved.length, 1)
+  assert.equal(saved[0].repeat, 'yearly')
+  assert.equal(saved[0].isRecurring, true)
+  assert.match(v.item(saved[0].id).props.subtitle, /每年 02-29/)
+})
+
+test('搜索框输入 5~180 纯数字动态生成自定义专注项并真实调用 focus_start(durationMinutes)', async () => {
+  assert.equal(parseCustomFocusMinutes('45'), 45)
+  assert.equal(parseCustomFocusMinutes('5'), 5)
+  assert.equal(parseCustomFocusMinutes('180'), 180)
+  assert.equal(parseCustomFocusMinutes('4'), null)
+  assert.equal(parseCustomFocusMinutes('181'), null)
+  assert.equal(parseCustomFocusMinutes('45m'), null)
+
+  host.ipc.focus_start = async (params) => {
+    const mins = params.durationMinutes ?? 25
+    return state = { ...fresh(), mode: params.mode ?? 'pomodoro', title: params.title, totalDurationMs: mins * 60_000, remainingMs: mins * 60_000 }
+  }
+  const v = await open()
+  await v.search('45')
+  const custom = v.item('pomodoro-custom-focus')
+  assert.ok(custom)
+  assert.equal(custom.props.title, '开始 45 分钟自定义专注')
+  assert.equal(v.items().some(i => i.props.id === 'empty-countdowns'), false)
+
+  await v.run(custom, '开始 45 分钟专注')
+  const startCall = host.ipcCalls.find(([m]) => m === 'focus_start')
+  assert.equal(startCall[1].durationMinutes, 45)
+  assert.equal(startCall[1].mode, 'single')
+  assert.match(v.text(), /45:00/)
+
+  await v.search('4')
+  assert.equal(v.items().some(i => i.props.id === 'pomodoro-custom-focus'), false)
 })

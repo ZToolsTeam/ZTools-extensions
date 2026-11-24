@@ -1,18 +1,24 @@
 {
   "id": "shredder",
   "name": "文件粉碎",
-  "description": "列出临时文件夹与崩溃转储目录里的文件，勾选并确认后多次覆写文件内容再删除",
-  "version": "2.0.10",
+  "description": "选择文件或文件夹导入待粉碎列表，勾选并确认后多次覆写文件内容再删除",
+  "version": "2.0.13",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
+    "安全隐私",
     "系统工具"
+  ],
+  "categoryId": [
+    "security",
+    "system"
   ],
   "permissions": [
     "fs",
     "system",
-    "shell"
+    "shell",
+    "dialog"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
@@ -24,5 +30,32 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "File Shredder",
+      "description": "Import files or folders to securely overwrite their contents multiple times before permanent deletion after confirmation.",
+      "keywords": [
+        "shredder",
+        "secure delete",
+        "wipe",
+        "overwrite",
+        "privacy"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

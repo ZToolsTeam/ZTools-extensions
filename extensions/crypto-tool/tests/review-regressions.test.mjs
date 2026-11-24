@@ -23,13 +23,13 @@ test('URL 深链进入编解码模式，UUID 子命令生成可复制的 v4 批�
   } finally { view.unmount(); delete globalThis.window.__ztoolsLaunchContext }
   const uuidView = await mount(genUuid)
   try {
-    await uuidView.search('10'); await uuidView.run(uuidView.item('uuid-result'), '生成 UUID')
-    await uuidView.run(uuidView.item('uuid-result'), '复制全部 UUID')
+    await uuidView.search('10')
+    await uuidView.run(uuidView.item('uuid-item-0'), '复制全部 UUID')
     const list = host.clipboard.text.split('\n')
     assert.equal(list.length, 10); assert.equal(new Set(list).size, 10)
     list.forEach(id => assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/))
-    await uuidView.search('0'); await uuidView.run(uuidView.item('uuid-result'), '生成 UUID')
-    assert.equal(uuidView.actions(uuidView.item('uuid-result')).some(a => a.props.title === '复制全部 UUID'), false)
+    await uuidView.search('0'); await uuidView.run(uuidView.item('uuid-error'), '重新生成')
+    assert.equal(uuidView.actions(uuidView.item('uuid-error')).some(a => a.props.title === '复制全部 UUID'), false)
     assert.match(host.lastToast().title, /失败/)
   } finally { uuidView.unmount() }
 })

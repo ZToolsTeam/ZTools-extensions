@@ -1,4 +1,6 @@
 import type { KeyboardLockRequest, KeyboardLockState } from './types.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 interface BridgeReply { success?: boolean; data?: unknown; error?: { message?: string } }
 interface Bridge { transport?: { methods?: { keyboard_lock?: (request: unknown) => Promise<BridgeReply> } } }
 let sequence = 0
@@ -10,20 +12,45 @@ export function validateLockState(value: unknown, id: string): KeyboardLockState
       !Number.isSafeInteger(state.remainingSeconds) || state.remainingSeconds < 0 || state.remainingSeconds > 300 ||
       !Number.isSafeInteger(state.blockedEvents) || state.blockedEvents < 0 || typeof state.lockPointer !== 'boolean' ||
       typeof state.reason !== 'string' || state.reason.length > 64 ||
-      (state.status === 'unlocked' && state.remainingSeconds !== 0)) throw new Error('客户端未返回可信的输入锁状态')
+      (state.status === 'unlocked' && state.remainingSeconds !== 0)) throw new Error(t('errUntrustedLockState'))
   return state
 }
 export async function keyboardLock(request: KeyboardLockRequest): Promise<KeyboardLockState> {
   const method = (globalThis as unknown as { __ztoolsElectron?: Bridge }).__ztoolsElectron?.transport?.methods?.keyboard_lock
-  if (!method) throw new Error('请更新客户端后使用系统键盘清洁锁')
+  if (!method) throw new Error(t('errUpdateClient'))
   const response = await method({ messageId: `lock_${Date.now()}_${++sequence}`, params: request, timeoutMs: 5000 })
-  if (response?.success !== true) throw new Error(response?.error?.message || '系统输入锁操作失败')
+  if (response?.success !== true) throw new Error(resolveErrorMessage(response?.error, t('errLockOpFailed')))
   return validateLockState(response.data, request.operationId)
 }
-export function formatCleanDuration(seconds: number) { return seconds < 60 ? `${seconds} 秒` : `${seconds / 60} 分钟` }
-export const unlockReasons: Record<string, string> = {
-  timer: '倒计时结束，输入已恢复', emergency: '已通过紧急快捷键解除', manual: '输入已恢复',
-  connection_lost: '与客户端失联，输入锁已自动解除', tap_disabled: '系统停止了输入拦截，输入锁已解除',
-  secure_input: '进入系统安全输入，输入锁已解除', error: '输入锁发生异常并已退出，请检查权限后重试',
-  process_exit: '输入锁进程已退出，输入已恢复'
+export function formatCleanDuration(seconds: number) {
+  return seconds < 60 ? t('durationSeconds', { seconds }) : t('durationMinutes', { minutes: seconds / 60 })
 }
+const UNLOCK_REASON_KEYS = {
+  timer: 'reasonTimer',
+  emergency: 'reasonEmergency',
+  manual: 'reasonManual',
+  connection_lost: 'reasonConnectionLost',
+  tap_disabled: 'reasonTapDisabled',
+  secure_input: 'reasonSecureInput',
+  error: 'reasonError',
+  process_exit: 'reasonProcessExit'
+} as const
+type UnlockReasonKey = keyof typeof UNLOCK_REASON_KEYS
+export function getUnlockReason(reason: string): string | undefined {
+  if (!Object.prototype.hasOwnProperty.call(UNLOCK_REASON_KEYS, reason)) return undefined
+  return t(UNLOCK_REASON_KEYS[reason as UnlockReasonKey])
+}
+export const unlockReasons: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get(_target, prop) {
+    return typeof prop === 'string' ? getUnlockReason(prop) : undefined
+  },
+  ownKeys() {
+    return Object.keys(UNLOCK_REASON_KEYS)
+  },
+  getOwnPropertyDescriptor(_target, prop) {
+    if (typeof prop === 'string' && Object.prototype.hasOwnProperty.call(UNLOCK_REASON_KEYS, prop)) {
+      return { configurable: true, enumerable: true, value: getUnlockReason(prop) }
+    }
+    return undefined
+  }
+})

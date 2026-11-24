@@ -167,3 +167,224 @@ test('选择文件 / 文件夹只出现一次：选择目标行在时顶部不�
   await empty.run(empty.item('choose'), '刷新外接磁盘')
   assert.equal(calls('drives').length, before + 1)
 })
+
+test('拖拽文件接收：收到 plugin_files_dropped 事件后自动扫描被占用目标', async () => {
+  const dropListeners = []
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    ...(globalThis.window.ztools || {}),
+    events: {
+      on(event, cb) {
+        if (event === 'plugin_files_dropped') dropListeners.push(cb)
+        return () => {}
+      }
+    }
+  }
+  const view = await open(commands['file-unlock'])
+  assert.equal(dropListeners.length, 1)
+
+  dropListeners[0]({ payload: { files: ['/fixture/文档.txt'] } })
+  await tick()
+  await tick()
+
+  assert.equal(calls('inspect').length, 1)
+  assert.equal(calls('inspect')[0][1].targetPath, '/fixture/文档.txt')
+  assert.ok(view.item('process:55'))
+})
+
+test('Ctrl+V 粘贴文件或文件夹与 Windows 手动选择文件/文件夹检测占用进程', async () => {
+  const view = await open(commands['file-unlock'])
+  assert.equal(view.tree().props.fileInput?.allowDirectories, true)
+  await view.pasteFiles(['/fixture/文档.txt'])
+  await tick()
+  assert.equal(calls('inspect').length, 1)
+  assert.equal(calls('inspect')[0][1].targetPath, '/fixture/文档.txt')
+  assert.ok(view.item('process:55'))
+
+  // Windows 平台下支持粘贴文件检测，且提供手动「选择文件检测」「选择文件夹检测」Action
+  host.reset()
+  host.ipc.system_get_platform = async () => ({ success: true, platform: 'windows' })
+  host.ipc.window_show_open_dialog = async (params) => ({
+    canceled: false,
+    filePath: params.properties?.includes('openDirectory') ? 'D:\\Locked\\FolderA' : 'D:\\Locked\\report.docx'
+  })
+  const winInspectCalls = []
+  host.ipc.dllplugin_call = async ({ func, params }) => {
+    if (func === 'listRemovableDrives') return { ok: true, drives: [] }
+    if (func === 'inspectLocks') {
+      winInspectCalls.push(params.targetPath)
+      return {
+        ok: true,
+        targetPath: params.targetPath,
+        isDirectory: params.targetPath.endsWith('FolderA'),
+        processes: [{ id: 'win-p1', pid: 4321, name: 'WINWORD.EXE', executablePath: 'C:\\Program Files\\WINWORD.EXE', lockedPath: params.targetPath }]
+      }
+    }
+    return { ok: true }
+  }
+
+  const winView = await open(commands['file-unlock'])
+  await tick(10)
+  const emptyItem = winView.item('empty-status')
+  const actionTitles = winView.actions(emptyItem).map(a => a.props.title)
+  assert.ok(actionTitles.includes('选择文件检测'))
+  assert.ok(actionTitles.includes('选择文件夹检测'))
+
+  await winView.run(emptyItem, '选择文件检测')
+  await tick(10)
+  assert.equal(winInspectCalls.at(-1), 'D:\\Locked\\report.docx')
+  assert.ok(winView.item('win-p1'))
+
+  await winView.pasteFiles(['D:\\Locked\\pasted_table.xlsx'])
+  await tick(10)
+  assert.equal(winInspectCalls.at(-1), 'D:\\Locked\\pasted_table.xlsx')
+})
+
+test('Windows 挂载零扫盘且不读剪贴板；usb-unlock 只列磁盘不扫描占用；手动检测剪贴板与清空当前目标（双端）', async () => {
+  // 1. Windows file-unlock 挂载：不调 clipboard_read_text、inspectLocks、listRemovableDrives，顶栏恰 2 个按钮
+  host.reset()
+  host.ipc.system_get_platform = async () => ({ success: true, platform: 'windows' })
+  host.clipboard.text = 'D:\\Secret\\from-clipboard.docx'
+  const winCalls = []
+  host.ipc.clipboard_read_text = async () => {
+    winCalls.push('clipboard_read_text')
+    return { success: true, data: '"D:\\Secret\\from-clipboard.docx"' }
+  }
+  let releasePendingInspect
+  let pendingInspectMode = false
+  host.ipc.dllplugin_call = async ({ func, params }) => {
+    winCalls.push(`${func}:${params.targetPath || ''}`)
+    if (func === 'listRemovableDrives') {
+      return {
+        ok: true,
+        drives: [{ mount: 'E:\\', label: 'MyUSB', totalBytes: 1024, freeBytes: 512, totalText: '1.0 KB', freeText: '512 B' }]
+      }
+    }
+    if (func === 'inspectLocks') {
+      if (pendingInspectMode) {
+        return await new Promise((resolve) => {
+          releasePendingInspect = () => resolve({
+            ok: true,
+            targetPath: params.targetPath,
+            isDirectory: false,
+            processes: [{ id: 'late-1', pid: 7777, name: 'notepad.exe', executablePath: 'C:\\Windows\\notepad.exe', lockedPath: params.targetPath }]
+          })
+        })
+      }
+      return {
+        ok: true,
+        targetPath: params.targetPath,
+        isDirectory: false,
+        processes: [{ id: 'clip-p1', pid: 5566, name: 'WINWORD.EXE', executablePath: 'C:\\Program Files\\WINWORD.EXE', lockedPath: params.targetPath }]
+      }
+    }
+    return { ok: true }
+  }
+
+  const winView = await open(commands['file-unlock'])
+  await tick(10)
+  assert.deepEqual(winCalls, [], `Windows 挂载不应读取剪贴板或扫描占用，实际：${JSON.stringify(winCalls)}`)
+  assert.equal(host.ipcCalls.some(([m]) => m === 'clipboard_read_text'), false)
+  assert.deepEqual(
+    winView.tree().props.filterBar.actions.map((a) => [a.id, a.title]),
+    [
+      ['pick-file', '选择文件检测'],
+      ['pick-folder', '选择文件夹检测']
+    ]
+  )
+
+  // 2. 点击空状态「检测剪贴板中的路径」后才读取剪贴板并检测占用
+  await winView.run(winView.item('empty-status'), '检测剪贴板中的路径')
+  await tick(10)
+  assert.equal(winCalls[0], 'clipboard_read_text')
+  assert.equal(winCalls[1], 'inspectLocks:D:\\Secret\\from-clipboard.docx')
+  const procItem = winView.item('clip-p1')
+  const procActionTitles = winView.actions(procItem).map((a) => a.props.title)
+  assert.ok(procActionTitles.includes('一键全部解锁'))
+  assert.ok(procActionTitles.includes('解锁并移入回收站'))
+  assert.ok(procActionTitles.includes('清空当前目标'))
+  const clearWinAction = winView.actions(procItem).find((a) => a.props.title === '清空当前目标')
+  assert.deepEqual(clearWinAction.props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'backspace' })
+
+  // 清空当前目标回到空状态，不碰磁盘
+  await winView.run(procItem, '清空当前目标')
+  await tick(10)
+  assert.ok(winView.item('empty-status'))
+  assert.match(winView.tree().props.filterBar.summaryText, /尚未选择目标/)
+
+  // 剪贴板无有效路径时给出提示，不触发 inspectLocks
+  host.ipc.clipboard_read_text = async () => ({ success: true, data: 'plain text not a path' })
+  const countBeforeBadClip = winCalls.length
+  await winView.run(winView.item('empty-status'), '检测剪贴板中的路径')
+  await tick(10)
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.equal(host.lastToast().title, '剪贴板中没有可检测的路径')
+  assert.equal(winCalls.length, countBeforeBadClip)
+
+  // 检测进行中：摘要与列表应显式显示「正在扫描占用进程…」，且禁止提前断言未占用或清空
+  pendingInspectMode = true
+  host.ipc.clipboard_read_text = async () => ({ success: true, data: 'D:\\Secret\\slow.docx' })
+  const inspecting = winView.run(winView.item('empty-status'), '检测剪贴板中的路径')
+  await tick(10)
+  assert.equal(winView.tree().props.isLoading, true)
+  assert.match(winView.tree().props.filterBar.summaryText, /正在扫描占用进程/)
+  assert.match(winView.item('empty-status').props.title, /正在扫描占用进程/)
+  assert.doesNotMatch(winView.item('empty-status').props.title, /未被任何进程占用/)
+  await winView.run(null, '清空当前目标')
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.equal(host.lastToast().title, '正在检测，完成后再清空')
+  releasePendingInspect()
+  await inspecting
+  await tick(10)
+  assert.ok(winView.item('late-1'))
+
+  // 3. Windows usb-unlock 挂载：只调用 listRemovableDrives 列出盘符，不自动检测磁盘占用也不读剪贴板
+  winCalls.length = 0
+  pendingInspectMode = false
+  const usbView = await open(commands['usb-unlock'])
+  await tick(10)
+  assert.deepEqual(winCalls, ['listRemovableDrives:'])
+  assert.ok(usbView.item('drive-E:\\'))
+  assert.ok(usbView.item('empty-status'))
+  await usbView.run(usbView.item('drive-E:\\'), '检测此移动磁盘的占用进程')
+  await tick(10)
+  assert.equal(winCalls.at(-1), 'inspectLocks:E:\\')
+
+  // 4. macOS 端支持「清空当前目标」（Cmd+Shift+Backspace）且操作进行中不可用
+  host.reset()
+  host.ipc.system_get_platform = async () => ({ success: true, platform: 'macos' })
+  host.ipc.file_unlock = async (p) => {
+    if (p.action === 'inspect') return structuredClone(snapshot)
+    if (p.action === 'close' || p.action === 'cancel') return { success: true, cancelRequested: true }
+    throw new Error('unexpected')
+  }
+  const macView = await open(commands['file-unlock'])
+  await inspect(macView)
+  const macTarget = macView.item('target')
+  const macClearAction = macView.actions(macTarget).find((a) => a.props.title === '清空当前目标')
+  assert.ok(macClearAction)
+  assert.deepEqual(macClearAction.props.shortcut, { modifiers: ['ctrl', 'shift'], key: 'backspace' })
+  await macView.run(macTarget, '清空当前目标')
+  await tick(10)
+  assert.ok(macView.item('choose'))
+
+  // macOS 检测进行中拒绝清空
+  let releaseMacInspect
+  host.ipc.file_unlock = async (p) => {
+    if (p.action === 'inspect') {
+      return await new Promise((resolve) => {
+        releaseMacInspect = () => resolve(structuredClone(snapshot))
+      })
+    }
+    return { success: true, cancelRequested: true }
+  }
+  await macView.search('/fixture/文档.txt')
+  const macInspecting = macView.run(macView.item('input'), '检测此路径')
+  await tick(5)
+  assert.equal(macView.tree().props.isLoading, true)
+  await macView.run(macView.item('target'), '清空当前目标')
+  assert.equal(host.lastToast().style, 'FAILURE')
+  assert.match(host.lastToast().title, /正在检测或执行操作/)
+  releaseMacInspect()
+  await macInspecting
+})

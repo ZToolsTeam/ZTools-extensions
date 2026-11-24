@@ -4,6 +4,7 @@ import {
   Action,
   Icon,
   Clipboard,
+  useLocale,
   useState,
   useEffect,
   showToast,
@@ -11,12 +12,13 @@ import {
 } from '@ztools/declarative-ui'
 import {
   type WechatInstanceItem,
-  LAUNCH_LIMIT_NOTE,
   formatBytes,
   fetchWechatInstances,
   launchWechatAgain,
   filterWechatInstances
 } from './logic.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './logic.js'
 
@@ -26,7 +28,7 @@ async function copyWithToast(text: string, successTitle: string): Promise<void> 
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('toastCopyFailed'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -35,6 +37,7 @@ async function copyWithToast(text: string, successTitle: string): Promise<void> 
 }
 
 export function WechatMultiCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [instances, setInstances] = useState<WechatInstanceItem[]>([])
   const [installPath, setInstallPath] = useState('')
@@ -48,12 +51,12 @@ export function WechatMultiCommand() {
       const snap = await fetchWechatInstances()
       setInstances(snap.instances)
       setInstallPath(snap.installPath)
-      setLoadError(snap.ok ? '' : snap.error || '读取微信进程失败')
+      setLoadError(snap.ok ? '' : resolveErrorMessage(snap, t('errReadProcessesFailed')))
       setWarning(snap.warning || '')
       if (!snap.ok) {
-        if (showNotice) await showToast({ style: Toast.Style.Failure, title: '读取微信进程失败', message: snap.error })
+        if (showNotice) await showToast({ style: Toast.Style.Failure, title: t('errReadProcessesFailed'), message: snap.error })
       } else if (showNotice) {
-        await showToast({ style: Toast.Style.Success, title: '已刷新', message: `运行中的微信进程 ${snap.instances.length} 个` })
+        await showToast({ style: Toast.Style.Success, title: t('toastRefreshedTitle'), message: t('toastRefreshedMsg', { count: snap.instances.length }) })
       }
     } finally {
       setIsLoading(false)
@@ -67,36 +70,37 @@ export function WechatMultiCommand() {
   async function handleLaunch() {
     const res = await launchWechatAgain()
     if (!res.ok) {
-      await showToast({ style: Toast.Style.Failure, title: '启动微信失败', message: res.message })
+      await showToast({ style: Toast.Style.Failure, title: t('errLaunchFailed'), message: res.message })
       return
     }
-    await showToast({ style: Toast.Style.Success, title: res.message, message: LAUNCH_LIMIT_NOTE })
+    await showToast({ style: Toast.Style.Success, title: res.message, message: t('launchLimitNote') })
     await refreshInstances(false)
   }
 
   const filtered = filterWechatInstances(instances, searchText)
   const query = searchText.trim()
-  const showLaunchRow = !loadError && (!query || '再运行一次微信'.includes(query) || '启动'.includes(query))
+  const launchTitle = t('actionLaunchAgain')
+  const showLaunchRow = !loadError && (!query || launchTitle.toLowerCase().includes(query.toLowerCase()) || t('kwLaunch').toLowerCase().includes(query.toLowerCase()))
 
   const launchRow = List.Item({
     id: 'wx-launch',
-    title: '再运行一次微信',
-    subtitle: installPath ? `${installPath} · ${LAUNCH_LIMIT_NOTE}` : '未检测到微信安装位置，启动时会提示失败原因',
+    title: launchTitle,
+    subtitle: installPath ? `${installPath} · ${t('launchLimitNote')}` : t('launchMissingPathSub'),
     icon: Icon.Plus,
     actions: ActionPanel({
-      title: '再运行一次微信',
-      children: [Action({ title: '再运行一次微信', icon: Icon.Plus, onAction: () => handleLaunch() })]
+      title: launchTitle,
+      children: [Action({ title: launchTitle, icon: Icon.Plus, onAction: () => handleLaunch() })]
     })
   })
 
   const statusRow = List.Item({
     id: 'wx-status',
-    title: '读取微信进程失败',
+    title: t('errReadProcessesFailed'),
     subtitle: loadError,
     icon: Icon.ExclamationMark,
     actions: ActionPanel({
-      title: '读取微信进程失败',
-      children: [Action({ title: '重新读取', icon: Icon.ArrowClockwise, onAction: () => refreshInstances(true) })]
+      title: t('errReadProcessesFailed'),
+      children: [Action({ title: t('actionRetryRead'), icon: Icon.ArrowClockwise, onAction: () => refreshInstances(true) })]
     })
   })
 
@@ -104,16 +108,16 @@ export function WechatMultiCommand() {
     List.Item({
       id: item.id,
       title: item.name,
-      subtitle: item.startTime ? `PID ${item.pid} · 启动于 ${item.startTime}` : `PID ${item.pid}`,
+      subtitle: item.startTime ? t('pidStartedAt', { pid: item.pid, time: item.startTime }) : `PID ${item.pid}`,
       icon: Icon.AppWindow,
       accessories: item.memoryBytes > 0 ? [{ text: formatBytes(item.memoryBytes) }] : [],
       actions: ActionPanel({
         title: `${item.name} (PID ${item.pid})`,
         children: [
           Action({
-            title: '复制 PID',
+            title: t('actionCopyPid'),
             icon: Icon.Clipboard,
-            onAction: () => copyWithToast(String(item.pid), '已复制 PID')
+            onAction: () => copyWithToast(String(item.pid), t('toastCopiedPid'))
           })
         ]
       })
@@ -121,20 +125,20 @@ export function WechatMultiCommand() {
   )
 
   return List({
-    navigationTitle: '微信多开',
-    searchBarPlaceholder: '搜索微信进程名或 PID',
+    navigationTitle: t('navTitle'),
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     filterBar: {
       summaryText: loadError
-        ? `读取失败：${loadError}`
-        : `运行中的 WeChat / Weixin 进程 ${instances.length} 个（同一个微信也可能有多个同名进程）${warning ? ` · ${warning}` : ''}`,
+        ? t('summaryFailed', { error: loadError })
+        : t('summaryRunning', { count: instances.length, warning: warning ? ` · ${warning}` : '' }),
       actions: [
         {
           id: 'refresh-wx',
-          label: '刷新',
-          title: '刷新',
+          label: t('actionRefresh'),
+          title: t('actionRefresh'),
           style: 'secondary',
           onAction: () => void refreshInstances(true)
         }
@@ -142,11 +146,11 @@ export function WechatMultiCommand() {
     },
     children: [
       List.Section({
-        title: '操作',
+        title: t('sectionActions'),
         children: loadError ? [statusRow] : showLaunchRow ? [launchRow] : []
       }),
       List.Section({
-        title: `正在运行的微信 (${filtered.length})`,
+        title: t('sectionRunning', { count: filtered.length }),
         children: instanceRows
       })
     ]

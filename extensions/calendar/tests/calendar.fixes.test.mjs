@@ -9,6 +9,7 @@ import CalendarCommand, {
   parseEventTimes,
   normalizeConferenceUrl,
   createCalendarEvent,
+  updateCalendarEvent,
   fetchCalendarPage,
   exportCalendarIcs,
   exportCalendarIcsToFile,
@@ -228,7 +229,7 @@ test('[故障注入] 宿主创建失败时提示中文原因，不带错误码�
   await form.run(undefined, '保存日程')
   await settle()
   assert.equal(host.lastToast().title, '创建日程失败')
-  assert.equal(host.lastToast().message, 'database is locked')
+  assert.equal(host.lastToast().message, '宿主内部错误')
   assert.equal(host.pushed.length, 1)
   // 直接调用接口时也先校验，非法时间不触达宿主
   host.ipcCalls.length = 0
@@ -301,7 +302,7 @@ test('[故障注入] 宿主导出失败：提示失败，不弹另存为、不�
   await view.run(view.item('a'), '导出当前列表为 ICS 文件...')
   await settle()
   assert.equal(host.lastToast().title, '导出 ICS 文件失败')
-  assert.equal(host.lastToast().message, 'database is locked')
+  assert.equal(host.lastToast().message, '宿主内部错误')
   assert.ok(!host.ipcCalls.some(([m]) => m === 'window_show_save_dialog'))
   assert.equal(writes.length, 0)
 
@@ -518,10 +519,10 @@ test('[故障注入] 首次读取失败：提示失败，空状态是「读取�
   const view = await mount(CalendarCommand)
   await settle()
   assert.equal(host.lastToast().title, '读取日程失败')
-  assert.equal(host.lastToast().message, 'database is locked')
+  assert.equal(host.lastToast().message, '宿主内部错误')
   const ids = view.items().map((i) => i.props.id)
   assert.deepEqual(ids, ['calendar-load-error'])
-  assert.match(view.tree().props.filterBar.summaryText, /读取日程失败：database is locked/)
+  assert.match(view.tree().props.filterBar.summaryText, /读取日程失败：宿主内部错误/)
   assert.doesNotMatch(view.text(), /当前暂无日程安排/)
 
   host.ipc.calendar_list_events = realList
@@ -562,13 +563,13 @@ test('[故障注入] 已有列表时切换范围读取失败：保留原列表�
 
 test('fetchCalendarPage：宿主失败或格式不对时抛 LOAD_EVENTS_FAILED，宿主返回空数组时就是空', async () => {
   const stub = (value) => ({ calendar_list_events: async () => value, calendar_count_events: async () => ({ success: true, data: { total: 0 } }) })
-  await assert.rejects(() => fetchCalendarPage('all', '', stub({ success: false, error: { message: 'database is locked' } })), /LOAD_EVENTS_FAILED: database is locked/)
+  await assert.rejects(() => fetchCalendarPage('all', '', stub({ success: false, error: { message: 'database is locked' } })), /LOAD_EVENTS_FAILED: 宿主读取日程失败/)
   await assert.rejects(() => fetchCalendarPage('all', '', stub({ success: true, data: { foo: 1 } })), /LOAD_EVENTS_FAILED: 宿主返回的日程格式无法识别/)
   const empty = await fetchCalendarPage('all', '', stub({ success: true, data: [] }))
   assert.deepEqual(empty.events, [], '空数组不回退到演示数据')
   await assert.rejects(
     () => fetchCalendarPage('upcoming', '', { calendar_upcoming_events: async () => { throw new Error('boom') } }),
-    /LOAD_EVENTS_FAILED: boom/
+    /LOAD_EVENTS_FAILED: 宿主读取日程失败/
   )
   // 导出也不回退
   await assert.rejects(() => exportCalendarIcs([{ id: 'a' }], { calendar_export_ics: async () => ({ success: false, error: { message: 'x' } }) }), /EXPORT_ICS_FAILED/)
@@ -682,5 +683,77 @@ test('[macOS 审查][异常] 读取失败时空列表只给重试与新建，新
   const titles = view.actions(err).map((a) => a.props.title).filter((t) => t !== '保存日程')
   assert.deepEqual(titles, ['重新读取日程', '新建日程事件...'])
   assert.ok(!view.tree().props.filterBar.actions.some((a) => a.id === 'create-calendar-event'))
+  view.unmount()
+})
+
+test('全天事件：勾选 isAllDay 后无需填写起止时刻，保存并正确展示「全天」', async () => {
+  const db = installCalendarHost([])
+  const view = await mount(CalendarCommand)
+  await settle()
+  const form = await openCreateForm(view)
+  await form.fill('title', '公司年会')
+  await form.fill('isAllDay', true)
+  assert.throws(() => form.field('startTime'), /找不到表单字段/)
+  assert.throws(() => form.field('endTime'), /找不到表单字段/)
+  await form.run(undefined, '保存日程')
+  await settle()
+  assert.equal(db.length, 1)
+  assert.equal(db[0].isAllDay, true)
+  const item = view.item(db[0].id)
+  assert.ok(item.props.accessories.some((a) => a.text === '全天'))
+  form.unmount()
+  view.unmount()
+})
+
+test('编辑已有日程：宿主支持 calendar_update_event 时直接更新；不支持时安全新建后再删旧记录', async () => {
+  const db = installCalendarHost([
+    { id: 'orig-1', title: '旧周会', startTime: todayAt(10), endTime: todayAt(11), location: 'A会议室', calendarName: 'Work', isAllDay: false }
+  ])
+  // 1) 宿主支持 calendar_update_event
+  host.ipc.calendar_update_event = async (params) => {
+    const idx = db.findIndex((e) => e.id === params.id)
+    if (idx < 0) throw new Error('not found')
+    db[idx] = { ...db[idx], ...params }
+    return db[idx]
+  }
+  const view = await mount(CalendarCommand)
+  await settle()
+  const editAction = view.actions(view.item('orig-1')).find((a) => a.type === 'Action.Push' && a.props.title === '编辑此日程...')
+  assert.ok(editAction)
+  host.pushed.push(getComponentFactory(editAction.props.target) || editAction.props.target)
+  await tick()
+  const editForm = await mountPushed(host)
+  await settle()
+  assert.equal(editForm.field('title').props.value, '旧周会')
+  await editForm.fill('title', '新周会（已改）')
+  await editForm.fill('isAllDay', true)
+  await editForm.run(undefined, '保存日程')
+  await settle()
+  assert.equal(db.length, 1)
+  assert.equal(db[0].id, 'orig-1')
+  assert.equal(db[0].title, '新周会（已改）')
+  assert.equal(db[0].isAllDay, true)
+  editForm.unmount()
+
+  // 2) 宿主不支持 calendar_update_event 时安全降级（先创建成功再删除旧记录）
+  delete host.ipc.calendar_update_event
+  const updated = await updateCalendarEvent('orig-1', {
+    title: '降级更新周会',
+    date: formatDateKey(todayAt(0)),
+    startTime: '14:00',
+    endTime: '15:00',
+    isAllDay: false
+  })
+  assert.equal(updated.title, '降级更新周会')
+  assert.equal(db.length, 1)
+  assert.notEqual(db[0].id, 'orig-1')
+  assert.equal(db[0].title, '降级更新周会')
+
+  // 3) 降级路径中若删除旧记录失败，绝不假成功
+  host.ipc.calendar_delete_event = async () => ({ success: false, error: 'delete locked' })
+  await assert.rejects(
+    () => updateCalendarEvent(db[0].id, { title: '清理失败测试', date: formatDateKey(todayAt(0)), isAllDay: true }),
+    /UPDATE_EVENT_CLEANUP_FAILED/
+  )
   view.unmount()
 })

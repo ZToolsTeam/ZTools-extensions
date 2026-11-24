@@ -2,7 +2,7 @@ export type UnlockProcessFilter = 'all' | 'killable' | 'protected'
 
 export type HandleKind = 'file' | 'directory' | 'dll' | 'unknown'
 
-export type ServiceTypeLabel = '系统内核' | '资源管理器' | '后台服务' | '普通进程'
+export type ServiceTypeLabel = string
 
 export interface LockingProcessItem {
   id: string

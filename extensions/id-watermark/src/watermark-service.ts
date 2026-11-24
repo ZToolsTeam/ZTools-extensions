@@ -5,6 +5,7 @@ import type {
   WatermarkRenderResult
 } from './types.js'
 import { decodeImage, MAX_IMAGE_BYTES } from './image-codec.js'
+import { t } from './i18n.js'
 
 export function formatWatermarkDate(now = new Date()): string {
   const y = now.getFullYear()
@@ -15,7 +16,7 @@ export function formatWatermarkDate(now = new Date()): string {
 
 export function resolveTemplate(
   rawText: string,
-  businessName = '指定业务',
+  businessName = t('defaultBusiness'),
   fixedDate?: string
 ): string {
   const dateStr = fixedDate || formatWatermarkDate()
@@ -25,33 +26,33 @@ export function resolveTemplate(
 }
 
 export function getPresetWatermarkTemplates(
-  businessName = '业务审核',
+  businessName = t('defaultPresetBusiness'),
   fixedDate?: string
 ): PresetTemplate[] {
   const rawPresets = [
     {
       id: 'tpl-general',
-      label: '通用政务与银行业务合规水印',
-      scenarioTag: '通用业务',
-      rawText: '仅供办理 {business} 使用 他用无效 {date}'
+      label: t('tplGeneralLabel'),
+      scenarioTag: t('tplGeneralTag'),
+      rawText: t('tplGeneralRaw')
     },
     {
       id: 'tpl-onboarding',
-      label: '企业入职与社保公积金申报专用',
-      scenarioTag: '入职求职',
-      rawText: '仅供办理入职与社保申报使用 再次复印无效 {date}'
+      label: t('tplOnboardingLabel'),
+      scenarioTag: t('tplOnboardingTag'),
+      rawText: t('tplOnboardingRaw')
     },
     {
       id: 'tpl-rental',
-      label: '房屋租赁签约与备案专用',
-      scenarioTag: '租房签约',
-      rawText: '仅供 {房屋地址} 租赁备案使用 挪作他用承担法律责任 {date}'
+      label: t('tplRentalLabel'),
+      scenarioTag: t('tplRentalTag'),
+      rawText: t('tplRentalRaw')
     },
     {
       id: 'tpl-enterprise',
-      label: '营业执照与企业招投标资质审查专用',
-      scenarioTag: '企业资质',
-      rawText: '仅供办理 {项目/招投标名称} 资质审查使用 复制伪造无效 {date}'
+      label: t('tplEnterpriseLabel'),
+      scenarioTag: t('tplEnterpriseTag'),
+      rawText: t('tplEnterpriseRaw')
     }
   ]
 
@@ -69,7 +70,7 @@ export function validateImageBufferHeader(bytes: Uint8Array): {
   if (!bytes || bytes.byteLength < 8) {
     return {
       valid: false,
-      error: 'INVALID_IMAGE_FILE: 仅支持有效的 JPG/PNG/WebP 格式图片（文件为空或非图像格式）'
+      error: t('errInvalidImageEmpty')
     }
   }
   if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
@@ -98,13 +99,13 @@ export function validateImageBufferHeader(bytes: Uint8Array): {
   }
   return {
     valid: false,
-    error: 'INVALID_IMAGE_FILE: 仅支持有效的 JPG/PNG/WebP 格式图片（检测到非图像文件头）'
+    error: t('errInvalidImageHeader')
   }
 }
 
 export function wrapWatermarkLines(text: string, maxCharsPerLine = 24): string[] {
   const clean = String(text ?? '').trim()
-  if (!clean) return ['仅供办理指定业务使用 他用无效']
+  if (!clean) return [t('defaultWrapFallback')]
   const chars = Array.from(clean)
   if (chars.length <= maxCharsPerLine) {
     return [clean]
@@ -153,7 +154,7 @@ export function computeAdaptiveWatermarkLayout(
 /** 必须以真实原图像素合成；失败不生成替代图片。 */
 export async function renderWatermarkOnImage(image: ImageMetadata, options: WatermarkOptions): Promise<WatermarkRenderResult> {
   if (!options.text.trim() || Array.from(options.text).length > 160 || !Number.isFinite(options.opacityPercent) || options.opacityPercent < 10 || options.opacityPercent > 65)
-    throw new Error('水印文字需为 1～160 字，不透明度需为 10～65%')
+    throw new Error(t('errWatermarkParams'))
   const bitmap = await decodeImage(image.rawBytes)
   let canvas: OffscreenCanvas | undefined
   try {
@@ -161,7 +162,7 @@ export async function renderWatermarkOnImage(image: ImageMetadata, options: Wate
     const { width, height } = bitmap
     const layout = computeAdaptiveWatermarkLayout(width, height, options)
     const ctx = canvas.getContext('2d')
-    if (!ctx) throw new Error('无法创建图像处理画布')
+    if (!ctx) throw new Error(t('errCanvasContext'))
     ctx.drawImage(bitmap, 0, 0)
     ctx.font = `${layout.effectiveFontSizePx}px sans-serif`
     ctx.fillStyle = options.colorMode === 'light' ? 'rgb(240, 240, 240)' : 'rgb(48, 48, 48)'
@@ -177,9 +178,9 @@ export async function renderWatermarkOnImage(image: ImageMetadata, options: Wate
         layout.wrappedLines.forEach((line, i) => ctx.fillText(line, x, y + i * lineHeight)); tileCount++
       }
     const blob = await canvas.convertToBlob({ type: 'image/png' })
-    if (blob.type !== 'image/png' || !blob.size || blob.size > MAX_IMAGE_BYTES) throw new Error('生成图片超过 16 MiB 或格式无效，请缩小原图后重试')
+    if (blob.type !== 'image/png' || !blob.size || blob.size > MAX_IMAGE_BYTES) throw new Error(t('errOutputTooLarge'))
     const verified = await decodeImage(new Uint8Array(await blob.arrayBuffer()))
-    try { if (verified.width !== width || verified.height !== height) throw new Error('合成图片尺寸校验失败') } finally { verified.close() }
+    try { if (verified.width !== width || verified.height !== height) throw new Error(t('errOutputSizeMismatch')) } finally { verified.close() }
     return { ...layout, tileCount, width, height, mimeType: 'image/png', blob }
   } finally { bitmap.close(); if (canvas) { canvas.width = 1; canvas.height = 1 } }
 }

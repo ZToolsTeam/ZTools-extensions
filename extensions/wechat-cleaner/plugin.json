@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "shell",
@@ -24,5 +25,33 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "WeChat Cleaner",
+      "description": "Scan desktop WeChat caches, logs, chat images/videos, and received files, moving selected items to the Recycle Bin without touching chat databases.",
+      "keywords": [
+        "wechat",
+        "cleaner",
+        "cache",
+        "cleanup",
+        "recycle bin",
+        "storage"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

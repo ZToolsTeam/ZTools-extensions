@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -11,6 +11,35 @@ import {
   readPngSize,
   SCREENSHOT_LIMITS
 } from '../src/validator.js'
+
+const tmpDirs = new Set()
+
+function createTempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix))
+  tmpDirs.add(dir)
+  return dir
+}
+
+function removeTempDir(dir) {
+  if (!dir) return
+  tmpDirs.delete(dir)
+  try {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+  } catch {
+    // 单个临时目录删除异常不中断其余清理
+  }
+}
+
+function cleanupAllTempDirs() {
+  for (const dir of [...tmpDirs]) {
+    removeTempDir(dir)
+  }
+}
+
+after(() => {
+  cleanupAllTempDirs()
+})
+process.once('exit', cleanupAllTempDirs)
 
 /** 生成真实可解码的灰度 PNG（签名 + IHDR + IDAT + IEND） */
 function makePng(width, height) {
@@ -43,6 +72,7 @@ function basePlugin(extra = {}) {
     version: '1.0.0',
     description: '截图校验',
     author: 'octocat',
+    category: ['图像媒体'],
     entry: 'dist/index.js',
     icon: 'icon.svg',
     permissions: [],
@@ -53,7 +83,7 @@ function basePlugin(extra = {}) {
 }
 
 function makePluginDir(files = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-shot-'))
+  const dir = createTempDir('ztools-shot-')
   fs.mkdirSync(path.join(dir, 'dist'))
   fs.writeFileSync(path.join(dir, 'dist/index.js'), 'export default 1\n')
   fs.writeFileSync(path.join(dir, 'icon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
@@ -82,17 +112,28 @@ describe('插件截图清单校验', () => {
     assert.equal(validatePluginManifest(basePlugin()).valid, true)
   })
 
-  it('超过 5 张、类型错误、重复路径、未知字段、过长标题都拒绝', () => {
+  it('超过 5 张、类型错误、重复路径、未知字段、空/空白/过长标题都拒绝', () => {
     const six = Array.from({ length: 6 }, (_, i) => ({ path: `screenshots/0${i}.png` }))
-    assert.ok(validatePluginManifest(basePlugin({ screenshots: six })).errors.some((e) => e.includes('最多 5 张')))
-    assert.ok(validatePluginManifest(basePlugin({ screenshots: 'screenshots/01.png' })).errors.some((e) => e.includes('必须为数组')))
-    assert.ok(validatePluginManifest(basePlugin({ screenshots: ['screenshots/01.png'] })).errors.some((e) => e.includes('必须为对象')))
+    assert.ok(validatePluginManifest(basePlugin({ screenshots: six })).errors.some((e) => e.includes('at most 5 items')))
+    assert.ok(validatePluginManifest(basePlugin({ screenshots: 'screenshots/01.png' })).errors.some((e) => e.includes('must be an array')))
+    assert.ok(validatePluginManifest(basePlugin({ screenshots: ['screenshots/01.png'] })).errors.some((e) => e.includes('must be an object')))
     const dup = validatePluginManifest(basePlugin({ screenshots: [{ path: 'screenshots/01.png' }, { path: 'screenshots/01.png' }] }))
-    assert.ok(dup.errors.some((e) => e.includes('重复')))
+    assert.ok(dup.errors.some((e) => e.includes('duplicated')))
     const unknown = validatePluginManifest(basePlugin({ screenshots: [{ path: 'screenshots/01.png', url: 'https://x' }] }))
-    assert.ok(unknown.errors.some((e) => e.includes('未知字段: url')))
+    assert.ok(unknown.errors.some((e) => e.includes('unknown fields: url')))
     const longTitle = validatePluginManifest(basePlugin({ screenshots: [{ path: 'screenshots/01.png', title: '长'.repeat(61) }] }))
     assert.ok(longTitle.errors.some((e) => e.includes('title')))
+    // 顶层 screenshots[].title 与 i18n.screenshots[].title 口径完全一致：存在时必须为非空字符串
+    for (const badTitle of ['', '   ', '\t\n', 123, null]) {
+      const topRes = validatePluginManifest(basePlugin({ screenshots: [{ path: 'screenshots/01.png', title: badTitle }] }))
+      assert.equal(topRes.valid, false, `顶层 title=${JSON.stringify(badTitle)} 应被拒绝`)
+      assert.ok(topRes.errors.some((e) => e.includes('screenshots[0].title must be a non-empty string of 1-60 characters')))
+      const i18nRes = validatePluginManifest(basePlugin({
+        i18n: { 'en-US': { screenshots: [{ file: 'screenshots/en-US/01.png', title: badTitle }] } }
+      }))
+      assert.equal(i18nRes.valid, false, `i18n title=${JSON.stringify(badTitle)} 应被拒绝`)
+      assert.ok(i18nRes.errors.some((e) => e.includes('i18n["en-US"].screenshots[0].title must be a non-empty string of 1-60 characters')))
+    }
   })
 
   it('路径穿越、绝对路径、反斜杠、非 screenshots/ 目录、非 PNG 扩展名都拒绝', () => {
@@ -112,12 +153,12 @@ describe('插件截图清单校验', () => {
     ]
     for (const p of bad) {
       const result = validatePluginManifest(basePlugin({ screenshots: [{ path: p }] }))
-      assert.ok(result.errors.some((e) => e.includes('.path 不合法')), `应拒绝 ${JSON.stringify(p)}`)
+      assert.ok(result.errors.some((e) => e.includes('.path is invalid')), `应拒绝 ${JSON.stringify(p)}`)
     }
   })
 
   it('缺文件、伪装扩展名、超大、尺寸越界、目录与软链接都拒绝', (t) => {
-    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-shot-outside-'))
+    const outside = createTempDir('ztools-shot-outside-')
     fs.writeFileSync(path.join(outside, 'leak.png'), makePng(1280, 800))
     const big = Buffer.concat([makePng(1280, 800), Buffer.alloc(SCREENSHOT_LIMITS.maxBytes)])
     const dir = makePluginDir({
@@ -132,19 +173,19 @@ describe('插件截图清单校验', () => {
     // 上级目录是软链接：路径看着在插件目录内，实际指向外面
     fs.symlinkSync(outside, path.join(dir, 'screenshots/outer'))
     t.after(() => {
-      fs.rmSync(dir, { recursive: true, force: true })
-      fs.rmSync(outside, { recursive: true, force: true })
+      removeTempDir(dir)
+      removeTempDir(outside)
     })
     const cases = [
-      ['screenshots/missing.png', '不存在'],
-      ['screenshots/fake.png', '不是有效的 PNG'],
-      ['screenshots/big.png', '超过 1024 KB'],
-      ['screenshots/tiny.png', '320×200'],
-      ['screenshots/huge.png', '4000×800'],
-      ['screenshots/truncated.png', '不是有效的 PNG'],
-      ['screenshots/dir.png', '不是普通文件'],
-      ['screenshots/link.png', '软链接'],
-      ['screenshots/outer/leak.png', '越界']
+      ['screenshots/missing.png', 'does not exist'],
+      ['screenshots/fake.png', 'not a valid PNG'],
+      ['screenshots/big.png', 'exceeding the 1024 KB limit'],
+      ['screenshots/tiny.png', '320x200'],
+      ['screenshots/huge.png', '4000x800'],
+      ['screenshots/truncated.png', 'not a valid PNG'],
+      ['screenshots/dir.png', 'must be a regular file'],
+      ['screenshots/link.png', 'must not be a symbolic link'],
+      ['screenshots/outer/leak.png', 'escapes plugin root']
     ]
     for (const [p, expected] of cases) {
       const result = validatePluginManifest(basePlugin({ screenshots: [{ path: p }] }), { baseDir: dir })

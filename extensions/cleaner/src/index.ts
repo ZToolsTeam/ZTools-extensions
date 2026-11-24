@@ -7,10 +7,12 @@ import {
   useEffect,
   showToast,
   Toast,
-  confirmAlert
+  confirmAlert,
+  useLocale,
+  getLocale
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
-  CLEAN_CLASSES,
   CleanGroupItem,
   CleanSampleFile,
   CleanSummaryData,
@@ -21,19 +23,21 @@ import {
   summarizeCleanResult,
   pickDefaultCheckedSamplePaths,
   emptyRecycleBin,
-  filterCleanGroups
+  filterCleanGroups,
+  getCleanClasses
 } from './logic.js'
 import { isRealElectronHost, showRealItemInFolder } from './native-ipc.js'
 
-const CLIENT_REQUIRED_TEXT = '需要在 ZTools 客户端中使用'
-
 type SampleRow = CleanSampleFile & { groupId: string; groupName: string; className: string }
+const SHORTCUT_CLEAN_SELECTED = { modifiers: ['ctrl', 'shift'] as ('ctrl' | 'shift')[], key: 'return' }
 
 function riskLabel(level: CleanGroupItem['riskLevel']): string {
-  return level === 'safe' ? '安全缓存' : level === 'caution' ? '谨慎核对' : '推荐清理'
+  return level === 'safe' ? t('riskSafe') : level === 'caution' ? t('riskCaution') : t('riskRecommended')
 }
 
 export default function CleanerCommand() {
+  useLocale()
+  const cleanClasses = getCleanClasses()
   const inRealHost = isRealElectronHost()
   const [searchText, setSearchText] = useState('')
   const [viewMode, setViewMode] = useState<'groups' | 'files'>('groups')
@@ -53,7 +57,7 @@ export default function CleanerCommand() {
     if (!inRealHost) return
     setIsLoading(true)
     if (options.showIndicator) {
-      showToast({ style: Toast.Style.Animated, title: '正在扫描...' })
+      showToast({ style: Toast.Style.Animated, title: t('scanningTitle') })
     }
     try {
       const res = await fetchCleanRulesAndScan()
@@ -67,18 +71,18 @@ export default function CleanerCommand() {
         setCheckedFilePaths(pickDefaultCheckedSamplePaths(res.groups))
       }
       if (res.error) {
-        showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: res.error })
+        showToast({ style: Toast.Style.Failure, title: t('scanIncompleteTitle'), message: res.error })
       } else if (options.showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '扫描完成',
-          message: `${res.groups.length} 项清理规则，共占用 ${formatBytes(res.summary.totalSizeBytes)}`
+          title: t('scanOkTitle'),
+          message: t('scanOkMsg', { count: res.groups.length, size: formatBytes(res.summary.totalSizeBytes) })
         })
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setScanError(message)
-      showToast({ style: Toast.Style.Failure, title: '扫描失败', message })
+      showToast({ style: Toast.Style.Failure, title: t('scanFailedTitle'), message })
     } finally {
       setIsLoading(false)
     }
@@ -130,8 +134,8 @@ export default function CleanerCommand() {
     if (targetFiles.length === 0) {
       showToast({
         style: Toast.Style.Failure,
-        title: '没有勾选任何文件',
-        message: '请先勾选要清理的项目或文件'
+        title: t('errNoCheckedFiles'),
+        message: t('noCheckedHint')
       })
       return
     }
@@ -141,7 +145,7 @@ export default function CleanerCommand() {
         const inGroup = targetFiles.filter(f => f.groupId === g.id)
         if (inGroup.length === 0) return ''
         const bytes = inGroup.reduce((s, f) => s + f.sizeBytes, 0)
-        return `- ${g.name}：${inGroup.length} 个（${formatBytes(bytes)}）`
+        return t('confirmCleanBreakdown', { name: g.name, count: inGroup.length, size: formatBytes(bytes) })
       })
       .filter(Boolean)
       .join('\n')
@@ -150,11 +154,13 @@ export default function CleanerCommand() {
     )
 
     const confirmed = await confirmAlert({
-      title: `把 ${targetFiles.length} 个文件移入回收站？`,
-      message: `共 ${formatBytes(targetBytes)}\n\n${breakdownLines}\n\n${
-        hasCaution ? '其中包含需要核对的项目（备份或下载的文件），请确认不再需要。\n' : ''
-      }只处理列出的样本文件，不会清空整个文件夹。文件移入回收站后仍占用磁盘空间，清空回收站后才会释放。`,
-      primaryAction: { title: '移入回收站', style: 'destructive' }
+      title: t('confirmCleanTitle', { count: targetFiles.length }),
+      message: t('confirmCleanMsg', {
+        size: formatBytes(targetBytes),
+        breakdown: breakdownLines,
+        caution: hasCaution ? t('confirmCleanCaution') : ''
+      }),
+      primaryAction: { title: t('actionMoveToTrash'), style: 'destructive' }
     })
     if (!confirmed) return
 
@@ -175,45 +181,45 @@ export default function CleanerCommand() {
 
   async function handleEmptyRecycleBin() {
     const confirmed = await confirmAlert({
-      title: '清空系统回收站？',
-      message: '将永久删除回收站里的全部文件（包括以前删除的其它文件），此操作不能撤销。',
-      primaryAction: { title: '清空回收站', style: 'destructive' }
+      title: t('confirmEmptyBinTitle'),
+      message: t('confirmEmptyBinMsg'),
+      primaryAction: { title: t('actionEmptyBin'), style: 'destructive' }
     })
     if (!confirmed) return
 
     const res = await emptyRecycleBin()
     if (!res.ok) {
-      showToast({ style: Toast.Style.Failure, title: '清空回收站失败', message: res.error })
+      showToast({ style: Toast.Style.Failure, title: t('emptyBinFailedDefault'), message: res.error })
       return
     }
     showToast({
       style: Toast.Style.Success,
-      title: '回收站已清空',
-      message: res.message || (typeof res.removedCount === 'number' ? `共 ${res.removedCount} 项` : undefined)
+      title: t('emptyBinOkTitle'),
+      message: res.message || (typeof res.removedCount === 'number' ? t('emptyBinOkCount', { count: res.removedCount }) : undefined)
     })
     await refreshData({ keepSelection: true })
   }
 
   async function locate(path: string) {
     const ok = await showRealItemInFolder(path)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: path })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: path })
   }
 
   if (!inRealHost) {
     return List({
-      searchBarPlaceholder: '搜索清理项',
+      searchBarPlaceholder: t('searchPlaceholderShort'),
       children: [
         List.Item({
           id: 'cleaner-client-required',
-          title: CLIENT_REQUIRED_TEXT,
-          subtitle: '本插件扫描本机的临时文件与缓存目录，只能在 Windows 版 ZTools 客户端中运行',
+          title: t('notInClient'),
+          subtitle: t('clientRequiredSub'),
           icon: { source: Icon.Info }
         })
       ]
     })
   }
 
-  const cleanActionTitle = `清理已勾选的 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})`
+  const cleanActionTitle = t('actionCleanSelected', { count: targetFiles.length, size: formatBytes(targetBytes) })
   const maxGroupBytes = Math.max(1, filtered[0]?.totalSizeBytes || 1)
   const maxSampleFileBytes = Math.max(1, allSampleFiles[0]?.sizeBytes || 1)
 
@@ -241,23 +247,24 @@ export default function CleanerCommand() {
               title: fileName,
               children: [
                 Action({
-                  title: cleanActionTitle,
-                  icon: Icon.Trash,
-                  style: Action.Style.Destructive,
-                  onAction: () => handleCleanSelected()
-                }),
-                Action({
-                  title: '在资源管理器定位',
+                  title: t('actionRevealInFolder'),
                   icon: Icon.Folder,
                   onAction: () => locate(file.path)
                 }),
                 Action({
-                  title: isChecked ? '取消勾选此文件' : '勾选此文件',
+                  title: isChecked ? t('actionUncheckFile') : t('actionCheckFile'),
                   icon: Icon.Checkmark,
                   onAction: () => setPathsChecked([file.path], !isChecked)
                 }),
+                Action({
+                  title: cleanActionTitle,
+                  icon: Icon.Trash,
+                  style: Action.Style.Destructive,
+                  shortcut: SHORTCUT_CLEAN_SELECTED,
+                  onAction: () => handleCleanSelected()
+                }),
                 Action.CopyToClipboard({
-                  title: '复制文件完整路径',
+                  title: t('actionCopyFullPath'),
                   content: file.path
                 })
               ]
@@ -271,13 +278,13 @@ export default function CleanerCommand() {
           const locatePath = item.sampleFiles[0]?.path || item.dirs?.[0] || ''
           const sampleText =
             item.sampleFiles.length > 0
-              ? `可清理最大的 ${item.sampleFiles.length} 个 (${formatBytes(sampleBytes)})`
-              : '没有可清理的文件'
+              ? t('sampleCleanableText', { count: item.sampleFiles.length, size: formatBytes(sampleBytes) })
+              : t('sampleNoneText')
 
           return List.Item({
             id: item.id,
             title: item.name,
-            subtitle: `共 ${item.fileCount.toLocaleString()} 个文件 · ${sampleText} · ${item.pathHint}`,
+            subtitle: t('groupSubtitle', { count: item.fileCount.toLocaleString(getLocale()), sample: sampleText, hint: item.pathHint }),
             checkable: !item.isProtected && item.sampleFiles.length > 0,
             checked: state,
             onCheckChange: c => toggleGroup(item, c),
@@ -291,42 +298,43 @@ export default function CleanerCommand() {
             actions: ActionPanel({
               title: item.name,
               children: [
-                Action({
-                  title: cleanActionTitle,
-                  icon: Icon.Trash,
-                  style: Action.Style.Destructive,
-                  onAction: () => handleCleanSelected()
-                }),
-                ...(locatePath
-                  ? [
-                      Action({
-                        title: '在资源管理器定位',
-                        icon: Icon.Folder,
-                        onAction: () => locate(locatePath)
-                      })
-                    ]
-                  : []),
                 ...(item.sampleFiles.length > 0
                   ? [
                       Action({
-                        title: state === true ? '取消勾选此项' : '勾选此项',
+                        title: state === true ? t('actionUncheckGroup') : t('actionCheckGroup'),
                         icon: Icon.Checkmark,
                         onAction: () => toggleGroup(item, state !== true)
                       })
                     ]
                   : []),
                 Action({
-                  title: '查看样本文件明细',
+                  title: t('actionViewSampleFiles'),
                   icon: Icon.Document,
                   onAction: () => setViewMode('files')
                 }),
+                ...(locatePath
+                  ? [
+                      Action({
+                        title: t('actionRevealInFolder'),
+                        icon: Icon.Folder,
+                        onAction: () => locate(locatePath)
+                      })
+                    ]
+                  : []),
                 Action({
-                  title: '清空系统回收站',
+                  title: cleanActionTitle,
+                  icon: Icon.Trash,
+                  style: Action.Style.Destructive,
+                  shortcut: SHORTCUT_CLEAN_SELECTED,
+                  onAction: () => handleCleanSelected()
+                }),
+                Action({
+                  title: t('actionEmptySysBin'),
                   icon: Icon.Trash,
                   onAction: () => handleEmptyRecycleBin()
                 }),
                 Action.CopyToClipboard({
-                  title: '复制扫描路径',
+                  title: t('actionCopyScanPath'),
                   content: item.pathHint
                 })
               ]
@@ -334,54 +342,67 @@ export default function CleanerCommand() {
           })
         })
 
-  const activeClassMeta = CLEAN_CLASSES.find(c => c.classId === classIdFilter)
+  const activeClassMeta = cleanClasses.find(c => c.classId === classIdFilter)
   const rightTitle =
     viewMode === 'files'
-      ? '样本文件明细（按体积降序）'
+      ? t('rightTitleFiles')
       : activeClassMeta
-      ? `${activeClassMeta.name}（按体积降序）`
-      : '全部清理项（按体积降序）'
+      ? t('rightTitleClass', { name: activeClassMeta.name })
+      : t('rightTitleAll')
 
   const checkableGroups = filtered.filter(g => g.sampleFiles.length > 0)
   const scopePaths = allSampleFiles.map(f => f.path)
   const allScopeChecked = scopePaths.length > 0 && targetFiles.length === scopePaths.length
   const someScopeChecked = targetFiles.length > 0 && !allScopeChecked
-  const diskText = summary.diskTotalSizeBytes > 0 ? ` · C 盘可用 ${formatBytes(summary.diskFreeSizeBytes)}` : ''
+  const diskText = summary.diskTotalSizeBytes > 0 ? t('diskFreeText', { size: formatBytes(summary.diskFreeSizeBytes) }) : ''
 
   return List({
-    searchBarPlaceholder: '搜索清理项、路径或说明',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按安全等级筛选',
+      tooltip: t('dropdownTooltip'),
       value: riskFilter,
       onChange: val => setRiskFilter(val),
       children: [
-        List.Dropdown.Item({ title: `全部安全等级 (${groups.length})`, value: 'all' }),
+        List.Dropdown.Item({ title: t('riskAllOption', { count: groups.length }), value: 'all' }),
         List.Dropdown.Item({
-          title: `安全缓存 (${groups.filter(g => g.riskLevel === 'safe').length})`,
+          title: t('riskSafeOption', { count: groups.filter(g => g.riskLevel === 'safe').length }),
           value: 'safe'
         }),
         List.Dropdown.Item({
-          title: `推荐清理 (${groups.filter(g => g.riskLevel === 'recommended').length})`,
+          title: t('riskRecOption', { count: groups.filter(g => g.riskLevel === 'recommended').length }),
           value: 'recommended'
         }),
         List.Dropdown.Item({
-          title: `谨慎核对 (${groups.filter(g => g.riskLevel === 'caution').length})`,
+          title: t('riskCautionOption', { count: groups.filter(g => g.riskLevel === 'caution').length }),
           value: 'caution'
         })
       ]
     }),
     filterBar: {
       summaryText: scanError
-        ? `${groups.length ? '扫描结果不完整' : '扫描失败'}：${scanError}`
-        : `共占用 ${formatBytes(summary.totalSizeBytes)} · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})${diskText}`,
+        ? t('summaryScanError', { label: groups.length ? t('scanIncompleteTitle') : t('scanFailedTitle'), error: scanError })
+        : t('summaryNormal', {
+            total: formatBytes(summary.totalSizeBytes),
+            count: targetFiles.length,
+            selected: formatBytes(targetBytes),
+            disk: diskText
+          }),
       actions: [
         {
+          id: 'clean-selected',
+          label: cleanActionTitle,
+          title: cleanActionTitle,
+          style: 'primary',
+          disabled: targetFiles.length === 0,
+          onAction: () => handleCleanSelected()
+        },
+        {
           id: 'rescan',
-          label: '重新扫描',
-          title: '重新扫描',
+          label: t('btnRescan'),
+          title: t('btnRescan'),
           style: 'secondary',
           onAction: () => refreshData({ showIndicator: true })
         }
@@ -391,26 +412,26 @@ export default function CleanerCommand() {
       title: rightTitle,
       subtitle:
         viewMode === 'files'
-          ? `${allSampleFiles.length} 个样本文件 · 已勾选 ${targetFiles.length} 个 (${formatBytes(targetBytes)})`
-          : `${filtered.length} 项 · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})`,
+          ? t('subListSubFiles', { total: allSampleFiles.length, checked: targetFiles.length, size: formatBytes(targetBytes) })
+          : t('subListSubGroups', { total: filtered.length, checked: targetFiles.length, size: formatBytes(targetBytes) }),
       checkable: viewMode === 'files' ? allSampleFiles.length > 0 : checkableGroups.length > 0,
       checked: allScopeChecked ? true : someScopeChecked ? 'indeterminate' : false,
       onCheckChange: () => setPathsChecked(scopePaths, !allScopeChecked),
       emptyText: isLoading
-        ? '正在扫描...'
+        ? t('scanningTitle')
         : viewMode === 'files'
-        ? '当前范围内没有样本文件'
-        : '当前范围内没有匹配的清理项',
+        ? t('emptyNoSamples')
+        : t('emptyNoGroups'),
       items: rightSubListItems
     },
     children: [
       List.Section({
-        title: '汇总',
+        title: t('sectionSummary'),
         children: [
           List.Item({
             id: 'nav-clean-all',
-            title: '全部清理项',
-            subtitle: `${groups.length} 项规则 · 共 ${formatBytes(summary.totalSizeBytes)}`,
+            title: t('navAllTitle'),
+            subtitle: t('navAllSub', { count: groups.length, size: formatBytes(summary.totalSizeBytes) }),
             icon: { source: Icon.HardDrive },
             accessories: [{ text: formatBytes(summary.totalSizeBytes) }],
             onSelect: () => {
@@ -420,23 +441,23 @@ export default function CleanerCommand() {
           }),
           List.Item({
             id: 'nav-clean-files',
-            title: '样本文件明细',
-            subtitle: `${allSampleFiles.length} 个样本文件，可逐个勾选`,
+            title: t('navFilesTitle'),
+            subtitle: t('navFilesSub', { count: allSampleFiles.length }),
             icon: { source: Icon.Document },
-            accessories: [{ text: `${allSampleFiles.length} 项` }],
+            accessories: [{ text: t('itemCountText', { count: allSampleFiles.length }) }],
             onSelect: () => setViewMode('files')
           })
         ]
       }),
       List.Section({
-        title: '清理分类',
-        children: CLEAN_CLASSES.map(cls => {
+        title: t('sectionClasses'),
+        children: cleanClasses.map(cls => {
           const clsGroups = groups.filter(g => g.classId === cls.classId)
           const clsBytes = clsGroups.reduce((s, g) => s + g.totalSizeBytes, 0)
           return List.Item({
             id: `nav-clean-class-${cls.classId}`,
             title: cls.name,
-            subtitle: `${clsGroups.length} 项规则`,
+            subtitle: t('classRuleCountSub', { count: clsGroups.length }),
             icon: { source: Icon.Folder },
             accessories: [{ text: formatBytes(clsBytes) }],
             onSelect: () => {

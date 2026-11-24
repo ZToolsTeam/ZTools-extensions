@@ -1,4 +1,21 @@
-export const BROWSERS = { chrome: 'Chrome', edge: 'Edge', brave: 'Brave', '360se': '360安全', '360chrome': '360极速', qqbrowser: 'QQ浏览器', firefox: 'Firefox', safari: 'Safari' } as const
+import { t } from './i18n.js'
+
+export const BROWSERS = {
+  chrome: 'Chrome',
+  edge: 'Edge',
+  brave: 'Brave',
+  get '360se'() {
+    return t('browser360se')
+  },
+  get '360chrome'() {
+    return t('browser360chrome')
+  },
+  get qqbrowser() {
+    return t('browserQQ')
+  },
+  firefox: 'Firefox',
+  safari: 'Safari'
+} as const
 export type BrowserType = keyof typeof BROWSERS
 export type BrowserFilterValue = 'all' | 'domestic' | BrowserType
 export interface BookmarkItem {

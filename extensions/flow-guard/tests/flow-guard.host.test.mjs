@@ -1,13 +1,16 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import FlowGuardCommand, {
-  NOT_IN_CLIENT_MESSAGE,
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
+  default: FlowGuardCommand,
+  getNotInClientMessage,
   fetchFlowGuardSnapshot,
   terminateNetworkProcess,
   openNetworkProcessLocation
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 function withBridge(bridge, fn) {
   setDeclarativeBridge(bridge)
@@ -67,11 +70,11 @@ test('flow-guard: 读取连接失败或不在客户端里时如实报错，不�
 
   const outside = await fetchFlowGuardSnapshot()
   assert.deepEqual(outside.groups, [])
-  assert.equal(outside.error, NOT_IN_CLIENT_MESSAGE)
+  assert.equal(outside.error, getNotInClientMessage())
 
   const view = FlowGuardCommand()
   assert.equal(view.type, 'List')
-  assert.equal(view.props.filterBar.summaryText, NOT_IN_CLIENT_MESSAGE)
+  assert.equal(view.props.filterBar.summaryText, getNotInClientMessage())
 })
 
 test('flow-guard: 系统核心进程不能结束，且不调用客户端', async () => {
@@ -134,7 +137,7 @@ test('flow-guard: 旧版客户端接口失败时返回成功外壳也要识别�
 
   const outside = await terminateNetworkProcess(4560, 'curl.exe')
   assert.equal(outside.ok, false)
-  assert.equal(outside.error, NOT_IN_CLIENT_MESSAGE)
+  assert.equal(outside.error, getNotInClientMessage())
 })
 
 test('flow-guard: 定位程序失败或不在客户端里时返回 false', async () => {

@@ -130,7 +130,7 @@ test('扫描：拿不到用户目录时报错，不退回默认用户目录；�
   delete globalThis.__ztoolsElectron
   try {
     const offline = await mover.fetchMoverSnapshot()
-    assert.equal(offline.error, mover.NOT_IN_CLIENT_MESSAGE)
+    assert.equal(offline.error, mover.getNotInClientMessage())
     assert.deepEqual(offline.folders, [])
   } finally {
     globalThis.__ztoolsElectron = saved
@@ -399,5 +399,64 @@ test('界面：不在客户端时显示空状态，不显示示例目录', async
     } finally { view.unmount() }
   } finally {
     globalThis.__ztoolsElectron = saved
+  }
+})
+
+test('回归：放宽扫描上限至 maxDepth>=16 / maxFiles>=200；触达上限标记抽样估算并在空间预检保留安全冗余', async () => {
+  assert.ok(mover.MOVER_SCAN_OPTIONS.maxDepth >= 16)
+  assert.ok(mover.MOVER_SCAN_OPTIONS.maxFiles >= 200)
+
+  installScanHost()
+  host.ipc.system_search_files = ({ query, limit }) => {
+    assert.equal(limit, 200, '应向宿主传递放宽后的文件上限 200')
+    if (query === 'dir:C:\\Users\\U\\Documents\\WeChat Files') {
+      return {
+        files: [{ name: 'msg.db', path: 'C:\\Users\\U\\Documents\\WeChat Files\\msg.db', is_dir: false, size: 8 * GB, mtime: 1 }],
+        subdirs: [],
+        total_matches: 200,
+        total_bytes: 8 * GB,
+        truncated: true,
+        approximate: true
+      }
+    }
+    if (query === 'dir:C:\\Users\\U\\Downloads') {
+      return {
+        files: [{ name: 'a.iso', path: 'C:\\Users\\U\\Downloads\\a.iso', is_dir: false, size: 2 * GB, mtime: 1 }],
+        subdirs: [],
+        total_matches: 1,
+        total_bytes: 2 * GB
+      }
+    }
+    return { files: [], total_matches: 0, total_bytes: 0 }
+  }
+
+  const snap = await mover.fetchMoverSnapshot()
+  const wechat = snap.folders.find(f => f.id === 'mover_wechat')
+  const downloads = snap.folders.find(f => f.id === 'mover_downloads')
+  assert.equal(wechat.isApproximate, true)
+  assert.ok(!downloads.isApproximate)
+
+  // 8 GB 抽样估算，按 1.25x 安全冗余需至少 10 GB：9 GB 应拒绝，12 GB 应放行
+  assert.match(mover.validateMoveSelection([wechat], 'D:\\ZToolsMoved', 9 * GB), /抽样估算|安全冗余/)
+  assert.equal(mover.validateMoveSelection([wechat], 'D:\\ZToolsMoved', 12 * GB), null)
+  // 非抽样目录 2 GB 在 2.1 GB 可用空间下正常放行
+  assert.equal(mover.validateMoveSelection([downloads], 'D:\\ZToolsMoved', Math.floor(2.1 * GB)), null)
+
+  // 界面展示抽样估算标签并在确认弹窗附带空间风险提示
+  installMoverHost({ sources: [wechat.sourcePath] })
+  const view = await mount(MoverCommand)
+  try {
+    const row = () => view.item('mover-item-mover_wechat')
+    assert.ok(row().props.accessories.some(a => a.tag?.value === '抽样估算'))
+    assert.ok(row().props.accessories.some(a => typeof a.text === 'string' && a.text.includes('≥')))
+    row().props.onCheckChange(true)
+    await tick()
+    assert.match(view.tree().props.filterBar.summaryText, /抽样估算/)
+    host.setConfirm(false)
+    await view.run(row(), '迁移已勾选的 1 个目录')
+    assert.equal(host.confirms.length, 1)
+    assert.match(host.confirms[0].message, /抽样估算.*实际可能更大/)
+  } finally {
+    view.unmount()
   }
 })

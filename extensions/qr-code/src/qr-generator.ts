@@ -2,8 +2,57 @@
  * 二维码生成：标准编码（qr-encoder）→ SVG 预览 / PNG 图片，以及生成历史的持久化
  */
 
-import { LocalStorage, Icon } from "@ztools/declarative-ui";
+import { LocalStorage, Icon, getLocale } from "@ztools/declarative-ui";
 import { encodeQr, type EccLevel, type QrCodeMatrix } from "./qr-encoder.js";
+
+const QR_GEN_MESSAGES: Record<string, {
+  labelUrl: string;
+  labelWifi: string;
+  labelEmail: string;
+  labelTel: string;
+  labelSms: string;
+  labelText: string;
+  wifiSsidEmpty: string;
+  wifiPasswordRequired: string;
+  wifiWpaInvalid: string;
+  wifiWepInvalid: string;
+  historyCorrupted: string;
+  upgradeZtoolsHistory: string;
+}> = {
+  "zh-CN": {
+    labelUrl: "网址",
+    labelWifi: "Wi-Fi",
+    labelEmail: "邮箱",
+    labelTel: "电话",
+    labelSms: "短信",
+    labelText: "文本",
+    wifiSsidEmpty: "Wi-Fi 名称不能为空",
+    wifiPasswordRequired: "请填写 Wi-Fi 密码，或把加密方式选为「无密码」",
+    wifiWpaInvalid: "WPA 密码需要 8–63 个英文字母、数字或符号（或 64 位十六进制）",
+    wifiWepInvalid: "WEP 密码需要 5 或 13 个字符（或 10 / 26 位十六进制）",
+    historyCorrupted: "二维码历史数据损坏，原数据已保留，请先恢复数据后重试",
+    upgradeZtoolsHistory: "请升级 ZTools 以安全保存二维码历史"
+  },
+  "en-US": {
+    labelUrl: "URL",
+    labelWifi: "Wi-Fi",
+    labelEmail: "Email",
+    labelTel: "Phone",
+    labelSms: "SMS",
+    labelText: "Text",
+    wifiSsidEmpty: "Wi-Fi name (SSID) cannot be empty",
+    wifiPasswordRequired: "Please enter a Wi-Fi password, or select \"None (Open)\" for security",
+    wifiWpaInvalid: "WPA password must be 8–63 ASCII characters (or 64 hex digits)",
+    wifiWepInvalid: "WEP password must be 5 or 13 characters (or 10 / 26 hex digits)",
+    historyCorrupted: "QR code history data is corrupted; original data was preserved. Please restore it before retrying.",
+    upgradeZtoolsHistory: "Please upgrade ZTools to safely save QR code history"
+  }
+};
+
+function qrGenStrings() {
+  const locale = getLocale();
+  return QR_GEN_MESSAGES[locale] ?? QR_GEN_MESSAGES["en-US"];
+}
 
 export type QrErrorCorrectionLevel = EccLevel;
 export type QrContentType = "url" | "wifi" | "email" | "tel" | "sms" | "text";
@@ -25,13 +74,14 @@ const QUIET_ZONE = 4;
  * 识别二维码内容的业务类型
  */
 export function detectQrContentType(content: string): { type: QrContentType; label: string; icon: Icon } {
+  const s = qrGenStrings();
   const trimmed = (content || "").trim();
-  if (/^https?:\/\//i.test(trimmed)) return { type: "url", label: "网址", icon: Icon.Globe };
-  if (/^WIFI:/i.test(trimmed) && /(?:^|;|:)S:[^;]+/i.test(trimmed)) return { type: "wifi", label: "Wi-Fi", icon: Icon.Shield };
-  if (/^mailto:/i.test(trimmed) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return { type: "email", label: "邮箱", icon: Icon.Pencil };
-  if (/^tel:/i.test(trimmed)) return { type: "tel", label: "电话", icon: Icon.Checkmark };
-  if (/^smsto:/i.test(trimmed)) return { type: "sms", label: "短信", icon: Icon.Text };
-  return { type: "text", label: "文本", icon: Icon.Document };
+  if (/^https?:\/\//i.test(trimmed)) return { type: "url", label: s.labelUrl, icon: Icon.Globe };
+  if (/^WIFI:/i.test(trimmed) && /(?:^|;|:)S:[^;]+/i.test(trimmed)) return { type: "wifi", label: s.labelWifi, icon: Icon.Shield };
+  if (/^mailto:/i.test(trimmed) || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) return { type: "email", label: s.labelEmail, icon: Icon.Pencil };
+  if (/^tel:/i.test(trimmed)) return { type: "tel", label: s.labelTel, icon: Icon.Checkmark };
+  if (/^smsto:/i.test(trimmed)) return { type: "sms", label: s.labelSms, icon: Icon.Text };
+  return { type: "text", label: s.labelText, icon: Icon.Document };
 }
 
 /**
@@ -47,15 +97,21 @@ function isPrintableAscii(text: string): boolean {
 }
 
 export function buildWifiPayload(ssid: string, password: string, security: "WPA" | "WEP" | "nopass", hidden = false): string {
+  const s = qrGenStrings();
   const esc = (v: string) => v.replace(/([\\;,:"])/g, "\\$1");
-  if (!ssid) throw new Error("Wi-Fi 名称不能为空");
-  if (security !== "nopass" && !password) throw new Error("请填写 Wi-Fi 密码，或把加密方式选为「无密码」");
+  const makeCodedError = (message: string, code: string) => {
+    const err = new Error(message) as Error & { code?: string };
+    err.code = code;
+    return err;
+  };
+  if (!ssid) throw makeCodedError(s.wifiSsidEmpty, "WIFI_SSID_EMPTY");
+  if (security !== "nopass" && !password) throw makeCodedError(s.wifiPasswordRequired, "WIFI_PASSWORD_INVALID");
   // 长度不合规的密码路由器本来就不接受，生成的二维码手机扫了也连不上，提前拦下
   if (security === "WPA" && !((isPrintableAscii(password) && password.length >= 8 && password.length <= 63) || /^[0-9a-fA-F]{64}$/.test(password))) {
-    throw new Error("WPA 密码需要 8–63 个英文字母、数字或符号（或 64 位十六进制）");
+    throw makeCodedError(s.wifiWpaInvalid, "WIFI_PASSWORD_INVALID");
   }
   if (security === "WEP" && !((isPrintableAscii(password) && (password.length === 5 || password.length === 13)) || /^(?:[0-9a-fA-F]{10}|[0-9a-fA-F]{26})$/.test(password))) {
-    throw new Error("WEP 密码需要 5 或 13 个字符（或 10 / 26 位十六进制）");
+    throw makeCodedError(s.wifiWepInvalid, "WIFI_PASSWORD_INVALID");
   }
   return `WIFI:T:${security};S:${esc(ssid)};${security === "nopass" ? "" : `P:${esc(password)};`}${hidden ? "H:true;" : ""};`;
 }
@@ -174,13 +230,13 @@ function sanitizeHistory(list: unknown): QrItem[] {
   if (!Array.isArray(list) || list.some(it => !it || typeof it.id !== "string" || !it.id || typeof it.title !== "string" ||
       typeof it.content !== "string" || !it.content || typeof it.createdAt !== "string" || !["L", "M", "Q", "H"].includes(it.level) ||
       (it.favorite !== undefined && typeof it.favorite !== "boolean")) || new Set(list.map(it => it.id)).size !== list.length) {
-    throw new Error("二维码历史数据损坏，原数据已保留，请先恢复数据后重试");
+    throw new Error(qrGenStrings().historyCorrupted);
   }
   return list;
 }
 
 async function changeQrHistory(update: (current: QrItem[]) => QrItem[]): Promise<QrItem[]> {
-  if (typeof LocalStorage.updateItem !== "function") throw new Error("请升级 ZTools 以安全保存二维码历史");
+  if (typeof LocalStorage.updateItem !== "function") throw new Error(qrGenStrings().upgradeZtoolsHistory);
   return LocalStorage.updateItem(QR_STORAGE_KEY, raw => update(sanitizeHistory(raw)));
 }
 

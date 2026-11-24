@@ -7,8 +7,9 @@ export interface GitEmergencyItem {
   categoryLabel: string
   tags: string[]
   pinyinKeywords: string[]
-  safetyLevel: '安全无损' | '注意检查' | '有损警告'
-  difficulty: '小白推荐' | '中等' | '专家慎用'
+  safetyLevel: string
+  safetyKind?: 'safe' | 'caution' | 'danger'
+  difficulty: string
   primaryCommand: string
   steps: Array<{
     title: string

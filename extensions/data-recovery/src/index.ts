@@ -14,12 +14,14 @@ import {
   Toast,
   showToast,
   useEffect,
+  useLocale,
   useState
 } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import { isRealElectronHost } from "./native-ipc.js";
 import {
-  NOT_IN_CLIENT_MESSAGE,
-  RECOVERY_CATEGORIES,
+  getNotInClientMessage,
+  getRecoveryCategories,
   createEmptyRecoverySnapshot,
   fetchRecoverableFiles,
   formatBytes,
@@ -31,8 +33,9 @@ import {
 } from "./logic.js";
 
 export function DataRecoveryCommand() {
+  useLocale();
   const [snapshot, setSnapshot] = useState<DataRecoverySnapshot>(() =>
-    isRealElectronHost() ? createEmptyRecoverySnapshot() : createEmptyRecoverySnapshot(NOT_IN_CLIENT_MESSAGE)
+    isRealElectronHost() ? createEmptyRecoverySnapshot() : createEmptyRecoverySnapshot(getNotInClientMessage())
   );
   const [selectedCategory, setSelectedCategory] = useState<RecoveryCategory>("all");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -89,7 +92,7 @@ export function DataRecoveryCommand() {
 
   const handleBatchRestore = async () => {
     if (selectedItems.length === 0) {
-      showToast({ style: Toast.Style.Failure, title: "请先勾选要恢复的文件" });
+      showToast({ style: Toast.Style.Failure, title: t("selectFilesFirst") });
       return;
     }
     setIsLoading(true);
@@ -99,7 +102,7 @@ export function DataRecoveryCommand() {
       setStatusBanner(res.message);
       showToast({
         style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-        title: res.ok ? "恢复完成" : res.restoredCount > 0 ? "部分文件恢复失败" : "恢复失败",
+        title: res.ok ? t("restoreSuccessTitle") : res.restoredCount > 0 ? t("restorePartialTitle") : t("restoreFailedTitle"),
         message: res.message
       });
     } finally {
@@ -113,8 +116,8 @@ export function DataRecoveryCommand() {
     if (!ok) {
       showToast({
         style: Toast.Style.Failure,
-        title: "无法打开恢复文件夹",
-        message: dir ? `${dir}（还没有恢复过文件时该文件夹可能不存在）` : "无法获取桌面路径"
+        title: t("openFolderFailedTitle"),
+        message: dir ? t("openFolderMissingHint", { dir }) : t("desktopPathUnavailable")
       });
     }
   };
@@ -122,49 +125,57 @@ export function DataRecoveryCommand() {
   const locateItem = async (path: string) => {
     const ok = await showRecoveryItem(path);
     if (!ok) {
-      showToast({ style: Toast.Style.Failure, title: "无法在资源管理器中定位此文件", message: path });
+      showToast({ style: Toast.Style.Failure, title: t("locateFailedTitle"), message: path });
     }
   };
 
-  const selectionText = `已勾选 ${selectedItems.length} 项 (${formatBytes(selectedBytes)}) · 恢复到 ${
-    snapshot.restoreTargetDir || "（未知）"
-  }`;
+  const selectionText = t("selectionSummary", {
+    count: selectedItems.length,
+    size: formatBytes(selectedBytes),
+    dir: snapshot.restoreTargetDir || t("unknownTarget")
+  });
   const summaryText = snapshot.error
     ? snapshot.error
     : statusBanner
       ? `${statusBanner} · ${selectionText}`
-      : `回收站文件 ${snapshot.items.length} 项 (${formatBytes(snapshot.totalSizeBytes)}) · ${selectionText}`;
+      : t("recycleSummary", {
+          count: snapshot.items.length,
+          size: formatBytes(snapshot.totalSizeBytes),
+          selection: selectionText
+        });
 
   const restoreAction = () =>
     Action({
-      title: `复制已勾选文件到恢复文件夹 (${selectedItems.length} 项)`,
+      title: t("copyCheckedAction", { count: selectedItems.length }),
       icon: Icon.CheckCircle,
       onAction: handleBatchRestore
     });
 
+  const categories = getRecoveryCategories();
+
   const leftNavNodes = [
     List.Item({
       id: "nav-rec-all",
-      title: "全部回收站文件",
-      subtitle: `${snapshot.items.length} 项`,
+      title: t("allRecycleFiles"),
+      subtitle: t("itemCount", { count: snapshot.items.length }),
       icon: Icon.HardDrive,
       onSelect: () => setSelectedCategory("all"),
       accessories: [
-        { tag: { value: `${snapshot.items.length} 项` } },
+        { tag: { value: t("itemCount", { count: snapshot.items.length }) } },
         { text: formatBytes(snapshot.totalSizeBytes) }
       ],
       actions: ActionPanel({
         children: [
           restoreAction(),
           Action({
-            title: "打开恢复文件夹",
+            title: t("openRecoveryFolder"),
             icon: Icon.Folder,
             onAction: openOutputFolder
           })
         ]
       })
     }),
-    ...RECOVERY_CATEGORIES.map((cat) => {
+    ...categories.map((cat) => {
       const catItems = snapshot.items.filter((i) => i.category === cat.id);
       const catBytes = catItems.reduce((s, i) => s + i.sizeBytes, 0);
       const ratio = Math.min(1, catBytes / Math.max(1, snapshot.totalSizeBytes));
@@ -177,13 +188,13 @@ export function DataRecoveryCommand() {
         onSelect: () => setSelectedCategory(cat.id),
         accessories: [
           { progress: ratio },
-          { tag: { value: `${catItems.length} 项` } },
+          { tag: { value: t("itemCount", { count: catItems.length }) } },
           { text: formatBytes(catBytes) }
         ],
         actions: ActionPanel({
           children: [
             Action({
-              title: `筛选「${cat.name}」`,
+              title: t("filterCategoryAction", { name: cat.name }),
               icon: Icon.Filter,
               onAction: () => setSelectedCategory(cat.id)
             }),
@@ -200,7 +211,7 @@ export function DataRecoveryCommand() {
     return List.Item({
       id: `rec-item-${item.id}`,
       title: item.name,
-      subtitle: item.modifiedText ? `${item.cachePath} · 修改于 ${item.modifiedText}` : item.cachePath,
+      subtitle: item.modifiedText ? t("modifiedSubtitle", { path: item.cachePath, time: item.modifiedText }) : item.cachePath,
       icon: Icon.Document,
       checkable: true,
       checked: isChecked,
@@ -211,17 +222,17 @@ export function DataRecoveryCommand() {
         children: [
           restoreAction(),
           Action({
-            title: "在资源管理器中定位此文件",
+            title: t("locateInExplorer"),
             icon: Icon.Folder,
             onAction: () => locateItem(item.cachePath)
           }),
           Action({
-            title: isChecked ? "取消勾选此文件" : "勾选此文件",
+            title: isChecked ? t("uncheckFile") : t("checkFile"),
             icon: Icon.CheckCircle,
             onAction: () => toggleItemCheck(item.id)
           }),
           Action({
-            title: "打开恢复文件夹",
+            title: t("openRecoveryFolder"),
             icon: Icon.Folder,
             onAction: openOutputFolder
           })
@@ -235,7 +246,7 @@ export function DataRecoveryCommand() {
 
   return List({
     isLoading,
-    searchBarPlaceholder: "搜索文件名、扩展名（如 .docx）...",
+    searchBarPlaceholder: t("searchPlaceholder"),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     filterBar: {
@@ -243,7 +254,7 @@ export function DataRecoveryCommand() {
       actions: [
         {
           id: "rescan",
-          title: "重新扫描",
+          title: t("rescanAction"),
           style: "secondary",
           onAction: () => {
             void reloadRecoveryList();
@@ -252,9 +263,9 @@ export function DataRecoveryCommand() {
       ]
     },
     subList: {
-      title: `回收站文件 (${visibleItems.length} 项 · 已选 ${formatBytes(selectedBytes)})`,
-      subtitle: "列表显示回收站内部文件名，恢复出的文件也使用这个名字",
-      emptyText: snapshot.error || (isLoading ? "正在读取回收站..." : "当前分类下没有回收站文件"),
+      title: t("subListTitle", { count: visibleItems.length, size: formatBytes(selectedBytes) }),
+      subtitle: t("subListSubtitle"),
+      emptyText: snapshot.error || (isLoading ? t("loadingText") : t("emptyText")),
       checkable: visibleItems.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: () => toggleAllVisible(),
@@ -262,8 +273,8 @@ export function DataRecoveryCommand() {
     },
     children: [
       List.Section({
-        title: "文件类型",
-        subtitle: "按扩展名分类",
+        title: t("sectionTitle"),
+        subtitle: t("sectionSubtitle"),
         children: leftNavNodes
       })
     ]

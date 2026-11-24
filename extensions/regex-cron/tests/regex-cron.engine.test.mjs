@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { runRegexMatch } from '../dist/regex-engine.js'
 import { runRegexInWorker } from '../dist/regex-worker.js'
-import { parseAndExplainCron, REGEX_PRESETS } from '../dist/regex-cron-service.js'
+import { parseAndExplainCron, getRegexPresets } from '../dist/regex-cron-service.js'
 import { BrowserWorker, activeWorkers, waitUntil } from './worker-harness.mjs'
 
+setRuntimeLocale('zh-CN')
 globalThis.Worker = BrowserWorker
 
 test('捕获组位置来自索引，重复子串、前瞻、未匹配组不靠字符串猜测', () => {
@@ -71,7 +73,7 @@ test('Cron固定日期下计算15分钟间隔及非法分钟，不混用正则�
 })
 
 test('所有字典的通过和拒绝样例与实际正则一致', () => {
-  for (const preset of REGEX_PRESETS) {
+  for (const preset of getRegexPresets()) {
     const pattern = `/${preset.pattern}/${preset.recommendedFlags || ''}`
     for (const value of preset.validExamples) assert.equal(runRegexMatch(pattern, value).totalMatches, 1, preset.id)
     for (const value of preset.invalidExamples) assert.equal(runRegexMatch(pattern, value).totalMatches, 0, preset.id)

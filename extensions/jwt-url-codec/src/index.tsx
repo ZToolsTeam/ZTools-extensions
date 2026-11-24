@@ -11,19 +11,24 @@ import React, {
   useMemo,
   useRef,
   useEffect,
+  useLocale,
   useNavigation,
 } from '@ztools/declarative-ui'
-import type { CodecMode, UrlQueryParamItem } from './types.js'
+import type { CodecMode, JwtVerificationResult, UrlQueryParamItem } from './types.js'
 import { isRealElectronHost } from './native-ipc.js'
 import { JwtSignForm } from './sign-form.js'
+import { JwtVerifyForm } from './verify-form.js'
+import { UrlParamForm } from './url-param-form.js'
 import {
   decodeJwtToken,
-  verifyJwtHmacSha256,
+  verifyJwtHmac,
   parseAndInspectUrl,
   queryParamsToJson,
+  rebuildUrlWithQueryParams,
   fencedBlock,
   displayError,
 } from './jwt-url-service.js'
+import { t } from './i18n.js'
 
 export * from './types.js'
 export * from './jwt-url-service.js'
@@ -32,18 +37,24 @@ const DEFAULT_JWT_SAMPLE =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c2VyXzEwMjQiLCJuYW1lIjoiWlRvb2xzIERldmVsb3BlciIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTczNTY4OTYwMCwiZXhwIjoxOTg4MTUwNDAwfQ.4f-8h_l7mN3vR2kX9pQ1wZ5yB6cT0dG8jL4sA2eF6uI'
 
 export function JwtUrlCodecCommand() {
+  const locale = useLocale()
   const [mode, setMode] = useState<CodecMode>('jwt')
   const [rawInput, setRawInput] = useState<string>(isRealElectronHost() ? '' : DEFAULT_JWT_SAMPLE)
-  const [verifyMsg, setVerifyMsg] = useState<string>('未验签（可通过动作面板读取剪贴板密钥验签）')
+  const [verifyMsgOverride, setVerifyMsgOverride] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(Date.now())
   const requestVersion = useRef(0)
   const { push } = useNavigation()
+  const verifyMsg = verifyMsgOverride ?? t('verifyInitial')
 
   function updateInput(text: string) {
     requestVersion.current++
     setRawInput(text)
-    setVerifyMsg('未验签（可通过动作面板读取剪贴板密钥验签）')
+    setVerifyMsgOverride(null)
   }
+
+  useEffect(() => {
+    setVerifyMsgOverride(null)
+  }, [locale])
 
   useEffect(() => {
     if (mode !== 'jwt') return () => { requestVersion.current++ }
@@ -64,7 +75,7 @@ export function JwtUrlCodecCommand() {
         error: displayError(err instanceof Error ? err.message : String(err)),
       }
     }
-  }, [mode, rawInput, nowMs])
+  }, [mode, rawInput, nowMs, locale])
 
   const urlState = useMemo(() => {
     if (mode !== 'url') return null
@@ -79,7 +90,7 @@ export function JwtUrlCodecCommand() {
         error: displayError(err instanceof Error ? err.message : String(err)),
       }
     }
-  }, [mode, rawInput])
+  }, [mode, rawInput, locale])
 
   const handleLoadFromClipboard = async (): Promise<void> => {
     const request = ++requestVersion.current
@@ -89,8 +100,8 @@ export function JwtUrlCodecCommand() {
       if (!text || !text.trim()) {
         await showToast({
           style: ToastStyle.Failure,
-          title: '剪贴板为空',
-          message: '请先复制 JWT Token 或 URL 链接',
+          title: t('toastClipboardEmpty'),
+          message: t('toastClipboardEmptyMsg'),
         })
         return
       }
@@ -103,13 +114,13 @@ export function JwtUrlCodecCommand() {
       }
       await showToast({
         style: ToastStyle.Success,
-        title: '已从剪贴板载入内容',
+        title: t('toastLoadedFromClipboard'),
       })
     } catch (err) {
       if (request !== requestVersion.current) return
       await showToast({
         style: ToastStyle.Failure,
-        title: '读取剪贴板失败',
+        title: t('toastReadClipboardFailed'),
         message: err instanceof Error ? err.message : String(err),
       })
     }
@@ -117,48 +128,117 @@ export function JwtUrlCodecCommand() {
 
   const handleVerifyFromClipboardSecret = async (): Promise<void> => {
     const request = ++requestVersion.current
-    setVerifyMsg('正在校验签名')
+    setVerifyMsgOverride(t('verifyChecking'))
     try {
       const clipSecret = await Clipboard.readText()
       if (request !== requestVersion.current) return
       if (!clipSecret) {
-        setVerifyMsg('未验签：缺少密钥')
+        setVerifyMsgOverride(t('verifyMissingSecret'))
         await showToast({
           style: ToastStyle.Failure,
-          title: '缺少验签密钥',
-          message: '请先复制 HS256 密钥到剪贴板',
+          title: t('toastMissingSecretTitle'),
+          message: t('toastMissingSecretMsg'),
         })
         return
       }
-      const res = await verifyJwtHmacSha256(rawInput, clipSecret)
+      const res = await verifyJwtHmac(rawInput, clipSecret)
       if (request !== requestVersion.current) return
-      setVerifyMsg(res.verified ? `验签通过 (${res.algorithm})` : `验签失败: ${res.reason}`)
+      setVerifyMsgOverride(res.verified ? t('verifyPassedStatus', { alg: res.algorithm }) : t('verifyFailedStatus', { reason: res.reason ?? '' }))
       await showToast({
         style: res.verified ? ToastStyle.Success : ToastStyle.Failure,
-        title: res.verified ? 'HS256 签名校验通过' : 'HS256 签名校验失败',
+        title: res.verified ? t('toastVerifyPassedAlg', { alg: res.algorithm }) : t('toastVerifyFailedAlg', { alg: res.algorithm }),
         message: res.reason,
       })
     } catch (err) {
       if (request !== requestVersion.current) return
-      setVerifyMsg('验签异常，未确认签名')
+      setVerifyMsgOverride(t('verifyExceptionStatus'))
       await showToast({
         style: ToastStyle.Failure,
-        title: '验签异常',
+        title: t('toastVerifyException'),
         message: displayError(err instanceof Error ? err.message : String(err)),
       })
     }
   }
 
+  const handleFormVerified = (res: JwtVerificationResult) => {
+    setVerifyMsgOverride(
+      res.verified
+        ? t('verifyPassedStatus', { alg: res.algorithm })
+        : t('verifyFailedStatus', { reason: res.reason ?? '' }),
+    )
+  }
+
+  const openVerifyForm = () => {
+    if (!jwtState?.ok) return
+    push(
+      <JwtVerifyForm
+        rawToken={rawInput}
+        algorithm={jwtState.result.algorithm}
+        onVerified={handleFormVerified}
+      />,
+    )
+  }
+
+  const applyRebuiltQueryParams = async (
+    nextParams: Array<{ key: string; value: string }>,
+    toastTitle: string,
+  ) => {
+    if (!urlState?.ok) return
+    const rebuilt = rebuildUrlWithQueryParams(urlState.result, nextParams)
+    updateInput(rebuilt)
+    await Clipboard.copy(rebuilt)
+    await showToast({
+      style: ToastStyle.Success,
+      title: toastTitle,
+    })
+  }
+
+  const openAddQueryParamForm = () => {
+    if (!urlState?.ok) return
+    const currentParams = urlState.result.queryParams.map((p) => ({ key: p.key, value: p.decodedValue }))
+    push(
+      <UrlParamForm
+        onSave={async (key, value) => {
+          await applyRebuiltQueryParams([...currentParams, { key, value }], t('toastQueryUpdated'))
+        }}
+      />,
+    )
+  }
+
+  const openEditQueryParamForm = (idx: number, param: UrlQueryParamItem) => {
+    if (!urlState?.ok) return
+    const currentParams = urlState.result.queryParams.map((p) => ({ key: p.key, value: p.decodedValue }))
+    push(
+      <UrlParamForm
+        isEdit={true}
+        initialKey={param.key}
+        initialValue={param.decodedValue}
+        onSave={async (key, value) => {
+          const next = currentParams.map((item, i) => (i === idx ? { key, value } : item))
+          await applyRebuiltQueryParams(next, t('toastQueryUpdated'))
+        }}
+      />,
+    )
+  }
+
+  const handleDeleteQueryParam = async (idx: number, key: string) => {
+    if (!urlState?.ok) return
+    const next = urlState.result.queryParams
+      .filter((_, i) => i !== idx)
+      .map((p) => ({ key: p.key, value: p.decodedValue }))
+    await applyRebuiltQueryParams(next, t('toastQueryDeleted', { key }))
+  }
+
   const emptySection = (
-    <List.Section title="等待输入">
+    <List.Section title={t('emptySectionTitle')}>
       <List.Item
         id="empty"
-        title={mode === 'jwt' ? '在上方粘贴 JWT Token' : '在上方粘贴 URL 或 Query 字符串'}
-        subtitle={mode === 'jwt' ? '支持带 Bearer 前缀；也可从剪贴板读取' : '支持完整 URL、域名路径和 a=1&b=2 形式'}
+        title={mode === 'jwt' ? t('emptyJwtTitle') : t('emptyUrlTitle')}
+        subtitle={mode === 'jwt' ? t('emptyJwtSub') : t('emptyUrlSub')}
         icon={mode === 'jwt' ? Icon.Key : Icon.Globe}
         actions={
           <ActionPanel>
-            <Action title="从剪贴板读取" icon={Icon.Clipboard} onAction={handleLoadFromClipboard} />
+            <Action title={t('actionReadClipboard')} icon={Icon.Clipboard} onAction={handleLoadFromClipboard} />
           </ActionPanel>
         }
       />
@@ -170,44 +250,52 @@ export function JwtUrlCodecCommand() {
   return (
     <List
       isShowingDetail={!isEmpty}
-      searchBarPlaceholder="粘贴 JWT Token 或 URL 链接直接解析..."
+      searchBarPlaceholder={t('searchPlaceholder')}
       searchText={rawInput}
       onSearchTextChange={updateInput}
       filterBar={mode === 'jwt' ? {
-        summaryText: '离线解析与 HS256 签名工具',
-        actions: [{ id: 'sign-jwt', title: '签发 JWT', onAction: () => push(<JwtSignForm
-          initialPayload={jwtState?.ok ? JSON.stringify(jwtState.result.payload, null, 2) : '{}'} onCreated={updateInput} />) }]
+        summaryText: t('summaryJwtTool'),
+        actions: [
+          ...(jwtState?.ok ? [{ id: 'verify-jwt', title: t('btnVerifyJwt'), onAction: openVerifyForm }] : []),
+          { id: 'sign-jwt', title: t('btnSignJwt'), onAction: () => push(<JwtSignForm
+            initialPayload={jwtState?.ok ? JSON.stringify(jwtState.result.payload, null, 2) : '{}'} onCreated={updateInput} />) }
+        ]
+      } : urlState?.ok ? {
+        summaryText: t('summaryUrlTool'),
+        actions: [
+          { id: 'add-query-param', title: t('btnAddQueryParam'), onAction: openAddQueryParamForm },
+        ]
       } : undefined}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="切换解析模式"
+          tooltip={t('dropdownTooltip')}
           value={mode}
-          onChange={(val: string) => { requestVersion.current++; setMode(val as CodecMode); setVerifyMsg('未验签') }}
+          onChange={(val: string) => { requestVersion.current++; setMode(val as CodecMode); setVerifyMsgOverride(t('verifySimple')) }}
         >
-          <List.Dropdown.Item title="JWT Token 深度解析" value="jwt" />
-          <List.Dropdown.Item title="URL 与 Query 参数拆解" value="url" />
+          <List.Dropdown.Item title={t('modeJwtTitle')} value="jwt" />
+          <List.Dropdown.Item title={t('modeUrlTitle')} value="url" />
         </List.Dropdown>
       }
     >
       {isEmpty && emptySection}
 
       {mode === 'jwt' && jwtState && !jwtState.ok && !jwtState.empty && (
-        <List.Section title="JWT 解析异常">
+        <List.Section title={t('jwtErrSecTitle')}>
           <List.Item
             id="jwt-error"
-            title="JWT 结构或编码非法"
+            title={t('jwtErrItemTitle')}
             subtitle={jwtState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '解析失败', color: Color.Red } }]}
+            accessories={[{ tag: { value: t('jwtErrTag'), color: Color.Red } }]}
             detail={
               <List.Item.Detail
-                markdown={`### JWT 解析失败\n\n${fencedBlock(jwtState.error)}\n\n请确认输入符合 Header.Payload.Signature 三段式 Base64URL 规范。`}
+                markdown={t('jwtErrDetailMd', { block: fencedBlock(jwtState.error) })}
               />
             }
             actions={
               <ActionPanel>
                 <Action
-                  title="从剪贴板载入 Token"
+                  title={t('actionLoadTokenFromClipboard')}
                   icon={Icon.Clipboard}
                   onAction={handleLoadFromClipboard}
                 />
@@ -218,14 +306,14 @@ export function JwtUrlCodecCommand() {
       )}
 
       {mode === 'jwt' && jwtState && jwtState.ok && (
-        <List.Section title="JWT 载荷与生命周期诊断">
+        <List.Section title={t('jwtSecTitle')}>
           <List.Item
             id="jwt-overview"
-            title={`算法 ${jwtState.result.algorithm} · 载荷字段 (${Object.keys(jwtState.result.payload).length} 项)`}
+            title={t('jwtOverviewTitle', { alg: jwtState.result.algorithm, count: Object.keys(jwtState.result.payload).length })}
             subtitle={jwtState.result.expiryCountdownText}
             icon={Icon.Key}
             accessories={[
-              ['已过期', '尚未生效', '时间声明异常'].includes(jwtState.result.timeStatus)
+              jwtState.result.timeStatusWarning
                 ? { tag: { value: jwtState.result.timeStatus, color: Color.Red } }
                 : { tag: jwtState.result.timeStatus },
             ]}
@@ -235,27 +323,27 @@ export function JwtUrlCodecCommand() {
                 metadata={
                   <List.Item.Detail.Metadata>
                     <List.Item.Detail.Metadata.Label
-                      title="签名算法 (alg)"
+                      title={t('metaAlgTitle')}
                       text={jwtState.result.algorithm}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="签发时间 (iat)"
-                      text={jwtState.result.issuedAtText || '未声明'}
+                      title={t('metaIatTitle')}
+                      text={jwtState.result.issuedAtText || t('metaUndeclared')}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="生效时间 (nbf)"
-                      text={jwtState.result.notBeforeText || '未声明'}
+                      title={t('metaNbfTitle')}
+                      text={jwtState.result.notBeforeText || t('metaUndeclared')}
                     />
                     <List.Item.Detail.Metadata.Label
-                      title="过期时间 (exp)"
-                      text={jwtState.result.expiresAtText || '未声明'}
+                      title={t('metaExpTitle')}
+                      text={jwtState.result.expiresAtText || t('metaUndeclared')}
                     />
                     <List.Item.Detail.Metadata.Separator />
                     <List.Item.Detail.Metadata.Label
-                      title="生命周期状态"
+                      title={t('metaLifecycleTitle')}
                       text={jwtState.result.expiryCountdownText}
                     />
-                    <List.Item.Detail.Metadata.Label title="本地验签状态" text={verifyMsg} />
+                    <List.Item.Detail.Metadata.Label title={t('metaVerifyTitle')} text={verifyMsg} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -263,20 +351,25 @@ export function JwtUrlCodecCommand() {
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard
-                  title="复制 Payload JSON"
+                  title={t('actionCopyPayload')}
                   content={JSON.stringify(jwtState.result.payload, null, 2)}
                 />
                 <Action.CopyToClipboard
-                  title="复制 Header JSON"
+                  title={t('actionCopyHeader')}
                   content={JSON.stringify(jwtState.result.header, null, 2)}
                 />
                 <Action
-                  title="使用剪贴板密钥校验 HS256 签名"
+                  title={t('actionVerifyWithForm')}
+                  icon={Icon.Key}
+                  onAction={openVerifyForm}
+                />
+                <Action
+                  title={t('actionVerifyClipboard')}
                   icon={Icon.Shield}
                   onAction={handleVerifyFromClipboardSecret}
                 />
                 <Action
-                  title="从剪贴板重新读取 Token"
+                  title={t('actionReloadToken')}
                   icon={Icon.Clipboard}
                   onAction={handleLoadFromClipboard}
                 />
@@ -293,13 +386,16 @@ export function JwtUrlCodecCommand() {
               accessories={[{ tag: typeof claimVal }]}
               detail={
                 <List.Item.Detail
-                  markdown={`### Claim 名称\n${fencedBlock(claimKey)}\n\n### Claim 值\n${fencedBlock(JSON.stringify(claimVal, null, 2), 'json')}`}
+                  markdown={t('claimDetailMd', {
+                    keyBlock: fencedBlock(claimKey),
+                    valBlock: fencedBlock(JSON.stringify(claimVal, null, 2), 'json')
+                  })}
                 />
               }
               actions={
                 <ActionPanel>
                   <Action.CopyToClipboard
-                    title={`复制 ${claimKey} 值`}
+                    title={t('actionCopyClaim', { key: claimKey })}
                     content={
                       typeof claimVal === 'object' ? JSON.stringify(claimVal) : String(claimVal)
                     }
@@ -312,36 +408,39 @@ export function JwtUrlCodecCommand() {
       )}
 
       {mode === 'url' && urlState && !urlState.ok && !urlState.empty && (
-        <List.Section title="URL 解析异常">
+        <List.Section title={t('urlErrSecTitle')}>
           <List.Item
             id="url-error"
-            title="URL 格式无法识别"
+            title={t('urlErrItemTitle')}
             subtitle={urlState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: { value: '格式错误', color: Color.Red } }]}
-            detail={<List.Item.Detail markdown={`### URL 解析异常\n\n${fencedBlock(urlState.error)}`} />}
+            accessories={[{ tag: { value: t('urlErrTag'), color: Color.Red } }]}
+            detail={<List.Item.Detail markdown={t('urlErrDetailMd', { block: fencedBlock(urlState.error) })} />}
           />
         </List.Section>
       )}
 
       {mode === 'url' && urlState && urlState.ok && (
-        <List.Section title={`URL 结构与 Query 参数 (${urlState.result.queryParams.length} 项)`}>
+        <List.Section title={t('urlSecTitle', { count: urlState.result.queryParams.length })}>
           <List.Item
             id="url-overview"
-            title={urlState.result.host !== '-' ? `${urlState.result.host}${urlState.result.pathname}` : 'Query 参数集合'}
+            title={urlState.result.host !== '-' ? `${urlState.result.host}${urlState.result.pathname}` : t('urlQueryCollectionTitle')}
             subtitle={urlState.result.decodedFullUrl}
             icon={Icon.Globe}
             accessories={[{ tag: urlState.result.protocol.toUpperCase() }]}
             detail={
               <List.Item.Detail
-                markdown={`### 解码预览（保留编码的 URL 用于请求）\n${fencedBlock(urlState.result.decodedFullUrl)}\n\n### Query 参数 JSON\n${fencedBlock(queryParamsToJson(urlState.result.queryParams), 'json')}`}
+                markdown={t('urlOverviewDetailMd', {
+                  decodedBlock: fencedBlock(urlState.result.decodedFullUrl),
+                  jsonBlock: fencedBlock(queryParamsToJson(urlState.result.queryParams), 'json')
+                })}
                 metadata={
                   <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label title="协议 (Protocol)" text={urlState.result.protocol} />
-                    <List.Item.Detail.Metadata.Label title="主机 (Host)" text={urlState.result.host} />
-                    <List.Item.Detail.Metadata.Label title="端口 (Port)" text={urlState.result.port} />
-                    <List.Item.Detail.Metadata.Label title="路径 (Pathname)" text={urlState.result.pathname} />
-                    <List.Item.Detail.Metadata.Label title="哈希锚点 (Hash)" text={urlState.result.hash || '无'} />
+                    <List.Item.Detail.Metadata.Label title={t('metaProtocol')} text={urlState.result.protocol} />
+                    <List.Item.Detail.Metadata.Label title={t('metaHost')} text={urlState.result.host} />
+                    <List.Item.Detail.Metadata.Label title={t('metaPort')} text={urlState.result.port} />
+                    <List.Item.Detail.Metadata.Label title={t('metaPathname')} text={urlState.result.pathname} />
+                    <List.Item.Detail.Metadata.Label title={t('metaHash')} text={urlState.result.hash || t('metaNone')} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -349,14 +448,19 @@ export function JwtUrlCodecCommand() {
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard
-                  title="复制完整 URL（保留编码）"
+                  title={t('actionCopyEncodedUrl')}
                   content={urlState.result.encodedFullUrl}
                 />
                 <Action.CopyToClipboard
-                  title="复制 Query 参数 JSON"
+                  title={t('actionCopyQueryJson')}
                   content={queryParamsToJson(urlState.result.queryParams)}
                 />
-                <Action.CopyToClipboard title="复制解码预览" content={urlState.result.decodedFullUrl} />
+                <Action
+                  title={t('actionAddQueryParam')}
+                  icon={Icon.Plus}
+                  onAction={openAddQueryParamForm}
+                />
+                <Action.CopyToClipboard title={t('actionCopyDecodedUrl')} content={urlState.result.decodedFullUrl} />
               </ActionPanel>
             }
           />
@@ -369,21 +473,41 @@ export function JwtUrlCodecCommand() {
               icon={Icon.Document}
               accessories={[
                 param.isNestedUrl
-                  ? { tag: '嵌套 URL' }
+                  ? { tag: t('tagNestedUrl') }
                   : param.isJsonLike
-                    ? { tag: 'JSON 载荷' }
+                    ? { tag: t('tagJsonPayload') }
                     : { tag: 'Query' },
               ]}
               detail={
                 <List.Item.Detail
-                  markdown={`### 参数名称\n${fencedBlock(param.key)}\n\n#### 解码值\n${fencedBlock(param.decodedValue)}\n\n#### 原始编码值\n${fencedBlock(param.rawValue)}`}
+                  markdown={t('paramDetailMd', {
+                    keyBlock: fencedBlock(param.key),
+                    valBlock: fencedBlock(param.decodedValue),
+                    rawBlock: fencedBlock(param.rawValue)
+                  })}
                 />
               }
               actions={
                 <ActionPanel>
-                  <Action.CopyToClipboard title="复制解码值" content={param.decodedValue} />
+                  <Action.CopyToClipboard title={t('actionCopyDecodedVal')} content={param.decodedValue} />
+                  <Action
+                    title={t('actionEditQueryParam')}
+                    icon={Icon.Pencil}
+                    onAction={() => openEditQueryParamForm(idx, param)}
+                  />
+                  <Action
+                    title={t('actionDeleteQueryParam')}
+                    icon={Icon.Trash}
+                    style={Action.Style.Destructive}
+                    onAction={() => handleDeleteQueryParam(idx, param.key)}
+                  />
+                  <Action
+                    title={t('actionAddQueryParam')}
+                    icon={Icon.Plus}
+                    onAction={openAddQueryParamForm}
+                  />
                   <Action.CopyToClipboard
-                    title="复制 key=value"
+                    title={t('actionCopyRawPair')}
                     content={`${param.rawKey}=${param.rawValue}`}
                   />
                 </ActionPanel>

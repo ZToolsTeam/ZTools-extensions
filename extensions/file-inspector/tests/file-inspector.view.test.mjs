@@ -158,3 +158,46 @@ test('目标换行符默认跟随系统：macOS 为 LF，Windows 为 CRLF，标�
     })
   }
 })
+
+
+test('支持通过 plugin_files_dropped 拖入文件读取并透视真实格式与编码', async () => {
+  const listeners = new Map()
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex')
+  host.ipc.filesystem_read_file = () => ({ success: true, size: bytes.length, content: bytes.toString('base64') })
+  const view = await mount(FileInspectorCommand)
+  try {
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/dropped.jpg'] } })
+    await tick()
+    assert.equal(view.tree().props.workbenchPanel.title, 'dropped.jpg')
+    assert.equal(view.item('line-1').props.accessories[0].tag, '应为 .png')
+  } finally {
+    view.unmount()
+    globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 Ctrl+V 粘贴任意扩展名伪装文件立即触发文件头与编码检测', async () => {
+  const bytes = Buffer.from('89504e470d0a1a0a', 'hex')
+  host.ipc.filesystem_read_file = () => ({ success: true, size: bytes.length, content: bytes.toString('base64') })
+  const view = await mount(FileInspectorCommand)
+  try {
+    await view.pasteFiles(['/tmp/pasted_disguised.csv'])
+    await tick()
+    assert.equal(view.tree().props.workbenchPanel.title, 'pasted_disguised.csv')
+    assert.equal(view.item('line-1').props.accessories[0].tag, '应为 .png')
+    assert.match(view.tree().props.filterBar.summaryText, /image\/png/)
+  } finally {
+    view.unmount()
+  }
+})

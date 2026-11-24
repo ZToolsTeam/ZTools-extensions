@@ -5,17 +5,19 @@ import {
   Icon,
   useState,
   useEffect,
+  useLocale,
   showToast,
   Toast,
   confirmAlert
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
-  OFFICIAL_QQ_GROUP_RULES,
+  getOfficialQQGroupRules,
   QQCleanCategoryItem,
   QQScannedFileEntry,
   QQAccountStat,
   QQ_FILE_DISPLAY_LIMIT,
-  FORBIDDEN_REASON,
+  getForbiddenReason,
   formatBytes,
   formatDateTime,
   fetchQQCleanSnapshot,
@@ -28,13 +30,14 @@ import {
   isRealElectronHost
 } from './logic.js'
 
-const CLIENT_REQUIRED_TEXT = '需要在 ZTools 客户端中使用'
-
 function stripLeadingSymbols(name: string): string {
   return name.replace(/^[^一-龥A-Za-z0-9]+/, '').trim() || name
 }
 
+const SHORTCUT_CLEAN_CHECKED = { modifiers: ['ctrl', 'shift'] as ('ctrl' | 'shift')[], key: 'return' }
+
 export default function QQCleanerCommand() {
+  useLocale()
   const inRealHost = isRealElectronHost()
   const [searchText, setSearchText] = useState('')
   const [selectedAccount, setSelectedAccount] = useState<string>('ALL')
@@ -58,7 +61,7 @@ export default function QQCleanerCommand() {
     if (!inRealHost) return
     setIsLoading(true)
     if (options.showIndicator) {
-      showToast({ style: Toast.Style.Animated, title: '正在扫描 QQ / TIM 缓存...' })
+      showToast({ style: Toast.Style.Animated, title: t('scanningToast') })
     }
     try {
       const snap = await fetchQQCleanSnapshot()
@@ -79,18 +82,18 @@ export default function QQCleanerCommand() {
         setCheckedFilePaths(pickDefaultCheckedPaths(visible, snap.categories))
       }
       if (snap.error) {
-        showToast({ style: Toast.Style.Failure, title: '扫描结果不完整', message: snap.error })
+        showToast({ style: Toast.Style.Failure, title: t('scanIncompleteToast'), message: snap.error })
       } else if (options.showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '扫描完成',
-          message: `识别 ${snap.detectedAccounts.length} 个 QQ 号，找到 ${snap.allFiles.length} 个文件`
+          title: t('scanCompleteToast'),
+          message: t('scanCompleteMsg', { accounts: snap.detectedAccounts.length, files: snap.allFiles.length })
         })
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setScanError(message)
-      showToast({ style: Toast.Style.Failure, title: '扫描失败', message })
+      showToast({ style: Toast.Style.Failure, title: t('scanFailedToast'), message })
     } finally {
       setIsLoading(false)
     }
@@ -124,7 +127,7 @@ export default function QQCleanerCommand() {
 
   function toggleSingleFileCheck(file: QQScannedFileEntry, nextChecked?: boolean) {
     if (file.isProtected || file.groupId === 999) {
-      showToast({ style: Toast.Style.Failure, title: '聊天数据库不能勾选', message: FORBIDDEN_REASON })
+      showToast({ style: Toast.Style.Failure, title: t('protectedDbToastTitle'), message: getForbiddenReason() })
       return
     }
     setCheckedFilePaths(prev => {
@@ -152,26 +155,32 @@ export default function QQCleanerCommand() {
     if (targetFiles.length === 0) {
       showToast({
         style: Toast.Style.Failure,
-        title: '没有勾选任何文件',
-        message: '请先在右侧勾选要清理的文件'
+        title: t('noFilesCheckedTitle'),
+        message: t('noFilesCheckedMsg')
       })
       return
     }
 
-    const breakdownLines = OFFICIAL_QQ_GROUP_RULES.filter(r => r.groupId !== 999)
+    const groupRules = getOfficialQQGroupRules()
+    const breakdownLines = groupRules.filter(r => r.groupId !== 999)
       .map(rule => {
         const inGroup = targetFiles.filter(f => f.groupId === rule.groupId)
         if (inGroup.length === 0) return ''
         const bytes = inGroup.reduce((s, f) => s + f.sizeBytes, 0)
-        return `- ${rule.shortName}：${inGroup.length} 个（${formatBytes(bytes)}）`
+        return t('breakdownLine', { name: rule.shortName, count: inGroup.length, bytes: formatBytes(bytes) })
       })
       .filter(Boolean)
       .join('\n')
 
     const confirmed = await confirmAlert({
-      title: `把 ${targetFiles.length} 个文件移入回收站？`,
-      message: `范围：${selectedAccount === 'ALL' ? '全部 QQ 号' : selectedAccount}，共 ${formatBytes(targetBytes)}\n\n${breakdownLines}\n\n${FORBIDDEN_REASON}。文件移入回收站后仍占用磁盘空间，清空回收站后才会释放。`,
-      primaryAction: { title: '移入回收站', style: 'destructive' }
+      title: t('confirmCleanTitle', { count: targetFiles.length }),
+      message: t('confirmCleanMsg', {
+        scope: selectedAccount === 'ALL' ? t('allAccountsLabel') : selectedAccount,
+        bytes: formatBytes(targetBytes),
+        breakdown: breakdownLines,
+        reason: getForbiddenReason()
+      }),
+      primaryAction: { title: t('moveToTrashBtn'), style: 'destructive' }
     })
     if (!confirmed) return
 
@@ -192,22 +201,22 @@ export default function QQCleanerCommand() {
 
   async function locateFile(filePath: string) {
     const ok = await openQQDirectory(filePath)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: filePath })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('locateFailedToast'), message: filePath })
   }
 
   async function openFile(filePath: string) {
     const ok = await openQQFileDefault(filePath)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法打开文件', message: filePath })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('openFailedToast'), message: filePath })
   }
 
   if (!inRealHost) {
     return List({
-      searchBarPlaceholder: '搜索 QQ / TIM 缓存文件',
+      searchBarPlaceholder: t('searchClientRequiredPlaceholder'),
       children: [
         List.Item({
           id: 'qq-client-required',
-          title: CLIENT_REQUIRED_TEXT,
-          subtitle: '本插件读取本机 QQ / TIM 的缓存目录，只能在 Windows 版 ZTools 客户端中运行',
+          title: t('clientRequired'),
+          subtitle: t('clientRequiredSubtitle'),
           icon: { source: Icon.Info }
         })
       ]
@@ -228,8 +237,8 @@ export default function QQCleanerCommand() {
       id: file.id,
       title: file.name,
       subtitle: isProtected
-        ? `${file.accountId} · 聊天数据库，受保护，不会被清理 · ${file.parentDir}`
-        : `${file.accountId} · ${formatDateTime(file.mtime)} · ${file.parentDir}`,
+        ? t('protectedDbSubtitle', { account: file.accountId, dir: file.parentDir })
+        : t('fileSubtitle', { account: file.accountId, date: formatDateTime(file.mtime), dir: file.parentDir }),
       checkable: !isProtected,
       checked: isChecked,
       onCheckChange: (next: boolean) => toggleSingleFileCheck(file, next),
@@ -237,39 +246,40 @@ export default function QQCleanerCommand() {
       icon: { source: isProtected ? Icon.Lock : Icon.Document },
       accessories: [
         { progress: { value: volRatio } },
-        { tag: { value: isProtected ? '受保护' : file.unrecognized ? '用途未识别' : file.groupName } },
+        { tag: { value: isProtected ? t('tagProtected') : file.unrecognized ? t('tagUnrecognized') : file.groupName } },
         { text: formatBytes(file.sizeBytes) }
       ],
       actions: ActionPanel({
         title: file.name,
         children: [
           Action({
-            title: `清理已勾选的 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)})`,
-            icon: Icon.Trash,
-            style: Action.Style.Destructive,
-            onAction: () => handleCleanChecked()
-          }),
-          Action({
-            title: '在资源管理器定位',
+            title: t('revealInExplorer'),
             icon: Icon.Folder,
             onAction: () => locateFile(file.path)
           }),
           ...(!isProtected
             ? [
                 Action({
-                  title: isChecked ? '取消勾选此文件' : '勾选此文件',
+                  title: isChecked ? t('uncheckFile') : t('checkFile'),
                   icon: Icon.Checkmark,
                   onAction: () => toggleSingleFileCheck(file, !isChecked)
                 })
               ]
             : []),
           Action({
-            title: '使用默认程序打开文件',
+            title: t('openWithDefault'),
             icon: Icon.Window,
             onAction: () => openFile(file.path)
           }),
+          Action({
+            title: t('cleanCheckedAction', { count: targetFiles.length, bytes: formatBytes(targetBytes) }),
+            icon: Icon.Trash,
+            style: Action.Style.Destructive,
+            shortcut: SHORTCUT_CLEAN_CHECKED,
+            onAction: () => handleCleanChecked()
+          }),
           Action.CopyToClipboard({
-            title: '复制文件完整路径',
+            title: t('copyFullPath'),
             content: file.path
           })
         ]
@@ -278,24 +288,26 @@ export default function QQCleanerCommand() {
   })
 
   const activeCategory = categories.find(c => c.groupId === selectedGroupId)
-  const rightTitle = activeCategory ? `${activeCategory.name}（按体积降序）` : '全部 QQ / TIM 文件（按体积降序）'
+  const rightTitle = activeCategory
+    ? t('rightTitleCategory', { name: activeCategory.name })
+    : t('rightTitleAll')
   const shownText =
     filteredFiles.length > visibleFiles.length
-      ? `${filteredFiles.length} 项，显示最大的 ${visibleFiles.length} 项`
-      : `${filteredFiles.length} 项`
+      ? t('shownTruncated', { total: filteredFiles.length, shown: visibleFiles.length })
+      : t('shownAll', { total: filteredFiles.length })
 
   return List({
-    searchBarPlaceholder: '搜索文件名、路径、分组或 QQ 号',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: (val: string) => setSearchText(val),
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按 QQ 号筛选',
+      tooltip: t('accountFilterTooltip'),
       value: selectedAccount,
       onChange: val => setSelectedAccount(val),
       children: [
         List.Dropdown.Item({
-          title: `全部 QQ 号 (${allFiles.length})`,
+          title: t('allAccountsDropdown', { count: allFiles.length }),
           value: 'ALL'
         }),
         ...accountStats.map(acc =>
@@ -308,13 +320,27 @@ export default function QQCleanerCommand() {
     }),
     filterBar: {
       summaryText: scanError
-        ? `扫描结果不完整：${scanError}`
-        : `${selectedAccount === 'ALL' ? '全部 QQ 号' : selectedAccount} · 缓存占用 ${formatBytes(totalScannable)} · 已勾选 ${targetFiles.length} 个文件 (${formatBytes(targetBytes)}) · 聊天数据库 ${formatBytes(protectedDbBytes)} 受保护`,
+        ? t('summaryIncomplete', { error: scanError })
+        : t('summaryReady', {
+            scope: selectedAccount === 'ALL' ? t('allAccountsLabel') : selectedAccount,
+            scannable: formatBytes(totalScannable),
+            count: targetFiles.length,
+            bytes: formatBytes(targetBytes),
+            protected: formatBytes(protectedDbBytes)
+          }),
       actions: [
         {
+          id: 'qq-act-clean',
+          label: t('cleanCheckedAction', { count: targetFiles.length, bytes: formatBytes(targetBytes) }),
+          title: t('cleanCheckedAction', { count: targetFiles.length, bytes: formatBytes(targetBytes) }),
+          style: 'primary',
+          disabled: targetFiles.length === 0,
+          onAction: () => handleCleanChecked()
+        },
+        {
           id: 'qq-act-rescan',
-          label: '重新扫描',
-          title: '重新扫描',
+          label: t('rescan'),
+          title: t('rescan'),
           style: 'secondary',
           onAction: () => refreshScan({ showIndicator: true })
         }
@@ -322,21 +348,21 @@ export default function QQCleanerCommand() {
     },
     subList: {
       title: rightTitle,
-      subtitle: `${shownText} · 已勾选 ${targetFiles.length} 个 (${formatBytes(targetBytes)})`,
+      subtitle: t('subListSubtitle', { shown: shownText, count: targetFiles.length, bytes: formatBytes(targetBytes) }),
       checkable: selectableVisible.length > 0,
       checked: allVisibleChecked ? true : someVisibleChecked ? 'indeterminate' : false,
       onCheckChange: () => toggleAllVisibleCheck(),
-      emptyText: isLoading ? '正在扫描...' : '当前 QQ 号与分组下没有找到缓存文件',
+      emptyText: isLoading ? t('scanningEmpty') : t('noFilesEmpty'),
       items: rightSubListItems
     },
     children: [
       List.Section({
-        title: 'QQ 存储总览',
+        title: t('overviewSection'),
         children: [
           List.Item({
             id: 'qq-nav-all',
-            title: '全部 QQ 文件',
-            subtitle: `已列出 ${allFiles.length} 个文件`,
+            title: t('allQQFilesNav'),
+            subtitle: t('listedCountSub', { count: allFiles.length }),
             icon: { source: Icon.HardDrive },
             accessories: [{ text: formatBytes(totalScannable) }],
             onSelect: () => setSelectedGroupId(0)
@@ -344,7 +370,7 @@ export default function QQCleanerCommand() {
         ]
       }),
       List.Section({
-        title: '清理分组与聊天库保护区',
+        title: t('groupsSection'),
         children: categories.map(cat => {
           const isProtected = cat.groupId === 999
           const checkedInGroup = targetFiles.filter(f => f.groupId === cat.groupId).length
@@ -352,8 +378,8 @@ export default function QQCleanerCommand() {
             id: `qq-nav-group-${cat.groupId}`,
             title: cat.shortName,
             subtitle: isProtected
-              ? '受保护，不会被清理'
-              : `已列出 ${cat.files.length} 个 · 已勾选 ${checkedInGroup} 个`,
+              ? t('protectedGroupSub')
+              : t('groupCountSub', { total: cat.files.length, checked: checkedInGroup }),
             icon: { source: isProtected ? Icon.Lock : Icon.Folder },
             accessories: [{ text: formatBytes(cat.totalSizeBytes) }],
             onSelect: () => setSelectedGroupId(cat.groupId)

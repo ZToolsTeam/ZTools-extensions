@@ -1,6 +1,7 @@
 /**
  * ZTools 文本排版与格式化核心逻辑 (纯函数)
  */
+import { getLocale } from '@ztools/declarative-ui'
 import { ST_CHARACTERS, ST_PHRASES, TS_CHARACTERS, TS_PHRASES } from "./opencc-dict.js";
 
 export interface TextStats {
@@ -473,7 +474,7 @@ export function dedupeLines(text: string): string {
 
 export function sortLines(text: string, order: "asc" | "desc" = "asc"): string {
   const lines = normalizeLineEndings(text || "").split("\n");
-  lines.sort((left, right) => left.localeCompare(right, "zh-CN"));
+  lines.sort((left, right) => left.localeCompare(right, getLocale()));
   if (order === "desc") lines.reverse();
   return lines.join("\n");
 }

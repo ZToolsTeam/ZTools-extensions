@@ -4,6 +4,7 @@ import React, {
   Color,
   Icon,
   List,
+  useLocale,
   useMemo,
   useState
 } from '@ztools/declarative-ui'
@@ -13,6 +14,7 @@ import {
   searchHttpStatus,
   searchLinuxCommands
 } from './dict-service.js'
+import { t } from './i18n.js'
 import type { DictCategory } from './types'
 
 export * from './types.js'
@@ -33,53 +35,49 @@ export function LinuxHttpDictCommand(props: LinuxHttpDictCommandProps = {}) {
         ? 'port'
         : 'linux')
 
+  const locale = useLocale()
   const [category, setCategory] = useState<DictCategory>(defaultCategory)
   const [searchText, setSearchText] = useState<string>(props.initialSearchText ?? '')
 
-  const filteredCommands = useMemo(() => searchLinuxCommands(searchText), [searchText])
-  const filteredHttpStatus = useMemo(() => searchHttpStatus(searchText), [searchText])
-  const filteredPorts = useMemo(() => searchCommonPorts(searchText), [searchText])
+  const filteredCommands = useMemo(() => searchLinuxCommands(searchText), [searchText, locale])
+  const filteredHttpStatus = useMemo(() => searchHttpStatus(searchText), [searchText, locale])
+  const filteredPorts = useMemo(() => searchCommonPorts(searchText), [searchText, locale])
 
-  return (
-    <List
-      searchText={searchText}
-      onSearchTextChange={setSearchText}
-      searchBarPlaceholder={
-        category === 'linux'
-          ? '搜索 Linux 命令或中文场景（如：tar、解压、端口占用、查找文件、awk）...'
-          : category === 'http'
-            ? '输入 HTTP 状态码或故障现象（如：502、504、499、403、网关超时）...'
-            : '输入端口号或服务名称（如：6379、3306、redis、mysql、nacos）...'
-      }
-      searchBarAccessory={
-        <List.Dropdown
-          value={category}
-          onChange={(v) => {
-            setCategory(v as DictCategory)
-            setSearchText('')
-          }}
-          tooltip="切换速查字典类别"
-        >
-          <List.Dropdown.Item title="Linux 高频命令实例" value="linux" icon={Icon.Terminal} />
-          <List.Dropdown.Item title="HTTP 状态码与排障" value="http" icon={Icon.Globe} />
-          <List.Dropdown.Item title="知名服务默认端口" value="port" icon={Icon.Wifi} />
-        </List.Dropdown>
-      }
-      isShowingDetail={true}
-    >
-      {category === 'linux' && (
-        <List.Section title={`Linux 高频实战命令库（共 ${filteredCommands.length} 项）`}>
-          {filteredCommands.map((item) => (
-            <List.Item
-              key={item.id}
-              id={item.id}
-              icon={Icon.Terminal}
-              title={item.name}
-              subtitle={item.description}
-              accessories={[{ tag: item.groupLabel }]}
-              detail={
-                <List.Item.Detail
-                  markdown={`#### 生产高频场景实例
+  const hasQuery = searchText.trim().length > 0
+  const showLinux =
+    category === 'linux' ||
+    (category === 'all' && filteredCommands.length > 0) ||
+    (hasQuery && filteredCommands.length > 0)
+  const showHttp =
+    category === 'http' ||
+    (category === 'all' && filteredHttpStatus.length > 0) ||
+    (hasQuery && filteredHttpStatus.length > 0)
+  const showPort =
+    category === 'port' ||
+    (category === 'all' && filteredPorts.length > 0) ||
+    (hasQuery && filteredPorts.length > 0)
+
+  const sectionOrder: Array<'linux' | 'http' | 'port'> =
+    category === 'http'
+      ? ['http', 'linux', 'port']
+      : category === 'port'
+        ? ['port', 'linux', 'http']
+        : ['linux', 'http', 'port']
+
+  const renderLinuxSection = () =>
+    showLinux && filteredCommands.length > 0 ? (
+      <List.Section key="sec-linux" title={t('secLinuxTitle', { count: filteredCommands.length })}>
+        {filteredCommands.map((item) => (
+          <List.Item
+            key={`linux-${item.id}`}
+            id={item.id}
+            icon={Icon.Terminal}
+            title={item.name}
+            subtitle={item.description}
+            accessories={[{ tag: item.groupLabel }]}
+            detail={
+              <List.Item.Detail
+                markdown={`${t('linuxExamplesHeader')}
 ${item.examples
   .map(
     (ex) => `##### ${ex.title}
@@ -90,148 +88,182 @@ ${ex.note ? `*${ex.note}*` : ''}`
   )
   .join('\n\n')}
 
-#### 常用核心参数说明
-| 参数选项 | 作用说明 |
-| :--- | :--- |
+${t('linuxParamsHeader')}
 ${item.params.map((p) => `| \`${p.flag}\` | ${p.desc} |`).join('\n')}
 `}
-                  metadata={
-                    <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="高频评级" text={item.stars} />
-                      <List.Item.Detail.Metadata.Separator />
-                      <List.Item.Detail.Metadata.Label
-                        title="软件包名"
-                        text={item.package || item.name}
-                      />
-                    </List.Item.Detail.Metadata>
-                  }
+                metadata={
+                  <List.Item.Detail.Metadata>
+                    <List.Item.Detail.Metadata.Label title={t('metaStarsTitle')} text={item.stars} />
+                    <List.Item.Detail.Metadata.Separator />
+                    <List.Item.Detail.Metadata.Label
+                      title={t('metaPackageTitle')}
+                      text={item.package || item.name}
+                    />
+                  </List.Item.Detail.Metadata>
+                }
+              />
+            }
+            actions={
+              <ActionPanel>
+                <Action.CopyToClipboard
+                  title={t('actionCopyPrimaryCmd')}
+                  content={item.examples[0]?.cmd || item.name}
                 />
-              }
-              actions={
-                <ActionPanel>
-                  <Action.CopyToClipboard
-                    title="复制首选推荐命令"
-                    content={item.examples[0]?.cmd || item.name}
-                  />
-                  <Action.CopyToClipboard
-                    title="复制全部示例命令"
-                    content={item.examples.map((e) => `# ${e.title}\n${e.cmd}`).join('\n\n')}
-                    shortcut={{ modifiers: ['cmd', 'shift'], key: 'c' }}
-                  />
-                </ActionPanel>
-              }
-            />
-          ))}
-        </List.Section>
-      )}
+                <Action.CopyToClipboard
+                  title={t('actionCopyAllExamples')}
+                  content={item.examples.map((e) => `# ${e.title}\n${e.cmd}`).join('\n\n')}
+                  shortcut={{ modifiers: ['cmd', 'shift'], key: 'c' }}
+                />
+              </ActionPanel>
+            }
+          />
+        ))}
+      </List.Section>
+    ) : null
 
-      {category === 'http' && (
-        <List.Section title={`HTTP 状态码排障指南（共 ${filteredHttpStatus.length} 项）`}>
-          {filteredHttpStatus.map((item) => (
-            <List.Item
-              key={String(item.code)}
-              id={String(item.code)}
-              icon={Icon.Globe}
-              title={`${item.code} ${item.phrase}`}
-              subtitle={item.meaning}
-              accessories={[
-                item.code >= 500
-                  ? { tag: { value: '服务端错误', color: Color.Red } }
-                  : item.code >= 400
-                    ? { tag: '客户端/网关异常' }
-                    : { tag: '正常/重定向' }
-              ]}
-              detail={
-                <List.Item.Detail
-                  markdown={`#### 常见原因
+  const renderHttpSection = () =>
+    showHttp && filteredHttpStatus.length > 0 ? (
+      <List.Section key="sec-http" title={t('secHttpTitle', { count: filteredHttpStatus.length })}>
+        {filteredHttpStatus.map((item) => (
+          <List.Item
+            key={`http-${item.code}`}
+            id={String(item.code)}
+            icon={Icon.Globe}
+            title={`${item.code} ${item.phrase}`}
+            subtitle={item.meaning}
+            accessories={[
+              item.code >= 500
+                ? { tag: { value: t('httpTag5xx'), color: Color.Red } }
+                : item.code >= 400
+                  ? { tag: t('httpTag4xx') }
+                  : { tag: t('httpTagOther') }
+            ]}
+            detail={
+              <List.Item.Detail
+                markdown={`${t('httpCausesHeader')}
 ${item.causes.map((c) => `- ${c}`).join('\n')}
 
-#### 排障自查清单
-${item.troubleshooting.map((t, i) => `${i + 1}. **${t.step}**：${t.action}`).join('\n')}
+${t('httpStepsHeader')}
+${item.troubleshooting.map((stepItem, i) => `${i + 1}. **${stepItem.step}**: ${stepItem.action}`).join('\n')}
 
-#### 架构设计提示
+${t('httpArchHeader')}
 ${item.architectureNotes}
 `}
-                  metadata={
-                    <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="标准依据" text={item.rfc} />
-                      <List.Item.Detail.Metadata.Separator />
-                      <List.Item.Detail.Metadata.Label
-                        title="安全重试建议"
-                        text={item.isRetryable ? '支持幂等退避重试' : '不可盲目重试（需修参数/查单）'}
-                      />
-                    </List.Item.Detail.Metadata>
-                  }
+                metadata={
+                  <List.Item.Detail.Metadata>
+                    <List.Item.Detail.Metadata.Label title={t('metaRfcTitle')} text={item.rfc} />
+                    <List.Item.Detail.Metadata.Separator />
+                    <List.Item.Detail.Metadata.Label
+                      title={t('metaRetryTitle')}
+                      text={item.isRetryable ? t('retrySafeText') : t('retryUnsafeText')}
+                    />
+                  </List.Item.Detail.Metadata>
+                }
+              />
+            }
+            actions={
+              <ActionPanel>
+                <Action.CopyToClipboard
+                  title={t('actionCopyHttpSummary')}
+                  content={`HTTP ${item.code} ${item.phrase}: ${item.meaning}\n${item.troubleshooting.map((stepItem) => `- ${stepItem.step}: ${stepItem.action}`).join('\n')}`}
                 />
-              }
-              actions={
-                <ActionPanel>
-                  <Action.CopyToClipboard
-                    title="复制排障指南摘要"
-                    content={`HTTP ${item.code} ${item.phrase}: ${item.meaning}\n${item.troubleshooting.map((t) => `- ${t.step}: ${t.action}`).join('\n')}`}
-                  />
-                  <Action.CopyToClipboard
-                    title="仅复制状态码数字"
-                    content={String(item.code)}
-                  />
-                </ActionPanel>
-              }
-            />
-          ))}
-        </List.Section>
-      )}
+                <Action.CopyToClipboard
+                  title={t('actionCopyHttpCode')}
+                  content={String(item.code)}
+                />
+              </ActionPanel>
+            }
+          />
+        ))}
+      </List.Section>
+    ) : null
 
-      {category === 'port' && (
-        <List.Section title={`知名网络端口与安全组基线（共 ${filteredPorts.length} 项）`}>
-          {filteredPorts.map((item) => (
-            <List.Item
-              key={String(item.port)}
-              id={String(item.port)}
-              icon={Icon.Wifi}
-              title={`端口 ${item.port} — ${item.service}`}
-              subtitle={item.description}
-              accessories={[{ tag: `${item.protocol} · ${item.category}` }]}
-              detail={
-                <List.Item.Detail
-                  markdown={`#### 防火墙与安全组加固建议
+  const renderPortSection = () =>
+    showPort && filteredPorts.length > 0 ? (
+      <List.Section key="sec-port" title={t('secPortTitle', { count: filteredPorts.length })}>
+        {filteredPorts.map((item) => (
+          <List.Item
+            key={`port-${item.port}`}
+            id={String(item.port)}
+            icon={Icon.Wifi}
+            title={t('portTitlePrefix', { port: item.port, service: item.service })}
+            subtitle={item.description}
+            accessories={[{ tag: `${item.protocol} · ${item.category}` }]}
+            detail={
+              <List.Item.Detail
+                markdown={`${t('portSecurityHeader')}
 > ${item.securityNotice}
 
-#### 查看端口占用
-Linux：
+${t('portCheckHeader')}
+Linux:
 \`\`\`bash
 ${portCheckCommands(item).linux}
 \`\`\`
-macOS：
+macOS:
 \`\`\`bash
 ${portCheckCommands(item).macos}
 \`\`\`
-Windows：
+Windows:
 \`\`\`bat
 ${portCheckCommands(item).windows}
 \`\`\`
 `}
+              />
+            }
+            actions={
+              <ActionPanel>
+                <Action.CopyToClipboard title={t('actionCopyPort')} content={String(item.port)} />
+                <Action.CopyToClipboard
+                  title={t('actionCopyLinuxPort')}
+                  content={portCheckCommands(item).linux}
                 />
-              }
-              actions={
-                <ActionPanel>
-                  <Action.CopyToClipboard title="复制端口号" content={String(item.port)} />
-                  <Action.CopyToClipboard
-                    title="复制 Linux 端口排查命令"
-                    content={portCheckCommands(item).linux}
-                  />
-                  <Action.CopyToClipboard
-                    title="复制 macOS 端口排查命令"
-                    content={portCheckCommands(item).macos}
-                  />
-                  <Action.CopyToClipboard
-                    title="复制 Windows 端口排查命令"
-                    content={portCheckCommands(item).windows}
-                  />
-                </ActionPanel>
-              }
-            />
-          ))}
-        </List.Section>
+                <Action.CopyToClipboard
+                  title={t('actionCopyMacPort')}
+                  content={portCheckCommands(item).macos}
+                />
+                <Action.CopyToClipboard
+                  title={t('actionCopyWinPort')}
+                  content={portCheckCommands(item).windows}
+                />
+              </ActionPanel>
+            }
+          />
+        ))}
+      </List.Section>
+    ) : null
+
+  return (
+    <List
+      searchText={searchText}
+      onSearchTextChange={setSearchText}
+      searchBarPlaceholder={
+        category === 'all'
+          ? t('searchAllPlaceholder')
+          : category === 'linux'
+            ? t('searchLinuxPlaceholder')
+            : category === 'http'
+              ? t('searchHttpPlaceholder')
+              : t('searchPortPlaceholder')
+      }
+      searchBarAccessory={
+        <List.Dropdown
+          value={category}
+          onChange={(v) => {
+            setCategory(v as DictCategory)
+            setSearchText('')
+          }}
+          tooltip={t('dropdownTooltip')}
+        >
+          <List.Dropdown.Item title={t('modeAllTitle')} value="all" icon={Icon.MagnifyingGlass} />
+          <List.Dropdown.Item title={t('modeLinuxTitle')} value="linux" icon={Icon.Terminal} />
+          <List.Dropdown.Item title={t('modeHttpTitle')} value="http" icon={Icon.Globe} />
+          <List.Dropdown.Item title={t('modePortTitle')} value="port" icon={Icon.Wifi} />
+        </List.Dropdown>
+      }
+      isShowingDetail={true}
+    >
+      {sectionOrder.map((sec) =>
+        sec === 'linux' ? renderLinuxSection() : sec === 'http' ? renderHttpSection() : renderPortSection()
       )}
     </List>
   )

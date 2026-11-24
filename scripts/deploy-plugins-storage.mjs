@@ -4,7 +4,7 @@
  * deploy-plugins-storage.mjs
  * 把插件发布产物上传到阿里云 OSS，并刷新阿里云 CDN 上的插件目录缓存。
  *
- * 线上实际使用：阿里云 OSS 存储桶 ztools-data，目录 plugins-v2/，经阿里云 CDN 域名 cdn.ztools.cn 分发。
+ * 线上实际使用：阿里云 OSS 存储桶（由环境变量 OSS_BUCKET / OSS_REGION 指定），目录 plugins-v2/，经阿里云 CDN 域名 cdn.ztools.cn 分发。
  * 1. 先上传插件包与图标（带版本号，长缓存），最后上传插件目录 catalog.json / plugins.json（短缓存），
  *    保证目录里引用的安装包一定已经在线；
  * 2. 刷新 CDN 上插件目录的缓存，让更新与下架尽快生效；
@@ -51,10 +51,10 @@ export function loadEnvFile(envPath) {
 // 自动预加载本地环境变量
 loadEnvFile()
 
-// 线上实际配置：阿里云 OSS 存储桶 ztools-data 的 plugins-v2/ 目录，经 cdn.ztools.cn 分发
+// 存储桶与地域由环境变量 OSS_BUCKET / OSS_REGION 注入（演练模式未传时使用占位值）
 export const DEFAULT_CDN_BASE_URL = 'https://cdn.ztools.cn'
-export const DEFAULT_OSS_BUCKET = 'ztools-data'
-export const DEFAULT_OSS_REGION = 'oss-cn-shenzhen'
+export const DEFAULT_OSS_BUCKET = ''
+export const DEFAULT_OSS_REGION = ''
 export const DEFAULT_OSS_PREFIX = 'plugins-v2'
 
 function normalizePrefix(prefix) {
@@ -161,8 +161,12 @@ function getMimeType(filePath) {
   }
 }
 
-/** 发布脚本产出的截图路径：screenshots/<版本>/<两位序号>-<8 位十六进制内容哈希>.png（见 build-plugins-release.mjs） */
-const SCREENSHOT_OBJECT_PATTERN = /(^|\/)screenshots\/[0-9a-z.+-]+\/\d{2}-[0-9a-f]{8}\.png$/
+/**
+ * 发布脚本产出的截图路径（见 build-plugins-release.mjs）：
+ * - 默认截图：screenshots/<版本>/<两位序号>-<8 位十六进制内容哈希>.png
+ * - 多语言截图：screenshots/<版本>/<locale>/<两位序号>-<8 位十六进制内容哈希>.png
+ */
+const SCREENSHOT_OBJECT_PATTERN = /(^|\/)screenshots\/[0-9a-z.+-]+(?:\/[a-z]{2,3}(?:-[a-z]{4})?(?:-[a-z]{2}|-[0-9]{3})?)?\/\d{2}-[0-9a-f]{8}\.png$/
 
 /**
  * 根据文件类型固化静态分发缓存策略
@@ -417,12 +421,15 @@ export async function deployPluginsStorage(options = {}) {
   const ossConfig = {
     accessKeyId: options.ossAccessKeyId || process.env.OSS_ACCESS_KEY_ID || (dryRun ? 'simulated_oss_key' : null),
     accessKeySecret: options.ossAccessKeySecret || process.env.OSS_ACCESS_KEY_SECRET || (dryRun ? 'simulated_oss_secret' : null),
-    bucket: options.ossBucket || process.env.OSS_BUCKET || DEFAULT_OSS_BUCKET,
-    region: options.ossRegion || process.env.OSS_REGION || DEFAULT_OSS_REGION,
+    bucket: options.ossBucket || process.env.OSS_BUCKET || DEFAULT_OSS_BUCKET || (dryRun ? 'example-oss-bucket' : ''),
+    region: options.ossRegion || process.env.OSS_REGION || DEFAULT_OSS_REGION || (dryRun ? 'oss-cn-hangzhou' : ''),
     endpoint: options.ossEndpoint
   }
   if (!ossConfig.accessKeyId || !ossConfig.accessKeySecret) {
     throw new Error('缺少阿里云 OSS 凭证 (OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET)，已停止上传。仅想演练请加 --dry-run')
+  }
+  if (!ossConfig.bucket || (!ossConfig.region && !ossConfig.endpoint)) {
+    throw new Error('缺少阿里云 OSS 存储桶配置 (OSS_BUCKET / OSS_REGION)，已停止上传。仅想演练请加 --dry-run')
   }
 
   const cdnConfig = {
@@ -511,7 +518,7 @@ async function runCli() {
 
 环境变量:
   OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET  阿里云 OSS 凭证（必填）
-  OSS_BUCKET (默认 ${DEFAULT_OSS_BUCKET}), OSS_REGION (默认 ${DEFAULT_OSS_REGION}), OSS_PREFIX
+  OSS_BUCKET, OSS_REGION                    阿里云 OSS 存储桶与地域（正式上传必填），OSS_PREFIX
   CDN_ACCESS_KEY_ID, CDN_ACCESS_KEY_SECRET  阿里云 CDN 刷新凭证（不填则沿用 OSS 凭证）
     `.trim())
     process.exit(0)

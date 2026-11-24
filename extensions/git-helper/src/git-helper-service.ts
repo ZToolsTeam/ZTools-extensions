@@ -1,212 +1,447 @@
 import type { CommitTypeItem, GitEmergencyItem, GitignoreStackTemplate } from './types.js'
+import { GIT_HELPER_MESSAGES, t } from './i18n.js'
 
-export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = [
+type GitHelperKey = keyof (typeof GIT_HELPER_MESSAGES)['zh-CN']
+
+interface EmergencyStepSpec {
+  titleKey: GitHelperKey
+  cmd?: string
+  cmdKey?: GitHelperKey
+  explainKey: GitHelperKey
+}
+
+interface EmergencySpec {
+  id: string
+  category: GitEmergencyItem['category']
+  titleKey: GitHelperKey
+  categoryKey: GitHelperKey
+  tagsKey: GitHelperKey
+  pinyinKeywords: readonly string[]
+  safetyKind: 'safe' | 'caution' | 'danger'
+  safetyKey: 'safetySafe' | 'safetyCaution' | 'safetyDanger'
+  diffKey: 'diffBeginner' | 'diffMedium' | 'diffExpert'
+  primaryCommand: string
+  steps: readonly EmergencyStepSpec[]
+  principleKey: GitHelperKey
+  minGitVersion?: string
+}
+
+interface CommitTypeSpec {
+  type: string
+  meaningKey: GitHelperKey
+  descKey: GitHelperKey
+  exampleKeys: readonly GitHelperKey[]
+}
+
+interface GitignoreSpec {
+  id: string
+  name?: string
+  nameKey?: GitHelperKey
+  catKey: GitHelperKey
+  rules: readonly string[]
+}
+
+const EMERGENCY_SPECS: readonly EmergencySpec[] = [
   {
     id: 'undo-last-commit-keep-changes',
-    title: '刚 commit 了，但想撤销这次提交并保留修改在工作区继续改',
     category: 'commit',
-    categoryLabel: '提交后悔药',
-    tags: ['撤销提交', '撤销commit', '保留代码', 'reset soft'],
+    titleKey: 'emUndoTitle',
+    categoryKey: 'emUndoCat',
+    tagsKey: 'emUndoTags',
     pinyinKeywords: ['chexiao', 'chexiaotijiao', 'huitui', 'huigun'],
-    safetyLevel: '注意检查',
-    difficulty: '小白推荐',
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffBeginner',
     primaryCommand: 'git branch backup/before-undo && git reset --soft HEAD~1',
     steps: [
       {
-        title: '为当前提交建立恢复分支，再撤销最近一次尚未推送的提交',
+        titleKey: 'emUndoStep1Title',
         cmd: 'git branch backup/before-undo && git reset --soft HEAD~1',
-        explain: '只适用于至少有两次提交的本地分支。恢复分支已存在时会停止，请另取新名字；不会覆盖旧恢复点。工作文件与暂存内容保持不变。'
+        explainKey: 'emUndoStep1Explain'
       },
       {
-        title: '若想同时取消 git add 退回未暂存状态（可选）',
+        titleKey: 'emUndoStep2Title',
         cmd: 'git reset --mixed HEAD',
-        explain: '在上一步之后执行；只取消暂存，不再回退 HEAD。工作文件保留，原来的暂存划分会取消。'
+        explainKey: 'emUndoStep2Explain'
       }
     ],
-    principle:
-      '先核对 git status 和 git log。只撤销一次未推送提交；已推送到共享分支的提交使用 revert。恢复分支保留原提交，不包含未提交文件的独立副本。',
+    principleKey: 'emUndoPrinciple',
     minGitVersion: 'Git 2.0+'
   },
   {
     id: 'amend-missing-file-or-message',
-    title: '刚 commit 完发现漏提了一个文件，或者提交备注写错了',
     category: 'commit',
-    categoryLabel: '提交后悔药',
-    tags: ['漏提文件', '修改提交备注', 'amend', '追加文件'],
+    titleKey: 'emAmendTitle',
+    categoryKey: 'emAmendCat',
+    tagsKey: 'emAmendTags',
     pinyinKeywords: ['loutiwangjian', 'xiugaibeizhu', 'amend', 'zhuijia'],
-    safetyLevel: '注意检查',
-    difficulty: '小白推荐',
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffBeginner',
     primaryCommand: 'git status --short',
     steps: [
       {
-        title: '把遗漏的文件加入暂存区并合并进上一次提交（不改备注）',
-        cmd: 'git add -- "需要补交的文件路径"',
-        explain: '把引号内替换为明确要补交的文件；再用 git diff --cached 检查全部暂存内容，避免把其他工作一起提交。'
+        titleKey: 'emAmendStep1Title',
+        cmdKey: 'emAmendStep1Cmd',
+        explainKey: 'emAmendStep1Explain'
       },
       {
-        title: '确认暂存内容后，保存旧提交再补交（不改备注）',
+        titleKey: 'emAmendStep2Title',
         cmd: 'git branch backup/before-amend && git commit --amend --no-edit',
-        explain: '只用于未推送提交。备份分支重名时停止，换新名字后重试；若只改备注，先核对暂存区，再单独使用 git commit --amend。'
+        explainKey: 'emAmendStep2Explain'
       }
     ],
-    principle: 'amend 会用一个新的 Commit 对象替换当前分支顶端的旧 Commit（仅限尚未 push 到公共分支时使用）。'
+    principleKey: 'emAmendPrinciple'
   },
   {
     id: 'recover-deleted-branch-or-hard-reset',
-    title: '手滑执行了 git reset --hard 或误删了本地未合并分支，想找回代码',
     category: 'reset',
-    categoryLabel: '绝境抢救',
-    tags: ['恢复误删分支', '找回代码', 'reflog', 'reset hard恢复'],
+    titleKey: 'emRecoverTitle',
+    categoryKey: 'emRecoverCat',
+    tagsKey: 'emRecoverTags',
     pinyinKeywords: ['huifufenzhi', 'wushanfenzhi', 'zhaohuidaima', 'reflog'],
-    safetyLevel: '安全无损',
-    difficulty: '中等',
+    safetyKind: 'safe',
+    safetyKey: 'safetySafe',
+    diffKey: 'diffMedium',
     primaryCommand: 'git reflog',
     steps: [
       {
-        title: '第一步：查看本地所有 HEAD 历史移动轨迹，找到翻车前的短哈希（如 a1b2c3d）',
+        titleKey: 'emRecoverStep1Title',
         cmd: 'git reflog -n 20',
-        explain: '从日志中确认要恢复的提交。记录可能已过期或被清理，未提交的文件修改通常不能依靠 reflog 找回。'
+        explainKey: 'emRecoverStep1Explain'
       },
       {
-        title: '第二步：基于翻车前的 commit 哈希新建或恢复分支',
-        cmd: 'git branch recovered-branch "确认后的提交哈希"',
-        explain: '将引号内替换为已核对的提交哈希，仅创建恢复分支，不切换或改写当前工作文件；不要假定 HEAD@{1} 就是正确版本。误删的分支若从未检出过，HEAD 的 reflog 里可能没有它，可查看删除时 git branch -D 输出的“was 短哈希”。'
+        titleKey: 'emRecoverStep2Title',
+        cmdKey: 'emRecoverStep2Cmd',
+        explainKey: 'emRecoverStep2Explain'
       }
     ],
-    principle:
-      'Git 的提交对象一旦生成就是不可变的，只要未触发过期 GC，reflog 就是时光机黑匣子。'
+    principleKey: 'emRecoverPrinciple'
   },
   {
     id: 'committed-to-wrong-branch',
-    title: '本来应该在新分支开发，结果不小心直接 commit 到了 main/master 分支',
     category: 'branch',
-    categoryLabel: '分支纠错',
-    tags: ['提交错分支', '移花接木', '挪移提交', 'master误提交'],
+    titleKey: 'emWrongBranchTitle',
+    categoryKey: 'emWrongBranchCat',
+    tagsKey: 'emWrongBranchTags',
     pinyinKeywords: ['tijiaocuofenzhi', 'fenzhicuowu', 'nuoyitijiao'],
-    safetyLevel: '注意检查',
-    difficulty: '中等',
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffMedium',
     primaryCommand: 'git switch -c feat/new-work',
     steps: [
       {
-        title: '第一步：新建并切换到工作分支，保留提交和当前修改',
+        titleKey: 'emWrongBranchStep1Title',
         cmd: 'git switch -c feat/new-work',
-        explain: '新名字不能与已有分支重复。原分支暂时保留，不触碰工作区。'
+        explainKey: 'emWrongBranchStep1Explain'
       },
       {
-        title: '第二步：核对分支与提交关系，再决定如何处理原分支',
+        titleKey: 'emWrongBranchStep2Title',
         cmd: 'git log --oneline --decorate --all -n 10',
-        explain: '当前工作已转到新分支。原分支若已共享，使用 revert；若尚未推送，核对要保留的提交后再调整原分支，不直接运行硬重置。'
+        explainKey: 'emWrongBranchStep2Explain'
       }
     ],
-    principle: '先建立新分支保护工作，再核对原分支是否已经共享。这里不会自动清理原分支的提交；git switch 需要 Git 2.23 或更新版本。'
+    principleKey: 'emWrongBranchPrinciple'
   },
   {
     id: 'undo-messy-git-pull-merge',
-    title: '刚执行了 git pull 或 merge 结果冲突一团糟，想立即回到合并前状态',
     category: 'merge',
-    categoryLabel: '冲突拆弹',
-    tags: ['撤销pull', '放弃合并', 'merge abort', '冲突回退'],
+    titleKey: 'emPullAbortTitle',
+    categoryKey: 'emPullAbortCat',
+    tagsKey: 'emPullAbortTags',
     pinyinKeywords: ['chexiaopull', 'fangqihebing', 'chongtu'],
-    safetyLevel: '注意检查',
-    difficulty: '小白推荐',
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffBeginner',
     primaryCommand: 'git status',
     steps: [
       {
-        title: '若正处于合并冲突中断状态，一键中止合并',
+        titleKey: 'emPullAbortStep1Title',
         cmd: 'git merge --abort',
-        explain: '只适用于正在进行的 merge；rebase 冲突单独用 git rebase --abort。先另存未提交文件及手动解决冲突的内容，abort 不能保证还原合并前所有未提交改动。'
+        explainKey: 'emPullAbortStep1Explain'
       },
       {
-        title: '若合并已经完成，先核对合并前位置；不要接着执行上一步',
+        titleKey: 'emPullAbortStep2Title',
         cmd: 'git show --stat ORIG_HEAD',
-        explain: '这是另一种情形，不是 abort 后的下一步。先保存文件副本并新建备份分支；确认该引用未被后续操作改写后，再决定 revert 或本地回退。'
+        explainKey: 'emPullAbortStep2Explain'
       }
     ],
-    principle: '区分正在合并与已经完成，不能把两个方案连续运行。ORIG_HEAD 会被后续操作更新，使用前必须核对实际提交。'
+    principleKey: 'emPullAbortPrinciple'
   },
   {
     id: 'revert-pushed-public-commit',
-    title: '错误代码已经 push 到了远程公共分支，需要安全回滚且不破坏团队历史',
     category: 'commit',
-    categoryLabel: '线上回滚',
-    tags: ['远程回滚', 'revert', '线上回退', '反向提交'],
+    titleKey: 'emRevertTitle',
+    categoryKey: 'emRevertCat',
+    tagsKey: 'emRevertTags',
     pinyinKeywords: ['yuanchenghuigun', 'xianshanghuigun', 'revert'],
-    safetyLevel: '注意检查',
-    difficulty: '小白推荐',
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffBeginner',
     primaryCommand: 'git show --stat HEAD',
     steps: [
       {
-        title: '生成一笔反向抵消提交（不动历史时间线）',
+        titleKey: 'emRevertStep1Title',
         cmd: 'git revert HEAD --no-edit',
-        explain: '确认 HEAD 是要撤销的普通提交，先保存当前修改。合并提交需要核对主线父节点，不能一律选择 -m 1；出现冲突后应处理或 git revert --abort。'
+        explainKey: 'emRevertStep1Explain'
       },
       {
-        title: '核对当前分支与上游后再正常推送（无需危险的 --force）',
+        titleKey: 'emRevertStep2Title',
         cmd: 'git status -sb',
-        explain: '测试反向提交并核对当前分支、远端和上游后再正常推送。不要把固定的 main 当成所有项目的目标分支。'
+        explainKey: 'emRevertStep2Explain'
       }
     ],
-    principle: '公共分支严禁 git reset --hard 后强推（force push），使用 git revert 新增反向补丁才是工程规范。'
+    principleKey: 'emRevertPrinciple'
+  },
+  {
+    id: 'recover-dropped-stash',
+    category: 'stash',
+    titleKey: 'emStashRecoverTitle',
+    categoryKey: 'emStashRecoverCat',
+    tagsKey: 'emStashRecoverTags',
+    pinyinKeywords: ['stash', 'wushanstash', 'zhaohuistash', 'fsck'],
+    safetyKind: 'safe',
+    safetyKey: 'safetySafe',
+    diffKey: 'diffMedium',
+    primaryCommand: "git fsck --no-reflog | awk '/dangling commit/ {print $3}'",
+    steps: [
+      {
+        titleKey: 'emStashRecoverStep1Title',
+        cmd: "git fsck --no-reflog | awk '/dangling commit/ {print $3}'",
+        explainKey: 'emStashRecoverStep1Explain'
+      },
+      {
+        titleKey: 'emStashRecoverStep2Title',
+        cmdKey: 'emStashRecoverStep2Cmd',
+        explainKey: 'emStashRecoverStep2Explain'
+      }
+    ],
+    principleKey: 'emStashRecoverPrinciple'
+  },
+  {
+    id: 'rescue-detached-head',
+    category: 'branch',
+    titleKey: 'emDetachedHeadTitle',
+    categoryKey: 'emDetachedHeadCat',
+    tagsKey: 'emDetachedHeadTags',
+    pinyinKeywords: ['detached', 'youli', 'youlitouzhizhen', 'jiuhuifenzhi'],
+    safetyKind: 'safe',
+    safetyKey: 'safetySafe',
+    diffKey: 'diffBeginner',
+    primaryCommand: 'git switch -c rescue/detached-work',
+    steps: [
+      {
+        titleKey: 'emDetachedHeadStep1Title',
+        cmd: 'git switch -c rescue/detached-work',
+        explainKey: 'emDetachedHeadStep1Explain'
+      },
+      {
+        titleKey: 'emDetachedHeadStep2Title',
+        cmdKey: 'emDetachedHeadStep2Cmd',
+        explainKey: 'emDetachedHeadStep2Explain'
+      }
+    ],
+    principleKey: 'emDetachedHeadPrinciple',
+    minGitVersion: 'Git 2.23+'
+  },
+  {
+    id: 'clean-untracked-files',
+    category: 'reset',
+    titleKey: 'emCleanUntrackedTitle',
+    categoryKey: 'emCleanUntrackedCat',
+    tagsKey: 'emCleanUntrackedTags',
+    pinyinKeywords: ['clean', 'qingli', 'weigenzong', 'shanchulinshi'],
+    safetyKind: 'danger',
+    safetyKey: 'safetyDanger',
+    diffKey: 'diffMedium',
+    primaryCommand: 'git clean -nd',
+    steps: [
+      {
+        titleKey: 'emCleanUntrackedStep1Title',
+        cmd: 'git clean -nd',
+        explainKey: 'emCleanUntrackedStep1Explain'
+      },
+      {
+        titleKey: 'emCleanUntrackedStep2Title',
+        cmd: 'git clean -fd',
+        explainKey: 'emCleanUntrackedStep2Explain'
+      }
+    ],
+    principleKey: 'emCleanUntrackedPrinciple'
+  },
+  {
+    id: 'edit-last-commit-message',
+    category: 'commit',
+    titleKey: 'emEditMsgTitle',
+    categoryKey: 'emEditMsgCat',
+    tagsKey: 'emEditMsgTags',
+    pinyinKeywords: ['xiugaicommit', 'gaibeizhu', 'amend', 'chongmingming'],
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffBeginner',
+    primaryCommand: 'git status --short',
+    steps: [
+      {
+        titleKey: 'emEditMsgStep1Title',
+        cmd: 'git status --short',
+        explainKey: 'emEditMsgStep1Explain'
+      },
+      {
+        titleKey: 'emEditMsgStep2Title',
+        cmdKey: 'emEditMsgStep2Cmd',
+        explainKey: 'emEditMsgStep2Explain'
+      }
+    ],
+    principleKey: 'emEditMsgPrinciple'
+  },
+  {
+    id: 'abort-or-continue-rebase',
+    category: 'merge',
+    titleKey: 'emRebaseAbortTitle',
+    categoryKey: 'emRebaseAbortCat',
+    tagsKey: 'emRebaseAbortTags',
+    pinyinKeywords: ['rebase', 'bianji', 'zhongzhibianji', 'chongtu'],
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffMedium',
+    primaryCommand: 'git rebase --abort',
+    steps: [
+      {
+        titleKey: 'emRebaseAbortStep1Title',
+        cmd: 'git rebase --abort',
+        explainKey: 'emRebaseAbortStep1Explain'
+      },
+      {
+        titleKey: 'emRebaseAbortStep2Title',
+        cmd: 'git rebase --continue',
+        explainKey: 'emRebaseAbortStep2Explain'
+      }
+    ],
+    principleKey: 'emRebaseAbortPrinciple'
+  },
+  {
+    id: 'discard-single-file',
+    category: 'reset',
+    titleKey: 'emDiscardFileTitle',
+    categoryKey: 'emDiscardFileCat',
+    tagsKey: 'emDiscardFileTags',
+    pinyinKeywords: ['chexiaodanwenjian', 'huanyuanwenjian', 'restore', 'fangqixiugai'],
+    safetyKind: 'danger',
+    safetyKey: 'safetyDanger',
+    diffKey: 'diffBeginner',
+    primaryCommand: 'git status --short',
+    steps: [
+      {
+        titleKey: 'emDiscardFileStep1Title',
+        cmdKey: 'emDiscardFileStep1Cmd',
+        explainKey: 'emDiscardFileStep1Explain'
+      },
+      {
+        titleKey: 'emDiscardFileStep2Title',
+        cmdKey: 'emDiscardFileStep2Cmd',
+        explainKey: 'emDiscardFileStep2Explain'
+      }
+    ],
+    principleKey: 'emDiscardFilePrinciple',
+    minGitVersion: 'Git 2.23+'
+  },
+  {
+    id: 'cleanup-merged-branches',
+    category: 'branch',
+    titleKey: 'emCleanBranchesTitle',
+    categoryKey: 'emCleanBranchesCat',
+    tagsKey: 'emCleanBranchesTags',
+    pinyinKeywords: ['qinglifenzhi', 'yihebingfenzhi', 'shanchufenzhi'],
+    safetyKind: 'safe',
+    safetyKey: 'safetySafe',
+    diffKey: 'diffBeginner',
+    primaryCommand: 'git branch --merged',
+    steps: [
+      {
+        titleKey: 'emCleanBranchesStep1Title',
+        cmd: 'git branch --merged',
+        explainKey: 'emCleanBranchesStep1Explain'
+      },
+      {
+        titleKey: 'emCleanBranchesStep2Title',
+        cmdKey: 'emCleanBranchesStep2Cmd',
+        explainKey: 'emCleanBranchesStep2Explain'
+      }
+    ],
+    principleKey: 'emCleanBranchesPrinciple'
+  },
+  {
+    id: 'unstage-git-add',
+    category: 'commit',
+    titleKey: 'emUnstageAddTitle',
+    categoryKey: 'emUnstageAddCat',
+    tagsKey: 'emUnstageAddTags',
+    pinyinKeywords: ['quxiaozancun', 'quxiaoadd', 'unstage', 'restore'],
+    safetyKind: 'safe',
+    safetyKey: 'safetySafe',
+    diffKey: 'diffBeginner',
+    primaryCommand: 'git restore --staged .',
+    steps: [
+      {
+        titleKey: 'emUnstageAddStep1Title',
+        cmdKey: 'emUnstageAddStep1Cmd',
+        explainKey: 'emUnstageAddStep1Explain'
+      },
+      {
+        titleKey: 'emUnstageAddStep2Title',
+        cmd: 'git restore --staged .',
+        explainKey: 'emUnstageAddStep2Explain'
+      }
+    ],
+    principleKey: 'emUnstageAddPrinciple',
+    minGitVersion: 'Git 2.23+'
+  },
+  {
+    id: 'cherry-pick-single-commit',
+    category: 'branch',
+    titleKey: 'emCherryPickTitle',
+    categoryKey: 'emCherryPickCat',
+    tagsKey: 'emCherryPickTags',
+    pinyinKeywords: ['cherrypick', 'zhaiqutijiao', 'rexiufu'],
+    safetyKind: 'caution',
+    safetyKey: 'safetyCaution',
+    diffKey: 'diffMedium',
+    primaryCommand: 'git log --oneline -n 15',
+    steps: [
+      {
+        titleKey: 'emCherryPickStep1Title',
+        cmd: 'git log --oneline -n 15',
+        explainKey: 'emCherryPickStep1Explain'
+      },
+      {
+        titleKey: 'emCherryPickStep2Title',
+        cmdKey: 'emCherryPickStep2Cmd',
+        explainKey: 'emCherryPickStep2Explain'
+      }
+    ],
+    principleKey: 'emCherryPickPrinciple'
   }
 ]
 
-/** 整份指南仅供阅读；每行都是 shell 注释，避免把可选方案串成连续命令。 */
-export function buildEmergencyGuide(item: GitEmergencyItem): string {
-  return [`场景：${item.title}`, '以下是说明，请逐项核对后单独执行命令；不需要把全部步骤连续运行。',
-    ...item.steps.flatMap((step, index) => [`${index + 1}. ${step.title}`, step.cmd, step.explain]), item.principle]
-    .flatMap(line => line.split(/\r?\n/)).map(line => `# ${line}`).join('\n')
-}
-
-export const COMMIT_TYPES: CommitTypeItem[] = [
-  {
-    type: 'feat',
-    chineseMeaning: '新增业务功能或特性',
-    description: '新增用户能用到或可调用的功能',
-    examples: ['feat(auth): 新增邮箱验证码登录', 'feat(export): 支持把报表导出为 CSV']
-  },
-  {
-    type: 'fix',
-    chineseMeaning: '修复 Bug 或生产异常',
-    description: '修复错误行为、崩溃或异常结果',
-    examples: ['fix(network): 修复请求超时后连接没有释放', 'fix(ui): 修复深色模式下表格边框对比度不足']
-  },
-  {
-    type: 'refactor',
-    chineseMeaning: '代码重构（不改变外部行为）',
-    description: '调整代码结构，对外功能和行为不变',
-    examples: ['refactor(order): 把支付逻辑从订单服务中拆分出来']
-  },
-  {
-    type: 'perf',
-    chineseMeaning: '性能与内存优化',
-    description: '提升速度，或降低内存、CPU 等资源占用',
-    examples: ['perf(search): 为列表查询增加索引，避免全表扫描']
-  },
-  {
-    type: 'test',
-    chineseMeaning: '新增或完善集成与异常测试',
-    description: '只新增或修改测试用例，不改功能代码',
-    examples: ['test(cart): 补充库存不足与重复下单的测试']
-  },
-  {
-    type: 'docs',
-    chineseMeaning: '技术文档与注释更新',
-    description: '只改文档、注释或 README',
-    examples: ['docs(readme): 补充本地开发与构建说明']
-  },
-  {
-    type: 'chore',
-    chineseMeaning: '构建脚本、依赖升级或工程杂务',
-    description: '构建脚本、依赖升级、CI 配置等不影响功能的杂项',
-    examples: ['chore(deps): 升级 TypeScript 与构建工具版本']
-  }
+const COMMIT_TYPE_SPECS: readonly CommitTypeSpec[] = [
+  { type: 'feat', meaningKey: 'ctFeatMeaning', descKey: 'ctFeatDesc', exampleKeys: ['ctFeatEx1', 'ctFeatEx2'] },
+  { type: 'fix', meaningKey: 'ctFixMeaning', descKey: 'ctFixDesc', exampleKeys: ['ctFixEx1', 'ctFixEx2'] },
+  { type: 'refactor', meaningKey: 'ctRefactorMeaning', descKey: 'ctRefactorDesc', exampleKeys: ['ctRefactorEx1'] },
+  { type: 'perf', meaningKey: 'ctPerfMeaning', descKey: 'ctPerfDesc', exampleKeys: ['ctPerfEx1'] },
+  { type: 'test', meaningKey: 'ctTestMeaning', descKey: 'ctTestDesc', exampleKeys: ['ctTestEx1'] },
+  { type: 'docs', meaningKey: 'ctDocsMeaning', descKey: 'ctDocsDesc', exampleKeys: ['ctDocsEx1'] },
+  { type: 'chore', meaningKey: 'ctChoreMeaning', descKey: 'ctChoreDesc', exampleKeys: ['ctChoreEx1'] },
+  { type: 'build', meaningKey: 'ctBuildMeaning', descKey: 'ctBuildDesc', exampleKeys: ['ctBuildEx1'] },
+  { type: 'ci', meaningKey: 'ctCiMeaning', descKey: 'ctCiDesc', exampleKeys: ['ctCiEx1'] },
+  { type: 'style', meaningKey: 'ctStyleMeaning', descKey: 'ctStyleDesc', exampleKeys: ['ctStyleEx1'] },
+  { type: 'revert', meaningKey: 'ctRevertMeaning', descKey: 'ctRevertDesc', exampleKeys: ['ctRevertEx1'] }
 ]
 
-export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
+const GITIGNORE_SPECS: readonly GitignoreSpec[] = [
   {
     id: 'Node',
     name: 'Node.js / TypeScript',
-    category: '语言与运行时',
+    catKey: 'giCatLang',
     rules: [
       'node_modules/',
       'dist/',
@@ -226,7 +461,7 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
   {
     id: 'ReactVue',
     name: 'React / Vue / Next / Vite',
-    category: '前端框架',
+    catKey: 'giCatFrontend',
     rules: [
       '.next/',
       '.nuxt/',
@@ -241,7 +476,7 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
   {
     id: 'Python',
     name: 'Python / PyTorch / Poetry',
-    category: '语言与运行时',
+    catKey: 'giCatLang',
     rules: [
       '__pycache__/',
       '*.py[cod]',
@@ -259,7 +494,7 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
   {
     id: 'Java',
     name: 'Java / Maven / Gradle / Spring',
-    category: '语言与运行时',
+    catKey: 'giCatLang',
     rules: [
       'target/',
       'build/',
@@ -278,21 +513,21 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
   {
     id: 'Go',
     name: 'Go (Golang)',
-    category: '语言与运行时',
+    catKey: 'giCatLang',
     // vendor/ 是否提交由项目决定（go mod vendor），默认不忽略
     rules: ['bin/', '*.exe', '*.exe~', '*.dll', '*.so', '*.dylib', '*.test', '*.out', 'go.work']
   },
   {
     id: 'Rust',
     name: 'Rust / Cargo',
-    category: '语言与运行时',
+    catKey: 'giCatLang',
     // Cargo 官方建议提交 Cargo.lock（应用与库都适用），这里不忽略它
     rules: ['target/', '**/*.rs.bk', '*.pdb']
   },
   {
     id: 'macOS',
-    name: 'macOS 系统隐藏文件',
-    category: '操作系统',
+    nameKey: 'giNameMacOS',
+    catKey: 'giCatOS',
     rules: [
       '.DS_Store',
       '.AppleDouble',
@@ -310,36 +545,168 @@ export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = [
   },
   {
     id: 'Windows',
-    name: 'Windows 系统缩略图与临时项',
-    category: '操作系统',
+    nameKey: 'giNameWindows',
+    catKey: 'giCatOS',
     rules: ['Thumbs.db', 'Thumbs.db:encryptable', 'ehthumbs.db', '[Dd]esktop.ini', '$RECYCLE.BIN/', '*.lnk']
   },
   {
     id: 'IDEs',
     name: 'VS Code / Cursor / JetBrains IDE',
-    category: '编辑器与 IDE',
+    catKey: 'giCatIDE',
     rules: ['.vscode/*', '!.vscode/extensions.json', '!.vscode/settings.json', '.idea/', '*.iml', '*.iws', '.history/']
   }
 ]
 
+function tr(key: GitHelperKey, locale?: 'zh-CN' | 'en-US'): string {
+  if (locale) return GIT_HELPER_MESSAGES[locale][key]
+  return t(key)
+}
+
+function splitTags(raw: string): string[] {
+  return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+function buildEmergencyItem(spec: EmergencySpec, locale?: 'zh-CN' | 'en-US'): GitEmergencyItem {
+  return {
+    id: spec.id,
+    title: tr(spec.titleKey, locale),
+    category: spec.category,
+    categoryLabel: tr(spec.categoryKey, locale),
+    tags: splitTags(tr(spec.tagsKey, locale)),
+    pinyinKeywords: [...spec.pinyinKeywords],
+    safetyKind: spec.safetyKind,
+    safetyLevel: tr(spec.safetyKey, locale),
+    difficulty: tr(spec.diffKey, locale),
+    primaryCommand: spec.primaryCommand,
+    steps: spec.steps.map((s) => ({
+      title: tr(s.titleKey, locale),
+      cmd: s.cmdKey ? tr(s.cmdKey, locale) : (s.cmd ?? ''),
+      explain: tr(s.explainKey, locale)
+    })),
+    principle: tr(spec.principleKey, locale),
+    ...(spec.minGitVersion ? { minGitVersion: spec.minGitVersion } : {})
+  }
+}
+
+/** 动态视图数组：所有展示文本通过 getter 实时按当前 locale 读取，支持语言热切换且无硬编码中文 */
+export const GIT_EMERGENCY_DATABASE: GitEmergencyItem[] = EMERGENCY_SPECS.map((spec) => ({
+  id: spec.id,
+  category: spec.category,
+  pinyinKeywords: [...spec.pinyinKeywords],
+  safetyKind: spec.safetyKind,
+  primaryCommand: spec.primaryCommand,
+  ...(spec.minGitVersion ? { minGitVersion: spec.minGitVersion } : {}),
+  get title() {
+    return tr(spec.titleKey)
+  },
+  get categoryLabel() {
+    return tr(spec.categoryKey)
+  },
+  get tags() {
+    return splitTags(tr(spec.tagsKey))
+  },
+  get safetyLevel() {
+    return tr(spec.safetyKey)
+  },
+  get difficulty() {
+    return tr(spec.diffKey)
+  },
+  get steps() {
+    return spec.steps.map((s) => ({
+      title: tr(s.titleKey),
+      cmd: s.cmdKey ? tr(s.cmdKey) : (s.cmd ?? ''),
+      explain: tr(s.explainKey)
+    }))
+  },
+  get principle() {
+    return tr(spec.principleKey)
+  }
+}))
+
+export const COMMIT_TYPES: CommitTypeItem[] = COMMIT_TYPE_SPECS.map((spec) => ({
+  type: spec.type,
+  get chineseMeaning() {
+    return tr(spec.meaningKey)
+  },
+  get description() {
+    return tr(spec.descKey)
+  },
+  get examples() {
+    return spec.exampleKeys.map((k) => tr(k))
+  }
+}))
+
+export const GITIGNORE_STACK_TEMPLATES: GitignoreStackTemplate[] = GITIGNORE_SPECS.map((spec) => ({
+  id: spec.id,
+  rules: [...spec.rules],
+  get name() {
+    return spec.nameKey ? tr(spec.nameKey) : (spec.name ?? spec.id)
+  },
+  get category() {
+    return tr(spec.catKey)
+  }
+}))
+
+/** 整份指南仅供阅读；每行都是 shell 注释，避免把可选方案串成连续命令。 */
+export function buildEmergencyGuide(item: GitEmergencyItem): string {
+  return [t('guideScenarioPrefix', { title: item.title }), t('guideIntro'),
+    ...item.steps.flatMap((step, index) => [`${index + 1}. ${step.title}`, step.cmd, step.explain]), item.principle]
+    .flatMap(line => line.split(/\r?\n/)).map(line => `# ${line}`).join('\n')
+}
+
+export function getEmergencyDatabase(): GitEmergencyItem[] {
+  return EMERGENCY_SPECS.map((spec) => buildEmergencyItem(spec))
+}
+
+export function getCommitTypes(): CommitTypeItem[] {
+  return COMMIT_TYPE_SPECS.map((spec) => ({
+    type: spec.type,
+    chineseMeaning: tr(spec.meaningKey),
+    description: tr(spec.descKey),
+    examples: spec.exampleKeys.map((k) => tr(k))
+  }))
+}
+
+export function getGitignoreStackTemplates(): GitignoreStackTemplate[] {
+  return GITIGNORE_SPECS.map((spec) => ({
+    id: spec.id,
+    name: spec.nameKey ? tr(spec.nameKey) : (spec.name ?? spec.id),
+    category: tr(spec.catKey),
+    rules: [...spec.rules]
+  }))
+}
+
 /**
- * 大白话 + 拼音缩写容错检索 Git 救命锦囊
+ * 大白话 + 拼音缩写容错检索 Git 救命锦囊（同时兼容中英文关键词）
  */
 export function searchGitEmergencies(query: string): GitEmergencyItem[] {
+  const db = getEmergencyDatabase()
   const q = String(query ?? '')
     .trim()
     .toLowerCase()
-  if (!q) return GIT_EMERGENCY_DATABASE
+  if (!q) return db
 
-  return GIT_EMERGENCY_DATABASE.filter(
-    (item) =>
-      item.title.toLowerCase().includes(q) ||
-      item.categoryLabel.toLowerCase().includes(q) ||
-      item.primaryCommand.toLowerCase().includes(q) ||
-      item.tags.some((t) => t.toLowerCase().includes(q)) ||
-      item.pinyinKeywords.some((p) => p.includes(q) || q.includes(p)) ||
-      item.steps.some((s) => s.title.toLowerCase().includes(q) || s.cmd.toLowerCase().includes(q))
-  )
+  return db.filter((item, idx) => {
+    const zh = buildEmergencyItem(EMERGENCY_SPECS[idx], 'zh-CN')
+    const en = buildEmergencyItem(EMERGENCY_SPECS[idx], 'en-US')
+    const haystack = [
+      item.title,
+      item.categoryLabel,
+      item.primaryCommand,
+      ...item.tags,
+      ...item.steps.flatMap((s) => [s.title, s.cmd]),
+      zh.title,
+      zh.categoryLabel,
+      ...zh.tags,
+      en.title,
+      en.categoryLabel,
+      ...en.tags
+    ]
+    return (
+      haystack.some((text) => text.toLowerCase().includes(q)) ||
+      item.pinyinKeywords.some((p) => p.includes(q) || q.includes(p))
+    )
+  })
 }
 
 /**
@@ -363,7 +730,7 @@ export function parseCommitInput(raw: string): { scope: string; subject: string 
   const head = text.slice(0, colonIdx).trim()
   const rest = text.slice(colonIdx + 1)
   if (!SCOPE_PATTERN.test(head) || rest.startsWith('//')) return { scope: '', subject: text }
-  if (COMMIT_TYPES.some((t) => t.type === head.toLowerCase())) return { scope: '', subject: rest.trim() }
+  if (COMMIT_TYPE_SPECS.some((spec) => spec.type === head.toLowerCase())) return { scope: '', subject: rest.trim() }
   return { scope: head, subject: rest.trim() }
 }
 
@@ -392,15 +759,15 @@ export function buildConventionalCommit(options: {
 
   const hasControl = /[\u0000-\u001f\u007f]/.test(cleanType + cleanScope + rawSubject)
   if (!rawSubject || hasControl) {
-    const placeholder = '请填写本次改动的简要说明'
+    const placeholder = t('commitPlaceholder')
     const msg = `${cleanType}${scopePart}${bang}: ${placeholder}`
     return {
       isValid: false,
       message: msg,
       gitCommand: '',
       validationHint: hasControl
-        ? '提交说明含有不可见的控制字符，请删除后重新输入'
-        : '提交说明不能为空，请简述本次修改的目的'
+        ? t('commitErrControlChars')
+        : t('commitErrEmpty')
     }
   }
 
@@ -427,11 +794,12 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
 
   const seenRules = new Set<string>()
   // 首行只写来源；具体模板名已在下面每段的 ### 标题里，不再在首行罗列
-  const sections: string[] = ['# 由 ZTools Git 助手生成']
+  const sections: string[] = [t('gitignoreGeneratedHeader')]
+  const localizedTemplates = getGitignoreStackTemplates()
 
   for (const stackId of effectiveIds) {
-    const tpl = GITIGNORE_STACK_TEMPLATES.find(
-      (t) => t.id.toLowerCase() === stackId.toLowerCase() || t.name.toLowerCase().includes(stackId.toLowerCase())
+    const tpl = localizedTemplates.find(
+      (tplItem) => tplItem.id.toLowerCase() === stackId.toLowerCase() || tplItem.name.toLowerCase().includes(stackId.toLowerCase())
     )
     if (!tpl) continue
 
@@ -451,7 +819,7 @@ export function generateGitignoreContent(selectedStackIds: string[], customRules
 
   const cleanCustom = [...new Set(customRules.map((r) => r.trim()))].filter((r) => r && !seenRules.has(r))
   if (cleanCustom.length > 0) {
-    sections.push('\n### Custom Rules ###')
+    sections.push(`\n${t('gitignoreCustomRulesHeader')}`)
     for (const r of cleanCustom) {
       seenRules.add(r)
       sections.push(r)

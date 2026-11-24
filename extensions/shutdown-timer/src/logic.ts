@@ -1,4 +1,6 @@
 import { confirmAlert, getHostTransport, type HostTransport } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 /**
  * shutdown：倒计时关机（客户端 system_shutdown，Windows 上即 shutdown.exe /s /t 秒数）
@@ -22,7 +24,9 @@ export interface PowerActionResult {
   detail?: string
 }
 
-export const HOST_REQUIRED_MESSAGE = '需要在 ZTools 客户端中使用'
+export function getHostRequiredMessage(): string {
+  return t('hostRequired')
+}
 export const CANCEL_COMMAND = 'shutdown.exe /a'
 /** 客户端 system_shutdown 允许的最长倒计时（秒） */
 export const MAX_SHUTDOWN_SECONDS = 86_400
@@ -38,7 +42,7 @@ export function getCommandForAction(action: PowerAction, seconds: number = 0): s
     case 'cancel':
       return CANCEL_COMMAND
     default:
-      throw new Error(`该电源动作没有对应的命令: ${action}`)
+      throw new Error(t('noCommandForAction', { action }))
   }
 }
 
@@ -63,11 +67,13 @@ export function calculateTargetTime(seconds: number, now: number = Date.now()): 
 }
 
 function shutdownPreset(minutes: number): QuickScheduleItem {
-  const label = minutes % 60 === 0 ? `${minutes / 60} 小时` : `${minutes} 分钟`
+  const label = minutes % 60 === 0
+    ? t('unitHours', { count: minutes / 60 })
+    : t('unitMinutes', { count: minutes })
   return {
     id: `shutdown-${minutes}m`,
-    title: `${label}后关机`,
-    subtitle: `倒计时 ${minutes * 60} 秒，到时会关闭所有程序`,
+    title: t('shutdownAfterTitle', { label }),
+    subtitle: t('shutdownAfterSub', { seconds: minutes * 60 }),
     action: 'shutdown',
     seconds: minutes * 60
   }
@@ -82,12 +88,12 @@ export function getQuickScheduleOptions(): QuickScheduleItem[] {
     shutdownPreset(30),
     shutdownPreset(60),
     shutdownPreset(120),
-    { id: 'immediate-lock', title: '立即锁定屏幕', subtitle: '锁定电脑，回来时需要重新登录', action: 'lock', seconds: 0 },
-    { id: 'immediate-sleep', title: '立即睡眠', subtitle: '让电脑进入睡眠状态', action: 'sleep', seconds: 0 },
+    { id: 'immediate-lock', title: t('lockNowTitle'), subtitle: t('lockNowSub'), action: 'lock', seconds: 0 },
+    { id: 'immediate-sleep', title: t('sleepNowTitle'), subtitle: t('sleepNowSub'), action: 'sleep', seconds: 0 },
     {
       id: 'cancel-task',
-      title: '取消已设定的关机计划',
-      subtitle: `插件不能直接取消，复制 ${CANCEL_COMMAND} 后在命令提示符中运行`,
+      title: t('cancelTaskTitle'),
+      subtitle: t('cancelTaskSub', { cmd: CANCEL_COMMAND }),
       action: 'cancel',
       seconds: 0
     }
@@ -95,7 +101,11 @@ export function getQuickScheduleOptions(): QuickScheduleItem[] {
 }
 
 export function shutdownConfirmMessage(seconds: number, now: number = Date.now()): string {
-  return `将在 ${Math.round(seconds / 60)} 分钟后（约 ${calculateTargetTime(seconds, now)}）关机。到时系统会关闭所有程序，未保存的内容可能丢失。插件不能取消已设定的计划，需要取消时在命令提示符中运行 ${CANCEL_COMMAND}。`
+  return t('shutdownConfirmMessage', {
+    minutes: Math.round(seconds / 60),
+    targetTime: calculateTargetTime(seconds, now),
+    cmd: CANCEL_COMMAND
+  })
 }
 
 function errorMessage(err: unknown): string {
@@ -115,7 +125,7 @@ async function callHost(transport: HostTransport, method: string, params: Record
   const res = await transport.call<{ success?: boolean; error?: { message?: string } | string }>(method, params)
   if (res && typeof res === 'object' && res.success === false) {
     const err = res.error
-    throw new Error(typeof err === 'string' ? err : err?.message || '客户端返回失败')
+    throw new Error(typeof err === 'string' ? err : resolveErrorMessage(err, t('hostReturnedFailure')))
   }
 }
 
@@ -128,43 +138,43 @@ export async function executePowerAction(
   options: { transport?: HostTransport | null; now?: number } = {}
 ): Promise<PowerActionResult> {
   if (item.action === 'cancel') {
-    return { ok: false, message: `插件不能直接取消关机计划，请在命令提示符中运行 ${CANCEL_COMMAND}` }
+    return { ok: false, message: t('cannotCancelDirectly', { cmd: CANCEL_COMMAND }) }
   }
   if (item.action === 'shutdown') {
     if (!Number.isInteger(item.seconds) || item.seconds < 1 || item.seconds > MAX_SHUTDOWN_SECONDS) {
-      return { ok: false, message: '倒计时必须在 1 秒到 24 小时之间' }
+      return { ok: false, message: t('countdownRangeError') }
     }
     const confirmed = await confirmAlert({
       title: item.title,
       message: shutdownConfirmMessage(item.seconds, options.now),
-      primaryAction: { title: '设定关机', style: 'destructive' },
-      dismissAction: { title: '取消' }
+      primaryAction: { title: t('confirmScheduleBtn'), style: 'destructive' },
+      dismissAction: { title: t('cancelBtn') }
     })
-    if (!confirmed) return { ok: false, canceled: true, message: '已取消，未设定关机' }
+    if (!confirmed) return { ok: false, canceled: true, message: t('canceledShutdownMsg') }
   }
 
   const transport = options.transport === undefined ? getHostTransport() : options.transport
-  if (!transport) return { ok: false, message: HOST_REQUIRED_MESSAGE }
+  if (!transport) return { ok: false, message: t('hostRequired') }
 
   try {
     if (item.action === 'shutdown') {
       await callHost(transport, 'system_shutdown', { force: false, timeout: item.seconds })
       return {
         ok: true,
-        message: `已设定 ${item.title}`,
-        detail: `预计 ${calculateTargetTime(item.seconds, options.now)} 关机，取消请在命令提示符中运行 ${CANCEL_COMMAND}`
+        message: t('scheduledMsg', { title: item.title }),
+        detail: t('scheduledDetail', { targetTime: calculateTargetTime(item.seconds, options.now), cmd: CANCEL_COMMAND })
       }
     }
     await callHost(transport, item.action === 'lock' ? 'system_lock' : 'system_sleep', {})
-    return { ok: true, message: item.action === 'lock' ? '已锁定屏幕' : '已发送睡眠指令' }
+    return { ok: true, message: item.action === 'lock' ? t('lockedMsg') : t('sleepSentMsg') }
   } catch (err) {
-    if (isHostMissing(err)) return { ok: false, message: HOST_REQUIRED_MESSAGE }
+    if (isHostMissing(err)) return { ok: false, message: t('hostRequired') }
     const reason = errorMessage(err)
     return {
       ok: false,
       message: reason,
       ...(item.action === 'shutdown'
-        ? { detail: `如果之前已经设定过关机计划，需要先运行 ${CANCEL_COMMAND} 取消` }
+        ? { detail: t('existingPlanHint', { cmd: CANCEL_COMMAND }) }
         : {})
     }
   }

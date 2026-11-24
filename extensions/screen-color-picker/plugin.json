@@ -11,6 +11,10 @@
     "开发工具",
     "图像媒体"
   ],
+  "categoryId": [
+    "developer",
+    "media"
+  ],
   "permissions": [
     "screen",
     "clipboard"
@@ -23,6 +27,34 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Screen Color Picker",
+      "description": "Pixel-level magnifying eyedropper that follows your cursor to pick any color on screen and copy HEX, RGB, or HSL values.",
+      "keywords": [
+        "eyedropper",
+        "color picker",
+        "screen color",
+        "hex",
+        "rgb",
+        "hsl"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

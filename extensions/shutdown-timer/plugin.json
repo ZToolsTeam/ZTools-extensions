@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system"
   ],
@@ -58,6 +59,61 @@
         "取消定时关机",
         "停止关机"
       ]
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Shutdown Timer",
+      "description": "Schedule automatic shutdown (10, 30, 60, or 120 minutes) after confirmation, or lock/sleep immediately, with a copyable cancel command.",
+      "keywords": [
+        "shutdown",
+        "timer",
+        "sleep",
+        "lock",
+        "power",
+        "schedule"
+      ],
+      "features": {
+        "timer-shutdown": {
+          "explain": "Schedule automatic system shutdown by countdown",
+          "cmds": [
+            "shutdown",
+            "shutdown timer",
+            "auto shutdown",
+            "delayed shutdown"
+          ]
+        },
+        "power-now": {
+          "explain": "Lock screen or put the computer to sleep immediately",
+          "cmds": [
+            "lock screen",
+            "sleep now",
+            "power"
+          ]
+        },
+        "timer-cancel": {
+          "explain": "Copy the command to cancel a scheduled shutdown",
+          "cmds": [
+            "cancel shutdown",
+            "abort shutdown",
+            "stop shutdown"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

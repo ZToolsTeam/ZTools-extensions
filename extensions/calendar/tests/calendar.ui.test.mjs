@@ -1,6 +1,7 @@
 // calendar 界面集成测试：真实声明式运行时 + 按宿主语义（时间窗口 / 搜索 / limit / 计数 / 按 id 导出）模拟的日程库
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import CalendarCommand from '../dist/index.js'
 
@@ -128,4 +129,28 @@ test('顶栏不放针对单条日程的「加入会议」；每条会议日程�
   assert.ok(!view.actions(view.item('gym')).some((a) => a.type === 'Action.OpenInBrowser'))
   assert.doesNotMatch(view.item('m2').props.detail.props.markdown, emoji)
   view.unmount()
+})
+
+test('i18n 热切换回归：切英文后按天分组的 section 标题实时更新，不冻结在旧语言', async () => {
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
+  const base = todayStart.getTime() + 10 * HOUR
+  installCalendarHost([
+    { id: 't1', title: 'Standup', startTime: base, endTime: base + HOUR, calendarName: 'Work' }
+  ], { limitCap: 100 })
+  try {
+    setRuntimeLocale('zh-CN')
+    const view = await mount(CalendarCommand)
+    await tick(10)
+    const zhSections = JSON.stringify(view.tree().children)
+    assert.match(zhSections, /今天/)
+
+    setRuntimeLocale('en-US')
+    await tick(5)
+    const enSections = JSON.stringify(view.tree().children)
+    assert.match(enSections, /Today/)
+    assert.doesNotMatch(enSections, /今天/)
+    view.unmount()
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

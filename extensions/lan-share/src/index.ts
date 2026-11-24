@@ -4,8 +4,11 @@ import {
   Action,
   Icon,
   Clipboard,
+  confirmAlert,
+  useLocale,
   useState,
   useEffect,
+  useRef,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
@@ -13,23 +16,43 @@ import {
   type LanShareStatus,
   type SharedFileItem,
   type LanActionResult,
+  LAN_SHARE_IMPORT_RULES,
+  LAN_SHARE_MAX_FILES,
+  addFilesToShareBatched,
+  clearAllSharedFiles,
+  createLanShareImportTransport,
   formatBytes,
   fetchLanShareStatus,
   startLanShare,
   stopLanShare,
-  pickFilesToShare,
-  addFilesToShare,
   setFileShared,
   removeSharedFile,
   generateQrCodeSvgDataUri,
   filterSharedFiles
 } from './logic.js'
+import {
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  normalizeFileInput,
+  pickFiles,
+  pickFolder,
+  summarizeImport,
+  type FileImportResult,
+  type NormalizedFileInput
+} from './file-import.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './logic.js'
 
-const NO_PASSWORD_NOTE = '同一局域网内的任何设备都能打开并下载，不需要密码'
-const FIREWALL_NOTE = '首次启动时 Windows 防火墙可能询问是否允许 ZTools 访问网络，需要允许，手机才能连上'
-const KEEP_RUNNING_NOTE = '关闭插件后服务仍在运行，直到在这里停止服务或退出 ZTools'
+function isDeclarativeFileInputSupported(): boolean {
+  if (typeof window === 'undefined') return true
+  const w = window as unknown as { __ztoolsDeclarativeFeatures?: { fileInput?: boolean } }
+  return w.__ztoolsDeclarativeFeatures?.fileInput === true
+}
 
 /**
  * 复制文本：等宿主确认写入成功后才提示成功；写入失败（内容为空、超过上限、剪贴板被占用等）时提示失败原因，不能假装已复制
@@ -40,7 +63,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('toastCopyFailed'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -50,27 +73,35 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
 
 function qrMarkdown(url: string): string {
   const qr = generateQrCodeSvgDataUri(url)
-  return qr ? `![访问地址二维码](${qr})\n\n` : '地址太长，无法生成二维码，请复制地址后发送到手机。\n\n'
+  return qr ? `![${t('qrAltText')}](${qr})\n\n` : t('qrTooLongMsg')
 }
 
 function serviceDetail(status: LanShareStatus): string {
-  if (!status.ok) return `### 读取共享状态失败\n\n${status.error || ''}`
+  if (!status.ok) return t('detailReadFailedHeader', { error: status.error || '' })
   if (!status.running) {
-    return `### 共享服务未运行\n\n启动后，同一局域网的设备在浏览器中打开本机地址即可看到共享列表并下载文件。\n\n- ${NO_PASSWORD_NOTE}\n- ${FIREWALL_NOTE}\n- 只支持从电脑下载到其他设备，不支持从手机上传`
+    return t('detailNotRunning', { noPassword: t('noPasswordNote'), firewall: t('firewallNote') })
   }
   const others = status.interfaces.filter((i) => i.address !== status.lanIp)
   const otherLines = others.length
-    ? `\n\n如果手机打不开，换用本机的其他地址：\n\n${others.map((i) => `- ${i.name}：\`http://${i.address}:${status.port}\``).join('\n')}`
+    ? `${t('detailOtherAddrsHeader')}${others.map((i) => `- ${i.name}: \`http://${i.address}:${status.port}\``).join('\n')}`
     : ''
-  const noLan = status.interfaces.length === 0 ? '\n\n没有检测到局域网地址，其他设备无法连接。' : ''
-  return `### 共享服务运行中\n\n${qrMarkdown(status.portalUrl)}\`\`\`text\n${status.portalUrl}\n\`\`\`\n\n- ${NO_PASSWORD_NOTE}\n- ${KEEP_RUNNING_NOTE}\n- ${FIREWALL_NOTE}${otherLines}${noLan}`
+  const noLan = status.interfaces.length === 0 ? t('detailNoLanAddr') : ''
+  return t('detailRunning', {
+    qr: qrMarkdown(status.portalUrl),
+    url: status.portalUrl,
+    noPassword: t('noPasswordNote'),
+    keepRunning: t('keepRunningNote'),
+    firewall: t('firewallNote'),
+    others: otherLines,
+    noLan
+  })
 }
 
 function fileDetail(file: SharedFileItem, status: LanShareStatus): string {
-  const head = `### ${file.name}\n\n- 路径：\`${file.path}\`\n- 大小：${formatBytes(file.sizeBytes)}\n\n`
-  if (file.isDirectory) return `${head}这是文件夹，共享网页不能下载文件夹。`
-  if (!file.shared) return `${head}已暂停共享，其他设备打开下载地址会被拒绝。`
-  if (!status.running) return `${head}共享服务未运行，启动后才能下载。`
+  const head = t('fileDetailHead', { name: file.name, path: file.path, size: formatBytes(file.sizeBytes) })
+  if (file.isDirectory) return t('fileDetailDir', { head })
+  if (!file.shared) return t('fileDetailPaused', { head })
+  if (!status.running) return t('fileDetailStopped', { head })
   return `${head}${qrMarkdown(file.downloadUrl)}\`\`\`text\n${file.downloadUrl}\n\`\`\``
 }
 
@@ -85,30 +116,38 @@ const EMPTY_STATUS: LanShareStatus = {
 }
 
 export function LanShareCommand() {
+  useLocale()
+  const transport = createLanShareImportTransport()
   const [searchText, setSearchText] = useState('')
   const [status, setStatus] = useState<LanShareStatus>(EMPTY_STATUS)
   const [isLoading, setIsLoading] = useState(true)
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ visitedDirs: number; matchedFiles: number } | null>(null)
+
+  const mountedRef = useRef(true)
+  const busyRef = useRef(false)
+  const importSeqRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
+  const statusRef = useRef<LanShareStatus>(EMPTY_STATUS)
+  statusRef.current = status
 
   async function refresh(showNotice = false) {
     setIsLoading(true)
     try {
       const next = await fetchLanShareStatus()
+      if (!mountedRef.current) return
       setStatus(next)
       if (showNotice) {
         await showToast(
           next.ok
-            ? { style: Toast.Style.Success, title: '已刷新', message: next.running ? next.portalUrl : '共享服务未运行' }
-            : { style: Toast.Style.Failure, title: '读取共享状态失败', message: next.error }
+            ? { style: Toast.Style.Success, title: t('toastRefreshed'), message: next.running ? next.portalUrl : t('toastNotRunning') }
+            : { style: Toast.Style.Failure, title: t('errReadStatusFailed'), message: next.error }
         )
       }
     } finally {
-      setIsLoading(false)
+      if (mountedRef.current) setIsLoading(false)
     }
   }
-
-  useEffect(() => {
-    void refresh(false)
-  }, [])
 
   /** 执行一个改变共享状态的操作：结果以客户端返回为准，之后重新读取完整状态 */
   async function applyResult(res: LanActionResult, failureTitle: string, successMessage?: string) {
@@ -120,111 +159,342 @@ export function LanShareCommand() {
     await refresh(false)
   }
 
+  async function shareCollectedResult(result: FileImportResult) {
+    if (result.canceled) return
+    if (result.error) {
+      await showToast({ style: Toast.Style.Failure, title: t('toastPickFailed'), message: result.error })
+      return
+    }
+    if (result.files.length === 0) {
+      const emptySummary = summarizeImport(result, { added: 0 })
+      await showToast({
+        style: Toast.Style.Failure,
+        title: emptySummary?.title || t('toastNoFilesFound'),
+        message: emptySummary?.message
+      })
+      return
+    }
+
+    busyRef.current = true
+    try {
+      const batch = await addFilesToShareBatched(result.files.map((f) => f.path))
+      if (!mountedRef.current) return
+
+      const extraNotes: string[] = []
+      if (result.ignored > 0) extraNotes.push(t('noteIgnoredHidden', { count: result.ignored }))
+      if (result.truncated) extraNotes.push(t('noteTruncated', { max: LAN_SHARE_MAX_FILES }))
+      if (result.failedDirs.length > 0) extraNotes.push(t('noteFailedDirs', { count: result.failedDirs.length }))
+      if (batch.failedBatches > 0) {
+        extraNotes.push(t('notePartialBatchFail', { error: batch.errorMessage ? ` (${batch.errorMessage})` : '' }))
+      }
+      if (batch.duplicateNameCount > 0) {
+        extraNotes.push(t('noteDuplicateNames', { count: batch.duplicateNameCount }))
+      }
+
+      if (batch.addedCount === 0) {
+        const failParts = [batch.errorMessage || t('errNoFilesAdded'), ...extraNotes]
+        await showToast({
+          style: Toast.Style.Failure,
+          title: t('toastShareFailed'),
+          message: failParts.filter(Boolean).join(t('semiSep'))
+        })
+        await refresh(false)
+        return
+      }
+
+      const title =
+        batch.skipped.length > 0
+          ? t('msgSharedPartial', { added: batch.addedCount, skipped: batch.skipped.length })
+          : t('msgSharedAll', { added: batch.addedCount })
+      const portal = batch.status?.portalUrl
+      const portalNote = portal ? `${portal} · ${t('noPasswordNote')}` : extraNotes.length === 0 ? undefined : t('noPasswordNote')
+      const message = [...extraNotes, portalNote].filter(Boolean).join(t('semiSep')) || undefined
+      await showToast({
+        style: batch.failedBatches > 0 ? Toast.Style.Failure : Toast.Style.Success,
+        title,
+        message
+      })
+      await refresh(false)
+    } finally {
+      busyRef.current = false
+    }
+  }
+
+  async function runShareImport(
+    task: (signal: AbortSignal, onProgress: (p: { visitedDirs: number; matchedFiles: number }) => void) => Promise<FileImportResult>
+  ) {
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    const seq = ++importSeqRef.current
+    setIsImporting(true)
+    setImportProgress(null)
+    try {
+      const result = await task(controller.signal, (progress) => {
+        if (mountedRef.current && seq === importSeqRef.current) setImportProgress(progress)
+      })
+      if (!mountedRef.current || seq !== importSeqRef.current) return
+      await shareCollectedResult(result)
+    } catch (err) {
+      if (!mountedRef.current || seq !== importSeqRef.current) return
+      await showToast({ style: Toast.Style.Failure, title: t('toastImportFailed'), message: friendlyFileError(err) })
+    } finally {
+      if (mountedRef.current && seq === importSeqRef.current) {
+        importAbortRef.current = null
+        setIsImporting(false)
+        setImportProgress(null)
+      }
+    }
+  }
+
+  function handleAddFiles() {
+    void runShareImport(() => pickFiles(transport, LAN_SHARE_IMPORT_RULES, { title: t('pickFilesTitle') }))
+  }
+
+  function handleAddFolder() {
+    void runShareImport(async (signal, onProgress) => {
+      const picked = await pickFolder(transport, { title: t('pickFolderTitle') })
+      if (picked.canceled) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      if (picked.error || !picked.folderPath) {
+        return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: resolveErrorMessage(picked, t('errNoFolderSelected')) }
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const confirmed = await confirmAlert({
+          title: t('confirmRootTitle', { path: picked.folderPath }),
+          message: t('confirmRootMsg', { max: LAN_SHARE_MAX_FILES }),
+          primaryAction: { title: t('confirmRootAction'), style: 'default' }
+        })
+        if (!confirmed) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }
+      }
+      return collectFolderFiles(transport, picked.folderPath, LAN_SHARE_IMPORT_RULES, { signal, onProgress })
+    })
+  }
+
+  function handleFileInput(input: NormalizedFileInput) {
+    void runShareImport((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, LAN_SHARE_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    )
+  }
+
+  useEffect(() => {
+    mountedRef.current = true
+    void refresh(false)
+
+    let cleanupDrop: (() => void) | undefined
+    if (!isDeclarativeFileInputSupported()) {
+      const ztools = (
+        globalThis as {
+          window?: {
+            ztools?: {
+              events?: {
+                on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void
+                off?: (event: string, cb: (payload: unknown) => void) => void
+              }
+            }
+          }
+        }
+      ).window?.ztools
+      if (typeof ztools?.events?.on === 'function') {
+        const handler = (raw: unknown) => {
+          const input = normalizeFileInput(raw)
+          if (input.paths.length > 0) handleFileInput(input)
+        }
+        const off = ztools.events.on('plugin_files_dropped', handler)
+        cleanupDrop = () => {
+          if (typeof off === 'function') off()
+          else ztools?.events?.off?.('plugin_files_dropped', handler)
+        }
+      }
+    }
+
+    return () => {
+      mountedRef.current = false
+      importSeqRef.current += 1
+      importAbortRef.current?.abort()
+      cleanupDrop?.()
+    }
+  }, [])
+
+  const fileInputProps = createImportInputProps(handleFileInput, {
+    allowClipboardImage: true,
+    dropTitle: t('dropTitle'),
+    dropSubtitle: t('dropSubtitle')
+  })
+
   async function handleStart() {
     const res = await startLanShare()
-    await applyResult(res, '启动共享服务失败', res.status?.portalUrl)
+    await applyResult(res, t('errStartFailed'), res.status?.portalUrl)
   }
 
   async function handleStop() {
-    await applyResult(await stopLanShare(), '停止共享服务失败')
-  }
-
-  async function handleAddFiles() {
-    const picked = await pickFilesToShare()
-    if (picked.canceled) return
-    if (!picked.ok) {
-      await showToast({ style: Toast.Style.Failure, title: '选择文件失败', message: picked.error })
-      return
-    }
-    const res = await addFilesToShare(picked.paths)
-    const portal = res.status?.portalUrl
-    await applyResult(res, '共享文件失败', portal ? `${portal} · ${NO_PASSWORD_NOTE}` : undefined)
+    await applyResult(await stopLanShare(), t('errStopFailed'))
   }
 
   async function handleToggle(file: SharedFileItem) {
-    await applyResult(await setFileShared(file.id, !file.shared), '切换共享状态失败')
+    await applyResult(await setFileShared(file.id, !file.shared), t('errToggleFailed'))
   }
 
   async function handleRemove(file: SharedFileItem) {
-    await applyResult(await removeSharedFile(file.id), '移除失败')
+    await applyResult(await removeSharedFile(file.id), t('errRemoveFailed'))
+  }
+
+  async function handleClearAll() {
+    if (busyRef.current || isImporting) {
+      await showToast({ style: Toast.Style.Failure, title: t('toastWaitClearing') })
+      return
+    }
+    if (statusRef.current.files.length === 0) return
+    busyRef.current = true
+    setIsLoading(true)
+    try {
+      const res = await clearAllSharedFiles(statusRef.current.files)
+      if (!mountedRef.current) return
+      await showToast({
+        style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: res.message,
+        message: res.detail
+      })
+      await refresh(false)
+    } finally {
+      busyRef.current = false
+      if (mountedRef.current) setIsLoading(false)
+    }
   }
 
   const filtered = filterSharedFiles(status.files, searchText)
   const downloadable = status.files.filter((f) => f.downloadUrl).length
 
+  const pickFilesAction = () =>
+    Action({
+      title: t('actionPickFiles'),
+      icon: Icon.Plus,
+      shortcut: { modifiers: ['ctrl'], key: 'o' },
+      onAction: () => handleAddFiles()
+    })
+
+  const pickFolderAction = () =>
+    Action({
+      title: t('actionPickFolder'),
+      icon: Icon.Folder,
+      shortcut: { modifiers: ['ctrl', 'shift'], key: 'o' },
+      onAction: () => handleAddFolder()
+    })
+
+  const refreshAction = () =>
+    Action({
+      title: t('actionRefreshStatus'),
+      icon: Icon.ArrowClockwise,
+      onAction: () => refresh(true)
+    })
+
+  const clearAllAction = () =>
+    Action({
+      title: t('actionClearAll'),
+      icon: Icon.Trash,
+      style: Action.Style.Destructive,
+      shortcut: { modifiers: ['ctrl', 'shift'], key: 'backspace' },
+      onAction: () => handleClearAll()
+    })
+
+  const listSection = (includeRefresh = true) =>
+    ActionPanel.Section({
+      title: t('sectionList'),
+      children: [
+        pickFilesAction(),
+        pickFolderAction(),
+        ...(includeRefresh ? [refreshAction()] : []),
+        ...(status.files.length > 0 ? [clearAllAction()] : [])
+      ]
+    })
+
   const serviceItem = !status.ok
     ? List.Item({
         id: 'lan-service',
-        title: '读取共享状态失败',
+        title: t('errReadStatusFailed'),
         subtitle: status.error,
         icon: Icon.ExclamationMark,
         detail: List.Item.Detail({ markdown: serviceDetail(status) }),
         actions: ActionPanel({
-          title: '读取共享状态失败',
-          children: [Action({ title: '重新读取', icon: Icon.ArrowClockwise, onAction: () => refresh(true) })]
+          title: t('errReadStatusFailed'),
+          children: [
+            Action({ title: t('actionReload'), icon: Icon.ArrowClockwise, onAction: () => refresh(true) }),
+            listSection(false)
+          ]
         })
       })
     : status.running
     ? List.Item({
         id: 'lan-service',
-        title: `共享服务运行中：${status.portalUrl}`,
-        subtitle: NO_PASSWORD_NOTE,
+        title: t('serviceRunningTitle', { url: status.portalUrl }),
+        subtitle: t('noPasswordNote'),
         icon: Icon.Wifi,
-        accessories: [{ tag: { value: '运行中' } }],
+        accessories: [{ tag: { value: t('tagRunning') } }],
         detail: List.Item.Detail({ markdown: serviceDetail(status) }),
         actions: ActionPanel({
-          title: '共享服务',
+          title: t('panelShareService'),
           children: [
             Action({
-              title: '复制访问地址',
+              title: t('actionCopyPortalUrl'),
               icon: Icon.Clipboard,
-              onAction: () => copyWithToast(status.portalUrl, '已复制访问地址', status.portalUrl)
+              onAction: () => copyWithToast(status.portalUrl, t('toastCopiedPortalUrl'), status.portalUrl)
             }),
             Action({
-              title: '停止共享服务',
+              title: t('actionStopService'),
               icon: Icon.Stop,
               shortcut: { modifiers: ['ctrl'], key: 'return' },
               onAction: () => handleStop()
-            })
+            }),
+            refreshAction(),
+            listSection(false)
           ]
         })
       })
     : List.Item({
         id: 'lan-service',
-        title: '共享服务未运行',
-        subtitle: '启动后，同一局域网的设备可以打开本机地址下载列表中的文件',
+        title: t('toastNotRunning'),
+        subtitle: t('serviceStoppedSub'),
         icon: Icon.Wifi,
-        accessories: [{ tag: { value: '未运行' } }],
+        accessories: [{ tag: { value: t('tagStopped') } }],
         detail: List.Item.Detail({ markdown: serviceDetail(status) }),
         actions: ActionPanel({
-          title: '共享服务',
-          children: [Action({ title: '启动共享服务', icon: Icon.Play, onAction: () => handleStart() })]
+          title: t('panelShareService'),
+          children: [
+            Action({ title: t('actionStartService'), icon: Icon.Play, onAction: () => handleStart() }),
+            refreshAction(),
+            listSection(false)
+          ]
         })
       })
 
   const fileItems = filtered.map((file) => {
-    const actions: ReturnType<typeof Action>[] = []
+    const actions: Array<ReturnType<typeof Action> | ReturnType<typeof ActionPanel.Section>> = []
     if (file.downloadUrl) {
       actions.push(
         Action({
-          title: '复制下载地址',
+          title: t('actionCopyDownloadUrl'),
           icon: Icon.Clipboard,
-          onAction: () => copyWithToast(file.downloadUrl, '已复制下载地址', file.downloadUrl)
+          onAction: () => copyWithToast(file.downloadUrl, t('toastCopiedDownloadUrl'), file.downloadUrl)
         })
       )
     }
     actions.push(
       Action({
-        title: file.shared ? '暂停共享该文件' : '恢复共享该文件',
+        title: file.shared ? t('actionPauseFile') : t('actionResumeFile'),
         icon: file.shared ? Icon.Pause : Icon.Play,
-        shortcut: { modifiers: ['ctrl'], key: 'return' },
+        // 仅当存在「复制下载地址」作为首项时由第 2 顺位自动承接 Ctrl+Enter，避免无下载地址时首项错位
         onAction: () => handleToggle(file)
       }),
       Action({
-        title: '从共享列表移除（不删除文件）',
+        title: t('actionRemoveFile'),
         icon: Icon.XMarkCircle,
+        shortcut: { modifiers: ['ctrl'], key: 'backspace' },
         onAction: () => handleRemove(file)
-      })
+      }),
+      listSection(true)
     )
     return List.Item({
       id: `lan-file-${file.id}`,
@@ -232,7 +502,7 @@ export function LanShareCommand() {
       subtitle: file.path,
       icon: Icon.Document,
       accessories: [
-        { tag: { value: file.isDirectory ? '文件夹' : !file.shared ? '已暂停' : status.running ? '共享中' : '服务未启动' } },
+        { tag: { value: file.isDirectory ? t('tagDirectory') : !file.shared ? t('tagPaused') : status.running ? t('tagSharing') : t('tagServiceStopped') } },
         { text: formatBytes(file.sizeBytes) }
       ],
       detail: List.Item.Detail({ markdown: fileDetail(file, status) }),
@@ -240,39 +510,54 @@ export function LanShareCommand() {
     })
   })
 
+  const clearSuffix = status.files.length > 0 ? t('summaryClearSuffix') : ''
+  const summaryText = isImporting
+    ? t('summaryImporting', { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
+    : !status.ok
+      ? t('summaryReadFailed', { error: status.error || '' })
+      : status.running
+        ? t('summaryRunning', { url: status.portalUrl, count: downloadable, suffix: clearSuffix })
+        : status.files.length === 0
+          ? t('summaryIdleEmpty')
+          : t('summaryIdleWithFiles', { count: status.files.length, suffix: clearSuffix })
+
   return List({
-    navigationTitle: '局域网传文件',
-    searchBarPlaceholder: '搜索共享的文件名或路径',
+    ...fileInputProps,
+    navigationTitle: t('navTitle'),
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: true,
-    isLoading,
+    isLoading: isLoading || isImporting,
+    actions: ActionPanel({
+      children: [
+        pickFilesAction(),
+        pickFolderAction(),
+        refreshAction(),
+        ...(status.files.length > 0 ? [clearAllAction()] : [])
+      ]
+    }),
     filterBar: {
-      summaryText: !status.ok
-        ? `读取失败：${status.error || ''}`
-        : status.running
-        ? `共享中 ${status.portalUrl} · ${downloadable} 个文件可下载`
-        : `共享服务未运行 · 列表中 ${status.files.length} 个文件`,
+      summaryText,
       actions: [
         {
-          id: 'add-files',
-          label: '选择文件并共享',
-          title: '选择文件并共享',
+          id: 'pick-files',
+          label: t('barPickFiles'),
+          title: t('barPickFiles'),
           style: 'secondary',
-          // 顶栏按钮由宿主直接调用、不会兜底 rejected promise，失败在函数内提示
-          onAction: () => void handleAddFiles()
+          onAction: handleAddFiles
         },
         {
-          id: 'refresh-lan',
-          label: '刷新',
-          title: '刷新',
+          id: 'pick-folder',
+          label: t('barPickFolder'),
+          title: t('barPickFolder'),
           style: 'secondary',
-          onAction: () => void refresh(true)
+          onAction: handleAddFolder
         }
       ]
     },
     children: [
-      List.Section({ title: '共享服务', children: [serviceItem] }),
-      List.Section({ title: `共享的文件 (${filtered.length})`, children: fileItems })
+      List.Section({ title: t('secShareService'), children: [serviceItem] }),
+      List.Section({ title: t('secSharedFiles', { count: filtered.length }), children: fileItems })
     ]
   })
 }

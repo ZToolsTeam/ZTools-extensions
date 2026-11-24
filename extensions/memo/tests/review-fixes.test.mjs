@@ -30,7 +30,7 @@ test('单条便签的动作不再重复 List 级的「新建便签」；空状�
   seed([createMemo([], '标题', '正文')[0]])
   const view = await mount(MemoCommand)
   const itemTitles = view.actions(view.items()[0]).map((a) => a.props.title)
-  assert.deepEqual(itemTitles, ['复制正文', '编辑便签', '复制标题', '删除便签'])
+  assert.deepEqual(itemTitles, ['复制正文', '直接粘贴正文回前台', '置顶便签', '编辑便签', '复制标题', '删除便签'])
   assert.deepEqual(view.actions(null).map((a) => a.props.title), ['新建便签'])
   await view.search('没有匹配')
   assert.equal(view.item('empty').props.actions, undefined)

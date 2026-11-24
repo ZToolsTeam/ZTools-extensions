@@ -1,7 +1,7 @@
 /**
  * SQLite 查看器（布局二：左侧数据表 + 右侧可勾选记录）
  *
- * - 顶部下拉框切换在 %APPDATA% / %LOCALAPPDATA% 下找到的数据库文件
+ * - 顶部下拉框切换用户导入的 SQLite 数据库文件（不扫描本机目录）
  * - 左侧列出表与视图（行数、列），选中后右侧只读显示该表前 50 行
  * - 勾选的记录（未勾选时为当前列表）可导出为 JSON / CSV / SQL INSERT 文本复制到剪贴板
  * - 只读，不执行写入或整理语句；读取失败时在状态条与空列表中如实显示原因
@@ -11,27 +11,60 @@ import {
   Action,
   ActionPanel,
   Clipboard,
+  FilterBar,
   Icon,
   List,
+  LocalStorage,
   Toast,
+  confirmAlert,
   showToast,
   useEffect,
+  useLocale,
+  useRef,
   useState
 } from "@ztools/declarative-ui";
-import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+import { t } from "./i18n.js";
+import { isRealElectronHost } from "./native-ipc.js";
+import { isDeclarativeFileInputSupported } from "./host-compat.js";
 import {
-  NOT_IN_CLIENT_MESSAGE,
+  type FileImportResult,
+  type NormalizedFileInput,
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  pathKey,
+  pickFiles,
+  pickFolder,
+  summarizeImport
+} from "./file-import.js";
+import {
+  getNotInClientMessage,
   PREVIEW_LIMIT,
+  RECENT_DBS_STORAGE_KEY,
+  SQLITE_IMPORT_RULES,
+  SQLITE_SUPPORTED_TEXT,
   createEmptySqliteWorkspace,
+  createSqliteImportTransport,
+  deserializeRecentDatabases,
   exportTableRecords,
   fetchSqliteWorkspace,
   fetchTableRows,
   formatBytes,
   openSqliteDbLocation,
+  serializeRecentDatabases,
+  toSqliteDatabaseFile,
   type SqlExportFormat,
+  type SqliteDatabaseFile,
   type SqliteRowRecord,
   type SqliteWorkspaceSnapshot
 } from "./logic.js";
+import { resolveErrorMessage } from './error-i18n.js'
+
+export * from "./logic.js";
 
 interface TableRowsState {
   loading: boolean;
@@ -39,60 +72,390 @@ interface TableRowsState {
   error?: string;
 }
 
+interface FolderImportProgress {
+  visitedDirs: number;
+  matchedFiles: number;
+}
+
+const KEY_OPEN_FILES = { modifiers: ["ctrl"] as ("ctrl")[], key: "o" };
+const KEY_OPEN_FOLDER = { modifiers: ["ctrl", "shift"] as ("ctrl" | "shift")[], key: "o" };
+const KEY_REMOVE_DB = { modifiers: ["ctrl"] as ("ctrl")[], key: "backspace" };
+const KEY_CLEAR_LIST = { modifiers: ["ctrl", "shift"] as ("ctrl" | "shift")[], key: "backspace" };
+const KEY_SELECT_ALL = { modifiers: ["ctrl"] as ("ctrl")[], key: "a" };
+const KEY_PREV_PAGE = { modifiers: ["ctrl"] as ("ctrl")[], key: "[" };
+const KEY_NEXT_PAGE = { modifiers: ["ctrl"] as ("ctrl")[], key: "]" };
+
+const cacheKey = (dbPath: string, table: string, page = 0) => `${pathKey(dbPath)}\u0000${table}\u0000${page}`;
+
+function persistRecentDatabases(databases: SqliteDatabaseFile[], activeDbPath: string) {
+  try {
+    if (databases.length === 0) {
+      void LocalStorage.removeItem(RECENT_DBS_STORAGE_KEY);
+      return;
+    }
+    void LocalStorage.setItem(RECENT_DBS_STORAGE_KEY, serializeRecentDatabases(databases, activeDbPath));
+  } catch {
+    // 忽略存储异常，避免阻断主流程
+  }
+}
+
 export function SqlitePluginCommand() {
-  const [workspace, setWorkspace] = useState<SqliteWorkspaceSnapshot>(() =>
-    isRealElectronHost() ? createEmptySqliteWorkspace() : createEmptySqliteWorkspace(NOT_IN_CLIENT_MESSAGE)
-  );
+  useLocale();
+  const isRealHost = isRealElectronHost();
+  const notInClientMsg = getNotInClientMessage();
+  const transport = createSqliteImportTransport();
+  const [databases, setDatabases] = useState<SqliteDatabaseFile[]>([]);
   const [activeDbPath, setActiveDbPath] = useState<string>("");
+  const [workspace, setWorkspace] = useState<SqliteWorkspaceSnapshot>(() =>
+    isRealHost ? createEmptySqliteWorkspace() : createEmptySqliteWorkspace(notInClientMsg)
+  );
   const [selectedTable, setSelectedTable] = useState<string>("");
-  // 按「数据库路径 + 表名」缓存已读取的记录，切换回来时不重复读取，也不会把旧数据库的结果显示到新数据库上
+  const [pageIndex, setPageIndex] = useState<number>(0);
+  // 按「数据库路径 + 表名 + 页码」缓存已读取的记录，切换回来时不重复读取，也不会把旧数据库的结果显示到新数据库上
   const [rowsCache, setRowsCache] = useState<Record<string, TableRowsState>>({});
   const [checkedRowIds, setCheckedRowIds] = useState<string[]>([]);
   const [searchText, setSearchText] = useState<string>("");
-  const [isLoading, setIsLoading] = useState<boolean>(isRealElectronHost());
+  const [isOpening, setIsOpening] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importProgress, setImportProgress] = useState<FolderImportProgress | null>(null);
 
-  const cacheKey = (dbPath: string, table: string) => `${dbPath}\u0000${table}`;
+  const databasesRef = useRef(databases);
+  databasesRef.current = databases;
+  const activeDbPathRef = useRef(activeDbPath);
+  activeDbPathRef.current = activeDbPath;
 
-  const reloadSqliteWorkspace = async (dbPath = activeDbPath) => {
-    setIsLoading(true);
+  const importSeqRef = useRef(0);
+  const importAbortRef = useRef<AbortController | null>(null);
+  const openSeqRef = useRef(0);
+  const tableSeqRef = useRef(0);
+
+  const clearOpenedView = () => {
+    openSeqRef.current += 1;
+    tableSeqRef.current += 1;
+    activeDbPathRef.current = "";
+    setActiveDbPath("");
+    setWorkspace(isRealHost ? createEmptySqliteWorkspace() : createEmptySqliteWorkspace(notInClientMsg));
+    setSelectedTable("");
+    setPageIndex(0);
+    setCheckedRowIds([]);
+    setRowsCache({});
+    setIsOpening(false);
+  };
+
+  const openDatabase = async (targetPath: string, shouldPersist = true) => {
+    const trimmed = targetPath.trim();
+    if (!trimmed) {
+      clearOpenedView();
+      return;
+    }
+    const seq = ++openSeqRef.current;
+    tableSeqRef.current += 1;
+    activeDbPathRef.current = trimmed;
+    setActiveDbPath(trimmed);
+    if (shouldPersist) {
+      persistRecentDatabases(databasesRef.current, trimmed);
+    }
+    setSelectedTable("");
+    setPageIndex(0);
+    setCheckedRowIds([]);
+    setRowsCache({});
+    setIsOpening(true);
     try {
-      const data = await fetchSqliteWorkspace(dbPath);
+      const data = await fetchSqliteWorkspace(trimmed);
+      if (seq !== openSeqRef.current) return;
+      if (!databasesRef.current.some((d) => pathKey(d.path) === pathKey(trimmed))) return;
+
+      const resolvedSize = data.databases[0]?.sizeBytes ?? null;
+      if (resolvedSize !== null) {
+        const nextList = databasesRef.current.map((d) =>
+          pathKey(d.path) === pathKey(trimmed) && d.sizeBytes === null ? { ...d, sizeBytes: resolvedSize } : d
+        );
+        databasesRef.current = nextList;
+        setDatabases(nextList);
+        persistRecentDatabases(nextList, trimmed);
+      }
+
       setWorkspace(data);
-      setCheckedRowIds([]);
       const nextCache: Record<string, TableRowsState> = {};
       if (data.rowsTableName) {
-        nextCache[cacheKey(data.activeDbPath, data.rowsTableName)] = { loading: false, rows: data.rows };
+        nextCache[cacheKey(data.activeDbPath, data.rowsTableName, 0)] = { loading: false, rows: data.rows };
       }
       setRowsCache(nextCache);
       setSelectedTable(data.tables[0]?.tableName || "");
+      setPageIndex(0);
     } finally {
-      setIsLoading(false);
+      if (seq === openSeqRef.current) setIsOpening(false);
     }
   };
 
-  useEffect(() => {
-    void reloadSqliteWorkspace(activeDbPath);
-  }, [activeDbPath]);
+  const openDatabaseRef = useRef(openDatabase);
+  openDatabaseRef.current = openDatabase;
 
-  const loadTable = async (tableName: string) => {
+  const commitImportResult = (result: FileImportResult) => {
+    const incoming = result.files.map(toSqliteDatabaseFile);
+    const { merged, added, duplicates } = mergeByPath(databasesRef.current, incoming, (d) => d.path);
+    const hadActive = Boolean(activeDbPathRef.current);
+
+    if (added.length > 0) {
+      databasesRef.current = merged;
+      setDatabases(merged);
+      const nextActive = hadActive ? activeDbPathRef.current : (added[0]?.path ?? "");
+      persistRecentDatabases(merged, nextActive);
+    }
+
+    const summary = summarizeImport(result, { added: added.length, duplicates }, SQLITE_SUPPORTED_TEXT);
+    if (summary) {
+      void showToast({
+        style: summary.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: summary.title,
+        message: summary.message
+      });
+    }
+
+    // 导入前没有打开任何数据库时，自动打开新导入的第 1 个
+    if (!hadActive && added.length > 0) {
+      void openDatabase(added[0]!.path);
+    }
+  };
+
+  const startDatabaseImport = async (
+    loader: (signal: AbortSignal, onProgress: (p: FolderImportProgress) => void) => Promise<FileImportResult>
+  ) => {
+    importAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    importAbortRef.current = ctrl;
+    const seq = ++importSeqRef.current;
+    setIsImporting(true);
+    setImportProgress(null);
+    try {
+      const result = await loader(ctrl.signal, (p) => {
+        if (seq === importSeqRef.current) setImportProgress(p);
+      });
+      if (seq !== importSeqRef.current) return;
+      commitImportResult(result);
+    } catch (err) {
+      if (seq !== importSeqRef.current) return;
+      await showToast({ style: Toast.Style.Failure, title: t("importFailed"), message: friendlyFileError(err) });
+    } finally {
+      if (seq === importSeqRef.current) {
+        importAbortRef.current = null;
+        setIsImporting(false);
+        setImportProgress(null);
+      }
+    }
+  };
+
+  const handlePickFiles = () => {
+    void startDatabaseImport(() =>
+      pickFiles(transport, SQLITE_IMPORT_RULES, {
+        title: t("pickDbFilesTitle"),
+        filterName: t("pickDbFilterName")
+      })
+    );
+  };
+
+  const handlePickFolder = () => {
+    void startDatabaseImport(async (signal, onProgress) => {
+      const picked = await pickFolder(transport, { title: t("pickDbFolderTitle") });
+      if (picked.canceled) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true };
+      if (picked.error || !picked.folderPath) {
+        return {
+          files: [],
+          ignored: 0,
+          truncated: false,
+          failedDirs: [],
+          canceled: false,
+          error: resolveErrorMessage(picked, t("noFolderSelected"))
+        };
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const confirmed = await confirmAlert({
+          title: t("confirmVolumeTitle", { path: picked.folderPath }),
+          message: t("confirmVolumeMsg"),
+          primaryAction: { title: t("continueImport"), style: "default" }
+        });
+        if (!confirmed) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true };
+      }
+      return collectFolderFiles(transport, picked.folderPath, SQLITE_IMPORT_RULES, { signal, onProgress });
+    });
+  };
+
+  const handleFileInput = (input: NormalizedFileInput) => {
+    void startDatabaseImport((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, SQLITE_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    );
+  };
+
+  const handleFileInputRef = useRef(handleFileInput);
+  handleFileInputRef.current = handleFileInput;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (isRealHost) {
+      void (async () => {
+        try {
+          const raw = await LocalStorage.getItem<string>(RECENT_DBS_STORAGE_KEY);
+          if (cancelled || databasesRef.current.length > 0) return;
+          const restored = deserializeRecentDatabases(raw);
+          if (restored.databases.length === 0) return;
+          databasesRef.current = restored.databases;
+          setDatabases(restored.databases);
+          if (restored.activeDbPath) {
+            void openDatabaseRef.current(restored.activeDbPath, false);
+          }
+        } catch {
+          // 忽略 LocalStorage 读取异常
+        }
+      })();
+    }
+
+    let cleanupDrop: (() => void) | undefined;
+    if (!isDeclarativeFileInputSupported()) {
+      const w = globalThis as {
+        window?: {
+          ztools?: {
+            events?: {
+              on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void;
+              off?: (event: string, cb: (payload: unknown) => void) => void;
+            };
+          };
+        };
+      };
+      const events = w.window?.ztools?.events;
+      if (typeof events?.on === "function") {
+        const onDrop = (envelope: unknown) => {
+          const input = normalizeFileInput(envelope);
+          if (input.paths.length > 0) handleFileInputRef.current(input);
+        };
+        const off = events.on("plugin_files_dropped", onDrop);
+        cleanupDrop = () => {
+          if (typeof off === "function") off();
+          else events.off?.("plugin_files_dropped", onDrop);
+        };
+      }
+    }
+
+    return () => {
+      cancelled = true;
+      importSeqRef.current += 1;
+      openSeqRef.current += 1;
+      tableSeqRef.current += 1;
+      importAbortRef.current?.abort();
+      cleanupDrop?.();
+    };
+  }, []);
+
+  const fileInputProps = createImportInputProps(
+    (input) => handleFileInputRef.current(input),
+    {
+      dropTitle: t("dropTitle"),
+      dropSubtitle: t("dropSubtitle")
+    }
+  );
+
+  const handleRemoveDatabase = () => {
+    const current = activeDbPathRef.current;
+    if (!current) return;
+    const key = pathKey(current);
+    const idx = databasesRef.current.findIndex((d) => pathKey(d.path) === key);
+    if (idx < 0) return;
+    const remaining = databasesRef.current.filter((_, i) => i !== idx);
+    databasesRef.current = remaining;
+    setDatabases(remaining);
+    if (remaining.length === 0) {
+      persistRecentDatabases([], "");
+      clearOpenedView();
+      return;
+    }
+    const nextDb = remaining[Math.min(idx, remaining.length - 1)]!;
+    persistRecentDatabases(remaining, nextDb.path);
+    void openDatabase(nextDb.path, false);
+  };
+
+  const handleClearDatabases = () => {
+    importSeqRef.current += 1;
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+    setIsImporting(false);
+    setImportProgress(null);
+    databasesRef.current = [];
+    setDatabases([]);
+    persistRecentDatabases([], "");
+    clearOpenedView();
+  };
+
+  const loadTable = async (tableName: string, targetPage = 0) => {
+    const safePage = Math.max(0, Math.floor(targetPage));
     if (tableName !== selectedTable) {
       setSelectedTable(tableName);
+      setPageIndex(safePage);
+      setCheckedRowIds([]);
+    } else if (safePage !== pageIndex) {
+      setPageIndex(safePage);
       setCheckedRowIds([]);
     }
-    const dbPath = workspace.activeDbPath;
-    const key = cacheKey(dbPath, tableName);
+    const dbPath = activeDbPathRef.current;
+    const key = cacheKey(dbPath, tableName, safePage);
     if (!dbPath || !tableName || rowsCache[key]) return;
+
+    const seq = ++tableSeqRef.current;
     setRowsCache((prev) => ({ ...prev, [key]: { loading: true, rows: [] } }));
-    const res = await fetchTableRows(dbPath, tableName);
+    const res = await fetchTableRows(dbPath, tableName, {
+      limit: PREVIEW_LIMIT,
+      offset: safePage * PREVIEW_LIMIT
+    });
+    if (seq !== tableSeqRef.current || pathKey(activeDbPathRef.current) !== pathKey(dbPath)) return;
     setRowsCache((prev) => ({
       ...prev,
       [key]: res.ok ? { loading: false, rows: res.rows } : { loading: false, rows: [], error: res.error }
     }));
   };
 
+  if (!isRealHost) {
+    return List({
+      searchBarPlaceholder: t("searchPlaceholder"),
+      children: [
+        List.Section({
+          title: t("viewerSectionTitle"),
+          children: [
+            List.Item({
+              id: "sqlite-client-required",
+              title: notInClientMsg,
+              subtitle: t("clientRequiredSubtitle"),
+              icon: Icon.Info
+            })
+          ]
+        })
+      ]
+    });
+  }
+
   const tableMeta = workspace.tables.find((t) => t.tableName === selectedTable);
-  const tableState = rowsCache[cacheKey(workspace.activeDbPath, selectedTable)];
+  const tableState = rowsCache[cacheKey(workspace.activeDbPath, selectedTable, pageIndex)];
   const tableRows = tableState?.rows || [];
+  const totalRows = tableMeta?.rowCount ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PREVIEW_LIMIT));
+  const hasPrevPage = Boolean(selectedTable) && pageIndex > 0;
+  const hasNextPage =
+    Boolean(selectedTable) &&
+    ((totalRows > 0 && (pageIndex + 1) * PREVIEW_LIMIT < totalRows) ||
+      (totalRows === 0 && tableRows.length >= PREVIEW_LIMIT));
+  const isPaginated = hasPrevPage || hasNextPage;
+  const pageStartRow = pageIndex * PREVIEW_LIMIT + 1;
+  const pageEndRow = tableRows.length > 0 ? pageIndex * PREVIEW_LIMIT + tableRows.length : pageStartRow;
+
+  const goPrevPage = () => {
+    if (!selectedTable || !hasPrevPage) return;
+    void loadTable(selectedTable, pageIndex - 1);
+  };
+  const goNextPage = () => {
+    if (!selectedTable || !hasNextPage) return;
+    void loadTable(selectedTable, pageIndex + 1);
+  };
 
   const keyword = searchText.trim().toLowerCase();
   const visibleRows = tableRows.filter((row) => {
@@ -104,7 +467,9 @@ export function SqlitePluginCommand() {
   const selectedRows = tableRows.filter((r) => checkedSet.has(r.id));
   const exportTargets = selectedRows.length > 0 ? selectedRows : visibleRows;
   const exportLabel =
-    selectedRows.length > 0 ? `已勾选的 ${selectedRows.length} 行` : `当前列表的 ${visibleRows.length} 行`;
+    selectedRows.length > 0
+      ? t("selectedRowsLabel", { count: selectedRows.length })
+      : t("visibleRowsLabel", { count: visibleRows.length });
 
   const toggleRowCheck = (id: string) => {
     setCheckedRowIds((prev) => (prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]));
@@ -125,7 +490,7 @@ export function SqlitePluginCommand() {
     const res = await exportTableRecords(exportTargets, format, (text) => Clipboard.copy(text), tableMeta);
     showToast({
       style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-      title: res.ok ? "已复制到剪贴板" : "导出失败",
+      title: res.ok ? t("copiedToClipboard") : t("exportFailed"),
       message: res.message
     });
   };
@@ -135,30 +500,102 @@ export function SqlitePluginCommand() {
     if (!ok) {
       showToast({
         style: Toast.Style.Failure,
-        title: "无法在资源管理器中定位数据库文件",
-        message: workspace.activeDbPath || "没有打开数据库"
+        title: t("locateDbFailed"),
+        message: workspace.activeDbPath || t("noDbOpened")
       });
     }
   };
 
-  const activeDb = workspace.databases.find((d) => d.path === workspace.activeDbPath);
-  const dbLabel = activeDb ? `${activeDb.name} (${formatBytes(activeDb.sizeBytes)})` : workspace.activeDbPath;
+  const pickFilesAction = () =>
+    Action({
+      title: t("pickFilesAction"),
+      icon: Icon.Plus,
+      shortcut: KEY_OPEN_FILES,
+      onAction: handlePickFiles
+    });
+  const pickFolderAction = () =>
+    Action({
+      title: t("pickFolderAction"),
+      icon: Icon.Folder,
+      shortcut: KEY_OPEN_FOLDER,
+      onAction: handlePickFolder
+    });
+  const removeDbAction = () =>
+    Action({
+      title: t("removeDbAction"),
+      icon: Icon.Minus,
+      shortcut: KEY_REMOVE_DB,
+      onAction: handleRemoveDatabase
+    });
+  const clearListAction = () =>
+    Action({
+      title: t("clearListAction"),
+      icon: Icon.Trash,
+      style: Action.Style.Destructive,
+      shortcut: KEY_CLEAR_LIST,
+      onAction: handleClearDatabases
+    });
+  const paginationActions = () => [
+    ...(hasNextPage
+      ? [
+          Action({
+            title: t("nextPageAction"),
+            icon: Icon.ArrowRight,
+            shortcut: KEY_NEXT_PAGE,
+            onAction: goNextPage
+          })
+        ]
+      : []),
+    ...(hasPrevPage
+      ? [
+          Action({
+            title: t("prevPageAction"),
+            icon: Icon.ArrowLeft,
+            shortcut: KEY_PREV_PAGE,
+            onAction: goPrevPage
+          })
+        ]
+      : [])
+  ];
 
-  const summaryText = workspace.error
-    ? workspace.error
-    : tableState?.error
-      ? `读取表「${selectedTable}」失败：${tableState.error}`
-      : `${dbLabel} · ${workspace.tables.length} 张表 · ${selectedTable ? `「${selectedTable}」显示前 ${tableRows.length} 行` : "未选择表"} · 已勾选 ${selectedRows.length} 行`;
+  const activeDb = databases.find((d) => pathKey(d.path) === pathKey(activeDbPath));
+  const dbLabel = activeDb ? `${activeDb.name} (${formatBytes(activeDb.sizeBytes)})` : activeDbPath;
+
+  const summaryText = isImporting
+    ? t("importingSummary", { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
+    : databases.length === 0
+      ? t("emptyDbPrompt")
+      : workspace.error
+        ? t("summaryErrorClear", { error: workspace.error })
+        : tableState?.error
+          ? t("summaryTableErrorClear", { table: selectedTable, error: tableState.error })
+          : t("summaryReady", {
+              db: dbLabel,
+              tables: workspace.tables.length,
+              tableStatus: selectedTable
+                ? isPaginated
+                  ? t("tablePreviewPagedStatus", {
+                      table: selectedTable,
+                      page: pageIndex + 1,
+                      totalPages,
+                      count: tableRows.length
+                    })
+                  : t("tablePreviewStatus", { table: selectedTable, count: tableRows.length })
+                : t("noTableSelected"),
+              checked: selectedRows.length
+            });
 
   const exportActions = (primary: SqlExportFormat, secondary: SqlExportFormat) => {
     const titles: Record<SqlExportFormat, string> = {
-      json: `导出${exportLabel}为 JSON`,
-      sql_insert: `导出${exportLabel}为 SQL INSERT 语句`,
-      csv: `导出${exportLabel}为 CSV`
+      json: t("exportJsonTitle", { target: exportLabel }),
+      sql_insert: t("exportSqlTitle", { target: exportLabel }),
+      csv: t("exportCsvTitle", { target: exportLabel })
     };
-    const order: SqlExportFormat[] = [primary, secondary, ...(["json", "sql_insert", "csv"] as SqlExportFormat[]).filter(
-      (f) => f !== primary && f !== secondary
-    )];
+    const order: SqlExportFormat[] = [
+      primary,
+      secondary,
+      ...(["json", "sql_insert", "csv"] as SqlExportFormat[]).filter((f) => f !== primary && f !== secondary)
+    ];
     return order.map((format) =>
       Action({
         title: titles[format],
@@ -168,28 +605,45 @@ export function SqlitePluginCommand() {
     );
   };
 
+  const allChecked = visibleRows.length > 0 && visibleRows.every((r) => checkedSet.has(r.id));
+  const someChecked = visibleRows.some((r) => checkedSet.has(r.id));
+
   const leftNavNodes = workspace.tables.map((table) =>
     List.Item({
       id: `nav-sql-${table.id}`,
       title: table.tableName,
-      subtitle: `${table.type === "view" ? "视图" : "表"} · ${table.columns.length} 列：${table.schemaSummary}`,
+      subtitle: t("tableSubtitle", {
+        type: table.type === "view" ? t("typeView") : t("typeTable"),
+        cols: table.columns.length,
+        schema: table.schemaSummary
+      }),
       icon: Icon.Document,
       onSelect: () => {
         void loadTable(table.tableName);
       },
-      accessories: [{ tag: { value: `${table.rowCount} 行` } }],
+      accessories: [{ tag: { value: t("rowCountTag", { count: table.rowCount }) } }],
       actions: ActionPanel({
         children: [
           Action({
-            title: `查看「${table.tableName}」的记录`,
+            title: t("viewTableRecords", { table: table.tableName }),
             icon: Icon.Filter,
-            onAction: () => loadTable(table.tableName)
+            onAction: () => loadTable(table.tableName, 0)
           }),
+          ...(table.tableName === selectedTable ? paginationActions() : []),
           ...exportActions("json", "csv"),
           Action({
-            title: "在资源管理器中定位数据库文件",
+            title: t("locateDbAction"),
             icon: Icon.Folder,
             onAction: locateDb
+          }),
+          ActionPanel.Section({
+            title: t("listSectionTitle"),
+            children: [
+              ...(activeDbPath ? [removeDbAction()] : []),
+              pickFilesAction(),
+              pickFolderAction(),
+              clearListAction()
+            ]
           })
         ]
       })
@@ -207,86 +661,146 @@ export function SqlitePluginCommand() {
       checked: isChecked,
       onCheckChange: () => toggleRowCheck(row.id),
       onToggleCheck: () => toggleRowCheck(row.id),
-      accessories: [{ text: `第 ${row.rowNumber} 行` }],
+      accessories: [{ text: t("rowNumberText", { num: row.rowNumber }) }],
       actions: ActionPanel({
         children: [
           ...exportActions("json", "sql_insert"),
+          ...paginationActions(),
           Action({
-            title: "在资源管理器中定位数据库文件",
+            title: t("locateDbAction"),
             icon: Icon.Folder,
             onAction: locateDb
+          }),
+          ActionPanel.Section({
+            title: t("listSectionTitle"),
+            children: [
+              ...(activeDbPath ? [removeDbAction()] : []),
+              pickFilesAction(),
+              pickFolderAction(),
+              Action({
+                title: allChecked ? t("uncheckAll") : t("checkAll"),
+                icon: Icon.CheckCircle,
+                shortcut: KEY_SELECT_ALL,
+                onAction: toggleAllVisible
+              }),
+              clearListAction()
+            ]
           })
         ]
       })
     });
   });
 
-  const allChecked = visibleRows.length > 0 && visibleRows.every((r) => checkedSet.has(r.id));
-  const someChecked = visibleRows.some((r) => checkedSet.has(r.id));
+  const emptyText = isImporting
+    ? t("importingEllipsis")
+    : databases.length === 0
+      ? t("emptySqlitePrompt")
+      : workspace.error ||
+        (tableState?.error
+          ? t("readFailedPrefix", { error: tableState.error })
+          : isOpening || tableState?.loading
+            ? t("readingEllipsis")
+            : selectedTable
+              ? keyword
+                ? t("noMatchingRows")
+                : t("emptyTableRows")
+              : t("noTablesToDisplay"));
 
-  const emptyText =
-    workspace.error ||
-    (tableState?.error
-      ? `读取失败：${tableState.error}`
-      : isLoading || tableState?.loading
-        ? "正在读取..."
-        : selectedTable
-          ? keyword
-            ? "没有匹配的记录"
-            : "这张表没有记录"
-          : "没有可显示的数据表");
+  const listActions = ActionPanel({
+    children: [
+      pickFilesAction(),
+      pickFolderAction(),
+      ...(databases.length > 0
+        ? [
+            ActionPanel.Section({
+              title: t("listSectionTitle"),
+              children: [...(activeDbPath ? [removeDbAction()] : []), clearListAction()]
+            })
+          ]
+        : [])
+    ]
+  });
 
   return List({
-    isLoading: isLoading || Boolean(tableState?.loading),
-    searchBarPlaceholder: "搜索当前表已读取的记录...",
+    ...fileInputProps,
+    isLoading: isImporting || isOpening || Boolean(tableState?.loading),
+    searchBarPlaceholder: t("searchPlaceholder"),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
+    actions: listActions,
     searchBarAccessory: List.Dropdown({
-      tooltip: "切换数据库文件",
-      value: workspace.activeDbPath,
-      onChange: (val) => setActiveDbPath(val),
-      children: workspace.databases.map((db) =>
+      tooltip: t("switchDbTooltip"),
+      value: activeDbPath,
+      onChange: (val) => {
+        if (val) void openDatabase(val);
+      },
+      children: databases.map((db) =>
         List.Dropdown.Item({
           title: `${db.name} (${formatBytes(db.sizeBytes)})`,
           value: db.path
         })
       )
     }),
-    filterBar: {
+    filterBar: FilterBar({
       summaryText,
       actions: [
         {
-          id: "open-database",
-          title: "打开数据库…",
+          id: "pick-files",
+          label: t("pickFilesBtn"),
+          title: t("pickFilesBtn"),
           style: "secondary",
-          onAction: async () => {
-            const result = await callHostTransport<{ canceled?: boolean; filePath?: string }>("window_show_open_dialog", {
-              title: "打开 SQLite 数据库",
-              filters: "SQLite 数据库|*.db;*.sqlite;*.sqlite3",
-              properties: ["openFile"]
-            });
-            if (!result.ok) {
-              await showToast({ style: Toast.Style.Failure, title: "无法打开数据库", message: result.error });
-            } else if (!result.data?.canceled && result.data?.filePath) {
-              if (activeDbPath === result.data.filePath) await reloadSqliteWorkspace(activeDbPath);
-              else setActiveDbPath(result.data.filePath);
-            }
-          }
+          onAction: handlePickFiles
         },
         {
-          id: "rescan",
-          title: "重新扫描",
+          id: "pick-folder",
+          label: t("pickFolderBtn"),
+          title: t("pickFolderBtn"),
           style: "secondary",
-          onAction: () => {
-            void reloadSqliteWorkspace(activeDbPath);
-          }
-        }
+          onAction: handlePickFolder
+        },
+        ...(hasPrevPage
+          ? [
+              {
+                id: "prev-page",
+                label: t("prevPageAction"),
+                title: t("prevPageAction"),
+                style: "secondary" as const,
+                onAction: goPrevPage
+              }
+            ]
+          : []),
+        ...(hasNextPage
+          ? [
+              {
+                id: "next-page",
+                label: t("nextPageAction"),
+                title: t("nextPageAction"),
+                style: "secondary" as const,
+                onAction: goNextPage
+              }
+            ]
+          : [])
       ]
-    },
+    }),
     subList: {
       title: selectedTable
-        ? `「${selectedTable}」前 ${PREVIEW_LIMIT} 行（显示 ${visibleRows.length} 行 · 已选 ${selectedRows.length} 行）`
-        : "记录",
+        ? isPaginated
+          ? t("subListTitlePaged", {
+              table: selectedTable,
+              page: pageIndex + 1,
+              totalPages,
+              start: pageStartRow,
+              end: pageEndRow,
+              visible: visibleRows.length,
+              checked: selectedRows.length
+            })
+          : t("subListTitleWithTable", {
+              table: selectedTable,
+              limit: PREVIEW_LIMIT,
+              visible: visibleRows.length,
+              checked: selectedRows.length
+            })
+        : t("subListTitleDefault"),
       subtitle: workspace.activeDbPath,
       emptyText,
       checkable: visibleRows.length > 0,
@@ -296,12 +810,16 @@ export function SqlitePluginCommand() {
     },
     children: [
       List.Section({
-        title: "数据表",
-        subtitle: "选中后右侧显示前 50 行",
+        title: t("tablesSectionTitle"),
+        subtitle: t("tablesSectionSubtitle"),
         children: leftNavNodes
       })
     ]
   });
 }
+
+export const commands = {
+  "sqlite-viewer": SqlitePluginCommand
+};
 
 export default SqlitePluginCommand;

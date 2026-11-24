@@ -1,4 +1,7 @@
+import { t } from './i18n.js'
+import { HOST_SERVICE_LABEL_ZH } from './unlock-labels.zh-data.js'
 import {
+  callHostTransport,
   invokePluginService,
   openRealPath,
   readRealClipboardText,
@@ -15,6 +18,7 @@ import type {
   ServiceTypeLabel,
   UnlockProcessFilter
 } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export const FILE_UNLOCK_PLUGIN_NAME = 'FileUnlockPlugin'
 
@@ -72,17 +76,17 @@ export function resolveServiceTypeLabel(
   rawLabel?: string
 ): ServiceTypeLabel {
   if (isKernelProtectedProcess(pid, name)) {
-    return '系统内核'
+    return t('svcKernel')
   }
   const base = normalizeProcessBaseName(name)
   if (base === 'explorer') {
-    return '资源管理器'
+    return t('svcExplorer')
   }
   const normalized = String(rawLabel ?? '').trim()
-  if (normalized === '后台服务' || normalized.toLowerCase().includes('service') || normalized === '3') {
-    return '后台服务'
+  if (normalized === HOST_SERVICE_LABEL_ZH || normalized.toLowerCase().includes('service') || normalized === '3') {
+    return t('svcService')
   }
-  return '普通进程'
+  return t('svcProcess')
 }
 
 export function sanitizeInputPath(rawInput: string): string {
@@ -110,7 +114,7 @@ export function validateTargetPath(rawInput: string): {
       valid: false,
       normalizedPath: '',
       errorCode: 'INVALID_PATH',
-      error: 'INVALID_PATH: 请输入或粘贴需要检测的文件、文件夹或盘符路径'
+      error: t('errInvalidPathEmpty')
     }
   }
   if (cleaned.includes('\0')) {
@@ -118,7 +122,7 @@ export function validateTargetPath(rawInput: string): {
       valid: false,
       normalizedPath: cleaned,
       errorCode: 'INVALID_PATH',
-      error: 'INVALID_PATH: 路径包含非法空字节 (null byte)'
+      error: t('errInvalidPathNull')
     }
   }
   if (/(^|[\\/])\.\.([\\/]|$)/.test(cleaned)) {
@@ -126,7 +130,7 @@ export function validateTargetPath(rawInput: string): {
       valid: false,
       normalizedPath: cleaned,
       errorCode: 'INVALID_PATH',
-      error: 'INVALID_PATH: 禁止使用包含 .. 的路径穿越'
+      error: t('errInvalidPathTraversal')
     }
   }
   if (!looksLikeFilePath(cleaned)) {
@@ -134,7 +138,7 @@ export function validateTargetPath(rawInput: string): {
       valid: false,
       normalizedPath: cleaned,
       errorCode: 'INVALID_PATH',
-      error: 'INVALID_PATH: 路径格式无效，请提供完整绝对路径（如 D:\\report.docx 或 /Volumes/USB）'
+      error: t('errInvalidPathFormat')
     }
   }
   return {
@@ -199,7 +203,7 @@ export async function loadRemovableDrives(hostOverride?: unknown): Promise<{ dri
     hostOverride
   )
   if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.drives)) {
-    return { drives: [], error: String(res.data?.error ?? res.error ?? res.message ?? '读取外接磁盘失败') }
+    return { drives: [], error: resolveErrorMessage(res.data?.error ? res.data : res, t('errLoadDrivesFailed')) }
   }
   const warning = typeof res.data.warning === 'string' && res.data.warning ? res.data.warning : undefined
   return { drives: normalizeDrives(res.data.drives), ...(warning ? { warning } : {}) }
@@ -209,7 +213,7 @@ function normalizeDrives(list: Array<Record<string, unknown>>): RemovableDriveIt
   return list
     .map((d) => ({
       mount: String(d.mount ?? ''),
-      label: String(d.label ?? '可移动磁盘'),
+      label: String(d.label ?? t('removableDriveDefaultLabel')),
       totalBytes: Number(d.totalBytes ?? 0),
       freeBytes: Number(d.freeBytes ?? 0),
       totalText: String(d.totalText ?? '0 B'),
@@ -241,7 +245,7 @@ export async function inspectTargetLocks(
       isUnlocked: false,
       processes: [],
       errorCode: validation.errorCode ?? 'INVALID_PATH',
-      error: validation.error ?? '路径格式无效'
+      error: resolveErrorMessage(validation, t('errInvalidPathShort'))
     }
   }
 
@@ -256,8 +260,8 @@ export async function inspectTargetLocks(
   )
 
   if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '扫描占用句柄失败')
-    const errCode = extractErrorCode(errText, res.data?.errorCode)
+    const rawErrText = String(res.data?.error ?? res.error ?? res.message ?? '')
+    const errCode = extractErrorCode(rawErrText, res.data?.errorCode)
     return {
       ok: false,
       targetPath: validation.normalizedPath,
@@ -265,7 +269,7 @@ export async function inspectTargetLocks(
       isUnlocked: false,
       processes: [],
       errorCode: errCode,
-      error: errText
+      error: resolveErrorMessage(res.data?.error ? res.data : res, t('errInspectLocksFailed'))
     }
   }
 
@@ -307,7 +311,7 @@ export async function unlockSingleProcess(
       unlockedCount: 0,
       skippedProtectedCount: 0,
       errorCode: 'INVALID_PID',
-      error: 'INVALID_PID: 无效的进程 PID'
+      error: t('errInvalidPid')
     }
   }
 
@@ -319,7 +323,7 @@ export async function unlockSingleProcess(
       unlockedCount: 0,
       skippedProtectedCount: 1,
       errorCode: 'PROCESS_PROTECTED',
-      error: `PROCESS_PROTECTED: 系统关键保护进程 (${proc.name}, PID ${proc.pid}) 受安全策略保护，严禁强制终止`
+      error: t('errProcessProtectedSingle', { name: proc.name, pid: proc.pid })
     }
   }
 
@@ -338,8 +342,8 @@ export async function unlockSingleProcess(
   )
 
   if (!res.ok || !res.data || res.data.ok === false) {
-    const errText = String(res.data?.error ?? res.error ?? res.message ?? '解除文件占用失败')
-    const errCode = extractErrorCode(errText, res.data?.errorCode)
+    const rawErrText = String(res.data?.error ?? res.error ?? res.message ?? '')
+    const errCode = extractErrorCode(rawErrText, res.data?.errorCode)
     return {
       ok: false,
       pid: proc.pid,
@@ -347,7 +351,7 @@ export async function unlockSingleProcess(
       unlockedCount: 0,
       skippedProtectedCount: errCode === 'PROCESS_PROTECTED' ? 1 : 0,
       errorCode: errCode,
-      error: errText
+      error: resolveErrorMessage(res.data?.error ? res.data : res, t('errUnlockPathFailed'))
     }
   }
 
@@ -380,7 +384,7 @@ export async function unlockAllProcesses(
       unlockedCount: 0,
       skippedProtectedCount: 0,
       errorCode: validation.errorCode ?? 'INVALID_PATH',
-      error: validation.error ?? '目标路径无效'
+      error: resolveErrorMessage(validation, t('errTargetPathInvalid'))
     }
   }
 
@@ -393,7 +397,7 @@ export async function unlockAllProcesses(
       unlockedCount: 0,
       skippedProtectedCount: protectedCount,
       errorCode: 'PROCESS_PROTECTED',
-      error: 'PROCESS_PROTECTED: 当前占用均为系统关键保护进程，禁止强制终止'
+      error: t('errProcessProtectedAll')
     }
   }
 
@@ -405,7 +409,7 @@ export async function unlockAllProcesses(
         unlockedCount: 0,
         skippedProtectedCount: 0,
         errorCode: 'TRASH_FAILED',
-        error: trashRes.error ?? '移入回收站失败'
+        error: resolveErrorMessage(trashRes, t('errTrashFailed'))
       }
     }
     return {
@@ -521,4 +525,57 @@ export async function copyProcessInfoToClipboard(
   hostOverride?: unknown
 ): Promise<boolean> {
   return writeRealClipboardText(text, hostOverride)
+}
+
+export function extractDroppedUnlockPath(envelopeOrPayload: unknown): string {
+  const raw = envelopeOrPayload && typeof envelopeOrPayload === 'object'
+    ? (envelopeOrPayload as { payload?: { files?: unknown }; files?: unknown })
+    : {}
+  const list = Array.isArray(raw.payload?.files) ? raw.payload!.files : Array.isArray(raw.files) ? raw.files : []
+  for (const item of list) {
+    if (typeof item === 'string') {
+      const cleaned = sanitizeInputPath(item)
+      if (cleaned) return cleaned
+    }
+  }
+  return ''
+}
+
+export async function selectUnlockTarget(
+  directory: boolean,
+  hostOverride?: unknown
+): Promise<{ canceled: boolean; path: string; error?: string }> {
+  const res = await callHostTransport<Record<string, unknown>>(
+    'window_show_open_dialog',
+    {
+      title: directory ? t('dialogSelectDir') : t('dialogSelectFile'),
+      properties: [directory ? 'openDirectory' : 'openFile']
+    },
+    hostOverride
+  )
+  if (!res.ok) {
+    return { canceled: false, path: '', error: resolveErrorMessage(res, t('errOpenSelectFailed')) }
+  }
+  const data = (res.data && typeof res.data === 'object' ? res.data : {}) as Record<string, unknown>
+  if (data.canceled === true) {
+    return { canceled: true, path: '' }
+  }
+  const rawList = Array.isArray(data.filePaths) ? data.filePaths : []
+  const firstFromList =
+    typeof rawList[0] === 'string'
+      ? rawList[0]
+      : rawList[0] && typeof rawList[0] === 'object' && typeof (rawList[0] as { path?: unknown }).path === 'string'
+        ? String((rawList[0] as { path: string }).path)
+        : ''
+  const rawPath =
+    typeof data.filePath === 'string' && data.filePath.trim()
+      ? data.filePath
+      : typeof data.folderPath === 'string' && data.folderPath.trim()
+        ? data.folderPath
+        : firstFromList
+  const cleaned = sanitizeInputPath(rawPath)
+  if (!cleaned) {
+    return { canceled: false, path: '', error: t('errSelectNoPath') }
+  }
+  return { canceled: false, path: cleaned }
 }

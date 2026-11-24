@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "system",
@@ -25,5 +26,30 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "System Cleaner",
+      "description": "Scan temporary files, browser caches, developer caches, and crash dumps. Move selected files to the Recycle Bin or empty the Recycle Bin.",
+      "keywords": [
+        "cleaner",
+        "junk",
+        "cache",
+        "temp files",
+        "recycle bin",
+        "disk cleanup"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

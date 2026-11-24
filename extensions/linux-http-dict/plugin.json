@@ -1,9 +1,13 @@
 {
   "id": "linux-http-dict",
   "name": "命令与状态码",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "离线速查 Linux 常用命令示例、常见 HTTP 状态码含义与排查步骤、常用服务默认端口",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -63,6 +67,69 @@
         "6379",
         "8080"
       ]
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Linux & HTTP Cheatsheet",
+      "description": "Offline reference for common Linux command examples, HTTP status codes with troubleshooting guides, and well-known service default ports.",
+      "keywords": [
+        "linux",
+        "http",
+        "status code",
+        "ports",
+        "tldr",
+        "shell",
+        "cheatsheet"
+      ],
+      "features": {
+        "linux-commands": {
+          "explain": "Browse practical Linux command examples ready to copy",
+          "cmds": [
+            "linux",
+            "tldr",
+            "shell commands",
+            "tar",
+            "find",
+            "awk"
+          ]
+        },
+        "http-status": {
+          "explain": "Look up HTTP status codes, common causes, and troubleshooting steps",
+          "cmds": [
+            "http status",
+            "status code",
+            "502",
+            "504",
+            "403"
+          ]
+        },
+        "port-dict": {
+          "explain": "Look up default ports for databases, caches, and common services",
+          "cmds": [
+            "ports",
+            "default ports",
+            "port lookup",
+            "3306",
+            "6379",
+            "8080"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

@@ -1,15 +1,15 @@
 {
   "id": "monitor-control",
   "name": "屏幕亮度与控制",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "读取显示器真实硬件状态，调节受支持的亮度与对比度；支持多屏统一亮度与系统熄屏命令",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "系统工具",
-    "效率工具"
+    "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "screen",
     "system"
@@ -56,5 +56,53 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Monitor Brightness & Control",
+      "description": "Read hardware monitor status and adjust supported brightness and contrast across built-in and external displays, with multi-screen sync and screen sleep.",
+      "keywords": [
+        "monitor",
+        "brightness",
+        "contrast",
+        "ddc",
+        "display",
+        "screen sleep"
+      ],
+      "features": {
+        "monitor-brightness": {
+          "explain": "Adjust hardware brightness and contrast for built-in and external monitors",
+          "cmds": [
+            "brightness",
+            "monitor",
+            "display",
+            "ddc",
+            "screen brightness"
+          ]
+        },
+        "monitor-sleep": {
+          "explain": "Turn off displays immediately via system power command",
+          "cmds": [
+            "sleep monitor",
+            "turn off screen",
+            "display sleep"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

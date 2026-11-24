@@ -1,4 +1,6 @@
 import type { MockSingleItem, MockUserRecord } from './types'
+import { t } from './i18n.js'
+import { CN_GENDER_MALE, CN_GENDER_FEMALE, type CnGender } from './mock-cn.zh-data.js'
 
 const ID_CARD_WEIGHTS = [7, 9, 10, 5, 8, 4, 2, 1, 6, 3, 7, 9, 10, 5, 8, 4, 2]
 const ID_CARD_CHECK_CODES = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '2']
@@ -6,15 +8,15 @@ const ID_CARD_CHECK_CODES = ['1', '0', 'X', '9', '8', '7', '6', '5', '4', '3', '
 const CREDIT_CODE_CHARSET = '0123456789ABCDEFGHJKLMNPQRTUWXY'
 const CREDIT_CODE_WEIGHTS = [1, 3, 9, 27, 19, 26, 16, 17, 20, 29, 25, 13, 8, 24, 10, 30, 28]
 
-const AREA_CODES: Array<{ code: string; name: string }> = [
-  { code: '110105', name: '北京市朝阳区' },
-  { code: '110108', name: '北京市海淀区' },
-  { code: '310115', name: '上海市浦东新区' },
-  { code: '440106', name: '广东省广州市天河区' },
-  { code: '440305', name: '广东省深圳市南山区' },
-  { code: '330106', name: '浙江省杭州市西湖区' },
-  { code: '320102', name: '江苏省南京市玄武区' },
-  { code: '510107', name: '四川省成都市武侯区' }
+const AREA_CODES = [
+  { code: '110105', nameKey: 'area110105' as const },
+  { code: '110108', nameKey: 'area110108' as const },
+  { code: '310115', nameKey: 'area310115' as const },
+  { code: '440106', nameKey: 'area440106' as const },
+  { code: '440305', nameKey: 'area440305' as const },
+  { code: '330106', nameKey: 'area330106' as const },
+  { code: '320102', nameKey: 'area320102' as const },
+  { code: '510107', nameKey: 'area510107' as const }
 ]
 
 const MOBILE_PREFIXES = [
@@ -36,17 +38,12 @@ const MOBILE_PREFIXES = [
   '192'
 ]
 
-const BANK_BINS: Array<{ bin: string; bankName: string; totalLen: number }> = [
-  { bin: '622202', bankName: '中国工商银行牡丹灵通卡', totalLen: 19 },
-  { bin: '622848', bankName: '中国农业银行金穗通宝卡', totalLen: 19 },
-  { bin: '621483', bankName: '招商银行一卡通借记卡', totalLen: 16 },
-  { bin: '622700', bankName: '中国建设银行龙卡借记卡', totalLen: 19 }
+const BANK_BINS = [
+  { bin: '622202', bankKey: 'bank622202' as const, totalLen: 19 },
+  { bin: '622848', bankKey: 'bank622848' as const, totalLen: 19 },
+  { bin: '621483', bankKey: 'bank621483' as const, totalLen: 16 },
+  { bin: '622700', bankKey: 'bank622700' as const, totalLen: 19 }
 ]
-
-const SURNAMES = ['陈', '林', '沈', '周', '陆', '顾', '苏', '许', '唐', '宋', '温', '贺']
-const GIVEN_NAMES_M = ['景行', '承泽', '思远', '明哲', '星河', '子轩', '峻熙', '嘉木']
-const GIVEN_NAMES_F = ['清欢', '知微', '若汐', '语桐', '舒窈', '南乔', '云舒', '映雪']
-const COMPANY_WORDS = ['极客云创', '星河智算', '量子奇点', '深海矩阵', '未来引擎', '凌云数科']
 
 let internalCounter = 104729
 
@@ -84,7 +81,7 @@ function padNum(val: number, len: number): string {
 export function calculateIdCardCheckDigit(first17: string): string {
   const clean = String(first17 ?? '').trim()
   if (!/^\d{17}$/.test(clean)) {
-    throw new Error('INVALID_ID_CARD_PREFIX: 身份证前 17 位必须为纯数字')
+    throw new Error(t('errIdCardPrefix'))
   }
   let sum = 0
   for (let i = 0; i < 17; i++) {
@@ -122,7 +119,7 @@ export function generateValidIdCard(options?: {
   idCard: string
   areaName: string
   birthDate: string
-  gender: '男' | '女'
+  gender: CnGender
 } {
   const rand = createPrng(options?.seed)
   const area = AREA_CODES[Math.floor(rand() * AREA_CODES.length)]!
@@ -137,9 +134,9 @@ export function generateValidIdCard(options?: {
 
   return {
     idCard: `${first17}${checkDigit}`,
-    areaName: area.name,
+    areaName: t(area.nameKey),
     birthDate: `${padNum(year, 4)}-${padNum(month, 2)}-${padNum(day, 2)}`,
-    gender: seq % 2 === 1 ? '男' : '女'
+    gender: seq % 2 === 1 ? CN_GENDER_MALE : CN_GENDER_FEMALE
   }
 }
 
@@ -151,14 +148,14 @@ export function calculateCreditCodeCheckChar(first17: string): string {
     .trim()
     .toUpperCase()
   if (clean.length !== 17) {
-    throw new Error('INVALID_CREDIT_CODE_PREFIX: 统一社会信用代码前 17 位长度必须为 17')
+    throw new Error(t('errCreditCodePrefix'))
   }
   let sum = 0
   for (let i = 0; i < 17; i++) {
     const ch = clean[i]!
     const idx = CREDIT_CODE_CHARSET.indexOf(ch)
     if (idx < 0) {
-      throw new Error(`INVALID_CREDIT_CODE_CHAR: 包含非法字符 "${ch}"（禁止出现 I/O/Z/S/V）`)
+      throw new Error(t('errCreditCodeChar', { ch }))
     }
     sum += idx * CREDIT_CODE_WEIGHTS[i]!
   }
@@ -202,7 +199,7 @@ export function generateValidCreditCode(seed?: number): string {
 export function calculateLuhnCheckDigit(partialCard: string): number {
   const clean = String(partialCard ?? '').trim()
   if (!/^\d+$/.test(clean)) {
-    throw new Error('INVALID_CARD_PREFIX: 银行卡前缀必须为纯数字')
+    throw new Error(t('errCardPrefix'))
   }
   let sum = 0
   let isEven = true
@@ -244,7 +241,7 @@ export function generateValidBankCard(seed?: number): {
   const check = calculateLuhnCheckDigit(prefix)
   return {
     cardNo: `${prefix}${check}`,
-    bankName: spec.bankName
+    bankName: t(spec.bankKey)
   }
 }
 
@@ -265,73 +262,100 @@ export function generateMockSingleItems(seed?: number): MockSingleItem[] {
   const creditCode = generateValidCreditCode(s1 + 17)
   const bankInfo = generateValidBankCard(s1 + 31)
   const phone = generateValidMobilePhone(s1 + 53)
-  const surname = SURNAMES[Math.floor(rand() * SURNAMES.length)]!
+  const surnames = t('surnames').split(',')
+  const givenNamesM = t('givenNamesM').split(',')
+  const givenNamesF = t('givenNamesF').split(',')
+  const companyWords = t('companyWords').split(',')
+  const surname = surnames[Math.floor(rand() * surnames.length)]!
   const given =
-    idInfo.gender === '男'
-      ? GIVEN_NAMES_M[Math.floor(rand() * GIVEN_NAMES_M.length)]!
-      : GIVEN_NAMES_F[Math.floor(rand() * GIVEN_NAMES_F.length)]!
+    idInfo.gender === CN_GENDER_MALE
+      ? givenNamesM[Math.floor(rand() * givenNamesM.length)]!
+      : givenNamesF[Math.floor(rand() * givenNamesF.length)]!
   const fullName = `${surname}${given}`
-  const company = `深圳${COMPANY_WORDS[Math.floor(rand() * COMPANY_WORDS.length)]!}科技有限公司`
+  const company = t('companyFull', { word: companyWords[Math.floor(rand() * companyWords.length)]! })
+
+  const genderLabel = idInfo.gender === CN_GENDER_MALE ? t('genderMale') : t('genderFemale')
 
   return [
     {
       id: 'mock-id-card',
       fieldKey: 'idCard',
-      label: '18位居民身份证号（GB 11643-1999）',
+      label: t('idCardLabel'),
       value: idInfo.idCard,
-      category: '实名身份',
+      category: t('idCardCategory'),
       standard: 'GB 11643-1999',
-      formatType: '18位加权模11',
-      breakdownMarkdown: `- **发证归属地**：${idInfo.areaName}（\`${idInfo.idCard.slice(0, 6)}\`）\n- **出生日期**：\`${idInfo.birthDate}\`\n- **性别标识**：${idInfo.gender} · 末位校验码：\`${idInfo.idCard.slice(17)}\``,
-      algorithmNote: '前 17 位按权重 [7,9,10,5,8,4,2,1,6,3,7,9,10,5,8,4,2] 求和模 11 映射校验码，可通过格式与校验码检查（不代表真实身份可核验）。',
+      formatType: t('idCardFormat'),
+      breakdownMarkdown: t('idCardBreakdown', {
+        areaName: idInfo.areaName,
+        areaCode: idInfo.idCard.slice(0, 6),
+        birthDate: idInfo.birthDate,
+        gender: genderLabel,
+        checkDigit: idInfo.idCard.slice(17)
+      }),
+      algorithmNote: t('idCardNote'),
       hasCheckDigit: true
     },
     {
       id: 'mock-credit-code',
       fieldKey: 'creditCode',
-      label: '18位统一社会信用代码（GB 32100-2015）',
+      label: t('creditCodeLabel'),
       value: creditCode,
-      category: '企业工商',
+      category: t('creditCodeCategory'),
       standard: 'GB 32100-2015',
-      formatType: '18位加权模31',
-      breakdownMarkdown: `- **登记管理部门**：工商（\`91\`）\n- **登记机关区划码**：\`${creditCode.slice(2, 8)}\`\n- **主体标识码**：\`${creditCode.slice(8, 17)}\` · 末位校验码：\`${creditCode.slice(17)}\``,
-      algorithmNote: '严格剔除 I、O、Z、S、V 易混淆字符，第 18 位按 3^i mod 31 加权计算。',
+      formatType: t('creditCodeFormat'),
+      breakdownMarkdown: t('creditCodeBreakdown', {
+        areaCode: creditCode.slice(2, 8),
+        orgCode: creditCode.slice(8, 17),
+        checkChar: creditCode.slice(17)
+      }),
+      algorithmNote: t('creditCodeNote'),
       hasCheckDigit: true
     },
     {
       id: 'mock-bank-card',
       fieldKey: 'bankCard',
-      label: '银联借记卡号（Luhn 模10校验）',
+      label: t('bankCardLabel'),
       value: bankInfo.cardNo,
-      category: '金融结算',
+      category: t('bankCardCategory'),
       standard: 'ISO/IEC 7812',
-      formatType: `${bankInfo.cardNo.length}位 Luhn`,
-      breakdownMarkdown: `- **发卡机构 BIN**：${bankInfo.bankName}（\`${bankInfo.cardNo.slice(0, 6)}\`）\n- **Luhn 末位校验码**：\`${bankInfo.cardNo.slice(-1)}\``,
-      algorithmNote: '从右向左偶数位翻倍求和模 10 为 0，可通过收银台与绑卡前端 Luhn 校验。',
+      formatType: t('bankCardFormat', { len: bankInfo.cardNo.length }),
+      breakdownMarkdown: t('bankCardBreakdown', {
+        bankName: bankInfo.bankName,
+        bin: bankInfo.cardNo.slice(0, 6),
+        checkDigit: bankInfo.cardNo.slice(-1)
+      }),
+      algorithmNote: t('bankCardNote'),
       hasCheckDigit: true
     },
     {
       id: 'mock-mobile-phone',
       fieldKey: 'phone',
-      label: '中国大陆 11 位手机号码',
+      label: t('mobileLabel'),
       value: phone,
-      category: '通信联络',
-      standard: '工信部号段规范',
-      formatType: '11位纯数字',
-      breakdownMarkdown: `- **运营商号段**：\`${phone.slice(0, 3)}\`\n- **完整号码**：\`${phone}\``,
-      algorithmNote: '在三大运营商及广电已分配号段内随机生成后 8 位，没有校验位，号码可能真实存在，请勿用于发送短信或拨打。',
+      category: t('mobileCategory'),
+      standard: t('mobileStandard'),
+      formatType: t('mobileFormat'),
+      breakdownMarkdown: t('mobileBreakdown', {
+        prefix: phone.slice(0, 3),
+        phone
+      }),
+      algorithmNote: t('mobileNote'),
       hasCheckDigit: false
     },
     {
       id: 'mock-person-company',
       fieldKey: 'nameAndCompany',
-      label: '测试人员姓名与企业主体名称',
+      label: t('personCompanyLabel'),
       value: `${fullName} · ${company}`,
-      category: '主体资料',
-      standard: '中文业务常用',
-      formatType: 'UTF-8 中文',
-      breakdownMarkdown: `- **测试联系人**：\`${fullName}\`（${idInfo.gender}）\n- **测试企业名**：\`${company}\``,
-      algorithmNote: '从固定词表随机组合中文姓名与企业名称，没有校验规则，可能与真实人名或企业重名。',
+      category: t('personCompanyCategory'),
+      standard: t('personCompanyStandard'),
+      formatType: t('personCompanyFormat'),
+      breakdownMarkdown: t('personCompanyBreakdown', {
+        fullName,
+        gender: genderLabel,
+        company
+      }),
+      algorithmNote: t('personCompanyNote'),
       hasCheckDigit: false,
       jsonValue: { name: fullName, companyName: company }
     }
@@ -350,11 +374,15 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
     const creditCode = generateValidCreditCode(itemSeed + 11)
     const bankInfo = generateValidBankCard(itemSeed + 23)
     const phone = generateValidMobilePhone(itemSeed + 41)
-    const surname = SURNAMES[i % SURNAMES.length]!
+    const surnames = t('surnames').split(',')
+    const givenNamesM = t('givenNamesM').split(',')
+    const givenNamesF = t('givenNamesF').split(',')
+    const companyWords = t('companyWords').split(',')
+    const surname = surnames[i % surnames.length]!
     const given =
-      idInfo.gender === '男'
-        ? GIVEN_NAMES_M[i % GIVEN_NAMES_M.length]!
-        : GIVEN_NAMES_F[i % GIVEN_NAMES_F.length]!
+      idInfo.gender === CN_GENDER_MALE
+        ? givenNamesM[i % givenNamesM.length]!
+        : givenNamesF[i % givenNamesF.length]!
     const [birthYear, birthMonth, birthDay] = idInfo.birthDate.split('-').map(Number)
     const birthdayPending = now.getMonth() + 1 < birthMonth! ||
       (now.getMonth() + 1 === birthMonth && now.getDate() < birthDay!)
@@ -362,15 +390,15 @@ export function generateMockBatchUsers(count = 10, seed?: number): MockUserRecor
     records.push({
       id: `USR-${padNum(i + 1, 4)}`,
       name: `${surname}${given}`,
-      gender: idInfo.gender,
+      gender: idInfo.gender === CN_GENDER_MALE ? t('genderMale') : t('genderFemale'),
       age: now.getFullYear() - birthYear! - Number(birthdayPending),
       idCard: idInfo.idCard,
       phone,
       email: `user_${i + 1}_${phone.slice(-4)}@example.com`,
-      companyName: `北京${COMPANY_WORDS[i % COMPANY_WORDS.length]!}信息科技有限公司`,
+      companyName: t('batchCompanyFull', { word: companyWords[i % companyWords.length]! }),
       creditCode,
       bankCard: bankInfo.cardNo,
-      address: `${idInfo.areaName}科技园创新大厦 ${i + 1} 层`,
+      address: t('batchAddressFull', { areaName: idInfo.areaName, floor: i + 1 }),
       createdAt: now.toISOString()
     })
   }

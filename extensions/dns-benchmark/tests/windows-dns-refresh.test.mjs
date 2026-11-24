@@ -83,3 +83,39 @@ test('恢复 DHCP 失败后同样重新读取网卡 DNS', async () => {
   assert.ok(v.items().every(item => !isActive(item)))
   assert.ok(host.toasts.some(t => /RESET_DHCP_FAILED/.test(t.title) && t.style === 'FAILURE'))
 })
+
+test('回归：Windows 端 dns-reset-dhcp 入口弹窗确认防误触，取消不执行、确认后恢复 DHCP', async () => {
+  host.setConfirm(false)
+  const vCancel = await mount(() => DnsCommand({ featureCode: 'dns-reset-dhcp' }))
+  views.push(vCancel)
+  await settled()
+  assert.equal(host.confirms.length, 1)
+  assert.match(host.confirms[0].title, /以太网/)
+  assert.equal(calls('resetDhcp').length, 0, '取消确认后绝不能调用 resetDhcp')
+
+  host.reset()
+  adapterDns = ['223.5.5.5', '223.6.6.6']
+  host.ipc.system_get_platform = async () => ({ success: true, platform: 'windows' })
+  host.ipc.dllplugin_call = async ({ func, params }) => {
+    if (func === 'getActiveAdapters') {
+      return { ok: true, adapters: [{ name: '以太网', description: 'Intel', ipv4: '192.0.2.10', isDhcp: adapterDns.length === 0, currentDns: [...adapterDns] }] }
+    }
+    if (func === 'benchmarkDns') return { ok: true, results: params.servers.map((s, i) => ({ id: s.id, primary: s.primary, avgMs: 10 + i, timeout: false })) }
+    if (func === 'resetDhcp') { adapterDns = []; return { ok: true, success: true, currentDns: [], isDhcp: true } }
+    throw new Error(`未预期的调用 ${func}`)
+  }
+  host.setConfirm(true)
+  const vConfirm = await mount(() => DnsCommand({ featureCode: 'dns-reset-dhcp' }))
+  views.push(vConfirm)
+  await settled()
+  assert.equal(host.confirms.length, 1)
+  assert.equal(calls('resetDhcp').length, 1, '确认后应调用 resetDhcp')
+  assert.ok(host.toasts.some(t => t.style === 'SUCCESS' && /DHCP/.test(t.title)))
+})
+
+test('回归：Windows 端刷新缓存快捷键使用规范的 ctrl 修饰键而非 cmd', async () => {
+  const v = await open()
+  const flushAction = v.actions(v.item('alidns')).find(a => a.props.title === '仅刷新本机 DNS 解析缓存')
+  assert.ok(flushAction, '应存在刷新缓存动作')
+  assert.deepEqual(flushAction.props.shortcut, { modifiers: ['ctrl'], key: 'r' })
+})

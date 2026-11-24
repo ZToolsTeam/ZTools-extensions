@@ -1,12 +1,10 @@
-// 本插件现行代码的宿主集成测试（从 packages/declarative-ui/tests/real-layout2-plugins.test.mjs 按插件拆出，导入改为本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-import * as sqlitePlugin from '../dist/logic.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+import * as sqlitePlugin from '../dist/index.js'
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+setRuntimeLocale('zh-CN')
+
 function createRealHostStub(handlers = {}) {
   const calls = []
   const dispatch = async (method, params) => {
@@ -35,28 +33,7 @@ function createRealHostStub(handlers = {}) {
   return stub
 }
 
-const APPDATA = 'C:\\Users\\RealUser\\AppData\\Roaming'
-const HOME = 'C:\\Users\\RealUser'
-const DB_PATH = `${APPDATA}\\SomeApp\\data.db`
-
-function pathHandler({ name }) {
-  if (name === 'appData') return APPDATA
-  if (name === 'home') return HOME
-  return ''
-}
-
-function searchWithDb({ query }) {
-  if (String(query) === `dir:${APPDATA}`) {
-    return {
-      files: [
-        { name: 'data.db', path: DB_PATH, is_dir: false, size: 40960, mtime: 1 },
-        { name: 'notes.txt', path: `${APPDATA}\\SomeApp\\notes.txt`, is_dir: false, size: 10, mtime: 1 }
-      ],
-      total_matches: 2
-    }
-  }
-  return { files: [], total_matches: 0, total_bytes: 0 }
-}
+const DB_PATH = 'D:\\Databases\\SomeApp\\data.db'
 
 const INSPECT_RESULT = {
   ok: true,
@@ -82,34 +59,53 @@ const INSPECT_RESULT = {
   ]
 }
 
-test('sqlite-plugin: 不在客户端里运行时不显示示例数据库与示例表', async () => {
+test('sqlite-plugin: 不在客户端里运行时不显示示例数据库与示例表，且已移除扫盘入口', async () => {
   const ws = await sqlitePlugin.fetchSqliteWorkspace()
   assert.equal(ws.databases.length, 0)
   assert.equal(ws.tables.length, 0)
   assert.equal(ws.rows.length, 0)
-  assert.equal(ws.error, sqlitePlugin.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(ws.error, sqlitePlugin.getNotInClientMessage())
+  assert.equal(typeof sqlitePlugin.findDatabaseFiles, 'undefined')
+  assert.equal(typeof sqlitePlugin.extractDroppedSqliteDbPath, 'undefined')
   assert.equal(typeof sqlitePlugin.createInitialSqliteWorkspace, 'undefined')
   assert.equal(typeof sqlitePlugin.executeSqliteQuery, 'undefined', '不再提供执行任意 SQL（含 VACUUM）的入口')
+
+  assert.deepEqual([...sqlitePlugin.SQLITE_IMPORT_RULES.extensions], ['.db', '.sqlite', '.sqlite3', '.db3'])
+  assert.equal(sqlitePlugin.formatBytes(null), '大小未识别')
+  const mapped = sqlitePlugin.toSqliteDatabaseFile({
+    path: 'D:\\Temp\\sample.db3',
+    name: 'sample.db3',
+    parentDir: 'D:\\Temp',
+    extension: '.db3',
+    sizeBytes: null,
+    lastModifiedMs: null
+  })
+  assert.equal(mapped.sizeBytes, null)
+  assert.equal(mapped.name, 'sample.db3')
 })
 
-test('sqlite-plugin: 找不到数据库文件时如实提示，不用猜测的路径去读取', async () => {
+test('sqlite-plugin: 未指定数据库路径时返回空工作区，不扫描 AppData 也不打开任何数据库', async () => {
   const host = createRealHostStub({
-    system_get_path: pathHandler,
-    system_search_files: () => ({ files: [], total_matches: 0, total_bytes: 0 }),
+    system_get_path: () => {
+      throw new Error('不应调用 system_get_path')
+    },
+    system_search_files: () => {
+      throw new Error('不应调用 system_search_files')
+    },
     dllplugin_call: () => {
       throw new Error('不应读取任何数据库')
     }
   })
   const ws = await sqlitePlugin.fetchSqliteWorkspace(undefined, host)
+  assert.equal(ws.databases.length, 0)
+  assert.equal(ws.activeDbPath, '')
   assert.equal(ws.tables.length, 0)
-  assert.equal(ws.error, sqlitePlugin.NO_DATABASE_MESSAGE)
-  assert.equal(host.calls.some((c) => c.channel === 'dllplugin_call'), false)
+  assert.equal(ws.error, undefined)
+  assert.equal(host.calls.length, 0)
 })
 
-test('sqlite-plugin: 表结构与记录来自客户端返回，不编造体积、索引与日志模式', async () => {
+test('sqlite-plugin: 按指定路径读取表结构与记录，不扫盘、不编造体积、索引与日志模式', async () => {
   const host = createRealHostStub({
-    system_get_path: pathHandler,
-    system_search_files: searchWithDb,
     dllplugin_call: (payload) => {
       assert.equal(payload.plugin, 'SqlitePlugin')
       assert.equal(payload.func, 'inspectWorkspace')
@@ -117,7 +113,7 @@ test('sqlite-plugin: 表结构与记录来自客户端返回，不编造体积�
       return INSPECT_RESULT
     }
   })
-  const ws = await sqlitePlugin.fetchSqliteWorkspace(undefined, host)
+  const ws = await sqlitePlugin.fetchSqliteWorkspace(DB_PATH, host)
   assert.equal(ws.error, undefined)
   assert.deepEqual(ws.databases.map((d) => d.name), ['data.db'])
   assert.equal(ws.activeDbPath, DB_PATH)
@@ -130,19 +126,18 @@ test('sqlite-plugin: 表结构与记录来自客户端返回，不编造体积�
   assert.doesNotMatch(text, /WAL/)
   assert.equal('sizeBytes' in ws.tables[0], false)
   assert.equal('indexes' in ws.tables[0], false)
+  assert.equal(host.calls.every((c) => c.channel === 'dllplugin_call'), true)
 })
 
-test('sqlite-plugin: 读取数据库失败时返回原因并保留数据库列表', async () => {
+test('sqlite-plugin: 读取数据库失败时如实返回原因与目标路径', async () => {
   const host = createRealHostStub({
-    system_get_path: pathHandler,
-    system_search_files: searchWithDb,
     dllplugin_call: () => ({ ok: false, success: false, error: 'file is not a database' })
   })
-  const ws = await sqlitePlugin.fetchSqliteWorkspace(undefined, host)
+  const ws = await sqlitePlugin.fetchSqliteWorkspace(DB_PATH, host)
   assert.equal(ws.tables.length, 0)
-  assert.equal(ws.databases.length, 1)
+  assert.equal(ws.activeDbPath, DB_PATH)
   assert.match(ws.error, /读取 data\.db 失败/)
-  assert.match(ws.error, /file is not a database/)
+  assert.match(ws.error, /客户端没有返回表结构/)
 })
 
 test('sqlite-plugin: 按表名只读读取记录，不传 SQL 语句；失败时如实返回', async () => {
@@ -166,7 +161,7 @@ test('sqlite-plugin: 按表名只读读取记录，不传 SQL 语句；失败时
   const bad = await sqlitePlugin.fetchTableRows(DB_PATH, 'logs', badHost)
   assert.equal(bad.ok, false)
   assert.equal(bad.rows.length, 0)
-  assert.match(bad.error, /no such table/)
+  assert.match(bad.error, /客户端没有返回记录/)
 })
 
 test('sqlite-plugin: 导出文本使用真实字段值并正确转义', () => {

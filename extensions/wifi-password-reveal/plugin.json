@@ -10,6 +10,10 @@
     "网络工具",
     "系统工具"
   ],
+  "categoryId": [
+    "network",
+    "system"
+  ],
   "permissions": [
     "system",
     "clipboard"
@@ -44,5 +48,42 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Wi-Fi Password Viewer",
+      "description": "View saved local wireless networks, reveal passwords on demand, and generate scannable Wi-Fi connection QR codes.",
+      "keywords": [
+        "wifi",
+        "password",
+        "wlan",
+        "wireless",
+        "qr code",
+        "network"
+      ],
+      "features": {
+        "wifi-passwords": {
+          "explain": "View saved Wi-Fi passwords and generate scannable connection QR codes",
+          "cmds": [
+            "wifi",
+            "wifi password",
+            "wlan",
+            "saved wifi",
+            "wifi qr"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
+    }
+  ]
 }

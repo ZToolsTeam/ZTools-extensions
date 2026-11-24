@@ -3,10 +3,15 @@
 // 客户端失败、部分文件读不到、状态没有变化时如实报错；不在客户端里运行时不显示示例数据
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import {
-  HOST_REQUIRED_MESSAGE,
+  getHostRequiredMessage,
   addFilesToShare,
+  addFilesToShareBatched,
   buildDownloadUrl,
+  clearAllSharedFiles,
+  countDuplicateFileNames,
   fetchLanShareStatus,
   filterSharedFiles,
   generateQrCodeSvgDataUri,
@@ -72,7 +77,7 @@ test('[边界] 服务未运行、文件已暂停、文件夹时不给下载地�
 test('[边界] 不在客户端里运行时读取状态、启动服务、加文件都如实失败，不返回示例文件', async () => {
   const s = await fetchLanShareStatus()
   assert.equal(s.ok, false)
-  assert.equal(s.error, HOST_REQUIRED_MESSAGE)
+  assert.equal(s.error, getHostRequiredMessage())
   assert.deepEqual(s.files, [])
   assert.equal((await startLanShare()).ok, false)
   assert.equal((await addFilesToShare(['D:\\a.txt'])).ok, false)
@@ -86,7 +91,7 @@ test('[故障] 客户端读取失败、启动失败、启动后仍未运行时�
 
   const portBusy = await startLanShare(lanHost({ startShareServer: () => ({ success: false, error: { message: 'listen EADDRINUSE' } }) }))
   assert.equal(portBusy.ok, false)
-  assert.match(portBusy.message, /EADDRINUSE/)
+  assert.match(portBusy.message, /调用局域网共享服务失败/)
 
   const notRunning = await startLanShare(lanHost({ startShareServer: () => status({ running: false }) }))
   assert.equal(notRunning.ok, false)
@@ -184,4 +189,78 @@ test('按文件名或路径搜索', () => {
   assert.deepEqual(filterSharedFiles(files, 'notes').map((f) => f.id), ['b'])
   assert.deepEqual(filterSharedFiles(files, 'd:\\share').map((f) => f.id), ['a1b2c3'])
   assert.equal(filterSharedFiles(files, '').length, 2)
+})
+
+test('同名文件统计：只按不同路径统计同名数量，同路径去重', () => {
+  assert.equal(
+    countDuplicateFileNames([
+      { name: 'readme.md', path: 'D:\\A\\readme.md' },
+      { name: 'README.md', path: 'D:\\B\\README.md' },
+      { name: 'readme.md', path: 'd:/a/readme.md' },
+      { name: 'unique.txt', path: 'D:\\C\\unique.txt' }
+    ]),
+    2
+  )
+  assert.equal(countDuplicateFileNames([{ name: 'a.txt', path: 'D:\\a.txt' }]), 0)
+})
+
+test('分批共享：超过 100 个文件按每批最多 100 个调用 addFiles，汇总成功、跳过与同名提示', async () => {
+  const batchSizes = []
+  const currentFiles = []
+  const host = lanHost({
+    addFiles: (params) => {
+      batchSizes.push(params.paths.length)
+      const added = []
+      for (const p of params.paths) {
+        if (p.endsWith('skip.txt')) continue
+        const item = { id: `id_${currentFiles.length + 1}`, name: p.split('\\').pop(), path: p, sizeBytes: 10, shared: true, isDirectory: false }
+        currentFiles.push(item)
+        added.push(item)
+      }
+      return status({ files: currentFiles, added })
+    }
+  })
+
+  const paths = []
+  for (let i = 0; i < 205; i++) {
+    paths.push(`D:\\Share\\f${i}.txt`)
+  }
+  paths.push('D:\\Share\\Sub\\f0.txt')
+  paths.push('D:\\Share\\skip.txt')
+
+  const res = await addFilesToShareBatched(paths, host)
+  assert.deepEqual(batchSizes, [100, 100, 7])
+  assert.equal(res.ok, true)
+  assert.equal(res.addedCount, 206)
+  assert.deepEqual(res.skipped, ['D:\\Share\\skip.txt'])
+  assert.equal(res.duplicateNameCount, 2)
+})
+
+test('清空共享列表：逐条移除，如实汇报全部成功或部分失败', async () => {
+  const list = [
+    { id: '1', name: 'a.txt', path: 'D:\\a.txt', sizeBytes: 10, shared: true, isDirectory: false, downloadUrl: '' },
+    { id: '2', name: 'b.txt', path: 'D:\\b.txt', sizeBytes: 10, shared: true, isDirectory: false, downloadUrl: '' },
+    { id: '3', name: 'c.txt', path: 'D:\\c.txt', sizeBytes: 10, shared: true, isDirectory: false, downloadUrl: '' }
+  ]
+  const remaining = new Map(list.map((f) => [f.id, f]))
+  const host = lanHost({
+    removeSharedFile: ({ id }) => {
+      if (id === '2') return { ok: false, success: false, error: '文件句柄被占用' }
+      remaining.delete(id)
+      return status({ files: [...remaining.values()] })
+    }
+  })
+  const partial = await clearAllSharedFiles(list, host)
+  assert.equal(partial.ok, false)
+  assert.equal(partial.removedCount, 2)
+  assert.equal(partial.failedCount, 1)
+  assert.equal(partial.message, '已移除 2 个，1 个失败')
+  assert.match(partial.detail, /b\.txt.*文件句柄被占用/)
+
+  const okAll = await clearAllSharedFiles(list.slice(0, 1), lanHost({ removeSharedFile: () => status({ files: [] }) }))
+  assert.equal(okAll.ok, true)
+  assert.match(okAll.message, /文件本身没有删除/)
+
+  const empty = await clearAllSharedFiles([], host)
+  assert.equal(empty.ok, false)
 })

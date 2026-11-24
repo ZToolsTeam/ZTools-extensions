@@ -1,0 +1,61 @@
+{
+  "id": "exchange-rate",
+  "name": "汇率计算",
+  "version": "2.0.0",
+  "revoked": true,
+  "revokedReason": "已合并至内置「计算器」插件（支持多币种汇率看板与算式内联换算），请改用计算器",
+  "description": "实时汇率查询与多币种换算，支持 15 种主流法币以及黄金（盎司）、比特币，汇率本地缓存 30 分钟并显示更新时间",
+  "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "entry": "dist/index.js",
+  "icon": "icon.svg",
+  "mode": "view",
+  "keywords": [
+    "汇率",
+    "exchange rate",
+    "货币",
+    "currency",
+    "换算",
+    "convert",
+    "美元",
+    "欧元",
+    "日元",
+    "人民币",
+    "黄金",
+    "gold",
+    "XAU",
+    "比特币",
+    "bitcoin",
+    "BTC"
+  ],
+  "permissions": [
+    "clipboard",
+    "network"
+  ],
+  "targets": [
+    {
+      "id": "windows-electron-any",
+      "platform": "windows",
+      "runtime": "electron",
+      "arch": "any"
+    },
+    {
+      "id": "macos-electron-any",
+      "platform": "macos",
+      "runtime": "electron",
+      "arch": "any"
+    }
+  ],
+  "nativeComponents": [],
+  "categoryId": "productivity",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Currency Converter",
+      "description": "Real-time exchange rates and multi-currency conversion supporting 15 major fiat currencies, gold (oz), and Bitcoin with 30-minute local caching.",
+      "revokedReason": "Merged into the built-in \"Calculator\" plugin (supports the multi-currency board and inline expression conversion). Please use Calculator instead."
+    }
+  }
+}

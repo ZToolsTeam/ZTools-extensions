@@ -1,0 +1,24 @@
+import type { StartupCleanBrokenResult, StartupEntryItem, StartupScanSummary, StartupSourceFilter, StartupSourceLabel, StartupSourceType, StartupToggleResult } from './types.js';
+export declare const STARTUP_MANAGER_PLUGIN_NAME = "StartupManagerPlugin";
+export declare const WINDOWS_PROTECTED_CORE_SERVICES: Set<string>;
+export declare function resolveInitialStartupFilter(featureCode?: string): StartupSourceFilter;
+export declare function extractExePathFromCommand(rawCommand: string): string;
+export declare function hasDangerousStartupTokens(val: string): boolean;
+export declare function isMicrosoftProtectedStartupItem(item: {
+    source?: string;
+    name?: string;
+    serviceName?: string;
+    taskPath?: string;
+    publisher?: string;
+    exePath?: string;
+    command?: string;
+}): boolean;
+export declare function resolveStartupSourceLabel(source: StartupSourceType): StartupSourceLabel;
+export declare function normalizeStartupEntry(raw: Record<string, unknown>): StartupEntryItem | null;
+export declare function computeStartupScanSummary(items: StartupEntryItem[]): StartupScanSummary;
+export declare function scanStartupItems(hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<StartupScanSummary>;
+export declare function setStartupItemEnabled(item: StartupEntryItem, targetEnabled: boolean, currentItems?: StartupEntryItem[], hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<StartupToggleResult>;
+export declare function removeBrokenStartupItems(targetBrokenItems: StartupEntryItem[], currentItems?: StartupEntryItem[], hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<StartupCleanBrokenResult>;
+export declare function filterStartupItems(items: StartupEntryItem[], filter: StartupSourceFilter, searchQuery: string): StartupEntryItem[];
+export declare function revealStartupExeInFolder(exePath: string, hostOverride?: unknown): Promise<boolean>;
+export declare function copyStartupCommandToClipboard(command: string, hostOverride?: unknown): Promise<boolean>;

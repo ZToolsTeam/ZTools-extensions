@@ -3,8 +3,7 @@ import assert from 'node:assert/strict'
 import {
   splitFileName,
   applyRenameRule,
-  batchApplyRename,
-  getSampleFiles
+  batchApplyRename
 } from '../dist/logic.js'
 
 test('BatchRename 文件名分离边界测试', () => {

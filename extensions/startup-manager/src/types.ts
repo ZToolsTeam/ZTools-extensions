@@ -1,6 +1,6 @@
 export type StartupSourceType = 'registry' | 'folder' | 'service' | 'task' | 'launchd'
 
-export type StartupSourceLabel = '注册表' | '启动目录' | '后台服务' | '计划任务' | 'LaunchAgent'
+export type StartupSourceLabel = string
 
 export type StartupSourceFilter = 'all' | 'app' | 'service' | 'task' | 'enabled' | 'broken'
 

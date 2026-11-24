@@ -379,3 +379,19 @@ test('record 界面：已有录制时开始给出可读原因；停止失败显�
   assert.match(toast.message, /ffmpeg 录制异常退出/)
   assert.match(view.tree().props.filterBar.props.summaryText, /^未在录制/)
 })
+
+test('i18n: RECORD_FORMAT_OPTIONS 与 getRecordLimitationNote 随 locale 实时切换不冻结', () => {
+  assert.deepEqual(record.RECORD_FORMAT_OPTIONS.map(o => o.label), ['MP4 视频', 'GIF 动图'])
+  assert.match(record.getRecordLimitationNote(), /整个桌面/)
+  host.setLocale('en-US')
+  try {
+    assert.deepEqual(record.RECORD_FORMAT_OPTIONS.map(o => o.label), ['MP4 Video', 'GIF Animation'])
+    assert.deepEqual(record.getRecordFormatOptions().map(o => o.label), ['MP4 Video', 'GIF Animation'])
+    const noteEn = record.getRecordLimitationNote()
+    assert.match(noteEn, /entire desktop/i)
+    assert.ok(!/[\u4e00-\u9fa5]/.test(noteEn))
+  } finally {
+    host.setLocale('zh-CN')
+  }
+  assert.deepEqual(record.RECORD_FORMAT_OPTIONS.map(o => o.label), ['MP4 视频', 'GIF 动图'])
+})

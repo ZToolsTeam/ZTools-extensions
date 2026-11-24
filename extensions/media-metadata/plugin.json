@@ -1,9 +1,17 @@
 {
   "id": "media-metadata",
   "name": "EXIF隐私抹除",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "本地读取照片与音视频元数据，清理照片定位及拍摄信息，校验图像数据后另存新副本",
   "author": "ZTools Team",
+  "category": [
+    "图像媒体",
+    "安全隐私"
+  ],
+  "categoryId": [
+    "media",
+    "security"
+  ],
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -58,5 +66,63 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "EXIF & Media Privacy Scrubber",
+      "description": "Inspect photo, audio, and video metadata locally, strip GPS location and camera EXIF tags from photos, and save verified clean copies.",
+      "keywords": [
+        "exif",
+        "metadata",
+        "gps",
+        "privacy",
+        "photo",
+        "mediainfo",
+        "scrub"
+      ],
+      "features": {
+        "media-metadata-workbench": {
+          "explain": "Inspect photo or media metadata and export stripped clean photo copies",
+          "cmds": [
+            "exif",
+            "mediainfo",
+            "photo metadata",
+            "strip exif",
+            "remove gps"
+          ]
+        },
+        "media-clean-gps-fast": {
+          "explain": "Strip GPS location tags from photos and save clean copies",
+          "cmds": [
+            "clean gps",
+            "remove location",
+            "strip gps"
+          ]
+        },
+        "media-stream-info": {
+          "explain": "Inspect audio and video container formats, codecs, and frame rates",
+          "cmds": [
+            "video info",
+            "audio info",
+            "codec info",
+            "framerate"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

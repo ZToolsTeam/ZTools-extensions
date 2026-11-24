@@ -10,6 +10,10 @@
     "系统工具",
     "办公效率"
   ],
+  "categoryId": [
+    "system",
+    "productivity"
+  ],
   "keywords": [
     "窗口管理",
     "窗口分屏",
@@ -21,23 +25,72 @@
   "features": [
     {
       "code": "win-snap-half",
-      "explain": "窗口左右分屏贴靠与居中排版",
+      "explain": "浏览并执行全部窗口分屏、居中与尺寸调整布局",
       "cmds": [
         "窗口分屏",
         "左右分屏",
-        "左半屏",
-        "右半屏",
-        "窗口居中"
+        "窗口布局",
+        "窗口管理"
       ]
     },
     {
       "code": "win-display",
-      "explain": "将活动窗口移动到上一或下一显示器",
+      "explain": "浏览跨显示器移动窗口动作",
       "cmds": [
         "移动窗口",
-        "下一显示器",
+        "多显示器",
         "上一显示器"
       ]
+    },
+    {
+      "code": "win-left-half",
+      "explain": "将活动窗口一键贴靠到屏幕左半侧",
+      "cmds": [
+        "左半屏",
+        "贴靠左侧",
+        "win left"
+      ],
+      "mode": "no-view"
+    },
+    {
+      "code": "win-right-half",
+      "explain": "将活动窗口一键贴靠到屏幕右半侧",
+      "cmds": [
+        "右半屏",
+        "贴靠右侧",
+        "win right"
+      ],
+      "mode": "no-view"
+    },
+    {
+      "code": "win-maximize",
+      "explain": "将活动窗口一键最大化铺满当前工作区",
+      "cmds": [
+        "窗口最大化",
+        "最大化窗口",
+        "win max"
+      ],
+      "mode": "no-view"
+    },
+    {
+      "code": "win-center",
+      "explain": "将活动窗口一键居中显示在当前屏幕",
+      "cmds": [
+        "窗口居中",
+        "屏幕居中",
+        "win center"
+      ],
+      "mode": "no-view"
+    },
+    {
+      "code": "win-next-display",
+      "explain": "将活动窗口一键移动到下一物理显示器",
+      "cmds": [
+        "下一显示器",
+        "移动到下一显示器",
+        "win next display"
+      ],
+      "mode": "no-view"
     }
   ],
   "permissions": [
@@ -54,5 +107,87 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Window Manager",
+      "description": "Snap active windows to halves, quarters, thirds, or center, and move windows across multiple displays.",
+      "keywords": [
+        "window",
+        "snap",
+        "split",
+        "tiling",
+        "center",
+        "multi-monitor"
+      ],
+      "features": {
+        "win-snap-half": {
+          "explain": "Browse and run all window snapping, centering, and resizing layouts",
+          "cmds": [
+            "window snap",
+            "split window",
+            "window layout",
+            "window manager"
+          ]
+        },
+        "win-display": {
+          "explain": "Browse actions to move the active window across displays",
+          "cmds": [
+            "move window",
+            "multi display",
+            "previous display"
+          ]
+        },
+        "win-left-half": {
+          "explain": "Snap active window to the left half of the screen immediately",
+          "cmds": [
+            "left half",
+            "snap left"
+          ]
+        },
+        "win-right-half": {
+          "explain": "Snap active window to the right half of the screen immediately",
+          "cmds": [
+            "right half",
+            "snap right"
+          ]
+        },
+        "win-maximize": {
+          "explain": "Maximize the active window to fill the work area immediately",
+          "cmds": [
+            "maximize window",
+            "win maximize"
+          ]
+        },
+        "win-center": {
+          "explain": "Center the active window on the current screen immediately",
+          "cmds": [
+            "center window",
+            "win center"
+          ]
+        },
+        "win-next-display": {
+          "explain": "Move the active window to the next display immediately",
+          "cmds": [
+            "next display",
+            "move to next display"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

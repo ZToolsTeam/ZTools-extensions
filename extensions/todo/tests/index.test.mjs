@@ -9,8 +9,8 @@ test.beforeEach(() => host.reset())
 
 test('首次打开没有示例数据，显示空状态', async () => {
   const view = await mount(TodoCommand)
-  assert.equal(view.items().length, 1)
-  assert.equal(view.items()[0].props.title, '还没有待办')
+  assert.equal(view.items().length, 0, '空状态不是可选中的条目')
+  assert.equal(view.emptyView().props.title, '还没有待办')
   assert.ok(!view.text().includes('全面落地纯声明式'))
 })
 
@@ -57,7 +57,8 @@ test('[故障注入] 存储读取失败时提示，并保持可用的空列表',
   host.faults.storageRead = new Error('数据库被占用')
   const view = await mount(TodoCommand)
   assert.ok(host.toasts.some((t) => /读取待办失败/.test(String(t.title))))
-  assert.equal(view.items()[0].props.id, 'empty-item')
+  assert.equal(view.items().length, 0)
+  assert.equal(view.emptyView().props.title, '读取待办失败，已暂停修改')
 })
 
 test('[数据损坏] 存储里的脏数据被过滤，不导致崩溃', () => {
@@ -77,8 +78,9 @@ test('[边界] 空标题拒绝；搜索与筛选组合', () => {
 })
 
 // 宿主在搜索词变化后选中第一项，回车执行它的第一个动作
+// 与客户端一致：有条目时回车执行首条的首个动作；列表为空时回退到 List 级动作
 async function pressEnter(view) {
-  const first = view.items()[0]
+  const first = view.items()[0] || null
   const primary = view.actions(first)[0]
   await view.run(first, primary.props.title)
   return { first, primary }
@@ -127,8 +129,8 @@ test('[边界] 只输入空格：不展示待办、回车不改动任何数据',
   for (const blank of ['   ', '\t', ' 　 ']) {
     await view.search(blank)
     const shown = view.items()
-    assert.deepEqual(shown.map((i) => i.props.id), ['empty-item'])
-    assert.equal(shown[0].props.title, '请输入待办内容')
+    assert.deepEqual(shown, [])
+    assert.equal(view.emptyView().props.title, '请输入待办内容')
     const { primary } = await pressEnter(view)
     assert.equal(primary.props.title, '新建待办事项', '主动作只打开表单，不写数据')
     host.pushed.length = 0
@@ -187,4 +189,61 @@ test('[回归] 旧窗口执行标为完成按明确意图更新，不反转其�
   await b.run(b.item(item.id), '标为已完成')
   assert.equal(saved()[0].completed, true)
   a.unmount(); b.unmount()
+})
+
+test('编辑已有待办：修改标题与优先级，保留完成状态与创建时间，并按未完成/高优/最新重排', async () => {
+  const older = { ...createTodo('旧低优任务', 'low'), id: 't-old', createdAt: 1000, completed: false }
+  const newer = { ...createTodo('新中优任务', 'medium'), id: 't-new', createdAt: 2000, completed: false }
+  const done = { ...createTodo('已完成高优', 'high'), id: 't-done', createdAt: 3000, completed: true, completedAt: 3500 }
+  seed([older, newer, done])
+  const view = await mount(TodoCommand)
+  assert.deepEqual(view.items().map((i) => i.props.id), ['t-new', 't-old', 't-done'])
+
+  // 编辑旧低优任务 -> 升级为高优先级，排到最前，保留 createdAt
+  await view.run(view.item('t-old'), '编辑待办')
+  let form = await mountPushed(host)
+  assert.equal(form.field('title').props.value, '旧低优任务')
+  assert.equal(form.field('priority').props.value, 'low')
+  await form.fill('title', '紧急修复任务')
+  await form.fill('priority', 'high')
+  await form.run(null, '保存待办')
+  await tick()
+  assert.equal(host.pushed.length, 0)
+  assert.deepEqual(view.items().map((i) => i.props.id), ['t-old', 't-new', 't-done'])
+  const editedOld = saved().find((t) => t.id === 't-old')
+  assert.equal(editedOld.title, '紧急修复任务')
+  assert.equal(editedOld.priority, 'high')
+  assert.equal(editedOld.completed, false)
+  assert.equal(editedOld.createdAt, 1000)
+
+  // 编辑已完成任务：保留 completed 和 completedAt
+  await view.run(view.item('t-done'), '编辑待办')
+  form = await mountPushed(host)
+  await form.fill('title', '已完成任务（更新）')
+  await form.run(null, '保存待办')
+  await tick()
+  const editedDone = saved().find((t) => t.id === 't-done')
+  assert.equal(editedDone.title, '已完成任务（更新）')
+  assert.equal(editedDone.completed, true)
+  assert.equal(editedDone.completedAt, 3500)
+  assert.equal(editedDone.createdAt, 3000)
+  view.unmount()
+})
+
+test('清空已完成待办需要二次确认：取消时不清空，确认后清空', async () => {
+  seed([
+    { ...createTodo('进行中任务', 'medium'), id: 'active-1', completed: false },
+    { ...createTodo('已完成任务', 'high'), id: 'done-1', completed: true, completedAt: 5000 }
+  ])
+  const view = await mount(TodoCommand)
+  host.setConfirm(false)
+  await view.run(null, '清空已完成待办')
+  assert.equal(host.confirms.length, 1)
+  assert.match(host.confirms[0].title, /1 条已完成待办/)
+  assert.equal(saved().length, 2, '取消确认时不能清空')
+
+  host.setConfirm(true)
+  await view.run(null, '清空已完成待办')
+  assert.deepEqual(saved().map((t) => t.id), ['active-1'])
+  view.unmount()
 })

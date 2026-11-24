@@ -12,7 +12,8 @@ export interface JwtDecodedResult {
   notBeforeText?: string
   expiresAtText?: string
   isExpired: boolean
-  timeStatus: '未声明到期' | '时间声明异常' | '已过期' | '尚未生效' | '尚未过期'
+  timeStatus: string
+  timeStatusWarning?: boolean
   expiryCountdownText: string
 }
 

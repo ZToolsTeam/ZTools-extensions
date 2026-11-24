@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as translator from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const translator = await import('../dist/index.js')
 
 async function withRealElectronWindow(handlers, fn) {
   const prevWindow = globalThis.window
@@ -124,9 +127,10 @@ test('[边界] 空输入拒绝；不在客户端里运行时直接提示需要�
   assert.deepEqual(emptyRes, { ok: false, error: '翻译内容不能为空' })
 
   assert.equal(globalThis.window, undefined)
+  const notInClient = translator.getNotInClientMessage()
   const noHost = await translator.translateTextWithHost('你好')
-  assert.deepEqual(noHost, { ok: false, error: translator.NOT_IN_CLIENT_MESSAGE })
-  assert.equal(translator.describeTranslateError(noHost.error), translator.NOT_IN_CLIENT_MESSAGE)
+  assert.deepEqual(noHost, { ok: false, error: notInClient })
+  assert.equal(translator.describeTranslateError(noHost.error), notInClient)
 
   const hist = await translator.fetchTranslationHistoryFromHost()
   assert.equal(hist.ok, false)
@@ -191,4 +195,23 @@ test('变量命名：英文原文直接转换，不经过翻译；中文或无�
     translator.englishTextOf({ originalText: 'こんにちは', translatedText: '你好', sourceLanguage: 'ja', targetLanguage: 'zh-CN', engineLabel: '' }),
     ''
   )
+})
+
+test('i18n 热切换：切换 zh-CN 与 en-US 时未在客户端提示文案即时更新不冻结', async () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhMsg = translator.getNotInClientMessage()
+    assert.match(zhMsg, /[\u4e00-\u9fa5]/)
+    const zhNoHost = await translator.translateTextWithHost('hello')
+    assert.deepEqual(zhNoHost, { ok: false, error: zhMsg })
+
+    setRuntimeLocale('en-US')
+    const enMsg = translator.getNotInClientMessage()
+    assert.notEqual(enMsg, zhMsg)
+    assert.doesNotMatch(enMsg, /[\u4e00-\u9fa5]/)
+    const enNoHost = await translator.translateTextWithHost('hello')
+    assert.deepEqual(enNoHost, { ok: false, error: enMsg })
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

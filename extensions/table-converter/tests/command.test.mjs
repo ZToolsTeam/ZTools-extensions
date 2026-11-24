@@ -191,3 +191,29 @@ test('[破坏性] 空状态主动作读取剪贴板失败时保留原输入并�
     assert.match(view.tree().props.filterBar.summaryText, /读取失败/)
   } finally { Clipboard.readText = read; view.unmount() }
 })
+
+test('粘贴表格文件与纯文本：支持 Ctrl+V 粘贴 .csv 文件读取内容转换，以及粘贴表格文本', async () => {
+  const host = createHost()
+  host.ipc.filesystem_read_file = async (params) => {
+    assert.equal(params.path, '/Users/me/report.csv')
+    assert.equal(params.encoding, 'utf8')
+    return { content: 'id,name\n1,Alice\n2,Bob' }
+  }
+  const view = await mount(TableConverterCommand, host)
+  try {
+    await view.pasteFiles(['/Users/me/report.csv'])
+    await tick()
+    await view.run(view.item('json'), '复制转换结果')
+    assert.deepEqual(JSON.parse(host.clipboard.text), [
+      { id: 1, name: 'Alice' },
+      { id: 2, name: 'Bob' }
+    ])
+
+    await view.pasteText('col1,col2\n10,20')
+    await tick()
+    await view.run(view.item('json'), '复制转换结果')
+    assert.deepEqual(JSON.parse(host.clipboard.text), [{ col1: 10, col2: 20 }])
+  } finally {
+    view.unmount()
+  }
+})

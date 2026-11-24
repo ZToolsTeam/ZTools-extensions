@@ -1,8 +1,12 @@
+import { getLocale } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
+
 export interface MemoItem {
   id: string
   title: string
   content: string
   tag: string
+  pinned?: boolean
   createTime: number
   updateTime: number
 }
@@ -16,12 +20,12 @@ export function createMemo(
   content: string,
   tag: string = ''
 ): MemoItem[] {
-  const cleanTitle = title.trim() || '无标题便签'
+  const cleanTitle = title.trim() || t('untitledMemo')
   const cleanContent = content.trim()
   const now = Date.now()
 
   if (typeof globalThis.crypto?.randomUUID !== 'function') {
-    throw new Error('无法生成唯一标识，请重启客户端后重试')
+    throw new Error(t('uuidUnavailableError'))
   }
   const newItem: MemoItem = {
     id: `memo-${now}-${globalThis.crypto.randomUUID()}`,
@@ -41,7 +45,7 @@ export function createMemo(
 export function updateMemo(
   items: MemoItem[],
   id: string,
-  updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag'>>
+  updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag' | 'pinned'>>
 ): MemoItem[] {
   return items.map(item => {
     if (item.id === id) {
@@ -63,14 +67,18 @@ export function deleteMemo(items: MemoItem[], id: string): MemoItem[] {
 }
 
 /**
- * 按标题、正文、标签检索；最近更新的排在前面
+ * 按标题、正文、标签检索；置顶便签排在最前，其余按最近更新倒序
  */
 export function filterMemos(items: MemoItem[], query: string): MemoItem[] {
   const q = (query || '').trim().toLowerCase()
   const list = q
     ? items.filter(m => m.title.toLowerCase().includes(q) || m.content.toLowerCase().includes(q) || m.tag.toLowerCase().includes(q))
     : items
-  return [...list].sort((a, b) => b.updateTime - a.updateTime)
+  return [...list].sort((a, b) => {
+    const pinDiff = Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))
+    if (pinDiff !== 0) return pinDiff
+    return b.updateTime - a.updateTime
+  })
 }
 
 export const MEMOS_STORAGE_KEY = 'memo.items.v1'
@@ -100,6 +108,7 @@ export function sanitizeStoredMemos(raw: unknown): MemoItem[] {
       title: m.title,
       content: m.content,
       tag: typeof m.tag === 'string' ? m.tag : '',
+      ...(m.pinned === true ? { pinned: true } : {}),
       createTime,
       updateTime: typeof m.updateTime === 'number' ? m.updateTime : createTime
     })
@@ -167,7 +176,7 @@ export function readLegacyMemos(storage: { getItem(key: string): string | null }
 /** 一次保存操作：只描述「改了哪一条」，写入时套用到存储里的最新列表上 */
 export type MemoMutation =
   | { type: 'create'; item: MemoItem }
-  | { type: 'update'; expected: MemoItem; updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag'>> }
+  | { type: 'update'; expected: MemoItem; updates: Partial<Pick<MemoItem, 'title' | 'content' | 'tag' | 'pinned'>>; touchUpdateTime?: boolean }
   | { type: 'delete'; expected: MemoItem }
 
 /**
@@ -191,18 +200,30 @@ export function applyMemoMutation(latest: unknown[] | undefined, mutation: MemoM
     const found = base.filter(entry => matches(entry, mutation.expected.id))
     const current = sanitizeStoredMemos(found)[0]
     const fields = ['title', 'content', 'tag', 'createTime', 'updateTime'] as const
-    if (found.length !== 1 || !current || fields.some(field => current[field] !== mutation.expected[field])) {
-      throw new Error('这条便签已在其他窗口修改或删除，原数据保留。请重新打开便签后再操作。')
+    if (
+      found.length !== 1 ||
+      !current ||
+      fields.some(field => current[field] !== mutation.expected[field]) ||
+      Boolean(current.pinned) !== Boolean(mutation.expected.pinned)
+    ) {
+      throw new Error(t('concurrentModifiedError'))
     }
   }
   switch (mutation.type) {
     case 'create':
-      if (base.some(entry => matches(entry, mutation.item.id))) throw new Error('便签标识已存在，请重试')
+      if (base.some(entry => matches(entry, mutation.item.id))) throw new Error(t('duplicateIdError'))
       return [mutation.item, ...base]
     case 'update':
-      return base.map(entry => matches(entry, mutation.expected.id)
-        ? { ...(entry as Record<string, unknown>), ...mutation.updates, updateTime: Date.now() }
-        : entry)
+      return base.map(entry => {
+        if (!matches(entry, mutation.expected.id)) return entry
+        const nextEntry: Record<string, unknown> = {
+          ...(entry as Record<string, unknown>),
+          ...mutation.updates,
+          ...(mutation.touchUpdateTime === false ? {} : { updateTime: Date.now() })
+        }
+        if (nextEntry.pinned !== true) delete nextEntry.pinned
+        return nextEntry
+      })
     case 'delete':
       return base.filter((entry) => !matches(entry, mutation.expected.id))
     default:
@@ -217,5 +238,5 @@ export function formatListDate(timestamp: number, now: number = Date.now()): str
   if (!Number.isFinite(timestamp) || timestamp <= 0) return ''
   const date = new Date(timestamp)
   const sameYear = date.getFullYear() === new Date(now).getFullYear()
-  return date.toLocaleDateString([], sameYear ? { month: '2-digit', day: '2-digit' } : { year: 'numeric', month: '2-digit', day: '2-digit' })
+  return date.toLocaleDateString(getLocale(), sameYear ? { month: '2-digit', day: '2-digit' } : { year: 'numeric', month: '2-digit', day: '2-digit' })
 }

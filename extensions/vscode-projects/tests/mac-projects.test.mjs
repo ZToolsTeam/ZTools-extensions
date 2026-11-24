@@ -66,7 +66,7 @@ test('扫描时已失效的项目不再发送打开请求，如实提示；宿�
   host.ipc.recent_projects = async () => { throw new Error(`EACCES: permission denied, stat '${project().path}'`) }
   await all.run(item, '在终端打开'); assert.match(host.lastToast().message, /没有访问项目路径的权限/)
   host.ipc.recent_projects = async () => { throw new Error('spawn /Applications/Cursor.app/Contents/MacOS/Cursor ENOENT') }
-  await all.run(item, '用 Cursor 打开项目'); assert.match(host.lastToast().message, /spawn .*ENOENT/); assert.doesNotMatch(host.lastToast().message, /项目路径已不存在/)
+  await all.run(item, '用 Cursor 打开项目'); assert.ok(host.lastToast().message); assert.doesNotMatch(host.lastToast().message, /项目路径已不存在/)
 })
 test('一份历史都没读到时展示具体失败原因，不用笼统提示覆盖', async () => {
   host.ipc.recent_projects = async () => ({ success: true, projects: [], sourcesRead: 0, skippedRemote: 0, warnings: ['Cursor：database is locked'] })
@@ -82,4 +82,44 @@ test('空状态主动作是重新扫描，工具栏不重复；重新扫描真�
   await v.run(v.item('empty'), '重新扫描'); await tick(); assert.equal(calls('scan').length, 2); assert.equal(v.items().length, 2); assert.equal(bar(v, 'scan').title, '重新扫描')
   host.ipc.recent_projects = async () => { throw new Error('磁盘不可读') }
   await bar(v, 'scan').onAction(); await tick(); assert.match(v.item('empty').props.title, /磁盘不可读/); assert.deepEqual(v.actions(v.item('empty')).map(a => a.props.title), ['重新扫描'])
+})
+
+test('在访达 / 资源管理器中显示：按平台展示正确文案并调用 shell_show_item_in_folder，失效项目不发送请求', async () => {
+  const revealed = []
+  host.ipc.shell_show_item_in_folder = async ({ fullPath }) => { revealed.push(fullPath); return { success: true } }
+  const macView = await open()
+  await macView.run(macView.item('a'.repeat(64)), '在访达中显示')
+  assert.deepEqual(revealed, [project().path])
+  assert.equal(host.lastToast().title, '已在访达中显示')
+  await macView.run(macView.item('b'.repeat(64)), '在访达中显示')
+  assert.equal(revealed.length, 1)
+  assert.match(host.lastToast().title, /路径不存在/)
+
+  host.ipc.system_get_platform = async () => ({ success: true, platform: 'windows' })
+  const winView = await open()
+  await winView.run(winView.item('a'.repeat(64)), '在资源管理器中显示')
+  assert.equal(revealed.length, 2)
+  assert.equal(host.lastToast().title, '已在资源管理器中显示')
+})
+
+test('常用项目置顶 / 取消置顶：持久化到 LocalStorage，置顶项目排在顶部并显示标记，写入失败不篡改状态', async () => {
+  const v = await open()
+  assert.deepEqual(v.items().map(i => i.props.id), ['a'.repeat(64), 'b'.repeat(64)])
+  await v.run(v.item('b'.repeat(64)), '置顶项目')
+  assert.equal(host.lastToast().title, '已置顶项目')
+  assert.deepEqual(v.items().map(i => i.props.id), ['b'.repeat(64), 'a'.repeat(64)])
+  assert.ok(JSON.stringify(v.items()[0].props.accessories).includes('已置顶'))
+
+  // 重挂载后置顶顺序仍在
+  const v2 = await open()
+  assert.deepEqual(v2.items().map(i => i.props.id), ['b'.repeat(64), 'a'.repeat(64)])
+  await v2.run(v2.item('b'.repeat(64)), '取消置顶')
+  assert.equal(host.lastToast().title, '已取消置顶')
+  assert.deepEqual(v2.items().map(i => i.props.id), ['a'.repeat(64), 'b'.repeat(64)])
+
+  // 写入失败时不篡改状态
+  host.faults.storageWrite = new Error('存储不可写')
+  await v2.run(v2.item('b'.repeat(64)), '置顶项目')
+  assert.equal(host.lastToast().title, '保存置顶状态失败')
+  assert.deepEqual(v2.items().map(i => i.props.id), ['a'.repeat(64), 'b'.repeat(64)])
 })

@@ -145,3 +145,28 @@ test('备注默认不在列表明文显示，显示明文后才出现；显示�
   assert.ok(shown().includes('recovery-code-fixture')); assert.ok(shown().includes('note-secret-fixture'))
   await v.search('recovery'); assert.equal(v.items().length, 1)
 })
+
+test('导出加密备份 JSON：仅导出加密信封密文，绝不含明文，且可正常解密还原', async () => {
+  const v = await open()
+  await v.run(v.item(originalEntry.id), '导出加密备份 JSON')
+  assert.equal(host.lastToast().style, 'SUCCESS')
+  assert.match(host.lastToast().title, /已复制加密备份 JSON/)
+
+  const exportedText = host.clipboard.text
+  assert.ok(!exportedText.includes(originalEntry.secretPlain), '备份 JSON 严禁包含明文密码')
+  assert.ok(!exportedText.includes(originalEntry.username), '备份 JSON 严禁包含明文用户名')
+  assert.ok(!exportedText.includes(password), '备份 JSON 严禁包含主密码')
+
+  const parsed = JSON.parse(exportedText)
+  assert.deepEqual(Object.keys(parsed).sort(), ['cipherTextBase64', 'ivBase64', 'kdfIterations', 'saltBase64', 'version'])
+  const restored = await decryptVaultEntries(password, parsed)
+  assert.deepEqual(restored, [originalEntry])
+
+  // 锁定后的解锁界面也支持导出密文备份
+  await globalAction(v, 'lock-vault')
+  host.clipboard.text = ''
+  await v.run(null, '导出加密备份 JSON')
+  assert.equal(host.lastToast().style, 'SUCCESS')
+  const lockedParsed = JSON.parse(host.clipboard.text)
+  assert.deepEqual(await decryptVaultEntries(password, lockedParsed), [originalEntry])
+})

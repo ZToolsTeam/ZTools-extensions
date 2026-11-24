@@ -58,3 +58,9 @@ List.Section = function ListSection(props, ...children) {
     return createDescriptor("List.Section", props, ...children);
 };
 List.Dropdown = DropdownComponent;
+/**
+ * List.EmptyView 列表为空时的空状态；列表有条目时不显示
+ */
+List.EmptyView = function ListEmptyView(props) {
+    return createDescriptor("List.EmptyView", props);
+};

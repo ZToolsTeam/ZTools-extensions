@@ -9,6 +9,7 @@
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "system",
     "shell"
@@ -21,6 +22,31 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Context Menu Manager",
+      "description": "Inspect and toggle Windows Explorer context menu shell entries for files, folders, and directory backgrounds, plus switch to the Windows 11 classic menu (shell extensions excluded).",
+      "keywords": [
+        "context menu",
+        "right click",
+        "windows 11",
+        "explorer",
+        "registry",
+        "shell"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
     }
   ]
 }

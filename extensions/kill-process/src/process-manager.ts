@@ -1,8 +1,12 @@
 type DynamicBridge = ReturnType<typeof JSON.parse>;
-import { confirmAlert, terminateProcess as hostTerminateProcess } from "@ztools/declarative-ui";
+import { confirmAlert, terminateProcess as hostTerminateProcess, getLocale } from "@ztools/declarative-ui";
 import { callHostTransport, isRealElectronHost, showRealItemInFolder } from "./native-ipc.js";
+import { t } from "./i18n.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
-export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+export function getNotInClientMessage(): string {
+  return t("notInClient");
+}
 
 export interface ProcessInfo {
   pid: number;
@@ -178,7 +182,7 @@ export interface ProcessListResult {
  */
 export async function loadProcesses(hostOverride?: DynamicBridge): Promise<ProcessListResult> {
   if (!hostOverride && !isRealElectronHost()) {
-    return { ok: false, processes: [], error: NOT_IN_CLIENT_MESSAGE };
+    return { ok: false, processes: [], error: t("notInClient") };
   }
 
   let snapshotError = "";
@@ -192,9 +196,9 @@ export async function loadProcesses(hostOverride?: DynamicBridge): Promise<Proce
     const rows = extractProcessRows(payload);
     if (payload?.error) snapshotError = String(payload.error);
     else if (rows && rows.length > 0) return { ok: true, processes: rows.map(mapRawToProcessInfo) };
-    else snapshotError = "进程快照为空";
+    else snapshotError = t("snapshotEmpty");
   } else {
-    snapshotError = snapshot.error || "读取进程快照失败";
+    snapshotError = resolveErrorMessage(snapshot, t("snapshotFailed"));
   }
 
   const basic = await callHostTransport<DynamicBridge>("process_list", {}, hostOverride);
@@ -205,7 +209,10 @@ export async function loadProcesses(hostOverride?: DynamicBridge): Promise<Proce
   return {
     ok: false,
     processes: [],
-    error: `读取进程列表失败：${basic.ok ? "列表为空" : basic.error || "未知错误"}（完整快照：${snapshotError}）`
+    error: t("loadProcessListFailed", {
+      reason: basic.ok ? t("listEmpty") : resolveErrorMessage(basic, t("unknownError")),
+      snapshot: snapshotError
+    })
   };
 }
 
@@ -230,21 +237,19 @@ function hostErrorCode(err: unknown): string {
 function describeTerminateFailure(code: string, mode: KillMode, rawMessage: string): string {
   switch (code) {
     case "PROCESS_PROTECTED":
-      return rawMessage || "该进程受保护，不能结束";
+      return rawMessage || t("errProtected");
     case "PROCESS_ACCESS_DENIED":
-      return "没有权限结束该进程：它可能属于系统或其他用户，需要以管理员身份运行 ZTools";
+      return t("errAccessDenied");
     case "PROCESS_IDENTITY_MISMATCH":
-      return "该 PID 已不是列表里的进程（可能已退出并被复用），为避免误结束未执行，请刷新后重试";
+      return t("errIdentityMismatch");
     case "PROCESS_TERMINATE_TIMEOUT":
-      return mode === "graceful"
-        ? "进程没有响应正常关闭请求，可以改用强制结束"
-        : "进程没有在限定时间内退出";
+      return mode === "graceful" ? t("errTimeoutGraceful") : t("errTimeoutForce");
     case "PLUGIN_PERMISSION_REQUIRED":
-      return "插件没有获得结束进程的权限，请更新插件";
+      return t("errPermissionRequired");
     case "PLUGIN_IDENTITY_REQUIRED":
-      return "无法确认插件身份，请关闭后重新打开插件再试";
+      return t("errIdentityRequired");
     default:
-      return rawMessage || "结束进程失败";
+      return rawMessage || t("errTerminateFallback");
   }
 }
 
@@ -257,12 +262,12 @@ async function legacyTerminate(pid: number, mode: KillMode, hostOverride?: Dynam
   );
   if (!res.ok) {
     const notInClient = res.error === "NO_WINDOW_ENV" || String(res.error || "").startsWith("METHOD_NOT_AVAILABLE");
-    return { ok: false, code: "HOST_CALL_FAILED", message: notInClient ? NOT_IN_CLIENT_MESSAGE : res.error || "调用客户端失败" };
+    return { ok: false, code: "HOST_CALL_FAILED", message: notInClient ? t("notInClient") : resolveErrorMessage(res, t("errHostCallFailed")) };
   }
   const payload = parseJsonPayload(res.data?.result !== undefined ? res.data.result : res.data);
   if (payload?.error) return { ok: false, code: "TERMINATE_FAILED", message: String(payload.error) };
   if (payload?.terminated === true) return { ok: true };
-  return { ok: false, code: "RESULT_UNCONFIRMED", message: "客户端没有确认进程已结束，请刷新列表查看" };
+  return { ok: false, code: "RESULT_UNCONFIRMED", message: t("errResultUnconfirmed") };
 }
 
 async function requestTermination(
@@ -310,7 +315,7 @@ export async function terminateProcess(
       success: false,
       command: "",
       error: "PROTECTED_CRITICAL_PROCESS",
-      message: `${proc.name || proc.pid} 是系统关键进程，不能结束`
+      message: t("errCriticalProcess", { target: proc.name || proc.pid })
     };
   }
 
@@ -319,7 +324,7 @@ export async function terminateProcess(
       success: false,
       command: "",
       error: "INVALID_PID",
-      message: "无效的进程 PID"
+      message: t("errInvalidPid")
     };
   }
   const isPosixProc = typeof proc.path === "string" && proc.path.startsWith("/") ? true : undefined;
@@ -331,24 +336,36 @@ export async function terminateProcess(
     return { success: false, command: cmd, error: outcome.code, message: outcome.message };
   }
   if (outcome.alreadyExited) {
-    return { success: true, alreadyExited: true, command: cmd, message: `${label} 已经退出` };
+    return { success: true, alreadyExited: true, command: cmd, message: t("msgAlreadyExited", { label }) };
   }
-  const modeText = mode === "tree" ? "结束进程树" : mode === "graceful" ? "结束" : "强制结束";
-  return { success: true, command: cmd, message: `已${modeText} ${label}` };
+  const msgKey = mode === "tree" ? "msgTerminatedTree" : mode === "graceful" ? "msgTerminatedGraceful" : "msgTerminatedForce";
+  return { success: true, command: cmd, message: t(msgKey, { label }) };
 }
 
 export const killProcessById = terminateProcess;
 
 export const KILL_MODE_LABEL: Record<KillMode, string> = {
-  graceful: "结束进程",
-  force: "强制结束",
-  tree: "结束进程树"
+  get graceful() {
+    return t("killGraceful");
+  },
+  get force() {
+    return t("killForce");
+  },
+  get tree() {
+    return t("killTree");
+  }
 };
 
 const KILL_MODE_WARNING: Record<KillMode, string> = {
-  graceful: "会请求程序正常退出，程序可能弹出保存提示或拒绝关闭。",
-  force: "会立即强制结束该进程，进程里未保存的内容会丢失。",
-  tree: "会强制结束该进程及其全部子进程，未保存的内容会丢失。"
+  get graceful() {
+    return t("warnGraceful");
+  },
+  get force() {
+    return t("warnForce");
+  },
+  get tree() {
+    return t("warnTree");
+  }
 };
 
 /**
@@ -362,10 +379,11 @@ export async function confirmAndTerminate(
   if ((proc.name && isSystemCriticalProcess(proc.name)) || isSystemCriticalProcess(proc.pid)) {
     return terminateProcess(proc, mode, false, hostOverride);
   }
+  const action = KILL_MODE_LABEL[mode];
   const confirmed = await confirmAlert({
-    title: `${KILL_MODE_LABEL[mode]}：${proc.name || proc.pid}？`,
-    message: `PID ${proc.pid}。${KILL_MODE_WARNING[mode]}`,
-    primaryAction: { title: KILL_MODE_LABEL[mode], style: "destructive" }
+    title: t("confirmTitle", { action, target: proc.name || proc.pid }),
+    message: t("confirmMessage", { pid: proc.pid, warning: KILL_MODE_WARNING[mode] }),
+    primaryAction: { title: action, style: "destructive" }
   });
   if (!confirmed) return null;
   return terminateProcess(proc, mode, false, hostOverride);
@@ -406,7 +424,7 @@ export function filterAndSortProcesses(
       case "cpu":
         return (b.cpuPercent ?? -1) - (a.cpuPercent ?? -1);
       case "name":
-        return a.name.localeCompare(b.name);
+        return a.name.localeCompare(b.name, getLocale());
       case "pid":
         return a.pid - b.pid;
       default:

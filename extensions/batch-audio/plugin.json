@@ -1,8 +1,8 @@
 {
   "id": "batch-audio",
   "name": "音频转换",
-  "description": "支持 MP3/FLAC/WAV/AAC 批量格式转换、音量均衡调节、静音片段裁剪与多段音频合并",
-  "version": "2.0.10",
+  "description": "支持选择文件、选择文件夹或拖入 MP3/FLAC/WAV/AAC 等音频文件，进行批量格式转换、音量均衡调节、静音片段裁剪与多段音频合并",
+  "version": "2.0.13",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -10,9 +10,15 @@
     "图像媒体",
     "办公效率"
   ],
+  "categoryId": [
+    "media",
+    "productivity"
+  ],
   "permissions": [
     "fs",
-    "audio"
+    "audio",
+    "dialog",
+    "shell"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
@@ -24,5 +30,35 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Batch Audio Converter",
+      "description": "Import MP3, FLAC, WAV, AAC, and other audio files via file picker, folder, or drag-and-drop for batch format conversion, volume normalization, silence trimming, and audio merging.",
+      "keywords": [
+        "audio",
+        "convert",
+        "mp3",
+        "flac",
+        "wav",
+        "aac",
+        "batch",
+        "merge"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

@@ -1,71 +1,65 @@
 import { callHostTransport } from './native-ipc.js'
+import { t } from './i18n.js'
 import type {
   CaffeineActionResult,
   CaffeineMode,
   CaffeinePreset,
   CaffeineStatus
 } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
-export const CAFFEINE_PRESETS: ReadonlyArray<CaffeinePreset> = [
-  {
-    id: 'caffeine-0',
-    minutes: 0,
-    title: '无限期防休眠（直到手动关闭）',
-    subtitle: '按所选模式持续保持唤醒'
-  },
-  {
-    id: 'caffeine-15',
-    minutes: 15,
-    title: '防休眠 15 分钟',
-    subtitle: '适合短时文件传输、会议投屏演示或临时离开座位'
-  },
-  {
-    id: 'caffeine-30',
-    minutes: 30,
-    title: '防休眠 30 分钟',
-    subtitle: '适合阅读长文、线上分享或常规构建打包'
-  },
-  {
-    id: 'caffeine-60',
-    minutes: 60,
-    title: '防休眠 1 小时',
-    subtitle: '适合编译大型工程、下载大体积镜像或导出视频'
-  },
-  {
-    id: 'caffeine-120',
-    minutes: 120,
-    title: '防休眠 2 小时',
-    subtitle: '适合长时间模型推理、数据库迁移或备份任务'
-  },
-  {
-    id: 'caffeine-240',
-    minutes: 240,
-    title: '防休眠 4 小时',
-    subtitle: '适合半天无人值守批处理任务，到期后自动恢复系统休眠策略'
+const CAFFEINE_PRESET_DEFS = [
+  { id: 'caffeine-0', minutes: 0, titleKey: 'preset0Title', subtitleKey: 'preset0Subtitle' },
+  { id: 'caffeine-15', minutes: 15, titleKey: 'preset15Title', subtitleKey: 'preset15Subtitle' },
+  { id: 'caffeine-30', minutes: 30, titleKey: 'preset30Title', subtitleKey: 'preset30Subtitle' },
+  { id: 'caffeine-60', minutes: 60, titleKey: 'preset60Title', subtitleKey: 'preset60Subtitle' },
+  { id: 'caffeine-120', minutes: 120, titleKey: 'preset120Title', subtitleKey: 'preset120Subtitle' },
+  { id: 'caffeine-240', minutes: 240, titleKey: 'preset240Title', subtitleKey: 'preset240Subtitle' }
+] as const
+
+export const CUSTOM_CAFFEINE_MIN_MINUTES = 5
+export const CUSTOM_CAFFEINE_MAX_MINUTES = 720
+
+export function parseCustomCaffeineMinutes(query: string): number | null {
+  const trimmed = (query || '').trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const minutes = Number(trimmed)
+  if (!Number.isSafeInteger(minutes) || minutes < CUSTOM_CAFFEINE_MIN_MINUTES || minutes > CUSTOM_CAFFEINE_MAX_MINUTES) {
+    return null
   }
-]
+  return minutes
+}
+
+export function getCaffeinePresets(): ReadonlyArray<CaffeinePreset> {
+  return CAFFEINE_PRESET_DEFS.map(def => ({
+    id: def.id,
+    minutes: def.minutes,
+    title: t(def.titleKey),
+    subtitle: t(def.subtitleKey)
+  }))
+}
 
 export function formatRemainingDuration(
   active: boolean,
   durationMinutes: number,
   remainingMs: number | null
 ): string {
-  if (!active) return '未开启'
+  if (!active) return t('inactiveText')
   if (durationMinutes === 0 || remainingMs === null) {
-    return '直到手动关闭'
+    return t('untilManualStop')
   }
   const totalSec = Math.max(0, Math.ceil(remainingMs / 1000))
   if (totalSec < 60) {
-    return `${totalSec} 秒`
+    return t('durationSec', { sec: totalSec })
   }
   const totalMin = Math.floor(totalSec / 60)
   const remSec = totalSec % 60
   if (totalMin < 60) {
-    return remSec > 0 ? `${totalMin} 分 ${remSec} 秒` : `${totalMin} 分钟`
+    return remSec > 0 ? t('durationMinSec', { min: totalMin, sec: remSec }) : t('durationMin', { min: totalMin })
   }
   const hours = Math.floor(totalMin / 60)
   const mins = totalMin % 60
-  return mins > 0 ? `${hours} 小时 ${mins} 分钟` : `${hours} 小时`
+  return mins > 0 ? t('durationHourMin', { hours, mins }) : t('durationHour', { hours })
 }
 
 export function normalizeCaffeineStatus(raw: Record<string, unknown>): CaffeineStatus {
@@ -108,7 +102,7 @@ export function getDefaultInactiveStatus(mode: CaffeineMode = 'display'): Caffei
     startedAtMs: null,
     expiresAtMs: null,
     remainingMs: null,
-    remainingText: '未开启',
+    remainingText: t('inactiveText'),
     sessionId: 0
   }
 }
@@ -121,13 +115,13 @@ async function callPowerSession(
   const res = await callHostTransport<Record<string, unknown>>(
     'system_power_session', { action, ...options }, hostOverride
   )
-  if (!res.ok || !res.data) return { ok: false, error: res.error || '无法读取系统防休眠状态' }
+  if (!res.ok || !res.data) return { ok: false, error: resolveErrorMessage(res, t('errReadStatus')) }
   const raw = res.data
   if (typeof raw.active !== 'boolean' || !['display', 'system'].includes(String(raw.mode)) ||
       !Number.isInteger(raw.durationMinutes) || !Number.isInteger(raw.sessionId) ||
       (raw.active && (typeof raw.startedAtMs !== 'number' || !Number.isFinite(raw.startedAtMs))) ||
       (raw.expiresAtMs !== null && (typeof raw.expiresAtMs !== 'number' || !Number.isFinite(raw.expiresAtMs)))) {
-    return { ok: false, error: '宿主返回的防休眠状态无效，请升级客户端后重试' }
+    return { ok: false, error: t('errInvalidHostStatus') }
   }
   return { ok: true, status: normalizeCaffeineStatus(raw) }
 }
@@ -142,9 +136,9 @@ export async function startCaffeineSession(
   hostOverride?: unknown
 ): Promise<CaffeineActionResult> {
   if (!Number.isInteger(durationMinutes) || durationMinutes < 0 || durationMinutes > 10080) {
-    return { ok: false, errorCode: 'INVALID_DURATION', error: '防休眠时长必须为 0~10080 的整数分钟，0 表示无限期' }
+    return { ok: false, errorCode: 'INVALID_DURATION', error: t('errInvalidDuration') }
   }
-  if (mode !== 'display' && mode !== 'system') return { ok: false, errorCode: 'INVALID_MODE', error: '防休眠模式无效' }
+  if (mode !== 'display' && mode !== 'system') return { ok: false, errorCode: 'INVALID_MODE', error: t('errInvalidMode') }
   return callPowerSession('start', hostOverride, { durationMinutes, mode })
 }
 

@@ -2,10 +2,11 @@ import type { DetectedSourceFormat, SourceFormat, TableConversionTarget, TableGr
 import { boundedJoin, cellValue, jsonGrid, makeGrid, matrixGrid } from './table-model.js'
 import { parseDelimitedRows, parseHtmlTable, parseMarkdownTable, markdownCell, escapeHtml } from './text-formats.js'
 import { parseSqlInsert, gridToSql } from './sql-format.js'
+import { t } from './i18n.js'
 export { parseDelimitedRows, gridToSql }
 
 export function detectAndParse(rawText: string, hasHeader = true, source: SourceFormat = 'auto'): { format: DetectedSourceFormat; grid: TableGrid } {
-  if (rawText.length > 2_000_000) throw new Error('单次输入最多 200 万字符，请拆分后转换。')
+  if (rawText.length > 2_000_000) throw new Error(t('errInputCharLimit'))
   const text = rawText.replace(/^\uFEFF/, ''), trimmed = text.trim()
   if (!text.length) return { format: 'empty', grid: makeGrid([], []) }
   let format: Exclude<DetectedSourceFormat, 'empty' | 'unrecognized'>
@@ -95,21 +96,21 @@ export function fencedPreview(content: string, language: string): string {
 export function buildAllConversionTargets(grid: TableGrid, sqlTableName = 'my_table'): TableConversionTarget[] {
   const typeSummary = grid.headers.map((h, i) => `${h}: ${grid.inferredTypes[i]}`).join(' · ')
   const specs = [
-    ['markdown', 'Markdown 对齐表格', '文字表格；嵌套值转为 JSON 文本', '文档', () => gridToMarkdown(grid)],
-    ['json', 'JSON 结构化对象数组', '保留 JSON 原类型；文本列仅推断可安全转换的数字和布尔值', '结构数据', () => gridToJson(grid)],
-    ['sql', `SQLite INSERT 语句（${sqlTableName}）`, 'SQLite 字面量语法；嵌套值转为 JSON 文本，缺失键映射 NULL', 'SQLite', () => {
-      if (grid.headers.length && !grid.rows.length) throw new Error('没有数据行，无法生成 INSERT 语句。首行已作为表头时，请补充数据行或切换为“无表头”。')
+    ['markdown', t('targetMdTitle'), t('targetMdSub'), t('targetMdBadge'), () => gridToMarkdown(grid)],
+    ['json', t('targetJsonTitle'), t('targetJsonSub'), t('targetJsonBadge'), () => gridToJson(grid)],
+    ['sql', t('targetSqlTitle', { table: sqlTableName }), t('targetSqlSub'), 'SQLite', () => {
+      if (grid.headers.length && !grid.rows.length) throw new Error(t('errSqlNoDataRows'))
       return gridToSql(grid, sqlTableName)
     }],
-    ['html', 'HTML 表格源码', '文字表格；单元格内容转义后输出', '网页', () => gridToHtml(grid)],
-    ['csv', 'CSV 表格', 'CRLF 分行；null 与缺失键输出为空单元格，嵌套值为 JSON 文本', '表格文本', () => gridToCsv(grid)]
+    ['html', t('targetHtmlTitle'), t('targetHtmlSub'), t('targetHtmlBadge'), () => gridToHtml(grid)],
+    ['csv', t('targetCsvTitle'), t('targetCsvSub'), t('targetCsvBadge'), () => gridToCsv(grid)]
   ] as const
   return specs.map<TableConversionTarget>(([id, title, subtitle, badge, convert]) => {
     const base = { id, title, subtitle, badge, language: id, typeSummary }
     try {
       const fullText = convert(), lines = fullText.split(/\r?\n/)
       const clipped = lines.length > 100 || fullText.length > 30_000
-      const previewText = clipped ? lines.slice(0, 100).join('\n').slice(0, 30_000) + '\n（预览已截断，复制包含完整结果）' : fullText
+      const previewText = clipped ? lines.slice(0, 100).join('\n').slice(0, 30_000) + t('previewTruncatedNote') : fullText
       return { ...base, fullText, previewText }
     } catch (error) {
       return { ...base, fullText: '', previewText: '', error: error instanceof Error ? error.message : String(error) }

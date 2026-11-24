@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as archiveManager from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const archiveManager = await import('../dist/index.js')
 
 async function withRealElectronWindow(handlers, fn) {
   const prevWindow = globalThis.window
@@ -37,33 +40,25 @@ async function withRealElectronWindow(handlers, fn) {
   }
 }
 
-test('archive-manager host integration: 压缩包目录树透视、分类识别、按需提取与单根目录防套娃', async () => {
+test('archive-manager host integration: 压缩包目录树透视、分类识别、按需提取与单根目录防套娃（已移除启动扫盘）', async () => {
+  assert.equal(typeof archiveManager.fetchRealArchiveCandidates, 'undefined', '不再导出启动扫描候选列表函数')
+  assert.deepEqual(archiveManager.ARCHIVE_IMPORT_RULES.extensions, ['.zip'])
+  assert.equal(archiveManager.formatBytes(null), '大小未识别')
+  assert.equal(archiveManager.formatBytes(undefined), '大小未识别')
+
+  const candidate = archiveManager.toArchiveCandidateItem({
+    path: 'D:\\ArchiveWorkspace\\downloads\\2026Q3_标书全套.zip',
+    name: '2026Q3_标书全套.zip',
+    parentDir: 'D:\\ArchiveWorkspace\\downloads',
+    extension: '.zip',
+    sizeBytes: null,
+    lastModifiedMs: null
+  })
+  assert.equal(candidate.sizeBytes, null)
+  assert.equal(candidate.name, '2026Q3_标书全套.zip')
+
   await withRealElectronWindow(
     {
-      system_get_path: ({ name }) => `D:\\ArchiveWorkspace\\${name}`,
-      system_search_files: ({ query }) => {
-        if (String(query).includes('downloads')) {
-          return {
-            files: [
-              {
-                name: '2026Q3_标书全套.zip',
-                path: 'D:\\ArchiveWorkspace\\downloads\\2026Q3_标书全套.zip',
-                is_dir: false,
-                size: 10485760,
-                mtime: 1720000000
-              },
-              {
-                name: 'not_an_archive.pdf',
-                path: 'D:\\ArchiveWorkspace\\downloads\\not_an_archive.pdf',
-                is_dir: false,
-                size: 512000,
-                mtime: 1720000000
-              }
-            ]
-          }
-        }
-        return { files: [] }
-      },
       dllplugin_call: ({ plugin, func, params }) => {
         if (func === 'ListArchiveEntries') {
           return {
@@ -121,17 +116,13 @@ test('archive-manager host integration: 压缩包目录树透视、分类识别�
       }
     },
     async () => {
-      const candidates = await archiveManager.fetchRealArchiveCandidates()
-      assert.equal(candidates.length, 1)
-      assert.equal(candidates[0].name, '2026Q3_标书全套.zip')
-
-      const inspected = await archiveManager.inspectArchiveEntries(candidates[0].path)
+      const inspected = await archiveManager.inspectArchiveEntries(candidate.path)
       assert.equal(inspected.ok, true)
       assert.equal(inspected.fileCount, 2)
       assert.equal(inspected.entries[0].category, '办公文档')
       assert.equal(inspected.entries[1].category, '图片与媒体')
 
-      const extracted = await archiveManager.extractArchiveEntries(candidates[0].path, {
+      const extracted = await archiveManager.extractArchiveEntries(candidate.path, {
         entryNames: ['2026Q3_标书/商务报价明细.xlsx']
       })
       assert.equal(extracted.ok, true)
@@ -207,7 +198,12 @@ test('解压落点与提示文字：与客户端规则一致，校验与解压�
   assert.deepEqual(archiveManager.summarizeExtractResult({ ok: false, extractedCount: 0, blockedEntries: [], error: 'ENCRYPTED_ARCHIVE' }), {
     ok: false,
     title: '解压失败',
-    message: 'ENCRYPTED_ARCHIVE'
+    message: '客户端没有说明原因'
+  })
+  assert.deepEqual(archiveManager.summarizeExtractResult({ ok: false, extractedCount: 0, blockedEntries: [], error: '压缩包包含加密条目' }), {
+    ok: false,
+    title: '解压失败',
+    message: '压缩包包含加密条目'
   })
   assert.equal(archiveManager.summarizeExtractResult({ ok: true, extractedCount: 0, blockedEntries: ['../x'] }).message, '1 个越界条目被拒绝')
   assert.equal(archiveManager.summarizeExtractResult({ ok: true, extractedCount: 4, blockedEntries: [], targetDir: 'D:\\out' }).title, '已解压 4 个文件')

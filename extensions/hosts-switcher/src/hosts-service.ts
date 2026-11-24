@@ -1,5 +1,7 @@
 import { callHostTransport } from './native-ipc.js'
+import { t } from './i18n.js'
 import type { HostRule, HostsProfile } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export function isValidIpAddress(ip: string): boolean {
   const trimmed = String(ip ?? '').trim()
@@ -117,65 +119,68 @@ export function buildCombinedHostsContent(profiles: HostsProfile[]): {
   }
 }
 
-export const DEFAULT_HOSTS_PROFILES: HostsProfile[] = [
-  {
-    id: 'hosts-system',
-    name: '系统基础默认 Hosts',
-    isEnabled: true,
-    isSystem: true,
-    rawContent: '127.0.0.1       localhost\n::1             localhost',
-    rulesCount: 2,
-    invalidCount: 0,
-    updatedAt: 1700000000000,
-    updatedAtFormatted: '2026-10-25 10:00'
-  },
-  {
-    id: 'hosts-local-dev',
-    name: '本地微服务联调环境 (Local Dev)',
-    isEnabled: false,
-    isSystem: false,
-    rawContent: [
-      '# 本地前端与网关调试映射',
-      '127.0.0.1       dev.ztools.local',
-      '127.0.0.1       api-dev.ztools.local',
-      '127.0.0.1       auth-dev.ztools.local'
-    ].join('\n'),
-    rulesCount: 3,
-    invalidCount: 0,
-    updatedAt: 1700000000000,
-    updatedAtFormatted: '2026-10-25 11:20'
-  },
-  {
-    id: 'hosts-staging',
-    name: '示例：测试环境 (Staging)',
-    isEnabled: false,
-    isSystem: false,
-    rawContent: [
-      '# 示例：把测试环境域名指向内网地址（请改成自己的域名与 IP）',
-      '192.168.10.50   staging.example.com',
-      '192.168.10.51   mysql.staging.example.com',
-      '192.168.10.52   redis.staging.example.com'
-    ].join('\n'),
-    rulesCount: 3,
-    invalidCount: 0,
-    updatedAt: 1700000000000,
-    updatedAtFormatted: '2026-10-25 09:15'
-  },
-  {
-    id: 'hosts-github',
-    name: 'GitHub 静态资源直连优化',
-    isEnabled: false,
-    isSystem: false,
-    rawContent: [
-      '140.82.113.4    github.com',
-      '185.199.108.133 raw.githubusercontent.com'
-    ].join('\n'),
-    rulesCount: 2,
-    invalidCount: 0,
-    updatedAt: 1700000000000,
-    updatedAtFormatted: '2026-10-24 18:00'
-  }
-]
+/** 根据当前运行时语言动态生成首次初始化默认 Hosts 方案，避免模块顶层静态冻结 */
+export function getDefaultHostsProfiles(): HostsProfile[] {
+  return [
+    {
+      id: 'hosts-system',
+      name: t('defaultSystemName'),
+      isEnabled: true,
+      isSystem: true,
+      rawContent: '127.0.0.1       localhost\n::1             localhost',
+      rulesCount: 2,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 10:00'
+    },
+    {
+      id: 'hosts-local-dev',
+      name: t('defaultLocalDevName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        t('defaultLocalDevComment'),
+        '127.0.0.1       dev.ztools.local',
+        '127.0.0.1       api-dev.ztools.local',
+        '127.0.0.1       auth-dev.ztools.local'
+      ].join('\n'),
+      rulesCount: 3,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 11:20'
+    },
+    {
+      id: 'hosts-staging',
+      name: t('defaultStagingName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        t('defaultStagingComment'),
+        '192.168.10.50   staging.example.com',
+        '192.168.10.51   mysql.staging.example.com',
+        '192.168.10.52   redis.staging.example.com'
+      ].join('\n'),
+      rulesCount: 3,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-25 09:15'
+    },
+    {
+      id: 'hosts-github',
+      name: t('defaultGithubName'),
+      isEnabled: false,
+      isSystem: false,
+      rawContent: [
+        '140.82.113.4    github.com',
+        '185.199.108.133 raw.githubusercontent.com'
+      ].join('\n'),
+      rulesCount: 2,
+      invalidCount: 0,
+      updatedAt: 1700000000000,
+      updatedAtFormatted: '2026-10-24 18:00'
+    }
+  ]
+}
 
 // 宿主只读写系统 hosts，调用方不能指定其他路径，所以这里不提供路径选项
 export async function readSystemHosts(
@@ -220,7 +225,7 @@ export async function applyCombinedHosts(
     hostOverride
   )
   if (!res.ok) {
-    const error = res.error || res.data?.error || '写入系统 hosts 失败'
+    const error = resolveErrorMessage(res.error ? res : res.data, t('errWriteSystemHostsFailed'))
     return {
       success: false,
       errorCode: res.data?.errorCode || errorCodeFromMessage(error) || 'WRITE_FAILED',
@@ -251,11 +256,11 @@ export async function flushDnsCache(
     return {
       success: false,
       output: '',
-      error: res.error || res.data?.error || '刷新 DNS 缓存失败'
+      error: resolveErrorMessage(res.error ? res : res.data, t('errFlushDnsFailed'))
     }
   }
   return {
     success: true,
-    output: res.data?.output || '本地 DNS 缓存已成功刷新'
+    output: res.data?.output || t('toastFlushDnsSuccess')
   }
 }
