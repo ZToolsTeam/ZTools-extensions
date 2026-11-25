@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import { CaffeineCommand, commands, startCaffeineSession } from '../dist/index.js'
+import { CaffeineCommand, CaffeineToggleCommand, commands, parseCustomCaffeineMinutes, startCaffeineSession } from '../dist/index.js'
 
 async function waitUntil(check) {
   for (let i = 0; i < 40 && !check(); i++) await tick()
@@ -80,14 +80,34 @@ test('慢状态查询只保留一个在途请求，停止操作后迟到的活�
   } finally { view.unmount() }
 })
 
-test('功能码切换入口只触发一次真实切换，失败会显示错误', async () => {
+test('功能码切换入口为 no-view 静默切换：成功返回回执并触发 HUD/Toast，失败抛错且防并发重入', async () => {
+  const { readFileSync } = await import('node:fs')
+  const manifest = JSON.parse(readFileSync(new URL('../plugin.json', import.meta.url), 'utf8'))
+  assert.equal(manifest.features.find(f => f.code === 'caffeine-toggle').mode, 'no-view')
+
   host.ipc.system_power_session = () => { throw new Error('不能切换') }
-  const view = await mount(commands['caffeine-toggle'])
-  try {
-    await waitUntil(() => !view.tree().props.isLoading)
-    assert.deepEqual(host.ipcCalls.map(([,p]) => p.action), ['toggle'])
-    assert.match(view.text(), /不能切换/)
-  } finally { view.unmount() }
+  await assert.rejects(() => commands['caffeine-toggle'](), /不能切换/)
+  assert.deepEqual(host.ipcCalls.map(([, p]) => p.action), ['toggle'])
+  assert.match(host.lastToast().title, /失败/)
+
+  let current = state(false)
+  host.ipc.system_power_session = p => {
+    if (p.action === 'toggle') current = current.active ? state(false) : { ...state(true), durationMinutes: 0, expiresAtMs: null, remainingMs: null }
+    return current
+  }
+  const onMsg = await commands['caffeine-toggle']()
+  assert.match(onMsg, /已开启防休眠/)
+  const offMsg = await commands['caffeine-toggle']()
+  assert.match(offMsg, /已关闭防休眠/)
+
+  // 并发重入拒绝
+  let release
+  host.ipc.system_power_session = () => new Promise(resolve => { release = resolve })
+  const first = CaffeineToggleCommand()
+  await tick()
+  await assert.rejects(() => CaffeineToggleCommand(), /正在执行/)
+  release({ ...state(true), durationMinutes: 0, expiresAtMs: null, remainingMs: null })
+  await first
 })
 
 test('清单只声明实际用到的 system 权限，不再申请未使用的 shell', async () => {
@@ -175,7 +195,7 @@ test('停止防休眠只出现一次：生效项可见时只在该项主动作�
   } finally { view.unmount() }
 })
 
-test('caffeine-toggle 开启后，停止防休眠不在顶部与主动作重复出现', async () => {
+test('caffeine-toggle 视图模式开启后，停止防休眠不在顶部与主动作重复出现', async () => {
   let current = state(false)
   host.ipc.system_power_session = p => {
     if (p.action === 'start') current = { ...state(true), durationMinutes: p.durationMinutes }
@@ -183,10 +203,47 @@ test('caffeine-toggle 开启后，停止防休眠不在顶部与主动作重复�
     if (p.action === 'stop') current = state(false)
     return current
   }
-  const view = await mount(commands['caffeine-toggle'])
+  const view = await mount(() => CaffeineCommand({ featureCode: 'caffeine-toggle' }))
   try {
     await waitUntil(() => /已开启/.test(view.tree().props.filterBar.summaryText))
     const text = JSON.stringify(view.tree(), (k, v) => typeof v === 'function' ? undefined : v)
     assert.equal(text.match(/停止防休眠/g).length, 1)
+  } finally { view.unmount() }
+})
+
+test('搜索框输入 5~720 纯数字分钟数动态生成自定义常亮项并可真实开启', async () => {
+  assert.equal(parseCustomCaffeineMinutes('45'), 45)
+  assert.equal(parseCustomCaffeineMinutes('5'), 5)
+  assert.equal(parseCustomCaffeineMinutes('720'), 720)
+  assert.equal(parseCustomCaffeineMinutes('4'), null)
+  assert.equal(parseCustomCaffeineMinutes('721'), null)
+  assert.equal(parseCustomCaffeineMinutes('45m'), null)
+
+  let current = state(false)
+  host.ipc.system_power_session = p => {
+    if (p.action === 'start') current = { ...state(true), mode: p.mode, durationMinutes: p.durationMinutes, remainingMs: p.durationMinutes * 60_000 }
+    if (p.action === 'stop') current = state(false)
+    return current
+  }
+  const view = await mount(CaffeineCommand)
+  try {
+    await waitUntil(() => !view.tree().props.isLoading)
+    await view.search('45')
+    const custom = view.item('caffeine-custom-45')
+    assert.ok(custom)
+    assert.equal(custom.props.title, '保持屏幕常亮 45 分钟')
+    await view.run(custom, '开启防休眠')
+    await waitUntil(() => /已开启/.test(view.tree().props.filterBar.summaryText))
+    assert.deepEqual(host.ipcCalls.at(-1), ['system_power_session', { action: 'start', durationMinutes: 45, mode: 'display' }])
+    assert.deepEqual(view.item('caffeine-custom-45').props.accessories, [{ tag: '生效中' }])
+
+    // 已有预设（如 15）不重复生成自定义项
+    await view.search('15')
+    assert.equal(view.items().some(i => i.props.id === 'caffeine-custom-15'), false)
+    assert.ok(view.item('caffeine-15'))
+
+    // 越界数字不生成自定义项
+    await view.search('4')
+    assert.equal(view.items().some(i => i.props.id === 'caffeine-custom-4'), false)
   } finally { view.unmount() }
 })

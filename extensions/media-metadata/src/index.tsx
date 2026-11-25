@@ -1,22 +1,26 @@
-import React, { Action, ActionPanel, Detail, Icon, List, Toast, showToast, useEffect, useMemo, useRef, useState } from '@ztools/declarative-ui'
-import { MediaClient, mediaSize, photoFormat } from './media-service.js'
+import React, { Action, ActionPanel, Detail, Icon, List, Toast, showToast, useEffect, useLocale, useMemo, useRef, useState } from '@ztools/declarative-ui'
+import { createCompatFileInputProps, isDeclarativeFileInputSupported } from './host-compat.js'
+import { t } from './i18n.js'
+import { extractDroppedMediaPath, MediaClient, mediaSize, photoFormat } from './media-service.js'
 import type { CleaningMode, MediaMetadataSummary, SavedMedia } from './types.js'
 export * from './types.js'
 export * from './media-service.js'
 
+const MEDIA_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.heic', '.heif', '.mp4', '.mov', '.mp3', '.m4a', '.wav', '.flac']
+
 /** 每个命令只说明自己处理的格式：只读命令写音视频，清理命令写照片 */
 export function supportScope(featureCode: string): string {
-  if (featureCode === 'media-stream-info') return 'MP4 / MOV / MP3 / M4A / WAV / FLAC，只读取已有参数，不修改文件'
-  if (featureCode === 'media-clean-gps-fast') return 'JPEG / PNG / HEIC 照片，清理后另存副本'
-  return 'JPEG / PNG / HEIC 可清理，音视频只查看真实参数'
+  if (featureCode === 'media-stream-info') return t('scopeReadonly')
+  if (featureCode === 'media-clean-gps-fast') return t('scopeCleanGps')
+  return t('scopeWorkbench')
 }
 
 export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' }: { featureCode?: string } = {}) {
+  useLocale()
   const client = useMemo(() => new MediaClient(), [])
   const active = useRef<AbortController | null>(null), alive = useRef(true), source = useRef('')
   const [summary, setSummary] = useState<MediaMetadataSummary | null>(null), [saved, setSaved] = useState<SavedMedia | null>(null)
   const [mode, setMode] = useState<CleaningMode>('location'), [query, setQuery] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState('')
-  useEffect(() => () => { alive.current = false; active.current?.abort(); source.current = '' }, [])
   async function operate(task: (signal: AbortSignal) => Promise<void>) {
     if (active.current) return
     const job = new AbortController(); active.current = job; setBusy(true); setError('')
@@ -27,6 +31,46 @@ export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' 
       }
     } finally { active.current = null; if (alive.current) setBusy(false) }
   }
+  const handleFilesDropped = (envelopeOrPayload: unknown) => {
+    void operate(async signal => {
+      const selected = extractDroppedMediaPath(envelopeOrPayload)
+      signal.throwIfAborted()
+      const info = await client.inspect(selected, signal)
+      if (alive.current && !signal.aborted) { source.current = selected; setSummary(info); setSaved(null) }
+    })
+  }
+  const fileInputProps = createCompatFileInputProps(
+    files => handleFilesDropped({ files }),
+    { extensions: MEDIA_EXTENSIONS, allowClipboardImage: true }
+  )
+  useEffect(() => {
+    alive.current = true
+    if (isDeclarativeFileInputSupported()) {
+      return () => {
+        alive.current = false
+        active.current?.abort()
+        source.current = ''
+      }
+    }
+    const events = (globalThis as {
+      window?: {
+        ztools?: {
+          events?: {
+            on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void
+            off?: (event: string, cb: (payload: unknown) => void) => void
+          }
+        }
+      }
+    }).window?.ztools?.events
+    const dispose = events && typeof events.on === 'function' ? events.on('plugin_files_dropped', handleFilesDropped) : undefined
+    return () => {
+      alive.current = false
+      active.current?.abort()
+      source.current = ''
+      if (typeof dispose === 'function') dispose()
+      else if (events && typeof events.off === 'function') events.off('plugin_files_dropped', handleFilesDropped)
+    }
+  }, [])
   const pick = () => operate(async signal => {
     const selected = await client.choose(signal)
     if (!selected) return
@@ -35,32 +79,32 @@ export function MediaMetadataCommand({ featureCode = 'media-metadata-workbench' 
     if (alive.current && !signal.aborted) { source.current = selected; setSummary(info); setSaved(null) }
   })
   const clean = () => operate(async signal => {
-    if (!summary?.canClean || !source.current) throw new Error('请选择支持清理的照片')
+    if (!summary?.canClean || !source.current) throw new Error(t('errChooseCleanablePhoto'))
     const format = photoFormat(summary.type)
-    if (!format) throw new Error('请选择支持清理的照片')
+    if (!format) throw new Error(t('errChooseCleanablePhoto'))
     const output = await client.choose(signal, summary.name.replace(/\.[^.]+$/, '') + `_clean.${format.extensions[0]}`, summary.type)
     if (!output) return
     signal.throwIfAborted()
     const result = await client.clean(source.current, summary, output, mode, signal)
     if (alive.current && !signal.aborted) {
       setSaved(result)
-      await showToast({ style: Toast.Style.Success, title: '副本已保存，定位标签检查通过', message: `${result.name} · ${mediaSize(result.size)}` })
+      await showToast({ style: Toast.Style.Success, title: t('toastCleanedTitle'), message: `${result.name} · ${mediaSize(result.size)}` })
     }
   })
   const readonly = featureCode === 'media-stream-info'
   const visible = summary && summary.name.toLowerCase().includes(query.trim().toLowerCase())
-  const details = <Detail markdown="读取自文件的元数据；未识别到的字段不代表不存在。" metadata={<Detail.Metadata>{summary?.fields.map(field => <Detail.Metadata.Label key={field.key} title={field.key} text={field.value} />)}</Detail.Metadata>} />
-  return <List navigationTitle={readonly ? '媒体参数' : '照片隐私清理'} isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder="搜索已选文件…"
-    actions={<ActionPanel><Action title="选择文件…" icon={Icon.Folder} onAction={pick} /></ActionPanel>}
-    filterBar={{ summaryText: error || (saved ? `已另存 ${saved.name} · ${mediaSize(saved.size)}` : '仅在本机处理，原文件保留 · 单文件最大 16 MiB'), actions: [{ id: 'pick', title: '选择文件', onAction: pick }] }}
-    workbenchPanel={{ title: readonly ? '参数查看' : '副本处理', fields: [
-      ...(readonly ? [] : [{ id: 'mode', label: '清理内容', type: 'select' as const, value: mode, options: [{ label: '定位及相关附属元数据', value: 'location' }, { label: 'EXIF / XMP / IPTC（保留显示参数）', value: 'metadata' }], onChange: (v: unknown) => { if (!active.current && (v === 'location' || v === 'metadata')) setMode(v) } }]),
-      { id: 'formats', label: '支持范围', type: 'info', value: supportScope(featureCode) },
-      ...(readonly ? [] : [{ id: 'scope', label: '清理说明', type: 'info' as const, value: '定位模式也移除 XMP、IPTC 和厂商注记；不处理画面、文件名或文字里的个人信息' }])
+  const details = <Detail markdown={t('detailMarkdown')} metadata={<Detail.Metadata>{summary?.fields.map(field => <Detail.Metadata.Label key={field.key} title={field.key} text={field.value} />)}</Detail.Metadata>} />
+  return <List {...fileInputProps} navigationTitle={readonly ? t('navTitleReadonly') : t('navTitleClean')} isLoading={busy} isShowingDetail={false} searchText={query} onSearchTextChange={setQuery} searchBarPlaceholder={t('searchPlaceholder')}
+    actions={<ActionPanel><Action title={t('actionChooseFileEllipsis')} icon={Icon.Folder} onAction={pick} /></ActionPanel>}
+    filterBar={{ summaryText: error || (saved ? t('summarySaved', { name: saved.name, size: mediaSize(saved.size) }) : t('summaryLocalLimit')), actions: [{ id: 'pick', title: t('actionChooseFile'), onAction: pick }] }}
+    workbenchPanel={{ title: readonly ? t('panelTitleReadonly') : t('panelTitleClean'), fields: [
+      ...(readonly ? [] : [{ id: 'mode', label: t('fieldModeLabel'), type: 'select' as const, value: mode, options: [{ label: t('modeLocation'), value: 'location' }, { label: t('modeMetadata'), value: 'metadata' }], onChange: (v: unknown) => { if (!active.current && (v === 'location' || v === 'metadata')) setMode(v) } }]),
+      { id: 'formats', label: t('fieldFormatsLabel'), type: 'info', value: supportScope(featureCode) },
+      ...(readonly ? [] : [{ id: 'scope', label: t('fieldScopeLabel'), type: 'info' as const, value: t('fieldScopeValue') }])
     ] }}
-    subList={{ title: '已选文件', emptyText: summary ? '没有匹配的文件' : '选择文件后读取元数据', items: visible ? [
-      <List.Item id="media" key="media" title={summary.name} subtitle={`${summary.type} · ${mediaSize(summary.size)} · ${summary.hasLocation ? '检测到定位标签' : '未检测到已识别的定位标签'}`} icon={Icon.Document}
-        actions={<ActionPanel>{summary.canClean && !readonly ? <Action title="清理并另存副本…" icon={Icon.Download} onAction={clean} /> : null}<Action.Push title="查看原始参数" target={details} /></ActionPanel>} />
+    subList={{ title: t('subListTitle'), emptyText: summary ? t('emptyNoMatch') : t('emptyPickFirst'), items: visible ? [
+      <List.Item id="media" key="media" title={summary.name} subtitle={`${summary.type} · ${mediaSize(summary.size)} · ${summary.hasLocation ? t('statusHasLocation') : t('statusNoLocation')}`} icon={Icon.Document}
+        actions={<ActionPanel>{summary.canClean && !readonly ? <Action title={t('actionCleanAndSave')} icon={Icon.Download} onAction={clean} /> : null}<Action.Push title={t('actionViewRawMetadata')} target={details} /></ActionPanel>} />
     ] : [] }} />
 }
 export const commands = {

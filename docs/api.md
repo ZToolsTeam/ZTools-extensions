@@ -1,3 +1,5 @@
+[English](en/api.md) | **简体中文**
+
 # API 参考
 
 插件只依赖一个包：`@ztools/declarative-ui`。它提供界面组件、Hook 和常用系统能力（提示、剪贴板、存储等）。本文按用途介绍每一项能做什么、有哪些要注意的地方；**准确的类型签名以 [`packages/declarative-ui/dist/`](../packages/declarative-ui/dist/index.d.ts) 里的 `.d.ts` 为准**，编辑器里悬停也能看到。
@@ -8,6 +10,7 @@
 - [可用模块](#可用模块)
 - [组件](#组件)
 - [Hook](#hook)
+- [国际化（i18n）](#国际化i18n)
 - [系统能力](#系统能力)
 - [客户端宿主 API（window.ztools）](#客户端宿主-apiwindowztools)
 - [权限](#权限)
@@ -74,6 +77,7 @@ export default function Command() {
 | `filterBar` | 搜索框下方的单行状态条：`{ summaryText, actions }`，`actions` 每项 `{ id, title, icon?, onAction }`，最多放 2 个全局动作 |
 | `subList` | 布局二、三的右栏明细：`{ title?, subtitle?, emptyText?, checkable?, checked?, onCheckChange?, items }`，`items` 是 `List.Item` 数组 |
 | `workbenchPanel` | 布局三的左栏参数：`{ title?, subtitle?, fields, previewCard? }`，`fields` 每项 `{ id, label, type: "select" \| "toggle" \| "text" \| "info", value, options?, onChange? }` |
+| `fileInput` / `onFileInput` | 接收拖入或 `⌘/Ctrl+V` 粘贴的文件（`Detail` 与 `Form` 同样支持），详见下方「文件拖入与粘贴输入」 |
 | `actions` | 没有选中项（例如列表为空），或选中项没有自己的 `actions` 时，底部使用的动作 |
 
 `metricGrid`、`distributionBar`、`segmentedControl`、`header` 等属性在类型里也有，其中 `metricGrid`、`distributionBar` 按规范不能用，原因见 [界面规范 · 属性约定](ui-guidelines.md#属性约定)。
@@ -94,11 +98,24 @@ export default function Command() {
 
 **`List.Section`**：分组，属性 `title`、`subtitle`，可带 `checkable` / `checked` / `onCheckChange` 做分组全选。
 
+**`List.EmptyView`**：列表没有条目时显示的空状态（居中的图标、标题和说明，不可选中）。属性 `title`（必填）、`description`、`icon`。放在 `List` 的子元素里，顶层或 `List.Section` 里都可以；列表有条目时不显示，加载中（`isLoading`）先显示加载状态。不要用一条 `List.Item` 冒充空状态：那样它会被当成数据选中、可执行。空列表时按回车和 ⌘K 会使用 `List` 的 `actions`，所以「空列表时回车新建」只需要把新建动作放在 `List` 级。空的 `List.Section` 仍会显示分组标题，不需要时请不要输出这个分组。
+
+```ts
+List({ actions: ActionPanel({}, [Action({ title: "新建待办", onAction: create })]) }, [
+  ...todos.map((todo) => List.Item({ id: todo.id, title: todo.title })),
+  ...(todos.length === 0
+    ? [List.EmptyView({ title: "还没有待办", description: "在上方输入内容后按回车即可添加", icon: Icon.CheckCircle })]
+    : [])
+])
+```
+
 **`List.Dropdown`**：属性 `value` / `defaultValue`、`onChange(value)`、`tooltip`，子元素是 `List.Dropdown.Item`（`title`、`value`、`icon`）和 `List.Dropdown.Section`。
 
 ### Detail
 
 一篇 Markdown，可选右侧属性栏。属性：`markdown`、`navigationTitle`、`isLoading`、`actions`、`metadata`。
+
+`markdown` 支持标题、列表、表格、引用、代码块、链接与图片。语言写 `math` 的代码块（```` ```math ````）显示为排版后的数学公式（LaTeX 语法，客户端 1.1.8.11 起）；公式写错无法排版时按源码原样显示。公式里不能使用链接、图片等外部资源命令。
 
 `metadata` 放一个 `Detail.Metadata`，子元素可以是：
 
@@ -119,16 +136,51 @@ export default function Command() {
 | `Form.TextArea` | `id`、`title`、`placeholder`、`value` / `defaultValue`、`onChange`、`error`、`info` |
 | `Form.Checkbox` | `id`、`title`、`label`、`value` / `defaultValue`、`onChange` |
 | `Form.Dropdown` | `id`、`title`、`value` / `defaultValue`、`onChange`、`error`、`info`，子元素 `Form.Dropdown.Item`（`title`、`value`、`icon`）、`Form.Dropdown.Section` |
-| `Form.Description` | `title`、`text`，一段说明文字 |
+| `Form.Description` | `title`、`text`，一段说明文字；客户端 1.1.8.11 起可用 `markdown` 显示内容预览（提供时优先于 `text`），支持与 `Detail` 相同的安全 Markdown、图片与 `math` 公式块 |
 | `Form.Separator` | 分隔线 |
 
 提交用 `Action.SubmitForm`：`onSubmit(values)` 收到的 `values` 以字段 `id` 为键。表单里 `⌘/Ctrl+Enter` 执行第一个动作。
 
+### 文件拖入与粘贴输入
+
+`List`、`Detail`、`Form` 均支持通过 `fileInput` 与 `onFileInput` 统一接收用户拖入或按 `⌘/Ctrl+V` 粘贴的文件：
+
+```tsx
+<List
+  fileInput={{
+    extensions: [".png", ".jpg", ".webp"],
+    allowMultiple: true,
+    allowImage: true,
+    allowDirectories: false,
+  }}
+  onFileInput={({ files, source, targetFieldId }) => {
+    // files: Array<{ path, name, size, isDirectory }>
+  }}
+>
+```
+
+| 配置项 (`fileInput`) | 说明 |
+| --- | --- |
+| `extensions` | 允许的文件扩展名数组（不区分大小写，如 `[".pdf"]` 或 `["pdf"]`）；不传表示不限扩展名 |
+| `allowMultiple` | 是否允许一次接收多个文件（默认 `true`；设为 `false` 时只取第 1 个匹配项） |
+| `allowDirectories` | 是否允许接收文件夹（默认 `false`） |
+| `allowImage` | 是否允许将剪贴板中的直接截图/位图落地为临时 PNG 文件后作为文件输入（默认 `false`） |
+| `onTextPaste` | 双模插件（既接文件又接文本，如二维码、JSON、哈希）可选的纯文本粘贴回调 `(text: string) => void`，仅在焦点不在非空输入控件时触发 |
+
+回调参数 `FileInputPayload`：
+
+- `files`：通过过滤且已获得客户端读取授权的文件列表，每项含 `{ path, name, size?, isDirectory? }`。
+- `directories`：`files` 中由客户端确认是文件夹的路径，只在 `allowDirectories: true` 且确实拖入或粘贴了文件夹时提供。请以它判断哪些是文件夹，不要按名称有没有后缀来猜（文件夹名可以带点，如 `2026.11_票据`）。客户端会为拖入的文件夹签发递归读取授权，插件可以用 `ztools.fs` 列出其中的文件；需要按扩展名导入文件夹内的文件时，建议不传 `extensions`，在插件里统一过滤，这样旧版客户端也不会把带点的文件夹名拦下。
+- `source`：来源，`"drop"`（拖入）或 `"paste"`（`⌘/Ctrl+V` 粘贴）。
+- `targetFieldId`：当用户在 `Form` 的某个字段或 `workbenchPanel.fields` 的某个字段上拖入/粘贴时，为该字段的 `id`，可用于区分「源文件」与「对比文件 / 密钥文件」等槽位。
+
+注意：当焦点在非空搜索框或表单文本输入框内且剪贴板里是纯文本时，`⌘/Ctrl+V` 保持正常的文本粘贴，不会误触文件导入。
+
 ### ActionPanel 与 Action
 
-`ActionPanel` 装一组动作，可以用 `ActionPanel.Section`（`title`）分组、`ActionPanel.Submenu`（`title`、`icon`）做子菜单。第 1 个动作是 `Enter` 主动作，第 2 个是 `⌘/Ctrl+Enter` 次动作，其余在 `⌘/Ctrl+K` 动作面板里。
+`ActionPanel` 装一组动作，可以用 `ActionPanel.Section`（`title`）分组、`ActionPanel.Submenu`（`title`、`icon`）做子菜单（子菜单在动作面板中作为分组展示，本身不支持绑定 `shortcut`）。第 1 个直达动作是 `Enter` 主动作，第 2 个默认是 `⌘/Ctrl+Enter` 次动作，其余在 `⌘/Ctrl+K` 动作面板里；若某动作显式声明了 `Ctrl/⌘+Enter`（`{ modifiers: ["ctrl"], key: "return" }`），则底栏与面板统一将该快捷键归属给显式声明者，不再自动占给第 2 顺位。
 
-每个动作都可以带 `title`、`icon` 和 `shortcut`（`{ modifiers: ["cmd" | "ctrl" | "opt" | "alt" | "shift"], key }`，`cmd` 和 `ctrl` 都表示 macOS 的 `⌘`、Windows 的 `Ctrl`）。
+每个动作都可以带 `title`、`icon` 和 `shortcut`（`{ modifiers: ["ctrl" | "opt" | "alt" | "shift"], key }` 或 `"space"` 等单键名）。推荐统一用 `"ctrl"` 表示主修饰键（macOS 自动对应 `⌘`，Windows 对应 `Ctrl`），同一插件内请勿混用 `"cmd"` 与 `"ctrl"`。注意避让宿主保留热键（`Ctrl/⌘+,`、`Ctrl/⌘+U`、`Ctrl/⌘+Shift+P`、`Ctrl/⌘+K`、`Esc`），以免被客户端屏蔽。
 
 | 动作 | 客户端做什么 |
 | --- | --- |
@@ -157,6 +209,105 @@ export default function Command() {
 | `useFetch(url, options?)` | 发 HTTP 请求并解析结果（需要 `network` 权限，见下方「网络请求」） |
 | `useCachedState(key, initialValue, options?)` | 带内存缓存的状态，缓存同样只属于本插件；`options.cache` 可指定自己创建的 `Cache` |
 | `usePopoutState(key, initialValue)` | 和 `useState` 一样，但用户把插件「弹出到独立窗口」时状态会带过去 |
+| `useLocale()` | 返回当前客户端生效语言标识（如 `"zh-CN"` / `"en-US"`），语言切换时自动触发组件重绘 |
+
+## 国际化（i18n）
+
+`@ztools/declarative-ui` 内置完整的运行时国际化 API，配合 `plugin.json` 的多语言元数据，插件可以在切换客户端语言时自动完成热切换。
+
+### SDK 国际化 API
+
+| API | 签名与用途 |
+| --- | --- |
+| `useLocale()` | `() => string`。在组件内订阅当前运行时语言（当前支持 `"zh-CN"` / `"en-US"`），客户端切换语言时自动触发组件重绘，卸载时自动清理监听 |
+| `createTranslator(messages, options?)` | `(messages, { defaultLocale? }) => (key, params?) => string`。创建带 `{var}` 占位符插值的翻译函数；查表回退顺序为「当前语言 → `"en-US"` → `options.defaultLocale` → 键名本身」 |
+| `getLocale()` | `() => string`。同步读取当前运行时生效语言标识，适合组件外部的纯函数、动作回调或错误格式化逻辑 |
+| `onLocaleChange(listener)` | `(listener: (locale: string) => void) => () => void`。在组件外部订阅语言变更事件，返回幂等的取消订阅函数 |
+
+推荐使用方式：在 `src/i18n.ts` 中集中维护双语词典，在组件入口调用 `useLocale()` 并用 `t(...)` 渲染文案：
+
+```ts
+// src/i18n.ts
+import { createTranslator } from "@ztools/declarative-ui";
+
+export const t = createTranslator(
+  {
+    "zh-CN": {
+      searchPlaceholder: "搜索条目（共 {count} 项）",
+      copyAction: "复制内容"
+    },
+    "en-US": {
+      searchPlaceholder: "Search items ({count} total)",
+      copyAction: "Copy Content"
+    }
+  },
+  { defaultLocale: "zh-CN" }
+);
+```
+
+```tsx
+// src/index.tsx
+import React, { List, ActionPanel, Action, useLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
+
+export default function Command() {
+  useLocale();
+  return (
+    <List searchBarPlaceholder={t("searchPlaceholder", { count: 3 })}>
+      <List.Item
+        id="demo"
+        title="Example"
+        actions={
+          <ActionPanel>
+            <Action.CopyToClipboard title={t("copyAction")} content="Example" />
+          </ActionPanel>
+        }
+      />
+    </List>
+  );
+}
+```
+
+编写词典时请注意：`zh-CN` 与 `en-US` 的键集合必须 100% 一致，不允许空字符串译文，且同名键中的 `{var}` 占位符集合必须完全一致。
+
+### `plugin.json` 多语言元数据
+
+在 `plugin.json` 中通过以下字段向客户端搜索与插件市场提供多语言元数据：
+
+| 字段 | 说明 |
+| --- | --- |
+| `defaultLocale` | 清单顶层 `name` / `description` / `features` 所使用的默认语言标签（BCP-47，如 `"zh-CN"` 或 `"en-US"`） |
+| `categoryId` | 标准英文分类 slug（单分类写字符串如 `"productivity"`，双分类写 2 项数组如 `["files", "productivity"]`），与 `category` 对应：`productivity` / `system` / `files` / `media` / `developer` / `network` / `security` |
+| `i18n` | 按 BCP-47 语言标签（如 `"en-US"`）映射的对象，支持 `name`、`description`、`keywords`、`revokedReason`、`features`、`screenshots` |
+
+```json
+{
+  "defaultLocale": "zh-CN",
+  "category": ["文件管理", "办公效率"],
+  "categoryId": ["files", "productivity"],
+  "i18n": {
+    "en-US": {
+      "name": "Quick Notes",
+      "description": "Capture and search short text snippets",
+      "keywords": ["notes", "snippets"],
+      "features": {
+        "open-notes": {
+          "explain": "Open Quick Notes",
+          "cmds": ["notes", "memo"]
+        }
+      },
+      "screenshots": [
+        { "file": "screenshots/en-US/01.png", "title": "Main View" }
+      ]
+    }
+  }
+}
+```
+
+注意事项：
+
+- `i18n.<locale>.features` 的每个键名必须真实存在于顶层 `features[].code` 中；若顶层未声明 `features`，则不能填写 `i18n.<locale>.features`。
+- **截图路径字段区别**：顶层 `screenshots` 每项使用 `path`（如 `{ "path": "screenshots/01.png" }`），而 `i18n.<locale>.screenshots` 每项使用 `file`（如 `{ "file": "screenshots/en-US/01.png" }`）；两者均要求为 `screenshots/` 目录下的 PNG 相对路径。
 
 ## 系统能力
 
@@ -172,7 +323,7 @@ export default function Command() {
 | `showToast(style, title, message?)` 或 `showToast({ style, title, message })` | 轻提示。`style` 用 `Toast.Style.Success` / `Failure` / `Animated`。返回的句柄可以改 `title`、`message`、`style` 或 `hide()` |
 | `showHUD(title)` | 简短的成功提示。客户端里显示为一条成功样式的轻提示（与 `showToast` 的 `Success` 相同），约 1.5 秒后自动消失 |
 | `confirmAlert({ title, message?, primaryAction?, dismissAction? })` | 客户端内的确认框，返回用户是否点了确认。危险操作把 `primaryAction.style` 设为 `"destructive"` |
-| `Clipboard.copy(content)` / `paste(content)` / `readText()` / `clear()` | 剪贴板。`copy` 失败（内容为空、超过 8 MiB、剪贴板被占用）会抛错，失败时不要提示「已复制」 |
+| `Clipboard.copy(content)` / `paste(content)` / `readText()` / `readFiles()` / `readImage()` / `clear()` | 剪贴板。`copy` 失败（内容为空、超过 8 MiB、剪贴板被占用）会抛错，失败时不要提示「已复制」；`readFiles()` 返回剪贴板中的文件路径数组 `string[]`，`readImage()` 返回图片 Data URL 或 `null` |
 | `LocalStorage.getItem` / `setItem` / `removeItem` / `allItems` / `clear` | 插件私有的持久存储，按插件 ID 隔离，重启不丢。key 为 1–200 个字符，单个值不超过 4 MiB，值按 JSON 保存 |
 | `SecureStorage` | 用系统钥匙串加密保存密钥、令牌等机密，值不超过 64 KiB。加密不可用时 `setItem` 直接报错，不会退回明文；先用 `status()` 检查是否可用。它防的是磁盘和其他程序读到明文，不能防同一客户端里的其他插件 |
 | `Cache` | 内存缓存（`get` / `set` / `has` / `remove` / `clear` / `subscribe`），客户端重启后清空。按插件 ID 隔离，其他插件读不到；`new Cache({ namespace })` 的 `namespace` 只用来在本插件内部再分组 |
@@ -239,6 +390,7 @@ SDK 没有封装的系统能力（读写文件、系统对话框、截图、系�
 | `filesystem_move_file_no_replace`，`{ sourcePath, destPath }` | 路径参数版本仅适用于 SDK Contract 1。要求源和目标都有写授权，由原生文件组件原子拒绝覆盖已存在目标，成功返回 `{ success: true }`。缺少原生组件明确报错，不会降级为可能覆盖文件的移动。当前不支持仅修改文件名大小写；完全相同的源、目标路径为空操作 |
 | `filesystem_get_directory_contents`，`{ path }` | SDK Contract 1 的路径参数版本返回 `{ success: true, files, writeAuthorized }`。列目录成功只表示有读授权；`writeAuthorized` 表示当前目录是否另有写授权。为 `false` 时应先让用户通过目录选择授权再改名，不能由「可读取」推断「可修改」。即使为 `true`，具体写操作仍可能因系统权限或目录变化失败 |
 | `image_ocr`，`{ action, lang?, path?, restoreWindow? }` | 用系统自带的文字识别在本机识别图片文字，不联网。`lang` 为 `zh-Hans-CN`（默认，中英混排）、`en-US`、`ja-JP` 或 `ko-KR`。`action` 取值：`recognizeImage` 识别 `path` 指向的图片（必须是用户经文件对话框等方式授权过的文件，不超过 16 MB）；`recognizeClipboard` 识别剪贴板里的图片（需要 `clipboard` 权限）；`captureRegion` 先收起发起调用的窗口，让用户框选屏幕区域后识别（需要 `screen` 权限，`restoreWindow: false` 时识别后不再显示窗口）。成功返回 `{ ok: true, text, lines }`；没有识别到文字返回 `{ ok: false, empty: true, error }`，用户取消框选返回 `{ ok: false, canceled: true, error }`，其余失败返回 `{ ok: false, error }`。框选要等用户操作，调用时把超时设到 3 分钟左右。macOS 与 Windows 都支持这三种动作；Windows 需要已安装所选语言的 OCR 语言包 |
+| `formula_ocr`，`{ action, path?, restoreWindow?, includePreview? }` | 在本机把图片里的数学公式识别成 LaTeX（客户端 1.1.8.11 起，macOS 与 Windows），图片不上传。识别模型约 114 MB，不随客户端安装，第一次使用前要下载：`action` 为 `modelStatus` 查询状态，返回 `{ state, totalBytes, receivedBytes?, error? }`，`state` 为 `missing`、`downloading`、`ready` 或 `failed`；`downloadModel` 开始下载（在客户端里进行，关掉插件也不中断，重复调用返回当前进度）；`cancelDownload` 取消。识别动作与 `image_ocr` 相同：`recognizeImage`（`path`）、`recognizeClipboard`、`captureRegion`（`restoreWindow`），权限要求也相同。识别动作可选 `includePreview: true`，返回用于会话内核对的 `previewDataUrl`（保持原始比例和颜色的 PNG data URL，最长边 1600 像素，PNG 不超过 384 KiB，预览不可用时省略）；默认不返回原图。成功返回 `{ ok: true, latex, score, lowConfidence, previewDataUrl? }`，`score` 是词元分数，不是公式正确率；高分结果同样需要核对。`lowConfidence` 为 `true` 时请提示用户核对；模型没下载返回 `{ ok: false, modelMissing: true, error }`；没有识别到公式返回 `{ ok: false, empty: true, error }`，取消框选返回 `{ ok: false, canceled: true, error }`。一次识别一个公式（可以是多行），夹在公式里的中文识别不准 |
 
 每个卷的字段：
 
@@ -289,4 +441,4 @@ SDK Contract 2 的文件方法使用授权引用，不能向上面的路径参�
 | --- | --- |
 | `renderDeclarativeRoot(Command)` | 渲染插件，返回 `{ getLatest(), forceRender(), unmount() }`，`getLatest()` 得到视图描述对象（`type`、`props`、`children`） |
 | `setDeclarativeBridge(bridge)` | 替换客户端能力的实现（提示、剪贴板、存储、导航等），用来模拟成功或失败 |
-| [`extensions/shared/test-harness.mjs`](../extensions/shared/test-harness.mjs) | 基于上面两个 API 的现成模拟客户端：`createHost()`、`mount(Command)`、`tick()`，支持搜索、执行动作、注入存储和宿主方法故障，用法见 [开发入门 · 检查与测试](getting-started.md#6-检查与测试) |
+| [`extensions/shared/test-harness.mjs`](../extensions/shared/test-harness.mjs) | 基于上面两个 API 的现成模拟客户端：`createHost()`、`mount(Command)`、`tick()`，支持搜索、执行动作、模拟文件粘贴与拖入（`api.pasteFiles(files, options)`、`api.dropFiles(files, options)`、`api.pasteText(text)`）、注入存储和宿主方法故障，用法见 [开发入门 · 检查与测试](getting-started.md#6-检查与测试) |

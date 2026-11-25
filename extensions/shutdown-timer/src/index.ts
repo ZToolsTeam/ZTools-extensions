@@ -5,6 +5,7 @@ import {
   Icon,
   Clipboard,
   useState,
+  useLocale,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
@@ -15,6 +16,7 @@ import {
   getQuickScheduleOptions,
   type QuickScheduleItem
 } from './logic.js'
+import { t } from './i18n.js'
 
 export * from './logic.js'
 
@@ -27,7 +29,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
   } catch (err) {
     await showToast({
       style: Toast.Style.Failure,
-      title: '复制失败',
+      title: t('copyFailedTitle'),
       message: err instanceof Error ? err.message : String(err)
     })
     return
@@ -38,7 +40,7 @@ async function copyWithToast(text: string, successTitle: string, successMessage?
 async function runPowerAction(item: QuickScheduleItem): Promise<void> {
   const res = await executePowerAction(item)
   if (res.canceled) {
-    await showToast({ style: Toast.Style.Animated, title: '已取消', message: res.message })
+    await showToast({ style: Toast.Style.Animated, title: t('canceledTitle'), message: res.message })
     return
   }
   await showToast(
@@ -46,8 +48,8 @@ async function runPowerAction(item: QuickScheduleItem): Promise<void> {
       ? { style: Toast.Style.Success, title: res.message, message: res.detail }
       : {
           style: Toast.Style.Failure,
-          title: `${item.title}失败`,
-          message: res.detail ? `${res.message}；${res.detail}` : res.message
+          title: t('actionFailedTitle', { title: item.title }),
+          message: res.detail ? t('detailJoin', { message: res.message, detail: res.detail }) : res.message
         }
   )
 }
@@ -69,36 +71,37 @@ function actionsFor(item: QuickScheduleItem) {
   if (item.action === 'cancel') {
     return [
       Action({
-        title: '复制取消命令',
+        title: t('copyCancelCmdAction'),
         icon: Icon.Clipboard,
-        onAction: () => copyWithToast(CANCEL_COMMAND, '已复制取消命令', '在命令提示符中运行即可取消已设定的关机')
+        onAction: () => copyWithToast(CANCEL_COMMAND, t('copiedCancelCmdTitle'), t('copiedCancelCmdMessage'))
       })
     ]
   }
   if (item.action === 'shutdown') {
     const cmd = getCommandForAction(item.action, item.seconds)
     return [
-      Action({ title: '设定定时关机（需确认）', icon: Icon.Power, onAction: () => runPowerAction(item) }),
+      Action({ title: t('scheduleShutdownAction'), icon: Icon.Power, onAction: () => runPowerAction(item) }),
       Action({
-        title: '复制等价命令',
+        title: t('copyEquivalentCmdAction'),
         icon: Icon.Clipboard,
         shortcut: { modifiers: ['ctrl'], key: 'return' },
-        onAction: () => copyWithToast(cmd, '已复制命令', cmd)
+        onAction: () => copyWithToast(cmd, t('copiedCmdTitle'), cmd)
       })
     ]
   }
   return [Action({ title: item.title, icon: iconFor(item.action), onAction: () => runPowerAction(item) })]
 }
 
-const SECTIONS: Array<{ title: string; actions: QuickScheduleItem['action'][] }> = [
-  { title: '定时关机', actions: ['shutdown'] },
-  { title: '立即执行', actions: ['lock', 'sleep'] },
-  { title: '取消关机计划', actions: ['cancel'] }
+const SECTION_SPECS: Array<{ titleKey: 'sectionShutdown' | 'sectionImmediate' | 'sectionCancel'; actions: QuickScheduleItem['action'][] }> = [
+  { titleKey: 'sectionShutdown', actions: ['shutdown'] },
+  { titleKey: 'sectionImmediate', actions: ['lock', 'sleep'] },
+  { titleKey: 'sectionCancel', actions: ['cancel'] }
 ]
 
 export default function ShutdownTimerCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
-  const [options] = useState<QuickScheduleItem[]>(getQuickScheduleOptions())
+  const options = getQuickScheduleOptions()
 
   const query = searchText.trim().toLowerCase()
   const filtered = options.filter(
@@ -106,14 +109,14 @@ export default function ShutdownTimerCommand() {
   )
 
   return List({
-    searchBarPlaceholder: '搜索电源动作，如 关机、30、锁屏、取消',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
-    children: SECTIONS.map((section) => {
+    children: SECTION_SPECS.map((section) => {
       const items = filtered.filter((item) => section.actions.includes(item.action))
       return items.length === 0
         ? null
         : List.Section({
-            title: section.title,
+            title: t(section.titleKey),
             children: items.map((item) =>
               List.Item({
                 id: item.id,
@@ -122,9 +125,9 @@ export default function ShutdownTimerCommand() {
                 icon: iconFor(item.action),
                 accessories:
                   item.action === 'shutdown'
-                    ? [{ tag: { value: '执行前确认' } }]
+                    ? [{ tag: { value: t('confirmTag') } }]
                     : item.action === 'cancel'
-                    ? [{ tag: { value: '复制命令' } }]
+                    ? [{ tag: { value: t('copyCmdTag') } }]
                     : [],
                 actions: ActionPanel({ title: item.title, children: actionsFor(item) })
               })

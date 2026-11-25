@@ -1,14 +1,15 @@
 {
   "id": "system-backup",
-  "name": "系统备份",
+  "name": "配置快照备份",
   "description": "将 Hosts、SSH、Git、终端与编辑器配置打包为本地快照，并解压到新目录取回文件",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "system"
@@ -23,5 +24,34 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Config Snapshot Backup",
+      "description": "Package Hosts, SSH, Git, terminal, and editor configs into local snapshots and extract them to a new folder when needed.",
+      "keywords": [
+        "backup",
+        "dotfiles",
+        "config",
+        "snapshot",
+        "ssh",
+        "git",
+        "hosts"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

@@ -3,12 +3,15 @@
 // 需要确认的操作在没有确认框时不执行
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import {
   SYSTEM_ACTIONS,
-  HOST_REQUIRED_MESSAGE,
+  getHostRequiredMessage,
   executeSystemAction,
   filterSystemActions
 } from '../dist/system-actions.js'
+
+setRuntimeLocale('zh-CN')
 
 // 宿主内置系统操作处理器能识别的动作（宿主把名字转小写并去掉 - _ 空格后比对）
 const HOST_SYSTEM_ACTIONS = new Set([
@@ -139,7 +142,7 @@ test('[边界] 未知操作、不在客户端里运行时如实报错', async ()
   // 没有 window，也没有注入的客户端
   const noHost = await executeSystemAction('lock-screen')
   assert.equal(noHost.success, false)
-  assert.equal(noHost.message, HOST_REQUIRED_MESSAGE)
+  assert.equal(noHost.message, getHostRequiredMessage())
 })
 
 test('[边界] 需要确认的操作在没有确认框时按取消处理，不调用客户端', async () => {

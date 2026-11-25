@@ -2,8 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHmac } from 'node:crypto'
 import { Clipboard } from '@ztools/declarative-ui'
-import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import { JwtUrlCodecCommand, parseAndInspectUrl, decodeJwtToken, signJwtHmacSha256, verifyJwtHmacSha256, decodeBase64UrlToUtf8, encodeUtf8ToBase64Url, fencedBlock } from '../dist/index.js'
+import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
+import { JwtUrlCodecCommand, parseAndInspectUrl, rebuildUrlWithQueryParams, decodeJwtToken, signJwtHmacSha256, verifyJwtHmacSha256, verifyJwtHmac, decodeBase64UrlToUtf8, encodeUtf8ToBase64Url, fencedBlock } from '../dist/index.js'
 
 const secret = '  本地测试密钥  '
 const token = (payload = { sub: '测试' }, header = { alg: 'HS256', typ: 'JWT' }) => {
@@ -189,4 +189,110 @@ test('[边界] 毫秒时间戳的 exp 判为时间声明异常，不误报尚未
   assert.match(result.expiryCountdownText, /exp.*毫秒/)
   const ok = decodeJwtToken(token({ exp: ms / 1000 }), Date.UTC(2026, 0, 1))
   assert.equal(ok.timeStatus, '已过期')
+})
+
+test('verifyJwtHmac 支持 HS256 / HS384 / HS512 验签，拒绝非 HMAC 算法与 crit/b64 扩展', async () => {
+  const makeHmacToken = (alg, hashName, payload = { sub: 'u1' }) => {
+    const data = [{ alg, typ: 'JWT' }, payload]
+      .map((v) => Buffer.from(JSON.stringify(v)).toString('base64url'))
+      .join('.')
+    return `${data}.${createHmac(hashName, secret).update(data).digest('base64url')}`
+  }
+
+  for (const [alg, hashName] of [['HS256', 'sha256'], ['HS384', 'sha384'], ['HS512', 'sha512']]) {
+    const t = makeHmacToken(alg, hashName)
+    const pass = await verifyJwtHmac(t, secret)
+    assert.equal(pass.verified, true, `${alg} 正确密钥应验签通过`)
+    assert.equal(pass.algorithm, alg)
+    const fail = await verifyJwtHmac(t, 'wrong-secret')
+    assert.equal(fail.verified, false, `${alg} 错误密钥应验签失败`)
+  }
+  assert.equal((await verifyJwtHmac(token({}, { alg: 'RS256' }), secret)).verified, false)
+  assert.equal((await verifyJwtHmac(token({}, { alg: 'HS512', crit: ['x'] }), secret)).verified, false)
+})
+
+test('JWT 输入 Secret 验签二级表单：支持 HS512 验签、更新状态且不落盘', async () => {
+  const host = createHost()
+  const view = await mount(JwtUrlCodecCommand, host)
+  try {
+    const data = [{ alg: 'HS512', typ: 'JWT' }, { sub: 'admin' }]
+      .map((v) => Buffer.from(JSON.stringify(v)).toString('base64url'))
+      .join('.')
+    const hs512Token = `${data}.${createHmac('sha512', secret).update(data).digest('base64url')}`
+    await view.search(hs512Token)
+    await view.run(view.item('jwt-overview'), '输入 Secret 验签 (HS256/384/512)')
+    await tick()
+    const form = await mountPushed(host)
+    try {
+      assert.equal(form.field('secret').type, 'Form.PasswordField')
+      await form.fill('secret', 'bad-secret')
+      await form.run(null, '立即验签')
+      await tick(20)
+      assert.equal(host.lastToast().style, 'FAILURE')
+      assert.equal(host.pushed.length, 1, '失败时保留表单供修改重试')
+
+      await form.fill('secret', secret)
+      await form.run(null, '立即验签')
+      await tick(20)
+      assert.equal(host.lastToast().style, 'SUCCESS')
+      assert.equal(host.pushed.length, 0, '通过后自动返回主页面')
+      assert.equal(host.storage.size, 0)
+      assert.match(view.text(), /验签通过 \(HS512\)/)
+    } finally {
+      form.unmount()
+    }
+  } finally {
+    view.unmount()
+  }
+})
+
+test('URL 模式支持新增、编辑、删除 Query 参数并实时重组复制完整 URL', async () => {
+  const inspected = parseAndInspectUrl('https://example.test/api?a=1&b=2#sec')
+  assert.equal(
+    rebuildUrlWithQueryParams(inspected, [{ key: 'a', value: '10' }, { key: 'c', value: 'x y' }]),
+    'https://example.test/api?a=10&c=x+y#sec'
+  )
+
+  const host = createHost()
+  const view = await mount(JwtUrlCodecCommand, host)
+  try {
+    await view.dropdown('url')
+    await view.search('https://example.test/search?q=old&page=1#top')
+
+    // 1. 编辑参数 q -> new value
+    await view.run(view.item('param-q-0'), '编辑此参数')
+    await tick()
+    const editForm = await mountPushed(host)
+    try {
+      await editForm.fill('value', 'ztools')
+      await editForm.run(null, '保存并重组复制 URL')
+      await tick(10)
+      assert.equal(host.clipboard.text, 'https://example.test/search?q=ztools&page=1#top')
+      assert.equal(view.tree().props.searchText, 'https://example.test/search?q=ztools&page=1#top')
+    } finally {
+      editForm.unmount()
+    }
+
+    // 2. 新增参数 lang=zh
+    await view.run(view.item('url-overview'), '新增 Query 参数')
+    await tick()
+    const addForm = await mountPushed(host)
+    try {
+      await addForm.fill('key', 'lang')
+      await addForm.fill('value', 'zh')
+      await addForm.run(null, '保存并重组复制 URL')
+      await tick(10)
+      assert.equal(host.clipboard.text, 'https://example.test/search?q=ztools&page=1&lang=zh#top')
+    } finally {
+      addForm.unmount()
+    }
+
+    // 3. 删除参数 page
+    await view.run(view.item('param-page-1'), '删除此参数')
+    await tick(10)
+    assert.equal(host.clipboard.text, 'https://example.test/search?q=ztools&lang=zh#top')
+    assert.equal(view.tree().props.searchText, 'https://example.test/search?q=ztools&lang=zh#top')
+  } finally {
+    view.unmount()
+  }
 })

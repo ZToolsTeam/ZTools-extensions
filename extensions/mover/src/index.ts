@@ -15,30 +15,33 @@ import {
   confirmAlert,
   showToast,
   useEffect,
+  useLocale,
   useRef,
   useState
 } from "@ztools/declarative-ui";
 import { isRealElectronHost } from "./native-ipc.js";
+import { t } from "./i18n.js";
 import {
-  MOVER_CATEGORIES,
-  NOT_IN_CLIENT_MESSAGE,
   authorizeMoveTarget,
   createEmptyMoverSnapshot,
   destinationPathFor,
   executeDirectoryMove,
   fetchMoverSnapshot,
   formatBytes,
+  getMoverCategories,
   openMoverFolderLocation,
   validateMoveSelection,
   type MovableFolderItem,
   type MoverCategory,
   type MoverSnapshot
 } from "./logic.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 export function MoverCommand() {
+  useLocale();
   const isRealHost = isRealElectronHost();
   const [snapshot, setSnapshot] = useState<MoverSnapshot>(() =>
-    createEmptyMoverSnapshot(isRealHost ? undefined : NOT_IN_CLIENT_MESSAGE)
+    createEmptyMoverSnapshot(isRealHost ? undefined : t("notInClient"))
   );
   const [selectedCategory, setSelectedCategory] = useState<MoverCategory>("all");
   const [targetRoot, setTargetRoot] = useState<string>("");
@@ -104,41 +107,44 @@ export function MoverCommand() {
 
   const handleBatchMove = async () => {
     if (!isRealHost) {
-      await showToast({ style: Toast.Style.Failure, title: NOT_IN_CLIENT_MESSAGE });
+      await showToast({ style: Toast.Style.Failure, title: t("notInClient") });
       return;
     }
     if (busy.current) return;
     if (!targetRoot) {
-      await showToast({ style: Toast.Style.Failure, title: "没有可用的目标分区", message: "需要 C 盘以外的分区" });
+      await showToast({ style: Toast.Style.Failure, title: t("noTargetDriveTitle"), message: t("noTargetDriveMessage") });
       return;
     }
     const folders = selectedFolders;
     const invalid = validateMoveSelection(folders, targetRoot, targetDrive?.freeBytes || 0);
     if (invalid) {
-      await showToast({ style: Toast.Style.Failure, title: "无法迁移", message: invalid });
+      await showToast({ style: Toast.Style.Failure, title: t("cannotMoveTitle"), message: invalid });
       return;
     }
     busy.current = true;
     try {
+      const hasApproximate = folders.some((f) => f.isApproximate === true);
       const list = folders
-        .map((f) => `- ${f.name}：${f.sourcePath}（约 ${formatBytes(f.sizeBytes)}）`)
+        .map((f) =>
+          t(f.isApproximate ? "confirmMoveItemApprox" : "confirmMoveItem", {
+            name: f.name,
+            sourcePath: f.sourcePath,
+            size: formatBytes(f.sizeBytes)
+          })
+        )
         .join("\n");
       const confirmed = await confirmAlert({
-        title: `迁移 ${folders.length} 个目录到 ${targetRoot}？`,
-        message:
-          `${list}\n\n` +
-          "会先把目录复制到目标位置，再把原目录改名、在原位置建立指向新位置的目录联接，成功后删除原目录。" +
-          "迁移前请退出微信、QQ 等正在使用这些目录的程序。插件不提供迁回功能。\n\n" +
-          "确认后还需要在弹出的窗口里选择目标分区，授权插件检查目标位置并在失败时清理复制的内容。",
-        primaryAction: { title: "迁移", style: "destructive" }
+        title: t("confirmMoveTitle", { count: folders.length, targetRoot }),
+        message: `${t("confirmMoveMessage", { list })}${hasApproximate ? t("confirmMoveApproxWarning") : ""}`,
+        primaryAction: { title: t("confirmMovePrimary"), style: "destructive" }
       });
       if (!confirmed) return;
       const grant = await authorizeMoveTarget(targetRoot);
       if (!grant.ok) {
         if (grant.canceled) {
-          setStatusBanner("已取消，没有迁移任何目录");
+          setStatusBanner(t("statusCanceled"));
         } else {
-          await showToast({ style: Toast.Style.Failure, title: "没有获得目标位置授权", message: grant.error });
+          await showToast({ style: Toast.Style.Failure, title: t("noAuthTitle"), message: grant.error });
         }
         return;
       }
@@ -149,7 +155,7 @@ export function MoverCommand() {
       setCheckedIds((prev) => prev.filter((id) => !folders.some((f) => f.id === id && movedPaths.has(f.sourcePath))));
       await showToast({
         style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-        title: res.ok ? `已迁移 ${res.movedCount} 个目录` : res.movedCount > 0 ? "部分目录没有迁移" : "迁移失败",
+        title: res.ok ? t("movedCountToast", { count: res.movedCount }) : res.movedCount > 0 ? t("partialMoveToast") : t("moveFailedToast"),
         message: res.message
       });
       await reloadMoverSnapshot();
@@ -161,43 +167,51 @@ export function MoverCommand() {
 
   const handleShowInFolder = async (folder: MovableFolderItem) => {
     const ok = await openMoverFolderLocation(folder.sourcePath);
-    if (!ok) await showToast({ style: Toast.Style.Failure, title: "无法在资源管理器中显示", message: folder.sourcePath });
+    if (!ok) await showToast({ style: Toast.Style.Failure, title: t("revealFailedTitle"), message: folder.sourcePath });
   };
 
   const maxFolderBytes = Math.max(1, ...visibleFolders.map((f) => f.sizeBytes));
 
+  const hasApproxSelected = selectedFolders.some((f) => f.isApproximate === true);
   const summaryText =
     statusBanner ||
     (snapshot.error
       ? snapshot.error
       : isLoading && snapshot.folders.length === 0
-        ? "正在扫描 C 盘目录"
+        ? t("scanningCDrive")
         : snapshot.targetDrives.length === 0
-        ? "没有找到 C 盘以外的分区，无法迁移"
-        : `C 盘剩余 ${formatBytes(snapshot.cDriveFreeBytes)} · 已选 ${selectedFolders.length} 个目录（约 ${formatBytes(selectedBytes)}）· 目标 ${targetRoot || "未选择"}`);
+          ? t("noNonCDrive")
+          : `${t("summaryDefault", {
+              free: formatBytes(snapshot.cDriveFreeBytes),
+              count: selectedFolders.length,
+              selected: formatBytes(selectedBytes),
+              target: targetRoot || t("targetUnselected")
+            })}${hasApproxSelected ? t("summaryApproxHint") : ""}`);
+
+  const categories = getMoverCategories();
 
   const leftNavNodes = [
     List.Item({
       id: "nav-mover-all",
-      title: "全部目录",
-      subtitle: `共 ${snapshot.folders.length} 项`,
+      title: t("allDirsTitle"),
+      subtitle: t("allDirsSubtitle", { count: snapshot.folders.length }),
       icon: Icon.HardDrive,
       onSelect: () => setSelectedCategory("all"),
       accessories: [
-        { tag: { value: `${snapshot.folders.length} 项` } },
+        { tag: { value: t("itemCountText", { count: snapshot.folders.length }) } },
         { text: formatBytes(snapshot.totalMovableBytes) }
       ],
       actions: ActionPanel({
         children: [
           Action({
-            title: "查看全部目录",
+            title: t("viewAllDirsAction"),
             icon: Icon.Filter,
             onAction: () => setSelectedCategory("all")
           })
         ]
       })
     }),
-    ...MOVER_CATEGORIES.map((cat) => {
+    ...categories.map((cat) => {
       const catFolders = snapshot.folders.filter((f) => f.category === cat.id);
       const catBytes = catFolders.reduce((s, f) => s + f.sizeBytes, 0);
       return List.Item({
@@ -208,13 +222,13 @@ export function MoverCommand() {
         onSelect: () => setSelectedCategory(cat.id),
         accessories: [
           { progress: Math.min(1, catBytes / Math.max(1, snapshot.totalMovableBytes)) },
-          { tag: { value: `${catFolders.length} 项` } },
+          { tag: { value: t("itemCountText", { count: catFolders.length }) } },
           { text: formatBytes(catBytes) }
         ],
         actions: ActionPanel({
           children: [
             Action({
-              title: `查看「${cat.name}」`,
+              title: t("viewCategoryAction", { name: cat.name }),
               icon: Icon.Filter,
               onAction: () => setSelectedCategory(cat.id)
             })
@@ -239,22 +253,27 @@ export function MoverCommand() {
       accessories: [
         { progress: Math.min(1, folder.sizeBytes / maxFolderBytes) },
         { tag: { value: folder.categoryName } },
-        { text: formatBytes(folder.sizeBytes) }
+        ...(folder.isApproximate ? [{ tag: { value: t("tagApproximateEstimate") } }] : []),
+        {
+          text: folder.isApproximate
+            ? t("approxSizeText", { size: formatBytes(folder.sizeBytes) })
+            : formatBytes(folder.sizeBytes)
+        }
       ],
       actions: ActionPanel({
         children: [
           Action({
-            title: `迁移已勾选的 ${selectedFolders.length} 个目录`,
+            title: t("moveCheckedAction", { count: selectedFolders.length }),
             icon: Icon.ArrowRight,
             onAction: handleBatchMove
           }),
           Action({
-            title: "在资源管理器中显示",
+            title: t("revealInExplorerAction"),
             icon: Icon.Folder,
             onAction: () => handleShowInFolder(folder)
           }),
           Action({
-            title: isChecked ? "取消勾选" : "勾选",
+            title: isChecked ? t("uncheckAction") : t("checkAction"),
             icon: Icon.CheckCircle,
             onAction: () => toggleFolderCheck(folder)
           })
@@ -268,13 +287,13 @@ export function MoverCommand() {
 
   return List({
     isLoading,
-    searchBarPlaceholder: "搜索目录名称或路径",
+    searchBarPlaceholder: t("searchPlaceholder"),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     searchBarAccessory:
       snapshot.targetDrives.length > 0
         ? List.Dropdown({
-            tooltip: "目标位置",
+            tooltip: t("targetDropdownTooltip"),
             value: targetRoot,
             onChange: (val) => setTargetRoot(val),
             children: snapshot.targetDrives.map((d) =>
@@ -291,7 +310,7 @@ export function MoverCommand() {
         ? [
             {
               id: "rescan",
-              title: "重新扫描",
+              title: t("rescanAction"),
               style: "secondary",
               onAction: () => {
                 setStatusBanner("");
@@ -302,9 +321,9 @@ export function MoverCommand() {
         : []
     },
     subList: {
-      title: `C 盘目录（${visibleFolders.length} 项）`,
+      title: t("subListTitle", { count: visibleFolders.length }),
       subtitle: targetRoot,
-      emptyText: snapshot.error || "当前分类下没有找到可迁移的目录",
+      emptyText: resolveErrorMessage(snapshot, t("subListEmptyText")),
       checkable: visibleFolders.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: () => toggleAllVisible(),
@@ -312,7 +331,7 @@ export function MoverCommand() {
     },
     children: [
       List.Section({
-        title: "目录分类",
+        title: t("leftSectionTitle"),
         children: leftNavNodes
       })
     ]

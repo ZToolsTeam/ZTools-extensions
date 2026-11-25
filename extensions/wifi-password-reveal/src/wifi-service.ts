@@ -1,3 +1,4 @@
+import { getLocale } from '@ztools/declarative-ui'
 import {
   FetchWifiProfilesOptions,
   WifiBand,
@@ -9,9 +10,29 @@ import {
 } from './types.js'
 import { callHostTransport, isRealElectronHost } from './native-ipc.js'
 import { encodeQr } from './qr-encoder.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
+import {
+  NETSH_ZH_PROFILE_LINE_REGEX,
+  NETSH_ZH_OPEN_AUTH_VALUES,
+  NETSH_ZH_ENTERPRISE_REGEX,
+  NETSH_ZH_PROFILE_NOT_FOUND_MARKERS,
+  NETSH_ZH_KEY_PREFIX_SSID,
+  NETSH_ZH_KEY_AUTH,
+  NETSH_ZH_KEY_CIPHERS,
+  NETSH_ZH_KEY_SECURITY_KEY,
+  NETSH_ZH_VAL_PRESENT,
+  NETSH_ZH_VAL_ABSENT,
+  NETSH_ZH_KEY_CONTENT
+} from './netsh-zh.zh-data.js'
+
+/** 不在 ZTools 客户端里运行时的稳定错误码 */
+export const NOT_IN_CLIENT_ERROR_CODE = 'NOT_IN_CLIENT'
 
 /** 不在 ZTools 客户端里运行（拿不到宿主通道）时的提示；此时不显示任何示例网络 */
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export function getNotInClientMessage(): string {
+  return t('notInClient')
+}
 
 export function parseNetshWlanProfiles(output: string): string[] {
   if (typeof output !== 'string' || !output.trim()) {
@@ -23,7 +44,7 @@ export function parseNetshWlanProfiles(output: string): string[] {
   const lines = output.split(/\r?\n/)
 
   for (const line of lines) {
-    const match = line.match(/^\s*(?:All User Profile|Current User Profile|所有用户配置文件|当前用户配置文件)[ \t]*[:：] ?(.*)$/)
+    const match = line.match(NETSH_ZH_PROFILE_LINE_REGEX)
     const ssid = match?.[1]
     if (ssid && !seen.has(ssid)) {
       seen.add(ssid)
@@ -36,8 +57,8 @@ export function parseNetshWlanProfiles(output: string): string[] {
 
 export const parseWindowsWlanProfiles = parseNetshWlanProfiles
 
-const OPEN_AUTH_VALUES = new Set(['open', 'none', '开放式', '无'])
-const ENTERPRISE_AUTH_PATTERNS = [/enterprise/i, /802\.1x/i, /企业/]
+const OPEN_AUTH_VALUES = new Set(['open', 'none', ...NETSH_ZH_OPEN_AUTH_VALUES])
+const ENTERPRISE_AUTH_PATTERNS = [/enterprise/i, /802\.1x/i, NETSH_ZH_ENTERPRISE_REGEX]
 
 export function normalizeSecurityType(rawAuth: string): WifiSecurityType {
   const val = (rawAuth || '').trim()
@@ -77,8 +98,7 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
 
   if (
     (output.includes('Profile "') && output.includes('is not found on the system')) ||
-    output.includes('系统上没有配置文件') ||
-    output.includes('找不到配置文件')
+    NETSH_ZH_PROFILE_NOT_FOUND_MARKERS.some((marker) => output.includes(marker))
   ) {
     return {
       ssid: cleanInputSsid,
@@ -89,7 +109,7 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
       isEnterprise: false,
       error: {
         code: 'ProfileNotFound',
-        message: `未在系统中找到 Wi-Fi 配置文件 "${cleanInputSsid}"`
+        message: t('errProfileNotFound', { ssid: cleanInputSsid })
       }
     }
   }
@@ -111,24 +131,24 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
     const rawValue = trimmed.slice(colonIdx + 1).replace(/^ /, '')
     const val = rawValue.trim()
 
-    if (key.startsWith('SSID name') || key.startsWith('SSID 名称')) {
+    if (key.startsWith('SSID name') || key.startsWith(NETSH_ZH_KEY_PREFIX_SSID)) {
       let parsedSsid = val
       if (parsedSsid.startsWith('"') && parsedSsid.endsWith('"')) {
         parsedSsid = parsedSsid.slice(1, -1)
       }
       if (parsedSsid) ssidName = parsedSsid
-    } else if (key === 'Authentication' || key === '身份验证') {
+    } else if (key === 'Authentication' || key === NETSH_ZH_KEY_AUTH) {
       authentication = val
-    } else if (key === 'Cipher' || key === '密码' || key === '加密') {
+    } else if (key === 'Cipher' || NETSH_ZH_KEY_CIPHERS.includes(key)) {
       cipher = val
-    } else if (key === 'Security key' || key === 'Security Key' || key === '安全密钥') {
+    } else if (key === 'Security key' || key === 'Security Key' || key === NETSH_ZH_KEY_SECURITY_KEY) {
       const lowerVal = val.toLowerCase()
-      if (lowerVal === 'present' || val === '存在') {
+      if (lowerVal === 'present' || val === NETSH_ZH_VAL_PRESENT) {
         securityKeyState = 'present'
-      } else if (lowerVal === 'absent' || val === '不存在') {
+      } else if (lowerVal === 'absent' || val === NETSH_ZH_VAL_ABSENT) {
         securityKeyState = 'absent'
       }
-    } else if (key === 'Key Content' || key === '关键内容') {
+    } else if (key === 'Key Content' || key === NETSH_ZH_KEY_CONTENT) {
       keyContent = rawValue
       keyContentFound = true
     }
@@ -159,7 +179,7 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
       isEnterprise: true,
       error: {
         code: 'EnterpriseNetwork',
-        message: `"${ssidName}" 使用企业级 802.1X/证书认证，本机不存储预共享明文密码`
+        message: t('errEnterpriseNoPassword', { ssid: ssidName })
       }
     }
   }
@@ -174,7 +194,7 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
       isEnterprise: false,
       error: {
         code: 'PermissionDenied',
-        message: 'Windows 隐藏了关键内容，请以管理员身份运行以读取明文密钥'
+        message: t('errPermissionDenied')
       }
     }
   }
@@ -189,7 +209,7 @@ export function parseWindowsWlanProfileDetail(ssidInput: string, output: string)
       isEnterprise: false,
       error: {
         code: 'Unknown',
-        message: '无法从 netsh 输出中解析出安全密钥信息'
+        message: t('errUnknownKeyInfo')
       }
     }
   }
@@ -236,11 +256,11 @@ export function generateWifiQrString(
   password = '',
   authType: WifiSecurityType = 'WPA2-Personal'
 ): string {
-  if (typeof ssid !== 'string' || ssid.length === 0) throw new Error('SSID 不能为空')
-  if (authType === 'Unknown') throw new Error('请先选择网络实际使用的加密类型')
-  if (authType.includes('Enterprise')) throw new Error('企业认证网络不支持密码二维码')
+  if (typeof ssid !== 'string' || ssid.length === 0) throw new Error(t('errEmptySsid'))
+  if (authType === 'Unknown') throw new Error(t('errSelectSecurityFirst'))
+  if (authType.includes('Enterprise')) throw new Error(t('errEnterpriseNoQr'))
   const isOpen = authType === 'Open'
-  if (!isOpen && !password) throw new Error('尚未读取到 Wi-Fi 密码，不能生成连网二维码')
+  if (!isOpen && !password) throw new Error(t('errNoPasswordForQr'))
   const qrType = isOpen ? 'nopass' : authType === 'WEP' ? 'WEP' : 'WPA'
   return `WIFI:T:${qrType};S:${escapeWifiQrField(ssid)};${isOpen ? '' : `P:${escapeWifiQrField(password)};`};`
 }
@@ -301,23 +321,23 @@ export function filterAndSortWifiProfiles(
       return (b.signalPercent ?? 0) - (a.signalPercent ?? 0)
     }
     if (sortBy === 'ssid') {
-      return a.ssid.localeCompare(b.ssid, 'zh-CN')
+      return a.ssid.localeCompare(b.ssid, getLocale())
     }
-    return a.authType.localeCompare(b.authType)
+    return a.authType.localeCompare(b.authType, getLocale())
   })
 }
 
 export async function revealWifiPasswordFromHost(ssid: string, hostOverride?: unknown): Promise<string> {
-  if (typeof ssid !== 'string' || ssid.length === 0) throw new Error('SSID 不能为空')
+  if (typeof ssid !== 'string' || ssid.length === 0) throw new Error(t('errEmptySsid'))
   const res = await callHostTransport<Record<string, unknown> | string>(
     'wifi_get_password', { ssid }, hostOverride
   )
-  if (!res.ok) throw new Error(res.error || '无法读取 Wi-Fi 密码')
+  if (!res.ok) throw new Error(resolveErrorMessage(res, t('errReadPasswordFailed')))
   const data = res.data
   if (data && typeof data === 'object' && data.error) throw new Error(String(data.error))
   const password = typeof data === 'string' ? data : data?.password
   if (typeof password !== 'string' || password.length === 0) {
-    throw new Error('未读取到密码；请确认系统授权，或使用系统无线网络设置查看')
+    throw new Error(t('errPasswordNotRead'))
   }
   return password
 }
@@ -353,7 +373,7 @@ export async function fetchSavedWifiProfiles(options: FetchWifiProfilesOptions =
     const execute = async (command: string, args: string[]) => {
       const result = await options.executor!(command, args)
       if (typeof result === 'string') return result
-      if (result.exitCode) throw new Error(result.stderr || '读取无线网络配置失败')
+      if (result.exitCode) throw new Error(result.stderr || t('errReadProfilesFailed'))
       return result.stdout
     }
     let ssids: string[]
@@ -365,18 +385,18 @@ export async function fetchSavedWifiProfiles(options: FetchWifiProfilesOptions =
     } else if (options.platform === 'win32' || !options.platform) {
       ssids = parseNetshWlanProfiles(await execute('netsh', ['wlan', 'show', 'profiles']))
     } else {
-      throw new Error('当前平台不支持读取无线网络配置')
+      throw new Error(t('errUnsupportedPlatform'))
     }
     return ssids.map(ssid => mapWifiProfile(ssid, iface)).filter((item): item is WifiProfileInfo => item !== null)
   }
   if (!options.hostOverride && !isRealElectronHost()) {
     // 拿不到客户端就无法读取，如实报不可用；不能返回空列表冒充「没有已保存的网络」
-    throw new Error(NOT_IN_CLIENT_MESSAGE)
+    throw Object.assign(new Error(t('notInClient')), { code: NOT_IN_CLIENT_ERROR_CODE })
   }
   const result = await callHostTransport<unknown>('wifi_get_profiles', {}, options.hostOverride)
-  if (!result.ok) throw new Error(result.error || '读取无线网络配置失败')
+  if (!result.ok) throw new Error(resolveErrorMessage(result, t('errReadProfilesFailed')))
   const data = result.data
   const records = Array.isArray(data) ? data : data && typeof data === 'object' ? (data as Record<string, unknown>).profiles : undefined
-  if (!Array.isArray(records)) throw new Error('宿主返回的无线网络列表无效')
+  if (!Array.isArray(records)) throw new Error(t('errInvalidHostProfiles'))
   return records.map(item => mapWifiProfile(item, options.interfaceName)).filter((item): item is WifiProfileInfo => item !== null)
 }

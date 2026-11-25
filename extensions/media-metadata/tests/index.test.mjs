@@ -104,6 +104,52 @@ test('未选文件时 Enter 主动作为“选择文件…”，执行后读取�
   await v.run(null, '选择文件…'); assert.ok(v.item('media')); assert.match(v.text(), /检测到定位标签/)
 })
 test('旧宿主直接提示升级，不调用 DLL', async () => {
-  globalThis.__ztoolsElectron.transport.methods = {}; const v = await open(); await pick(v)
+  const savedMethods = globalThis.__ztoolsElectron.transport.methods
+  try {
+    globalThis.__ztoolsElectron.transport.methods = {}; const v = await open(); await pick(v)
+    assert.match(host.lastToast().title, /升级/); assert.equal(host.ipcCalls.length, 0)
+  } finally { globalThis.__ztoolsElectron.transport.methods = savedMethods }
   assert.match(host.lastToast().title, /升级/); assert.equal(host.ipcCalls.length, 0)
+})
+
+test('支持通过 plugin_files_dropped 拖入媒体文件读取元数据，非支持格式提示错误', async () => {
+  const listeners = new Map()
+  const prevFeatures = globalThis.window.__ztoolsDeclarativeFeatures
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  try {
+    const v = await open()
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/readme.pdf'] } })
+    await tick()
+    assert.match(host.lastToast().title, /照片或音视频/)
+    assert.equal(v.items().length, 0)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/照片.jpg'] } })
+    await tick()
+    assert.ok(v.item('media'))
+    assert.match(v.text(), /检测到定位标签/)
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = prevFeatures
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 pasteFiles 粘贴照片或音视频文件直接读取元数据', async () => {
+  const v = await open()
+  assert.equal(v.tree().props.fileInput.allowClipboardImage, true)
+  await v.pasteFiles(['/tmp/readme.pdf'])
+  assert.match(host.lastToast().title, /格式不匹配/)
+  assert.equal(v.items().length, 0)
+
+  await v.pasteFiles(['/tmp/照片.jpg'])
+  assert.ok(v.item('media'))
+  assert.match(v.text(), /检测到定位标签/)
 })

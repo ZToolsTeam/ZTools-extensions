@@ -1,9 +1,13 @@
 {
   "id": "font-manager",
   "name": "字体管理",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "检索本机已安装字体，输入文字查看真实字形，查看字体文件附带的许可与版权说明。",
   "author": "ZTools Team",
+  "category": [
+    "系统工具"
+  ],
+  "categoryId": "system",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -40,21 +44,78 @@
       ]
     },
     {
-      "code": "font-manager-free-commercial",
-      "explain": "查看字体文件附带的许可说明",
+      "code": "font-manager-with-license",
+      "explain": "筛选含内嵌许可信息的字体（仅反映内嵌元数据）",
       "cmds": [
         "字体许可",
-        "字体授权说明"
+        "含内嵌许可字体"
       ]
     },
     {
-      "code": "font-manager-commercial-risk",
-      "explain": "查看没有附带许可说明的字体",
+      "code": "font-manager-without-license",
+      "explain": "筛选未检出许可信息的字体（仅反映内嵌元数据）",
       "cmds": [
-        "未附许可字体",
+        "未检出许可字体",
         "字体版权信息"
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Font Manager",
+      "description": "Search installed system fonts, preview custom text with live glyphs, and inspect embedded license and copyright metadata.",
+      "keywords": [
+        "fonts",
+        "typography",
+        "font preview",
+        "system fonts",
+        "license"
+      ],
+      "features": {
+        "font-manager-all": {
+          "explain": "Search and preview all installed local fonts",
+          "cmds": [
+            "fonts",
+            "font manager",
+            "font preview",
+            "system fonts"
+          ]
+        },
+        "font-manager-with-license": {
+          "explain": "Filter fonts with embedded license metadata",
+          "cmds": [
+            "font license",
+            "embedded license metadata",
+            "font terms"
+          ]
+        },
+        "font-manager-without-license": {
+          "explain": "Filter fonts with no embedded license metadata",
+          "cmds": [
+            "no license metadata",
+            "font copyright",
+            "missing font license"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/03-interactive.png"
+    }
+  ]
 }

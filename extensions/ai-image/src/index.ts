@@ -9,21 +9,40 @@ import {
   showToast,
   Toast,
   confirmAlert,
-  FilterBar
+  FilterBar,
+  useLocale
 } from '@ztools/declarative-ui'
 import type { ListItemAccessory } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
-  AI_IMAGE_ENGINES,
+  FileImportResult,
+  NormalizedFileInput,
+  createImportInputProps,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  summarizeImport
+} from './file-import.js'
+import { isDeclarativeFileInputSupported } from './host-compat.js'
+import {
+  AI_IMAGE_SUPPORTED_TEXT,
   AiImageBatchResult,
   AiImageFileItem,
   AiImageOutputFormat,
   AiImageScale,
-  AI_INFERENCE_UNAVAILABLE_REASON,
+  collectAiImageFolderFiles,
   executeAiImageBatch,
-  fetchAiImageQueue,
+  expandAiImageInputPaths,
+  formatAiImageError,
   formatBytes,
-  openAiImageLocation
+  getAiImageEngines,
+  importedFileToAiImageItem,
+  isAiImageHostReady,
+  openAiImageLocation,
+  pickAiImageFolder,
+  selectAiImageFiles
 } from './logic.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './logic.js'
 
@@ -34,8 +53,12 @@ interface ItemOutcome {
   resolution: string
 }
 
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+interface HostEventsWindow {
+  ztools?: {
+    events?: {
+      on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void
+    }
+  }
 }
 
 function baseName(fullPath: string): string {
@@ -46,181 +69,471 @@ function resolutionText(width: number, height: number): string {
   return width > 0 && height > 0 ? `${width}×${height}` : ''
 }
 
+function formatSizeText(sizeBytes: number | null): string {
+  return sizeBytes === null ? t('sizeUnknown') : formatBytes(sizeBytes)
+}
+
+function formatTotalSize(items: readonly AiImageFileItem[]): string {
+  if (items.length === 0) return '0 B'
+  let knownBytes = 0
+  let hasKnown = false
+  for (const item of items) {
+    if (item.sizeBytes !== null) {
+      knownBytes += item.sizeBytes
+      hasKnown = true
+    }
+  }
+  return hasKnown ? formatBytes(knownBytes) : t('sizeUnknown')
+}
+
 export function AiImageCommand() {
+  useLocale()
+  const engines = getAiImageEngines()
   const [searchText, setSearchText] = useState('')
-  const [activeEngineId, setActiveEngineId] = useState<string>(AI_IMAGE_ENGINES[0].id)
+  const [activeEngineId, setActiveEngineId] = useState<string>(engines[0].id)
   const [scaleFactor, setScaleFactor] = useState<AiImageScale>('2x')
   const [outputFormat, setOutputFormat] = useState<AiImageOutputFormat>('png')
   const [files, setFiles] = useState<AiImageFileItem[]>([])
   const [checkedIds, setCheckedIds] = useState<string[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
+  const [isImporting, setIsImporting] = useState(false)
+  const [importProgress, setImportProgress] = useState<{ visitedDirs: number; matchedFiles: number } | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [processingIds, setProcessingIds] = useState<string[]>([])
   const [outcomes, setOutcomes] = useState<Record<string, ItemOutcome>>({})
   const [lastRunText, setLastRunText] = useState('')
-  const processingRef = useRef(false)
 
-  async function refreshWorkspace(showIndicator = false) {
-    setIsLoading(true)
-    try {
-      const ws = await fetchAiImageQueue()
-      setFiles(ws.files)
-      setCheckedIds(ws.files.map(f => f.id))
-      setOutcomes({})
-      setLoadError(ws.error || '')
-      if (ws.error) {
-        showToast({ style: Toast.Style.Failure, title: '读取图片队列失败', message: ws.error })
-      } else if (showIndicator) {
-        showToast({ style: Toast.Style.Success, title: '已重新扫描', message: `找到 ${ws.files.length} 张图片` })
+  const filesRef = useRef<AiImageFileItem[]>([])
+  const processingRef = useRef(false)
+  const processingIdsRef = useRef<Set<string>>(new Set())
+  const mountedRef = useRef(true)
+  const importBatchRef = useRef(0)
+  const importAbortRef = useRef<AbortController | null>(null)
+
+  function updateFiles(updater: (prev: AiImageFileItem[]) => AiImageFileItem[]): AiImageFileItem[] {
+    const next = updater(filesRef.current)
+    filesRef.current = next
+    setFiles(next)
+    return next
+  }
+
+  function startImportBatch(): { batchId: number; signal: AbortSignal } {
+    importAbortRef.current?.abort()
+    const controller = new AbortController()
+    importAbortRef.current = controller
+    importBatchRef.current += 1
+    return { batchId: importBatchRef.current, signal: controller.signal }
+  }
+
+  function commitImportResult(batchId: number, result: FileImportResult) {
+    if (!mountedRef.current || batchId !== importBatchRef.current) return
+    if (result.canceled) return
+    if (result.error) {
+      const errSummary = summarizeImport(result, { added: 0 }, AI_IMAGE_SUPPORTED_TEXT)
+      if (errSummary) {
+        showToast({ style: Toast.Style.Failure, title: errSummary.title, message: errSummary.message })
       }
+      return
+    }
+    const incoming = result.files.map(importedFileToAiImageItem)
+    const { merged, added, duplicates } = mergeByPath(filesRef.current, incoming, f => f.path)
+    if (added.length > 0) {
+      filesRef.current = merged
+      setFiles(merged)
+      const addedIds = added.map(f => f.id)
+      setCheckedIds(prev => Array.from(new Set([...prev, ...addedIds])))
+    }
+    const summary = summarizeImport(result, { added: added.length, duplicates }, AI_IMAGE_SUPPORTED_TEXT)
+    if (summary) {
+      showToast({
+        style: summary.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: summary.title,
+        message: summary.message
+      })
+    }
+  }
+
+  async function handlePickFiles() {
+    if (!isAiImageHostReady()) {
+      showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: t('hostRequired') })
+      return
+    }
+    const { batchId } = startImportBatch()
+    try {
+      const res = await selectAiImageFiles()
+      commitImportResult(batchId, res)
     } catch (err) {
-      const msg = errorMessage(err)
-      setLoadError(msg)
-      showToast({ style: Toast.Style.Failure, title: '读取图片队列失败', message: msg })
+      if (mountedRef.current && batchId === importBatchRef.current) {
+        showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: formatAiImageError(err) })
+      }
+    }
+  }
+
+  async function handlePickFolder() {
+    if (!isAiImageHostReady()) {
+      showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: t('hostRequired') })
+      return
+    }
+    const { batchId, signal } = startImportBatch()
+    try {
+      const picked = await pickAiImageFolder()
+      if (!mountedRef.current || batchId !== importBatchRef.current) return
+      if (picked.canceled) return
+      if (picked.error || !picked.folderPath) {
+        showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: resolveErrorMessage(picked, t('noFolderSelected')) })
+        return
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const confirmed = await confirmAlert({
+          title: t('confirmRootTitle', { path: picked.folderPath }),
+          message: t('confirmRootMessage', { supported: AI_IMAGE_SUPPORTED_TEXT }),
+          primaryAction: { title: t('confirmRootAction'), style: 'default' }
+        })
+        if (!confirmed || !mountedRef.current || batchId !== importBatchRef.current) return
+      }
+      setIsImporting(true)
+      setImportProgress({ visitedDirs: 0, matchedFiles: 0 })
+      const res = await collectAiImageFolderFiles(picked.folderPath, {
+        signal,
+        onProgress: p => {
+          if (mountedRef.current && importBatchRef.current === batchId) {
+            setImportProgress(p)
+          }
+        }
+      })
+      commitImportResult(batchId, res)
+    } catch (err) {
+      if (mountedRef.current && batchId === importBatchRef.current) {
+        showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: formatAiImageError(err) })
+      }
     } finally {
-      setIsLoading(false)
+      if (mountedRef.current && importBatchRef.current === batchId) {
+        setIsImporting(false)
+        setImportProgress(null)
+      }
+    }
+  }
+
+  async function handleInputPaths(input: NormalizedFileInput) {
+    if (!isAiImageHostReady()) {
+      showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: t('hostRequired') })
+      return
+    }
+    const { batchId, signal } = startImportBatch()
+    setIsImporting(true)
+    setImportProgress({ visitedDirs: 0, matchedFiles: 0 })
+    try {
+      const res = await expandAiImageInputPaths(input.paths, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress: p => {
+          if (mountedRef.current && importBatchRef.current === batchId) {
+            setImportProgress(p)
+          }
+        }
+      })
+      commitImportResult(batchId, res)
+    } catch (err) {
+      if (mountedRef.current && batchId === importBatchRef.current) {
+        showToast({ style: Toast.Style.Failure, title: t('importFailedTitle'), message: formatAiImageError(err) })
+      }
+    } finally {
+      if (mountedRef.current && importBatchRef.current === batchId) {
+        setIsImporting(false)
+        setImportProgress(null)
+      }
     }
   }
 
   useEffect(() => {
-    refreshWorkspace(false)
+    mountedRef.current = true
+    const win = typeof window !== 'undefined' ? (window as unknown as HostEventsWindow) : undefined
+    const unsub = !isDeclarativeFileInputSupported()
+      ? win?.ztools?.events?.on?.('plugin_files_dropped', raw => {
+          const input = normalizeFileInput(raw)
+          if (input.paths.length > 0) void handleInputPaths(input)
+        })
+      : undefined
+    return () => {
+      mountedRef.current = false
+      importBatchRef.current += 1
+      importAbortRef.current?.abort()
+      importAbortRef.current = null
+      if (typeof unsub === 'function') unsub()
+    }
   }, [])
 
-  const activeEngine = AI_IMAGE_ENGINES.find(e => e.id === activeEngineId) || AI_IMAGE_ENGINES[0]
-  const unavailableReason = activeEngine.unavailableReason || AI_INFERENCE_UNAVAILABLE_REASON
+  function removeFileFromList(targetId: string) {
+    if (processingIdsRef.current.has(targetId)) return
+    updateFiles(prev => prev.filter(f => f.id !== targetId))
+    setCheckedIds(prev => prev.filter(id => id !== targetId))
+    setOutcomes(prev => {
+      if (!(targetId in prev)) return prev
+      const next = { ...prev }
+      delete next[targetId]
+      return next
+    })
+  }
+
+  function clearQueue() {
+    if (processingRef.current) {
+      showToast({ style: Toast.Style.Failure, title: t('clearWhileProcessing') })
+      return
+    }
+    importBatchRef.current += 1
+    importAbortRef.current?.abort()
+    importAbortRef.current = null
+    setIsImporting(false)
+    setImportProgress(null)
+    updateFiles(() => [])
+    setCheckedIds([])
+    setOutcomes({})
+    setLastRunText('')
+  }
+
+  const fileInputProps = createImportInputProps(
+    input => {
+      void handleInputPaths(input)
+    },
+    {
+      allowClipboardImage: true,
+      dropTitle: t('dropTitle'),
+      dropSubtitle: t('dropSubtitle', { supported: AI_IMAGE_SUPPORTED_TEXT })
+    }
+  )
+
+  const activeEngine = engines.find(e => e.id === activeEngineId) || engines[0]
+  const unavailableReason = activeEngine.unavailableReason || t('aiInferenceUnavailable')
   const formatLabel = outputFormat.toUpperCase()
 
   function applyResult(targets: AiImageFileItem[], res: AiImageBatchResult) {
+    const activeIds = new Set(filesRef.current.map(f => f.id))
     const idByPath = new Map(targets.map(f => [f.path, f.id]))
     const updates: Record<string, ItemOutcome> = {}
     for (const o of res.outputs) {
       const id = idByPath.get(o.inputPath)
-      if (id) updates[id] = { ok: true, detail: o.outputPath, resolution: resolutionText(o.width, o.height) }
+      if (id && activeIds.has(id)) {
+        updates[id] = { ok: true, detail: o.outputPath, resolution: resolutionText(o.width, o.height) }
+      }
     }
     for (const fail of res.failures) {
       const id = idByPath.get(fail.inputPath)
-      if (id) updates[id] = { ok: false, detail: fail.error, resolution: '' }
+      if (id && activeIds.has(id)) {
+        updates[id] = { ok: false, detail: fail.error, resolution: '' }
+      }
     }
-    setOutcomes(prev => ({ ...prev, ...updates }))
+    if (Object.keys(updates).length > 0) {
+      setOutcomes(prev => ({ ...prev, ...updates }))
+    }
   }
 
   async function runBatch(targets: AiImageFileItem[], askConfirm: boolean) {
     if (processingRef.current) {
-      showToast({ style: Toast.Style.Failure, title: '正在处理，请等当前任务完成' })
+      showToast({ style: Toast.Style.Failure, title: t('processingWait') })
       return
     }
     if (targets.length === 0) {
-      showToast({ style: Toast.Style.Failure, title: '请先勾选要处理的图片' })
+      showToast({ style: Toast.Style.Failure, title: t('selectImagesFirst') })
       return
     }
     if (!activeEngine.available) {
-      showToast({ style: Toast.Style.Failure, title: `${activeEngine.title}暂不可用`, message: unavailableReason })
+      showToast({ style: Toast.Style.Failure, title: t('engineUnavailableTitle', { title: activeEngine.title }), message: unavailableReason })
       return
     }
     if (askConfirm && targets.length > 1) {
       const confirmed = await confirmAlert({
-        title: `放大 ${targets.length} 张图片？`,
-        message: `${activeEngine.title} ${scaleFactor}，输出 ${formatLabel} 到原图所在目录，文件名加倍率和时间，不覆盖已有文件。`,
-        primaryAction: { title: '开始处理', style: 'default' }
+        title: t('confirmBatchTitle', { count: targets.length }),
+        message: t('confirmBatchMessage', { title: activeEngine.title, scale: scaleFactor, format: formatLabel }),
+        primaryAction: { title: t('confirmBatchAction'), style: 'default' }
       })
       if (!confirmed) return
     }
 
+    const targetIds = targets.map(t => t.id)
     processingRef.current = true
+    processingIdsRef.current = new Set(targetIds)
     setIsProcessing(true)
+    setProcessingIds(targetIds)
+
     let res: AiImageBatchResult
     try {
-      res = await executeAiImageBatch(targets, { engineId: activeEngine.id, scaleFactor, outputFormat })
+      res = await executeAiImageBatch(
+        targets,
+        { engineId: activeEngine.id, scaleFactor, outputFormat },
+        undefined,
+        new Date(),
+        {
+          shouldProcess: item => mountedRef.current && filesRef.current.some(cur => cur.id === item.id)
+        }
+      )
     } catch (err) {
-      showToast({ style: Toast.Style.Failure, title: '处理失败', message: errorMessage(err) })
+      if (mountedRef.current) {
+        showToast({ style: Toast.Style.Failure, title: t('processFailedTitle'), message: formatAiImageError(err) })
+      }
       return
     } finally {
       processingRef.current = false
-      setIsProcessing(false)
+      processingIdsRef.current = new Set()
+      if (mountedRef.current) {
+        setIsProcessing(false)
+        setProcessingIds([])
+      }
     }
+
+    if (!mountedRef.current) return
 
     applyResult(targets, res)
     if (res.processedCount === 0) {
-      setLastRunText(res.failedCount > 0 ? `${res.failedCount} 张全部失败` : '未能开始')
+      setLastRunText(res.failedCount > 0 ? t('lastRunAllFailed', { count: res.failedCount }) : t('lastRunNotStarted'))
       showToast({
         style: Toast.Style.Failure,
-        title: res.failedCount > 0 ? `${res.failedCount} 张图片处理失败` : '无法开始处理',
-        message: res.error || '客户端图片处理失败'
+        title: res.failedCount > 0 ? t('batchFailedTitle', { count: res.failedCount }) : t('cannotStartTitle'),
+        message: resolveErrorMessage(res, t('errHostProcessFailed'))
       })
       return
     }
     if (res.failedCount > 0) {
-      setLastRunText(`成功 ${res.processedCount} 张，失败 ${res.failedCount} 张`)
+      setLastRunText(t('lastRunPartial', { ok: res.processedCount, fail: res.failedCount }))
       showToast({
         style: Toast.Style.Failure,
-        title: `完成 ${res.processedCount} 张，失败 ${res.failedCount} 张`,
+        title: t('batchPartialTitle', { ok: res.processedCount, fail: res.failedCount }),
         message: res.error
       })
       return
     }
-    setLastRunText(`成功 ${res.processedCount} 张，共 ${formatBytes(res.totalOutputBytes)}`)
+    setLastRunText(t('lastRunSuccess', { count: res.processedCount, size: formatBytes(res.totalOutputBytes) }))
     const first = res.outputs[0]
     const firstRes = resolutionText(first.width, first.height)
     showToast({
       style: Toast.Style.Success,
-      title: `已放大 ${res.processedCount} 张图片`,
+      title: t('batchSuccessTitle', { count: res.processedCount }),
       message:
         res.processedCount === 1
-          ? `${baseName(first.outputPath)}${firstRes ? `（${firstRes}）` : ''}`
-          : `输出到原图所在目录，共 ${formatBytes(res.totalOutputBytes)}`
+          ? t('batchSuccessSingleMsg', { name: baseName(first.outputPath), res: firstRes ? ` (${firstRes})` : '' })
+          : t('batchSuccessMultiMsg', { size: formatBytes(res.totalOutputBytes) })
     })
   }
 
   async function revealInFolder(targetPath: string) {
     const ok = await openAiImageLocation(targetPath)
     if (!ok) {
-      showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中显示', message: targetPath })
+      showToast({ style: Toast.Style.Failure, title: t('revealFailedTitle'), message: targetPath })
     }
   }
 
   const selectedFiles = files.filter(f => checkedIds.includes(f.id))
-  const totalBytes = selectedFiles.reduce((s, f) => s + f.sizeBytes, 0)
+  const totalSizeText = formatTotalSize(selectedFiles)
   const q = searchText.trim().toLowerCase()
   const filteredFiles = files.filter(f => !q || f.name.toLowerCase().includes(q) || f.path.toLowerCase().includes(q))
+  const allFilteredChecked = filteredFiles.length > 0 && filteredFiles.every(f => checkedIds.includes(f.id))
+  const someFilteredChecked = filteredFiles.some(f => checkedIds.includes(f.id))
   const factorText = scaleFactor === '4x' ? '4' : '2'
 
-  let summaryText = `已选 ${selectedFiles.length}/${files.length} 张图片（${formatBytes(totalBytes)}）· ${activeEngine.tag} ${scaleFactor} · 输出 ${formatLabel}`
-  if (isProcessing) {
-    summaryText = '正在处理图片…'
-  } else if (isLoading && files.length === 0) {
-    summaryText = '正在扫描图片、桌面、下载目录…'
-  } else if (loadError) {
-    summaryText = `读取图片队列失败：${loadError}`
-  } else if (!activeEngine.available) {
-    summaryText = `${activeEngine.title}暂不可用：${unavailableReason}`
+  function toggleSelectAll() {
+    if (filteredFiles.length === 0) return
+    const filteredIds = filteredFiles.map(f => f.id)
+    if (allFilteredChecked) {
+      const idSet = new Set(filteredIds)
+      setCheckedIds(prev => prev.filter(id => !idSet.has(id)))
+    } else {
+      setCheckedIds(prev => Array.from(new Set([...prev, ...filteredIds])))
+    }
   }
 
-  const emptyText = loadError
-    ? `读取失败：${loadError}`
-    : isLoading
-      ? '正在扫描…'
-      : q
-        ? '没有匹配的图片'
-        : '图片、桌面、下载目录里没有找到 PNG、JPG、BMP 图片'
+  let summaryText = t('summaryNormal', {
+    selected: selectedFiles.length,
+    total: files.length,
+    size: totalSizeText,
+    tag: activeEngine.tag,
+    scale: scaleFactor,
+    format: formatLabel
+  })
+  if (isImporting) {
+    summaryText = importProgress
+      ? t('summaryImportingProgress', { dirs: importProgress.visitedDirs, files: importProgress.matchedFiles })
+      : t('summaryImporting')
+  } else if (isProcessing) {
+    summaryText = t('summaryProcessing')
+  } else if (!activeEngine.available) {
+    summaryText =
+      files.length === 0
+        ? t('summaryUnavailableEmpty', { title: activeEngine.title, reason: unavailableReason })
+        : t('summaryUnavailable', { title: activeEngine.title, reason: unavailableReason })
+  } else if (files.length === 0) {
+    summaryText = t('summaryEmpty')
+  }
 
-  const maxImgBytes = Math.max(1, filteredFiles[0]?.sizeBytes || 1)
+  const emptyText = !isAiImageHostReady()
+    ? t('hostRequired')
+    : isImporting
+      ? t('summaryImporting')
+      : q
+        ? t('emptyNoMatch')
+        : t('emptyDefault')
+
+  const maxKnownBytes = filteredFiles.reduce((max, f) => Math.max(max, f.sizeBytes ?? 0), 0)
   const queueItems = filteredFiles.map(f => {
     const outcome = outcomes[f.id]
-    const volRatio = Math.max(10, Math.min(100, Math.round((f.sizeBytes / maxImgBytes) * 100)))
+    const isItemProcessing = processingIds.includes(f.id)
     const subtitle = outcome
       ? outcome.ok
         ? `${f.parentDir} → ${baseName(outcome.detail)}`
-        : `${f.parentDir} · 失败：${outcome.detail}`
+        : t('itemFailedSub', { dir: f.parentDir, detail: outcome.detail })
       : f.parentDir
-    const accessories: ListItemAccessory[] = [{ progress: { value: volRatio } }]
+    const accessories: ListItemAccessory[] = []
+    if (f.sizeBytes !== null && maxKnownBytes > 0) {
+      const volRatio = Math.max(10, Math.min(100, Math.round((f.sizeBytes / maxKnownBytes) * 100)))
+      accessories.push({ progress: { value: volRatio } })
+    }
     if (outcome) {
       accessories.push(
         outcome.ok
-          ? { tag: { value: outcome.resolution ? `已输出 ${outcome.resolution}` : '已输出' } }
-          : { tag: { value: '处理失败' }, tooltip: outcome.detail }
+          ? { tag: { value: outcome.resolution ? t('tagOutputWithRes', { res: outcome.resolution }) : t('tagOutput') } }
+          : { tag: { value: t('tagFailed') }, tooltip: outcome.detail }
       )
     }
-    accessories.push({ text: formatBytes(f.sizeBytes) })
+    accessories.push({ text: formatSizeText(f.sizeBytes) })
+
+    const listSectionChildren = [
+      ...(isItemProcessing
+        ? []
+        : [
+            Action({
+              title: t('actionRemove'),
+              icon: Icon.Minus,
+              shortcut: { modifiers: ['ctrl'], key: 'backspace' },
+              onAction: () => removeFileFromList(f.id)
+            })
+          ]),
+      Action({
+        title: t('actionPickFilesEllipsis'),
+        icon: Icon.Document,
+        shortcut: { modifiers: ['ctrl'], key: 'o' },
+        onAction: () => {
+          void handlePickFiles()
+        }
+      }),
+      Action({
+        title: t('actionPickFolderEllipsis'),
+        icon: Icon.Folder,
+        shortcut: { modifiers: ['ctrl', 'shift'], key: 'o' },
+        onAction: () => {
+          void handlePickFolder()
+        }
+      }),
+      Action({
+        title: allFilteredChecked ? t('actionDeselectAll') : t('actionSelectAll'),
+        icon: Icon.Checkmark,
+        shortcut: { modifiers: ['ctrl'], key: 'a' },
+        onAction: toggleSelectAll
+      }),
+      Action({
+        title: t('actionClearList'),
+        icon: Icon.Trash,
+        style: Action.Style.Destructive,
+        shortcut: { modifiers: ['ctrl', 'shift'], key: 'backspace' },
+        onAction: clearQueue
+      })
+    ]
 
     return List.Item({
       id: f.id,
@@ -237,19 +550,23 @@ export function AiImageCommand() {
         title: f.name,
         children: [
           Action({
-            title: `开始处理已勾选的 ${selectedFiles.length} 张`,
+            title: t('actionProcessSelected', { count: selectedFiles.length }),
             icon: Icon.Bolt,
             onAction: () => runBatch(selectedFiles, true)
           }),
           Action({
-            title: '在资源管理器中显示',
+            title: t('actionRevealInFolder'),
             icon: Icon.Folder,
             onAction: () => revealInFolder(outcome?.ok ? outcome.detail : f.path)
           }),
           Action({
-            title: '仅处理这张图片',
+            title: t('actionProcessSingle'),
             icon: Icon.Play,
             onAction: () => runBatch([f], false)
+          }),
+          ActionPanel.Section({
+            title: t('sectionList'),
+            children: listSectionChildren
           })
         ]
       })
@@ -257,17 +574,54 @@ export function AiImageCommand() {
   })
 
   return List({
-    searchBarPlaceholder: '搜索图片文件名或目录',
+    ...fileInputProps,
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    isLoading: isLoading || isProcessing,
+    isLoading: isImporting || isProcessing,
+    actions: ActionPanel({
+      children: [
+        Action({
+          title: t('actionPickFilesEllipsis'),
+          icon: Icon.Document,
+          shortcut: { modifiers: ['ctrl'], key: 'o' },
+          onAction: () => {
+            void handlePickFiles()
+          }
+        }),
+        Action({
+          title: t('actionPickFolderEllipsis'),
+          icon: Icon.Folder,
+          shortcut: { modifiers: ['ctrl', 'shift'], key: 'o' },
+          onAction: () => {
+            void handlePickFolder()
+          }
+        }),
+        ...(files.length > 0
+          ? [
+              ActionPanel.Section({
+                title: t('sectionList'),
+                children: [
+                  Action({
+                    title: t('actionClearList'),
+                    icon: Icon.Trash,
+                    style: Action.Style.Destructive,
+                    shortcut: { modifiers: ['ctrl', 'shift'], key: 'backspace' },
+                    onAction: clearQueue
+                  })
+                ]
+              })
+            ]
+          : [])
+      ]
+    }),
     searchBarAccessory: List.Dropdown({
-      tooltip: '处理方式',
+      tooltip: t('dropdownTooltip'),
       value: activeEngineId,
       onChange: val => setActiveEngineId(val),
-      children: AI_IMAGE_ENGINES.map(e =>
+      children: engines.map(e =>
         List.Dropdown.Item({
-          title: e.available ? e.title : `${e.title}（暂不可用）`,
+          title: e.available ? e.title : t('dropdownUnavailable', { title: e.title }),
           value: e.id
         })
       )
@@ -276,32 +630,45 @@ export function AiImageCommand() {
       summaryText,
       actions: [
         {
-          id: 'rescan-ai-image',
-          label: '重新扫描',
-          title: '重新扫描',
+          id: 'pick-files',
+          label: t('btnPickFiles'),
+          title: t('btnPickFiles'),
+          icon: Icon.Document,
           style: 'secondary',
-          onAction: () => refreshWorkspace(true)
+          onAction: () => {
+            void handlePickFiles()
+          }
+        },
+        {
+          id: 'pick-folder',
+          label: t('btnPickFolder'),
+          title: t('btnPickFolder'),
+          icon: Icon.Folder,
+          style: 'secondary',
+          onAction: () => {
+            void handlePickFolder()
+          }
         }
       ]
     }),
     workbenchPanel: {
-      title: '处理参数',
-      subtitle: activeEngine.available ? activeEngine.subtitle : `${activeEngine.title}暂不可用`,
+      title: t('wbTitle'),
+      subtitle: activeEngine.available ? activeEngine.subtitle : t('engineUnavailableTitle', { title: activeEngine.title }),
       fields: [
         {
           id: 'wb-scale-factor',
-          label: '放大倍率',
+          label: t('wbScaleLabel'),
           type: 'select',
           value: scaleFactor,
           onChange: val => setScaleFactor(val === '4x' ? '4x' : '2x'),
           options: [
-            { label: '2 倍', value: '2x' },
-            { label: '4 倍', value: '4x' }
+            { label: t('wbScale2x'), value: '2x' },
+            { label: t('wbScale4x'), value: '4x' }
           ]
         },
         {
           id: 'wb-output-format',
-          label: '输出格式',
+          label: t('wbFormatLabel'),
           type: 'select',
           value: outputFormat,
           onChange: val => setOutputFormat(val === 'jpg' ? 'jpg' : 'png'),
@@ -312,42 +679,43 @@ export function AiImageCommand() {
         },
         {
           id: 'wb-outdir',
-          label: '输出位置',
+          label: t('wbOutdirLabel'),
           type: 'info',
-          value: '原图所在目录，文件名加倍率和时间，不覆盖已有文件'
+          value: t('wbOutdirValue')
         }
       ],
       previewCard: {
-        title: '处理预估',
-        badge: activeEngine.available ? scaleFactor : '暂不可用',
+        title: t('previewTitle'),
+        badge: activeEngine.available ? scaleFactor : t('previewBadgeUnavailable'),
         subtitle: activeEngine.available ? activeEngine.title : unavailableReason,
         metrics: [
-          { label: '已选图片', value: `${selectedFiles.length} / ${files.length} 张` },
-          { label: '原图总大小', value: formatBytes(totalBytes) },
-          { label: '输出分辨率', value: `原尺寸 ×${factorText}` },
-          { label: '上次处理', value: lastRunText || '尚未处理' }
+          { label: t('metricSelected'), value: t('metricSelectedValue', { selected: selectedFiles.length, total: files.length }) },
+          { label: t('metricTotalSize'), value: totalSizeText },
+          { label: t('metricOutRes'), value: t('metricOutResValue', { factor: factorText }) },
+          { label: t('metricLastRun'), value: lastRunText || t('metricNotRun') }
         ]
       }
     },
     subList: {
-      title: '待处理图片（按大小降序，勾选后按 ↵ 开始处理）',
-      subtitle: `${filteredFiles.length} 张图片`,
+      title: t('subListTitle'),
+      subtitle: t('subListSubtitle', { count: filteredFiles.length }),
       checkable: filteredFiles.length > 0,
-      checked:
-        filteredFiles.length > 0 && filteredFiles.every(f => checkedIds.includes(f.id))
-          ? true
-          : filteredFiles.some(f => checkedIds.includes(f.id))
-            ? 'indeterminate'
-            : false,
+      checked: allFilteredChecked ? true : someFilteredChecked ? 'indeterminate' : false,
       onCheckChange: checked => {
-        setCheckedIds(checked ? filteredFiles.map(f => f.id) : [])
+        const filteredIds = filteredFiles.map(f => f.id)
+        if (checked) {
+          setCheckedIds(prev => Array.from(new Set([...prev, ...filteredIds])))
+        } else {
+          const idSet = new Set(filteredIds)
+          setCheckedIds(prev => prev.filter(id => !idSet.has(id)))
+        }
       },
       emptyText,
       items: queueItems
     },
     children: [
       List.Section({
-        title: `待处理图片（${filteredFiles.length}）`,
+        title: t('sectionPendingTitle', { count: filteredFiles.length }),
         children: queueItems
       })
     ]

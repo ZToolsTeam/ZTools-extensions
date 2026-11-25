@@ -1,8 +1,8 @@
 {
   "id": "batch-image",
   "name": "图片压缩",
-  "description": "批量压缩与转换 PNG/JPG/WebP/BMP 图片：三档画质重新编码、限制最长边、转 JPG/PNG、扫描件转灰度，报销附件场景会标出仍超过 300KB 的图片；结果另存为原图同目录的 *_opt 文件，不覆盖原图",
-  "version": "1.1.7",
+  "description": "批量压缩与转换 PNG/JPG/WebP/BMP/GIF/TIFF/AVIF 图片：支持选择文件、选择文件夹或拖入导入，三档画质重新编码、限制最长边、转 JPG/PNG、扫描件转灰度，报销附件场景会标出仍超过 300KB 的图片；结果另存为原图同目录的 *_opt 文件，不覆盖原图",
+  "version": "1.1.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -10,6 +10,10 @@
   "category": [
     "图像媒体",
     "办公效率"
+  ],
+  "categoryId": [
+    "media",
+    "productivity"
   ],
   "keywords": [
     "image",
@@ -69,7 +73,8 @@
   "permissions": [
     "fs",
     "clipboard",
-    "shell"
+    "shell",
+    "dialog"
   ],
   "requireAdmin": false,
   "nativeComponents": [],
@@ -81,5 +86,73 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Batch Image Compressor",
+      "description": "Batch compress and convert PNG, JPG, WebP, BMP, GIF, TIFF, and AVIF images with 3 quality tiers, max dimension limits, JPG/PNG conversion, and grayscale scanning. Flags images over 300 KB and saves as *_opt copies without overwriting originals.",
+      "keywords": [
+        "image",
+        "compress",
+        "convert",
+        "resize",
+        "png",
+        "jpg",
+        "webp",
+        "grayscale"
+      ],
+      "features": {
+        "preset-lossless": {
+          "explain": "Batch compress images to reduce file size",
+          "cmds": [
+            "compress image",
+            "image compressor",
+            "shrink image",
+            "optimize image"
+          ]
+        },
+        "preset-gov-limit": {
+          "explain": "Compress attachments for forms and expenses (flags files over 300 KB)",
+          "cmds": [
+            "300kb image",
+            "id photo compress",
+            "expense attachment",
+            "limit 300kb"
+          ]
+        },
+        "preset-to-jpg": {
+          "explain": "Batch convert PNG, WebP, and BMP images to JPG",
+          "cmds": [
+            "convert to jpg",
+            "webp to jpg",
+            "png to jpg",
+            "image format"
+          ]
+        },
+        "preset-doc-bw": {
+          "explain": "Convert scanned documents to grayscale",
+          "cmds": [
+            "grayscale",
+            "scan to bw",
+            "black and white",
+            "document grayscale"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

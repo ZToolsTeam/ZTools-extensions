@@ -245,3 +245,18 @@ test('筛选项不带英文括注；macOS 不列仅 Windows 的 IDM；目录管�
   }finally{view.unmount()}
  }
 })
+
+test('Ctrl+V 粘贴文件夹切换当前扫描与整理的下载目录',async()=>{
+ const host=setup()
+ const pastedDir='/tmp/pasted-downloads'
+ host.ipc.system_search_files=({query})=>query===`dir:${pastedDir}`
+  ?{success:true,files:[row('pasted-installer.dmg',pastedDir)],total_matches:1}
+  :{success:true,files:[row('a.dmg'),row('b.txt')],total_matches:2}
+ const view=await mount(Command,host)
+ try{
+  assert.ok(view.item(`dl-${root}/a.dmg`))
+  await view.pasteFiles([pastedDir])
+  await tick(20)
+  assert.ok(view.item(`dl-${pastedDir}/pasted-installer.dmg`))
+ }finally{view.unmount()}
+})

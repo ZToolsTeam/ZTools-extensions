@@ -2,13 +2,14 @@
   "id": "software-manager",
   "name": "软件卸载",
   "description": "列出系统登记的已安装软件与占用体积，确认后启动软件自带的卸载程序，并只读列出 AppData 目录占用",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "keywords": [
     "软件卸载",
     "应用卸载",
@@ -53,6 +54,62 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Software Uninstaller",
+      "description": "List installed applications with registered disk sizes, launch native uninstallers after confirmation, and inspect read-only AppData storage usage.",
+      "keywords": [
+        "uninstall",
+        "software",
+        "apps",
+        "programs",
+        "appdata",
+        "cleanup"
+      ],
+      "features": {
+        "uninstall-all": {
+          "explain": "List installed software and launch native uninstallers after confirmation",
+          "cmds": [
+            "uninstall",
+            "software manager",
+            "remove apps",
+            "installed apps"
+          ]
+        },
+        "uninstall-large": {
+          "explain": "Sort installed applications by largest registered disk size",
+          "cmds": [
+            "large apps",
+            "big software",
+            "app disk usage"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/01-software-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/02-appdata-residuals.png"
+    },
+    {
+      "path": "screenshots/03-action-panel.png"
     }
   ]
 }

@@ -2,13 +2,14 @@
   "id": "process-monitor",
   "name": "进程监控",
   "description": "查看本机进程的 CPU 与内存占用、查询本地端口被哪个进程占用，可定位程序文件，确认后结束进程",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "keywords": [
     "进程监控",
     "任务管理器",
@@ -71,6 +72,60 @@
       "platform": "macos",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Process & Port Monitor",
+      "description": "Inspect CPU and memory usage by process, look up which process owns a local port, reveal executables in folder, and terminate processes after confirmation.",
+      "keywords": [
+        "process",
+        "port",
+        "kill",
+        "cpu",
+        "memory",
+        "netstat",
+        "task manager"
+      ],
+      "features": {
+        "kill-high-cpu": {
+          "explain": "Inspect and terminate high CPU or memory processes",
+          "cmds": [
+            "process monitor",
+            "kill process",
+            "task manager",
+            "high cpu"
+          ]
+        },
+        "port-lookup": {
+          "explain": "Find which process is using a local port and release it",
+          "cmds": [
+            "port",
+            "port lookup",
+            "netstat",
+            "free port",
+            "8080",
+            "3000"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/03-interactive.png"
     }
   ]
 }

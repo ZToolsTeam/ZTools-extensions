@@ -2,6 +2,8 @@
 // 经 preload IPC 模拟宿主（含故障注入），覆盖「读取失败不伪造数据」「macOS 系统版本 / 内核 / Build」「名称与能力一致」。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import { readFileSync } from 'node:fs'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import HardwareInfoCommand from '../dist/index.js'

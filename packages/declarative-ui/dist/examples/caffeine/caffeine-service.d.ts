@@ -1,0 +1,10 @@
+import type { CaffeineActionResult, CaffeineMode, CaffeinePreset, CaffeineStatus } from './types.js';
+export declare const CAFFEINE_PLUGIN_NAME = "CaffeinePlugin";
+export declare const CAFFEINE_PRESETS: ReadonlyArray<CaffeinePreset>;
+export declare function formatRemainingDuration(active: boolean, durationMinutes: number, remainingMs: number | null): string;
+export declare function normalizeCaffeineStatus(raw: Record<string, unknown>): CaffeineStatus;
+export declare function getDefaultInactiveStatus(mode?: CaffeineMode): CaffeineStatus;
+export declare function getCaffeineStatus(hostOverride?: unknown): Promise<CaffeineActionResult>;
+export declare function startCaffeineSession(durationMinutes: number, mode?: CaffeineMode, hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<CaffeineActionResult>;
+export declare function stopCaffeineSession(hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<CaffeineActionResult>;
+export declare function toggleCaffeineSession(mode?: CaffeineMode, hostOverride?: unknown, extraParams?: Record<string, unknown>): Promise<CaffeineActionResult>;

@@ -1,9 +1,13 @@
 {
   "id": "ssh-proxy-helper",
   "name": "主机与代理",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "管理 SSH 主机连接、端口转发及 Git、NPM 和新终端的本地代理配置",
   "author": "ZTools Team",
+  "category": [
+    "网络工具"
+  ],
+  "categoryId": "network",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -59,5 +63,62 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "SSH & Dev Proxy Helper",
+      "description": "Manage SSH host connections, port forwarding tunnels, and local proxy settings for Git, NPM, and new terminal sessions.",
+      "keywords": [
+        "ssh",
+        "proxy",
+        "tunnel",
+        "port forward",
+        "git proxy",
+        "npm proxy"
+      ],
+      "features": {
+        "ssh-all": {
+          "explain": "View all SSH hosts, port forwarding tunnels, and dev proxy status",
+          "cmds": [
+            "ssh",
+            "proxy",
+            "ssh hosts",
+            "dev proxy",
+            "git proxy"
+          ]
+        },
+        "ssh-proxy-toggle": {
+          "explain": "Manage Git/NPM user proxy configs or launch a proxied terminal",
+          "cmds": [
+            "toggle proxy",
+            "git proxy",
+            "npm proxy",
+            "terminal proxy"
+          ]
+        },
+        "ssh-tunnel": {
+          "explain": "Create local-to-remote SSH port forwarding tunnels quickly",
+          "cmds": [
+            "ssh tunnel",
+            "port forward",
+            "create tunnel"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

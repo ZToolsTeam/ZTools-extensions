@@ -1,4 +1,5 @@
 import { getDeclarativeBridge } from "./bridge.js";
+import { tApiError } from "./error-messages.js";
 import { ZToolsHostError } from "./host-error.js";
 import { updateStoredItem } from "./storage-update.js";
 const memoryStorage = new Map();
@@ -6,7 +7,7 @@ export const LocalStorage = {
     async compareAndSet(key, expected, value) {
         const bridge = getDeclarativeBridge();
         if (!bridge?.storageCompareAndSet) {
-            throw new ZToolsHostError("HOST_FEATURE_UNAVAILABLE", "当前宿主不支持原子存储，请升级 ZTools");
+            throw new ZToolsHostError("HOST_FEATURE_UNAVAILABLE", tApiError("storageAtomicUnsupported"));
         }
         return bridge.storageCompareAndSet(key, expected, value);
     },

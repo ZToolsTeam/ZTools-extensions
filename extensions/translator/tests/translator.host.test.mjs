@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as translator from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const translator = await import('../dist/index.js')
 
 async function withRealElectronWindow(handlers, fn) {
   const prevWindow = globalThis.window
@@ -88,10 +91,22 @@ test('[故障注入] 客户端翻译失败时如实返回失败，不用插件�
       }
     },
     async () => {
+      // zh-CN 对称规则：无结构化错误码的纯英文原文安全回退为中文提示，不裸露英文、不冒充译文
       const res = await translator.translateTextWithHost('期待您的回复')
       assert.equal(res.ok, false)
-      assert.match(res.error, /503/)
+      assert.equal(res.error, '翻译接口调用失败')
       assert.equal('result' in res, false)
+
+      // en-US 模式下透传英文原文，保留具体失败原因
+      setRuntimeLocale('en-US')
+      try {
+        const enRes = await translator.translateTextWithHost('期待您的回复')
+        assert.equal(enRes.ok, false)
+        assert.match(enRes.error, /503/)
+        assert.equal('result' in enRes, false)
+      } finally {
+        setRuntimeLocale('zh-CN')
+      }
     }
   )
 
@@ -124,9 +139,10 @@ test('[边界] 空输入拒绝；不在客户端里运行时直接提示需要�
   assert.deepEqual(emptyRes, { ok: false, error: '翻译内容不能为空' })
 
   assert.equal(globalThis.window, undefined)
+  const notInClient = translator.getNotInClientMessage()
   const noHost = await translator.translateTextWithHost('你好')
-  assert.deepEqual(noHost, { ok: false, error: translator.NOT_IN_CLIENT_MESSAGE })
-  assert.equal(translator.describeTranslateError(noHost.error), translator.NOT_IN_CLIENT_MESSAGE)
+  assert.deepEqual(noHost, { ok: false, error: notInClient })
+  assert.equal(translator.describeTranslateError(noHost.error), notInClient)
 
   const hist = await translator.fetchTranslationHistoryFromHost()
   assert.equal(hist.ok, false)
@@ -153,13 +169,34 @@ test('翻译记录：读取成功、读取失败、格式不对三种情况分�
   await withRealElectronWindow(
     {
       translator_get_history: () => {
-        throw new Error('database is locked')
+        throw Object.assign(new Error('database is locked'), { code: 'DATABASE_LOCKED' })
       }
     },
     async () => {
       const res = await translator.fetchTranslationHistoryFromHost()
       assert.equal(res.ok, false)
-      assert.match(res.error, /database is locked/)
+      assert.match(res.error, /本地数据库正被占用/)
+    }
+  )
+  await withRealElectronWindow(
+    {
+      translator_get_history: () => {
+        throw new Error('database is locked')
+      }
+    },
+    async () => {
+      const zhRes = await translator.fetchTranslationHistoryFromHost()
+      assert.equal(zhRes.ok, false)
+      assert.equal(zhRes.error, '读取翻译记录失败')
+
+      setRuntimeLocale('en-US')
+      try {
+        const enRes = await translator.fetchTranslationHistoryFromHost()
+        assert.equal(enRes.ok, false)
+        assert.match(enRes.error, /database is locked/)
+      } finally {
+        setRuntimeLocale('zh-CN')
+      }
     }
   )
   await withRealElectronWindow({ translator_get_history: () => ({ foo: 1 }) }, async () => {
@@ -191,4 +228,23 @@ test('变量命名：英文原文直接转换，不经过翻译；中文或无�
     translator.englishTextOf({ originalText: 'こんにちは', translatedText: '你好', sourceLanguage: 'ja', targetLanguage: 'zh-CN', engineLabel: '' }),
     ''
   )
+})
+
+test('i18n 热切换：切换 zh-CN 与 en-US 时未在客户端提示文案即时更新不冻结', async () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhMsg = translator.getNotInClientMessage()
+    assert.match(zhMsg, /[\u4e00-\u9fa5]/)
+    const zhNoHost = await translator.translateTextWithHost('hello')
+    assert.deepEqual(zhNoHost, { ok: false, error: zhMsg })
+
+    setRuntimeLocale('en-US')
+    const enMsg = translator.getNotInClientMessage()
+    assert.notEqual(enMsg, zhMsg)
+    assert.doesNotMatch(enMsg, /[\u4e00-\u9fa5]/)
+    const enNoHost = await translator.translateTextWithHost('hello')
+    assert.deepEqual(enNoHost, { ok: false, error: enMsg })
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

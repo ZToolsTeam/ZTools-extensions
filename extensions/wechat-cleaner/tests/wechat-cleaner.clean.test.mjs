@@ -217,7 +217,7 @@ test('executeWechatCleanup：只处理传入路径，空列表、受保护路径
 })
 
 test('pickDefaultCheckedPaths：只勾选显示出来的、默认勾选分类里的文件', () => {
-  const rules = logic.OFFICIAL_WECHAT_OWNER_RULES
+  const rules = logic.getOfficialWechatOwnerRules()
   assert.equal(rules.find(r => r.ownerId === 109).defaultChecked, false, '聊天视频与语音默认不勾选')
   assert.equal(rules.find(r => r.ownerId === 108).defaultChecked, false)
   assert.equal(rules.find(r => r.ownerId === 110).defaultChecked, false)
@@ -256,9 +256,23 @@ test('classifyWechatFilePath：无法识别用途的文件标记为未识别，�
   const cache = logic.classifyWechatFilePath(`C:\\Users\\t\\AppData\\Roaming\\Tencent\\xwechat\\radium\\web\\a.data`, [])
   assert.equal(cache.ownerId, 107)
   assert.equal(cache.unrecognized, undefined)
-  const categories = logic.OFFICIAL_WECHAT_OWNER_RULES.map(r => ({ ownerId: r.ownerId, checked: r.defaultChecked }))
+  const categories = logic.getOfficialWechatOwnerRules().map(r => ({ ownerId: r.ownerId, checked: r.defaultChecked }))
   assert.deepEqual(
     logic.pickDefaultCheckedPaths([{ path: 'u', ownerId: 107, isProtected: false, unrecognized: true }], categories),
     []
   )
+})
+
+test('安全红线：文件行 Enter 主动作定位文件，不误触全局批量清理', async () => {
+  const host = createHost()
+  installWechatHost(host, buildFixture())
+  const view = await mount(WechatCleanerCommand)
+  await waitFor(view, t => t.props.isLoading === false && t.props.subList.items.length > 0)
+  const item = subItems(view)[0]
+  const actions = view.actions(item)
+  assert.equal(actions[0].props.title, '在资源管理器定位', '文件行第 1 项必须为安全定位')
+  const batchAct = cleanAction(view, item)
+  assert.ok(batchAct && batchAct.props.shortcut, '批量清理退至次动作并带快捷键')
+  const topClean = view.tree().props.filterBar.actions.find(a => a.id === 'wx-act-clean')
+  assert.ok(topClean && topClean.disabled === false)
 })

@@ -1,16 +1,16 @@
 {
   "id": "password-vault",
   "name": "密码保险箱",
-  "version": "1.1.6",
+  "version": "1.1.8",
   "minAppVersion": "1.1.8.5",
   "description": "在本机用主密码加密保存账号密码、API Key、服务器密码与软件激活码（AES-256-GCM），复制密码 30 秒后自动清除剪贴板",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "安全隐私",
-    "效率工具"
+    "安全隐私"
   ],
+  "categoryId": "security",
   "permissions": [
     "crypto",
     "clipboard",
@@ -53,6 +53,55 @@
       "platform": "macos",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Password Vault",
+      "description": "Encrypt and store logins, API keys, server passwords, and license keys locally with a master password (AES-256-GCM), auto-clearing copied secrets after 30 seconds.",
+      "keywords": [
+        "password",
+        "vault",
+        "aes",
+        "secret",
+        "api key",
+        "generator",
+        "security"
+      ],
+      "features": {
+        "vault-list": {
+          "explain": "Unlock and search locally encrypted logins, API keys, server secrets, and private notes",
+          "cmds": [
+            "password vault",
+            "vault",
+            "passwords",
+            "1password",
+            "keepass"
+          ]
+        },
+        "vault-generator": {
+          "explain": "Generate 16-32 character random passwords without unlocking (auto-clears after 30s)",
+          "cmds": [
+            "password generator",
+            "random password",
+            "generate password"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

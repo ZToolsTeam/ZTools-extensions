@@ -1,16 +1,16 @@
 {
   "id": "invoice-assistant",
   "name": "发票助手",
-  "description": "扫描下载、桌面、文档目录中的 PDF/XML 电子发票，识别发票号码、开票日期、销售方、购买方与金额（识别不到的字段需手动补全后才能导出），支持发票号查重、个人抬头提示、按模板复制规范命名的发票副本、导出报销明细 CSV 与复制表格文本",
-  "version": "1.1.7",
+  "description": "通过选择文件、选择文件夹或拖入导入 PDF/OFD/XML/图片电子发票，识别发票号码、开票日期、销售方、购买方与金额（识别不到的字段需手动补全后才能导出），支持发票号查重、个人抬头提示、按模板复制规范命名的发票副本、导出报销明细 CSV 与复制表格文本",
+  "version": "1.1.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "alias": "fp",
   "category": [
-    "办公效率",
-    "文档处理"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "keywords": [
     "invoice",
     "fapiao",
@@ -62,6 +62,7 @@
   ],
   "permissions": [
     "fs",
+    "dialog",
     "clipboard",
     "shell"
   ],
@@ -75,5 +76,61 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Invoice Assistant",
+      "description": "Import PDF, OFD, XML, or image e-invoices to extract invoice numbers, dates, sellers, buyers, and amounts, detect duplicates, copy renamed archives, and export expense CSVs.",
+      "keywords": [
+        "invoice",
+        "fapiao",
+        "reimbursement",
+        "expense",
+        "pdf",
+        "csv",
+        "receipt"
+      ],
+      "features": {
+        "invoice-reimburse": {
+          "explain": "Summarize e-invoices and export reimbursement CSV spreadsheets",
+          "cmds": [
+            "invoice",
+            "reimbursement",
+            "expense report",
+            "invoice summary"
+          ]
+        },
+        "invoice-rename": {
+          "explain": "Copy e-invoices with standardized filenames using templates",
+          "cmds": [
+            "rename invoice",
+            "invoice archive",
+            "invoice naming"
+          ]
+        },
+        "invoice-travel": {
+          "explain": "Filter travel, transport, and hotel invoices",
+          "cmds": [
+            "travel invoice",
+            "hotel invoice",
+            "transport receipt"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

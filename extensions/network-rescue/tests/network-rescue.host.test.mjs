@@ -1,6 +1,7 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { getLocale, setRuntimeLocale } from '@ztools/declarative-ui'
 import {
   fetchNetworkDiagnostics,
   executeNetworkRepair,
@@ -34,7 +35,10 @@ async function withSimulatedRealElectronWindow(methodsMap, fn) {
   }
 }
 
-test('network-rescue: 真实诊断联动与修复失败时严禁伪造 ok:true 断言', async () => {
+test('network-rescue: 真实诊断联动与修复失败时严禁伪造 ok:true 断言', async (t) => {
+  const prevLocale = getLocale()
+  setRuntimeLocale('zh-CN')
+  t.after(() => setRuntimeLocale(prevLocale))
   const mockHost = {
     dllplugin_call: async ({ func, params }) => {
       if (func === 'diagnose') {

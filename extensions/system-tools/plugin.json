@@ -2,13 +2,14 @@
   "id": "system-tools",
   "name": "系统工具",
   "description": "把锁屏、睡眠、休眠、重启、关机、注销、系统音量与静音、显示隐藏文件、清空回收站、防止熄屏等系统操作集中在一个列表里，回车执行，重启、关机、注销和清空回收站执行前会确认",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "keywords": [
     "系统工具",
     "锁屏",
@@ -60,6 +61,63 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "System Commands",
+      "description": "Run common system actions from one list: lock, sleep, hibernate, restart, shutdown, sign out, volume/mute, toggle hidden files, empty Recycle Bin, and keep awake.",
+      "keywords": [
+        "system",
+        "lock",
+        "sleep",
+        "restart",
+        "shutdown",
+        "volume",
+        "mute",
+        "recycle bin"
+      ],
+      "features": {
+        "sys-power": {
+          "explain": "Lock, sleep, hibernate, restart, shut down, or sign out",
+          "cmds": [
+            "system tools",
+            "lock",
+            "sleep",
+            "hibernate",
+            "restart",
+            "shutdown",
+            "logout"
+          ]
+        },
+        "sys-misc": {
+          "explain": "Adjust system volume/mute, toggle hidden files, empty Recycle Bin, and prevent sleep",
+          "cmds": [
+            "volume",
+            "mute",
+            "hidden files",
+            "empty trash",
+            "prevent sleep"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/03-interactive.png"
     }
   ]
 }

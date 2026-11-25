@@ -1,13 +1,16 @@
 /** 布局二：左侧配置分类，右侧可勾选配置与历史快照。 */
-import { Action, ActionPanel, Icon, List, useEffect, useRef, useState } from "@ztools/declarative-ui";
+import { Action, ActionPanel, confirmAlert, Icon, List, showToast, Toast, useEffect, useLocale, useRef, useState } from "@ztools/declarative-ui";
 import {
-  BACKUP_CATEGORIES, createBackupArchive, createInitialSystemBackupSnapshot,
-  extractBackupSnapshot, fetchSystemBackupSnapshot, formatBytes, latestBackupArchive,
+  getBackupCategories, createBackupArchive, createInitialSystemBackupSnapshot,
+  deleteBackupSnapshot, extractBackupSnapshot, fetchSystemBackupSnapshot, formatBytes, latestBackupArchive,
   openBackupConfigLocation, openExtractedDirectory,
   type BackupCategory, type BackupConfigItem
 } from "./logic.js";
+import { t } from "./i18n.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 export function SystemBackupCommand() {
+  useLocale();
   const [snapshot, setSnapshot] = useState(createInitialSystemBackupSnapshot);
   const [selectedCategory, setSelectedCategory] = useState<BackupCategory>("all");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
@@ -24,13 +27,13 @@ export function SystemBackupCommand() {
     try {
       const data = await fetchSystemBackupSnapshot();
       if (data.error) {
-        setStatusBanner(`读取配置列表失败：${data.error}`);
+        setStatusBanner(t("bannerReadListFailed", { error: data.error }));
         return;
       }
       setSnapshot(data);
       const configIds = data.items.filter(item => item.category !== "snapshot_archives").map(item => item.id);
       setCheckedIds(previous => selectAll ? configIds : previous.filter(id => configIds.includes(id)));
-      setStatusBanner(`已扫描 ${configIds.length} 项配置 · 归档目录：${data.backupVaultDir}`);
+      setStatusBanner(t("bannerScanned", { count: configIds.length, dir: data.backupVaultDir }));
     } finally {
       busy.current = false;
       setIsLoading(false);
@@ -67,10 +70,19 @@ export function SystemBackupCommand() {
       let message = result.message;
       if (result.archivePath) {
         const refreshed = await fetchSystemBackupSnapshot();
-        if (refreshed.error) message += `；刷新列表失败：${refreshed.error}`;
+        if (refreshed.error) message += t("bannerRefreshFailed", { error: refreshed.error });
         else setSnapshot(refreshed);
       }
       setStatusBanner(message);
+      await showToast({
+        style: result.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: result.ok
+          ? t("toastBackupSuccessTitle")
+          : result.partial
+            ? t("toastBackupPartialTitle")
+            : t("toastBackupFailedTitle"),
+        message
+      });
     } finally {
       busy.current = false;
       setIsLoading(false);
@@ -81,7 +93,9 @@ export function SystemBackupCommand() {
     if (busy.current) return;
     const archive = item ?? latestBackupArchive(snapshot.items);
     if (!archive || archive.category !== "snapshot_archives") {
-      setStatusBanner("没有可解压的快照，请先创建快照");
+      const msg = t("bannerNoArchive");
+      setStatusBanner(msg);
+      await showToast({ style: Toast.Style.Failure, title: t("toastExtractFailedTitle"), message: msg });
       return;
     }
     busy.current = true;
@@ -91,6 +105,42 @@ export function SystemBackupCommand() {
       const result = await extractBackupSnapshot(archive.path);
       setOutputDir(result.outputDir);
       setStatusBanner(result.message);
+      await showToast({
+        style: result.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: result.ok ? t("toastExtractSuccessTitle") : t("toastExtractFailedTitle"),
+        message: result.message
+      });
+    } finally {
+      busy.current = false;
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteArchive = async (item: BackupConfigItem) => {
+    if (busy.current || item.category !== "snapshot_archives") return;
+    const confirmed = await confirmAlert({
+      title: t("confirmDeleteTitle"),
+      message: t("confirmDeleteMessage", { name: item.name }),
+      primaryAction: { title: t("actionDeleteSnapshot"), style: "destructive" },
+      dismissAction: { title: t("actionCancel") }
+    });
+    if (!confirmed) return;
+    busy.current = true;
+    setIsLoading(true);
+    try {
+      const result = await deleteBackupSnapshot(item.path);
+      let message = result.message;
+      if (result.ok) {
+        const refreshed = await fetchSystemBackupSnapshot();
+        if (refreshed.error) message += t("bannerRefreshFailed", { error: refreshed.error });
+        else setSnapshot(refreshed);
+      }
+      setStatusBanner(message);
+      await showToast({
+        style: result.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: result.ok ? t("toastDeleteSuccessTitle") : t("toastDeleteFailedTitle"),
+        message
+      });
     } finally {
       busy.current = false;
       setIsLoading(false);
@@ -98,26 +148,26 @@ export function SystemBackupCommand() {
   };
 
   const backupAction = () => Action({
-    title: `创建快照（${selectedItems.length} 项配置）`, icon: Icon.Download, onAction: handleCreateBackup
+    title: t("actionCreateSnapshot", { count: selectedItems.length }), icon: Icon.Download, onAction: handleCreateBackup
   });
   const leftNavNodes = [
     List.Item({
-      id: "nav-all", title: "全部配置与快照", icon: Icon.HardDrive,
+      id: "nav-all", title: t("navAllTitle"), icon: Icon.HardDrive,
       onSelect: () => setSelectedCategory("all"),
-      accessories: [{ text: `${snapshot.items.length} 项` }],
+      accessories: [{ text: t("itemCountText", { count: snapshot.items.length }) }],
       actions: ActionPanel({ children: [
         backupAction(),
-        Action({ title: "解压最新快照", icon: Icon.Folder, onAction: () => handleExtract() })
+        Action({ title: t("actionExtractLatest"), icon: Icon.Folder, onAction: () => handleExtract() })
       ] })
     }),
-    ...BACKUP_CATEGORIES.map(category => List.Item({
+    ...getBackupCategories().map(category => List.Item({
       id: `nav-${category.id}`, title: category.name, subtitle: category.subtitle, icon: Icon.Folder,
       onSelect: () => setSelectedCategory(category.id),
-      accessories: [{ text: `${snapshot.items.filter(item => item.category === category.id).length} 项` }],
+      accessories: [{ text: t("itemCountText", { count: snapshot.items.filter(item => item.category === category.id).length }) }],
       actions: ActionPanel({ children: [
-        Action({ title: `查看${category.name}`, icon: Icon.Filter, onAction: () => setSelectedCategory(category.id) }),
+        Action({ title: t("actionViewCategory", { name: category.name }), icon: Icon.Filter, onAction: () => setSelectedCategory(category.id) }),
         category.id === "snapshot_archives"
-          ? Action({ title: "解压最新快照", icon: Icon.Folder, onAction: () => handleExtract() })
+          ? Action({ title: t("actionExtractLatest"), icon: Icon.Folder, onAction: () => handleExtract() })
           : backupAction()
       ] })
     }))
@@ -131,43 +181,64 @@ export function SystemBackupCommand() {
       checkable: !isArchive, checked: !isArchive && isChecked,
       onCheckChange: () => { if (!isArchive) toggleItemCheck(item.id); },
       accessories: [{ tag: { value: item.statusTag } }, { text: formatBytes(item.sizeBytes) }],
-      actions: ActionPanel({ children: [
-        isArchive
-          ? Action({ title: "解压此快照", icon: Icon.Folder, onAction: () => handleExtract(item) })
-          : backupAction(),
-        Action({ title: "在资源管理器中显示", icon: Icon.Folder, onAction: async () => {
-          if (!await openBackupConfigLocation(item.path)) setStatusBanner("无法在资源管理器中显示该文件");
-        } }),
-        ...(!isArchive ? [Action({
-          title: isChecked ? "取消勾选" : "勾选此配置", icon: Icon.CheckCircle, onAction: () => toggleItemCheck(item.id)
-        })] : [])
-      ] })
+      actions: ActionPanel({ children: isArchive
+        ? [
+            Action({ title: t("actionExtractThis"), icon: Icon.Folder, onAction: () => handleExtract(item) }),
+            Action({ title: t("actionShowInExplorer"), icon: Icon.Folder, onAction: async () => {
+              if (!await openBackupConfigLocation(item.path)) {
+                setStatusBanner(t("bannerRevealFailed"));
+                await showToast({ style: Toast.Style.Failure, title: t("bannerRevealFailed"), message: item.path });
+              }
+            } }),
+            Action({
+              title: t("actionDeleteSnapshot"),
+              icon: Icon.Trash,
+              style: Action.Style.Destructive,
+              onAction: () => handleDeleteArchive(item)
+            })
+          ]
+        : [
+            Action({
+              title: isChecked ? t("actionUncheck") : t("actionCheck"),
+              icon: Icon.CheckCircle,
+              onAction: () => toggleItemCheck(item.id)
+            }),
+            Action({ title: t("actionShowInExplorer"), icon: Icon.Folder, onAction: async () => {
+              if (!await openBackupConfigLocation(item.path)) {
+                setStatusBanner(t("bannerRevealFailed"));
+                await showToast({ style: Toast.Style.Failure, title: t("bannerRevealFailed"), message: item.path });
+              }
+            } }),
+            backupAction()
+          ] })
     });
   });
   const allChecked = visibleConfigs.length > 0 && visibleConfigs.every(item => checked.has(item.id));
   const someChecked = visibleConfigs.some(item => checked.has(item.id));
 
   return List({
+    navigationTitle: t("pluginTitle"),
     isLoading, isShowingDetail: false,
-    searchBarPlaceholder: "搜索配置文件或快照...", onSearchTextChange: setSearchText,
+    searchBarPlaceholder: t("searchPlaceholder"), onSearchTextChange: setSearchText,
     filterBar: {
-      summaryText: statusBanner || `已选 ${selectedItems.length} 项配置（${formatBytes(selectedBytes)}）`,
+      summaryText: statusBanner || t("summarySelected", { count: selectedItems.length, size: formatBytes(selectedBytes) }),
       actions: [
-        { id: "rescan", title: "重新扫描", style: "secondary", onAction: () => reloadBackupSnapshot() },
-        ...(outputDir ? [{ id: "open-output", title: "打开解压目录", style: "secondary" as const, onAction: async () => {
-          if (!await openExtractedDirectory(outputDir)) setStatusBanner(`无法打开解压目录：${outputDir}`);
+        { id: "create-backup", title: t("actionCreateSnapshot", { count: selectedItems.length }), onAction: handleCreateBackup },
+        { id: "rescan", title: t("actionRescan"), style: "secondary", onAction: () => reloadBackupSnapshot() },
+        ...(outputDir ? [{ id: "open-output", title: t("actionOpenExtractDir"), style: "secondary" as const, onAction: async () => {
+          if (!await openExtractedDirectory(outputDir)) setStatusBanner(t("bannerOpenDirFailed", { dir: outputDir }));
         } }] : [])
       ]
     },
     subList: {
-      title: `配置与快照（${visibleItems.length} 项 · 已选 ${selectedItems.length} 项配置）`,
+      title: t("subListTitle", { visible: visibleItems.length, selected: selectedItems.length }),
       subtitle: snapshot.backupVaultDir,
-      emptyText: isLoading ? "正在扫描..." : snapshot.error || "当前分类下没有匹配的配置或快照",
+      emptyText: isLoading ? t("emptyScanning") : resolveErrorMessage(snapshot, t("emptyNoMatch")),
       checkable: visibleConfigs.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: toggleAllVisible, items: subListItems
     },
-    children: [List.Section({ title: "配置分类", children: leftNavNodes })]
+    children: [List.Section({ title: t("sectionCategories"), children: leftNavNodes })]
   });
 }
 

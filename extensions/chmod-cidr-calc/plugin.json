@@ -1,9 +1,13 @@
 {
   "id": "chmod-cidr-calc",
   "name": "网段与权限计算",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "IPv4 CIDR 子网掩码/可用地址池/32 位二进制掩码计算与 Linux chmod 八进制/符号权限位双向推演工具",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -37,6 +41,45 @@
         "子网计算",
         "权限计算"
       ]
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "CIDR & Chmod Calculator",
+      "description": "Calculate IPv4 CIDR subnets, usable host ranges, and 32-bit binary masks, and convert between Linux chmod octal and symbolic permissions.",
+      "keywords": [
+        "chmod",
+        "cidr",
+        "subnet",
+        "ipcalc",
+        "netmask",
+        "permissions",
+        "ipv4"
+      ],
+      "features": {
+        "chmod-cidr-calc": {
+          "explain": "Calculate IPv4 CIDR subnet ranges or convert Linux chmod permissions",
+          "cmds": [
+            "chmod",
+            "cidr",
+            "subnet",
+            "ipcalc",
+            "netmask",
+            "permissions"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
     }
   ]
 }

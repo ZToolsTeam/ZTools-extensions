@@ -2,7 +2,7 @@
  * 实时数学计算与色彩检测引擎 (Safe Expression Evaluator & Color Inspector)
  * 纯算法实现，彻底禁止 eval() 与 new Function()，完全符合 AST 安全扫描规范
  */
-import { LocalStorage } from "@ztools/declarative-ui";
+import { LocalStorage, getLocale } from "@ztools/declarative-ui";
 
 export interface CalculationResult {
   isCalculation: boolean;
@@ -84,6 +84,117 @@ const HISTORY_STORAGE_KEY = "ztools-calculator-history-v1";
 /** 未置顶历史最多保留的条数；置顶项不受限制，不会被淘汰 */
 export const MAX_RECENT_HISTORY = 100;
 
+type EngineLocale = "zh-CN" | "en-US";
+
+const ENGINE_MESSAGES = {
+  "zh-CN": {
+    invalidNumber: '数字格式不正确: "{value}"',
+    unknownIdentifier: '未知标识符: "{word}"',
+    illegalChar: '非法输入字符: "{char}"',
+    mismatchedParens: "括号不匹配",
+    missingUnaryOperand: "负号后缺少数字",
+    missingBinaryOperand: "运算符参数不足",
+    divideByZero: "除数不能为零",
+    unimplementedOp: "未实现的运算符: {op}",
+    missingFuncArg: "函数参数不足",
+    negativeSqrt: "负数没有实数平方根",
+    unimplementedFunc: "未实现的函数: {fn}",
+    incompleteExpr: "计算表达式格式不完整",
+    overflowOrNonReal: "计算结果溢出或无实数解",
+    belowAbsoluteZero: "温度不能低于绝对零度（0 K / -273.15 °C / -459.67 °F）",
+    unitOverflow: "换算结果超出数值范围",
+    unitDetails: "单位换算 ({category}): {from} -> {to}",
+    dateOutOfRange: "日期超出可表示范围",
+    dateNotExist: '日期不存在: "{expr}"',
+    dateToday: "今天",
+    dateDaysLater: "{days} 天后",
+    dateDaysAgo: "{days} 天前",
+    dateFutureDetails: "{expr} (未来 {count} {unit})",
+    datePastDetails: "{expr} (过去 {count} {unit})",
+    dateForwardDetails: "{desc} (往后 {count} {unit})",
+    dateBackwardDetails: "{desc} (往前 {count} {unit})",
+    weekdays: "星期日,星期一,星期二,星期三,星期四,星期五,星期六",
+    historyCorrupt: "计算历史数据损坏，原数据已保留，请先恢复数据后重试",
+    historyUpgradeRequired: "请升级 ZTools 以安全保存计算历史",
+    historyChanged: "计算历史已变化，请重新读取后重试",
+    uuidUnavailable: "无法生成唯一标识，请重启客户端后重试"
+  },
+  "en-US": {
+    invalidNumber: 'Invalid number format: "{value}"',
+    unknownIdentifier: 'Unknown identifier: "{word}"',
+    illegalChar: 'Invalid character: "{char}"',
+    mismatchedParens: "Mismatched parentheses",
+    missingUnaryOperand: "Missing operand after unary minus",
+    missingBinaryOperand: "Insufficient operands for operator",
+    divideByZero: "Division by zero",
+    unimplementedOp: "Unsupported operator: {op}",
+    missingFuncArg: "Missing function argument",
+    negativeSqrt: "Square root of a negative number is not real",
+    unimplementedFunc: "Unsupported function: {fn}",
+    incompleteExpr: "Incomplete expression",
+    overflowOrNonReal: "Result overflowed or is not a real number",
+    belowAbsoluteZero: "Temperature cannot be below absolute zero (0 K / -273.15 °C / -459.67 °F)",
+    unitOverflow: "Conversion result exceeds numeric range",
+    unitDetails: "Unit conversion ({category}): {from} -> {to}",
+    dateOutOfRange: "Date is out of representable range",
+    dateNotExist: 'Date does not exist: "{expr}"',
+    dateToday: "Today",
+    dateDaysLater: "in {days} [[days:day|days]]",
+    dateDaysAgo: "{days} [[days:day|days]] ago",
+    dateFutureDetails: "{expr} (+{count} {unit})",
+    datePastDetails: "{expr} (-{count} {unit})",
+    dateForwardDetails: "{desc} (+{count} {unit})",
+    dateBackwardDetails: "{desc} (-{count} {unit})",
+    weekdays: "Sun,Mon,Tue,Wed,Thu,Fri,Sat",
+    historyCorrupt: "Calculation history data is corrupted. Original data is preserved; please recover before retrying.",
+    historyUpgradeRequired: "Please upgrade ZTools to safely save calculation history.",
+    historyChanged: "Calculation history has changed; please reload and try again.",
+    uuidUnavailable: "Unable to generate a unique ID. Please restart ZTools and try again."
+  }
+} as const;
+
+type EngineMessageKey = keyof typeof ENGINE_MESSAGES["zh-CN"];
+
+function resolveEngineLocale(explicitLocale?: string): EngineLocale {
+  const globalRecord = globalThis as Record<string, unknown>;
+  const docLang =
+    typeof document !== "undefined" && typeof document.documentElement?.lang === "string"
+      ? document.documentElement.lang
+      : undefined;
+  const runtimeLocale = typeof getLocale === "function" ? getLocale() : undefined;
+  const raw =
+    explicitLocale ||
+    (docLang && docLang.trim() ? docLang : undefined) ||
+    (typeof globalRecord.__ztoolsLocale === "string" ? globalRecord.__ztoolsLocale : undefined) ||
+    runtimeLocale;
+  if (typeof raw === "string" && /^zh(?:[-_]|$)/i.test(raw.trim())) {
+    return "zh-CN";
+  }
+  return "en-US";
+}
+
+function engineT(
+  key: EngineMessageKey,
+  params?: Record<string, string | number>,
+  explicitLocale?: string
+): string {
+  const locale = resolveEngineLocale(explicitLocale);
+  let template: string = ENGINE_MESSAGES[locale][key];
+  if (params) {
+    template = template.replace(/\{([A-Za-z0-9_]+)\}/g, (match, token: string) =>
+      Object.prototype.hasOwnProperty.call(params, token) ? String(params[token]) : match
+    );
+  }
+  if (template.includes("[[")) {
+    template = template.replace(/\[\[([A-Za-z0-9_.-]+):([^|\]]+)\|([^\]]+)\]\]/g, (_m, k: string, one: string, other: string) => {
+      const v = params?.[k];
+      const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/,/g, ""));
+      return n === 1 ? one : other;
+    });
+  }
+  return template;
+}
+
 /** 单独一个数字（可带正负号、小数、科学计数法）：1e-9、-12.5、.5 */
 const PLAIN_NUMBER_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
 /** 单独一个整数（可带正负号） */
@@ -100,12 +211,13 @@ const UNIT_NUMBER_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
  * - 绝对值小于 1e-6 或不小于 1e21 用科学计数法（15 位有效数字），避免极小数被舍成 0；
  * - 其余小数保留 15 位有效数字（双精度可靠位数，去掉 0.1+0.2 这类浮点尾差）。
  */
-export function formatCalculatorNumber(val: number): string {
+export function formatCalculatorNumber(val: number, explicitLocale?: string): string {
   if (val === 0) return "0";
   const abs = Math.abs(val);
   if (abs < 1e-6 || abs >= 1e21) return String(Number(val.toPrecision(15)));
-  if (Number.isInteger(val)) return val.toLocaleString("en-US");
-  return val.toLocaleString("en-US", { maximumSignificantDigits: 15 });
+  const locale = resolveEngineLocale(explicitLocale);
+  if (Number.isInteger(val)) return val.toLocaleString(locale);
+  return val.toLocaleString(locale, { maximumSignificantDigits: 15 });
 }
 
 /** 按小数位四舍五入，并把 -0 规范成 0 */
@@ -135,7 +247,7 @@ const CONSTANTS: Record<string, number> = {
   e: Math.E
 };
 
-function tokenize(expr: string): Token[] {
+function tokenize(expr: string, locale?: string): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   const s = expr.trim();
@@ -167,7 +279,7 @@ function tokenize(expr: string): Token[] {
         numStr += sci[0];
         i += sci[0].length;
       }
-      if ((numStr.match(/\./g) || []).length > 1 || numStr === ".") throw new Error(`数字格式不正确: "${numStr}"`);
+      if ((numStr.match(/\./g) || []).length > 1 || numStr === ".") throw new Error(engineT("invalidNumber", { value: numStr }, locale));
       // 数字后的 % ：后面紧跟数字或括号时是取余（10 % 3），否则是百分号（50%）
       if (i < s.length && s[i] === "%" && !/^%\s*[0-9.(a-zA-Z]/.test(s.slice(i))) {
         i++;
@@ -223,12 +335,12 @@ function tokenize(expr: string): Token[] {
       } else if (CONSTANTS[lower] !== undefined) {
         tokens.push({ type: "CONST", value: CONSTANTS[lower] });
       } else {
-        throw new Error(`未知标识符: "${word}"`);
+        throw new Error(engineT("unknownIdentifier", { word }, locale));
       }
       continue;
     }
 
-    throw new Error(`非法输入字符: "${c}"`);
+    throw new Error(engineT("illegalChar", { char: c }, locale));
   }
 
   return tokens;
@@ -244,7 +356,7 @@ const PRECEDENCE: Record<string, number> = {
   "^": 3
 };
 
-function shuntingYard(tokens: Token[]): Token[] {
+function shuntingYard(tokens: Token[], locale?: string): Token[] {
   const output: Token[] = [];
   const ops: Token[] = [];
 
@@ -271,7 +383,7 @@ function shuntingYard(tokens: Token[]): Token[] {
       while (ops.length > 0 && ops[ops.length - 1].type !== "LPAREN") {
         output.push(ops.pop()!);
       }
-      if (ops.length === 0) throw new Error("括号不匹配");
+      if (ops.length === 0) throw new Error(engineT("mismatchedParens", undefined, locale));
       ops.pop(); // pop LPAREN
       if (ops.length > 0 && ops[ops.length - 1].type === "FUNC") {
         output.push(ops.pop()!);
@@ -282,7 +394,7 @@ function shuntingYard(tokens: Token[]): Token[] {
   while (ops.length > 0) {
     const top = ops.pop()!;
     if (top.type === "LPAREN" || top.type === "RPAREN") {
-      throw new Error("括号不匹配");
+      throw new Error(engineT("mismatchedParens", undefined, locale));
     }
     output.push(top);
   }
@@ -290,7 +402,7 @@ function shuntingYard(tokens: Token[]): Token[] {
   return output;
 }
 
-function evaluateRpn(rpn: Token[]): number {
+function evaluateRpn(rpn: Token[], locale?: string): number {
   const stack: number[] = [];
 
   for (const token of rpn) {
@@ -299,10 +411,10 @@ function evaluateRpn(rpn: Token[]): number {
     } else if (token.type === "CONST") {
       stack.push(token.value as number);
     } else if (token.type === "NEG") {
-      if (stack.length < 1) throw new Error("负号后缺少数字");
+      if (stack.length < 1) throw new Error(engineT("missingUnaryOperand", undefined, locale));
       stack.push(-stack.pop()!);
     } else if (token.type === "OP") {
-      if (stack.length < 2) throw new Error("运算符参数不足");
+      if (stack.length < 2) throw new Error(engineT("missingBinaryOperand", undefined, locale));
       const b = stack.pop()!;
       const a = stack.pop()!;
       switch (token.value) {
@@ -310,22 +422,22 @@ function evaluateRpn(rpn: Token[]): number {
         case "-": stack.push(a - b); break;
         case "*": stack.push(a * b); break;
         case "/":
-          if (b === 0) throw new Error("除数不能为零");
+          if (b === 0) throw new Error(engineT("divideByZero", undefined, locale));
           stack.push(a / b);
           break;
         case "%":
-          if (b === 0) throw new Error("除数不能为零");
+          if (b === 0) throw new Error(engineT("divideByZero", undefined, locale));
           stack.push(a % b);
           break;
         case "^": stack.push(Math.pow(a, b)); break;
-        default: throw new Error(`未实现的运算符: ${token.value}`);
+        default: throw new Error(engineT("unimplementedOp", { op: String(token.value) }, locale));
       }
     } else if (token.type === "FUNC") {
-      if (stack.length < 1) throw new Error("函数参数不足");
+      if (stack.length < 1) throw new Error(engineT("missingFuncArg", undefined, locale));
       const arg = stack.pop()!;
       switch (token.value) {
         case "sqrt":
-          if (arg < 0) throw new Error("负数没有实数平方根");
+          if (arg < 0) throw new Error(engineT("negativeSqrt", undefined, locale));
           stack.push(Math.sqrt(arg));
           break;
         case "cbrt": stack.push(Math.cbrt(arg)); break;
@@ -344,18 +456,18 @@ function evaluateRpn(rpn: Token[]): number {
         case "floor": stack.push(Math.floor(arg)); break;
         case "ceil": stack.push(Math.ceil(arg)); break;
         case "exp": stack.push(Math.exp(arg)); break;
-        default: throw new Error(`未实现的函数: ${token.value}`);
+        default: throw new Error(engineT("unimplementedFunc", { fn: String(token.value) }, locale));
       }
     }
   }
 
-  if (stack.length !== 1) throw new Error("计算表达式格式不完整");
+  if (stack.length !== 1) throw new Error(engineT("incompleteExpr", undefined, locale));
   const result = stack[0];
-  if (!Number.isFinite(result)) throw new Error("计算结果溢出或无实数解");
+  if (!Number.isFinite(result)) throw new Error(engineT("overflowOrNonReal", undefined, locale));
   return result;
 }
 
-export function evaluateMathExpression(input: string): CalculationResult {
+export function evaluateMathExpression(input: string, options: { locale?: string } = {}): CalculationResult {
   if (!input || typeof input !== "string") {
     return { isCalculation: false, expression: "", answer: null, formattedAnswer: "" };
   }
@@ -370,12 +482,12 @@ export function evaluateMathExpression(input: string): CalculationResult {
   }
 
   try {
-    const tokens = tokenize(trimmed);
+    const tokens = tokenize(trimmed, options.locale);
     if (tokens.length === 0) {
       return { isCalculation: false, expression: trimmed, answer: null, formattedAnswer: "" };
     }
-    const rpn = shuntingYard(tokens);
-    const raw = evaluateRpn(rpn);
+    const rpn = shuntingYard(tokens, options.locale);
+    const raw = evaluateRpn(rpn, options.locale);
     const val = raw === 0 ? 0 : raw; // -0 规范成 0
 
     return {
@@ -384,8 +496,8 @@ export function evaluateMathExpression(input: string): CalculationResult {
       answer: val,
       // 单独一个整数（如进制换算的十进制结果填回）按 BigInt 原样显示：超过 2^53 的整数用 Number 会丢精度
       formattedAnswer: PLAIN_INTEGER_RE.test(trimmed)
-        ? BigInt(trimmed).toLocaleString("en-US")
-        : formatCalculatorNumber(val)
+        ? BigInt(trimmed).toLocaleString(resolveEngineLocale(options.locale))
+        : formatCalculatorNumber(val, options.locale)
     };
   } catch (err: unknown) {
     return {
@@ -445,11 +557,12 @@ const DIGITAL_RATIOS: Record<string, number> = {
 
 export function convertUnits(
   input: string,
-  options: { remBase?: number } = {}
+  options: { remBase?: number; locale?: string } = {}
 ): UnitConversionResult | null {
   if (!input || typeof input !== "string") return null;
   const s = input.trim().toLowerCase();
   const remBase = options.remBase || 16;
+  const locale = options.locale;
 
   // 1. px <-> rem（数字先按宽松模式匹配，再严格校验，格式不对时给出明确错误而不是静默取前半段）
   const cssMatch = s.match(/^([+-]?[\d.]+)\s*(px|rem)\s*(?:to|in|=)\s*(px|rem)$/);
@@ -457,7 +570,7 @@ export function convertUnits(
     const from = cssMatch[2];
     const to = cssMatch[3];
     const val = parseUnitNumber(cssMatch[1]);
-    if (val === null) return unitError(input, cssMatch[1], from, to, "css");
+    if (val === null) return unitError(input, cssMatch[1], from, to, "css", locale);
     if (from === to) {
       return {
         isConversion: true,
@@ -471,7 +584,7 @@ export function convertUnits(
     }
     // value 与显示一致（舍入后的值），填回输入框后得到的就是界面上看到的数
     const resVal = from === "px" ? roundTo(val / remBase, 4) : roundTo(val * remBase, 2);
-    if (!Number.isFinite(resVal)) return unitOverflow(input, from, to, "css");
+    if (!Number.isFinite(resVal)) return unitOverflow(input, from, to, "css", locale);
 
     return {
       isConversion: true,
@@ -540,7 +653,7 @@ export function convertUnits(
     // 不认识的单位组合不当作换算，交给后面的日期 / 算式判断
     if (!category) return null;
     const val = parseUnitNumber(unitMatch[1]);
-    if (val === null) return unitError(input, unitMatch[1], from, to, category);
+    if (val === null) return unitError(input, unitMatch[1], from, to, category, locale);
 
     // Temperature: c, f, k, celsius, fahrenheit, kelvin
     if (category === "temp") {
@@ -559,7 +672,7 @@ export function convertUnits(
           fromUnit: from,
           toUnit: to,
           category,
-          error: "温度不能低于绝对零度（0 K / -273.15 °C / -459.67 °F）"
+          error: engineT("belowAbsoluteZero", undefined, locale)
         };
       }
 
@@ -568,7 +681,7 @@ export function convertUnits(
       if (toNorm === "k") targetVal = cVal + 273.15;
 
       const rounded = roundTo(targetVal, 2);
-      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, "temp");
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, "temp", locale);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -585,7 +698,7 @@ export function convertUnits(
       const inMeters = val * LENGTH_RATIOS[from];
       const targetVal = inMeters / LENGTH_RATIOS[to];
       const rounded = roundTo(targetVal, 4);
-      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category, locale);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -602,7 +715,7 @@ export function convertUnits(
       const inGrams = val * MASS_RATIOS[from];
       const targetVal = inGrams / MASS_RATIOS[to];
       const rounded = roundTo(targetVal, 4);
-      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category, locale);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -619,7 +732,7 @@ export function convertUnits(
       const inBytes = val * DIGITAL_RATIOS[from];
       const targetVal = inBytes / DIGITAL_RATIOS[to];
       const rounded = roundTo(targetVal, 4);
-      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category);
+      if (!Number.isFinite(rounded)) return unitOverflow(input, from, to, category, locale);
       return {
         isConversion: true,
         expression: input.trim(),
@@ -657,7 +770,8 @@ function unitOverflow(
   input: string,
   from: string,
   to: string,
-  category: UnitConversionResult["category"]
+  category: UnitConversionResult["category"],
+  locale?: string
 ): UnitConversionResult {
   return {
     isConversion: true,
@@ -667,7 +781,7 @@ function unitOverflow(
     fromUnit: from,
     toUnit: to,
     category,
-    error: "换算结果超出数值范围"
+    error: engineT("unitOverflow", undefined, locale)
   };
 }
 
@@ -676,7 +790,8 @@ function unitError(
   rawNumber: string,
   from: string,
   to: string,
-  category: UnitConversionResult["category"]
+  category: UnitConversionResult["category"],
+  locale?: string
 ): UnitConversionResult {
   return {
     isConversion: true,
@@ -686,7 +801,7 @@ function unitError(
     fromUnit: from,
     toUnit: to,
     category,
-    error: `数字格式不正确: "${rawNumber}"`
+    error: engineT("invalidNumber", { value: rawNumber }, locale)
   };
 }
 
@@ -694,7 +809,6 @@ function unitError(
 // 3. Date Calculation（汇率换算已移除：没有实时汇率来源时不提供估算值）
 // =========================================================================
 
-const WEEKDAYS = ["星期日", "星期一", "星期二", "星期三", "星期四", "星期五", "星期六"];
 const DATE_UNIT_SOURCE = "(days?|weeks?|months?|years?|hours?|mins?|minutes?)";
 /** now / today 加减：now + 2 weeks、today - 3 days */
 const RELATIVE_DATE_RE = new RegExp(`^(now|today)\\s*([+-])\\s*(\\d+)\\s*${DATE_UNIT_SOURCE}$`);
@@ -739,11 +853,17 @@ function shiftDate(d: Date, sign: number, count: number, unit: string): void {
 }
 
 /** 「星期四 · 14 天后」：日期字面量的说明 */
-function describeDate(d: Date): string {
+function describeDate(d: Date, locale?: string): string {
   const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const diff = Math.round((startOf(d) - startOf(new Date())) / 86400000);
-  const rel = diff === 0 ? "今天" : diff > 0 ? `${diff} 天后` : `${-diff} 天前`;
-  return `${WEEKDAYS[d.getDay()]} · ${rel}`;
+  const rel =
+    diff === 0
+      ? engineT("dateToday", undefined, locale)
+      : diff > 0
+        ? engineT("dateDaysLater", { days: diff }, locale)
+        : engineT("dateDaysAgo", { days: -diff }, locale);
+  const weekdays = engineT("weekdays", undefined, locale).split(",");
+  return `${weekdays[d.getDay()]} · ${rel}`;
 }
 
 function dateError(input: string, error: string): DateCalculationResult {
@@ -757,9 +877,10 @@ function dateError(input: string, error: string): DateCalculationResult {
   };
 }
 
-export function evaluateDateExpression(input: string): DateCalculationResult | null {
+export function evaluateDateExpression(input: string, options: { locale?: string } = {}): DateCalculationResult | null {
   if (!input || typeof input !== "string") return null;
   const s = input.trim().toLowerCase();
+  const locale = options.locale;
 
   // 1. now / today 加减
   const rel = s.match(RELATIVE_DATE_RE);
@@ -769,13 +890,13 @@ export function evaluateDateExpression(input: string): DateCalculationResult | n
     const unit = rel[4];
     const target = new Date();
     shiftDate(target, op === "+" ? 1 : -1, count, unit);
-    if (Number.isNaN(target.getTime())) return dateError(input, "日期超出可表示范围");
+    if (Number.isNaN(target.getTime())) return dateError(input, engineT("dateOutOfRange", undefined, locale));
     return {
       isDate: true,
       expression: input.trim(),
       targetDate: target,
       formattedAnswer: formatDateValue(target, unit.startsWith("hour") || unit.startsWith("min")),
-      details: `${input.trim()} (${op === "+" ? "未来" : "过去"} ${count} ${unit})`
+      details: engineT(op === "+" ? "dateFutureDetails" : "datePastDetails", { expr: input.trim(), count, unit }, locale)
     };
   }
 
@@ -794,7 +915,7 @@ export function evaluateDateExpression(input: string): DateCalculationResult | n
     // 夏令时跳过的时刻（如纽约 2026-03-08 02:30）本地不存在，Date 会顺延一小时，不能静默改成别的时间
     target.getHours() !== hour || target.getMinutes() !== minute
   ) {
-    return dateError(input, `日期不存在: "${input.trim()}"`);
+    return dateError(input, engineT("dateNotExist", { expr: input.trim() }, locale));
   }
 
   const op = lit[6];
@@ -804,19 +925,23 @@ export function evaluateDateExpression(input: string): DateCalculationResult | n
       expression: input.trim(),
       targetDate: target,
       formattedAnswer: formatDateValue(target, hasTime),
-      details: describeDate(target)
+      details: describeDate(target, locale)
     };
   }
   const count = parseInt(lit[7], 10);
   const unit = lit[8];
   shiftDate(target, op === "+" ? 1 : -1, count, unit);
-  if (Number.isNaN(target.getTime())) return dateError(input, "日期超出可表示范围");
+  if (Number.isNaN(target.getTime())) return dateError(input, engineT("dateOutOfRange", undefined, locale));
   return {
     isDate: true,
     expression: input.trim(),
     targetDate: target,
     formattedAnswer: formatDateValue(target, hasTime || unit.startsWith("hour") || unit.startsWith("min")),
-    details: `${describeDate(target)} (${op === "+" ? "往后" : "往前"} ${count} ${unit})`
+    details: engineT(
+      op === "+" ? "dateForwardDetails" : "dateBackwardDetails",
+      { desc: describeDate(target, locale), count, unit },
+      locale
+    )
   };
 }
 
@@ -973,7 +1098,7 @@ function getLuminance(r: number, g: number, b: number): number {
 
 export function evaluateCalculatorQuery(
   input: string,
-  options: { remBase?: number } = {}
+  options: { remBase?: number; locale?: string } = {}
 ): CalculatorQueryResult {
   if (!input || typeof input !== "string" || !input.trim()) {
     return {
@@ -1013,12 +1138,12 @@ export function evaluateCalculatorQuery(
       // 进制结果原样填回（0xFF、0b1010 单独出现时按转十进制计算；十进制整数按 BigInt 精确显示），
       // 其余换算填回不带单位的数值（与显示一致的舍入值），都能再次计算出同一数值
       fillText: unit.category === "radix" ? unit.formattedAnswer : String(unit.value),
-      details: `单位换算 (${unit.category.toUpperCase()}): ${unit.fromUnit} -> ${unit.toUnit}`
+      details: engineT("unitDetails", { category: unit.category.toUpperCase(), from: unit.fromUnit, to: unit.toUnit }, options.locale)
     };
   }
 
   // 4. Date calculation check
-  const dateRes = evaluateDateExpression(s);
+  const dateRes = evaluateDateExpression(s, options);
   if (dateRes && dateRes.isDate) {
     if (dateRes.error) {
       return { type: "date", expression: s, formattedAnswer: "", error: dateRes.error };
@@ -1035,7 +1160,7 @@ export function evaluateCalculatorQuery(
   }
 
   // 5. Math expression check
-  const math = evaluateMathExpression(s);
+  const math = evaluateMathExpression(s, options);
   if (math.isCalculation) {
     return {
       type: "math",
@@ -1069,12 +1194,12 @@ function parseCalculatorHistory(raw: unknown): CalculatorHistoryItem[] {
   if (!Array.isArray(raw) || raw.some(item => !item || typeof item.id !== "string" || !item.id || typeof item.expression !== "string" ||
       typeof item.answer !== "string" || !["math", "unit", "currency", "date", "color"].includes(item.type) ||
       typeof item.timestamp !== "number" || !Number.isFinite(item.timestamp) || (item.pinned !== undefined && typeof item.pinned !== "boolean")) ||
-      new Set(raw.map(item => item.id)).size !== raw.length) throw new Error("计算历史数据损坏，原数据已保留，请先恢复数据后重试");
+      new Set(raw.map(item => item.id)).size !== raw.length) throw new Error(engineT("historyCorrupt"));
   return raw;
 }
 
 async function changeCalculatorHistory(update: (current: CalculatorHistoryItem[]) => CalculatorHistoryItem[]): Promise<CalculatorHistoryItem[]> {
-  if (typeof LocalStorage.updateItem !== "function") throw new Error("请升级 ZTools 以安全保存计算历史");
+  if (typeof LocalStorage.updateItem !== "function") throw new Error(engineT("historyUpgradeRequired"));
   return LocalStorage.updateItem(HISTORY_STORAGE_KEY, raw => update(parseCalculatorHistory(raw)));
 }
 
@@ -1083,7 +1208,7 @@ export async function saveCalculatorHistory(
 ): Promise<void> {
   parseCalculatorHistory(items);
   await changeCalculatorHistory(current => {
-    if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error("计算历史已变化，请重新读取后重试");
+    if (JSON.stringify(current) !== JSON.stringify(expected)) throw new Error(engineT("historyChanged"));
     return items;
   });
 }
@@ -1093,8 +1218,8 @@ export async function addCalculatorHistory(
   answer: string,
   type: CalculatorHistoryItem["type"]
 ): Promise<CalculatorHistoryItem[]> {
-  if (typeof globalThis.crypto?.randomUUID !== 'function') {
-    throw new Error('无法生成唯一标识，请重启客户端后重试')
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    throw new Error(engineT("uuidUnavailable"));
   }
   const id = `calc-${Date.now()}-${globalThis.crypto.randomUUID()}`, timestamp = Date.now();
   return changeCalculatorHistory(current => {

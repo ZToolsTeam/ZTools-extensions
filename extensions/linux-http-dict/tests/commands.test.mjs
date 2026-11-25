@@ -109,3 +109,46 @@ test('tar 第三条示例缩短后仍可按 node_modules 搜到，详情与复�
   } finally { view.unmount() }
   assert.ok(host)
 })
+
+test('离线词库基线达标：Linux 40+、HTTP 35+、端口 40+，覆盖高频条目', async () => {
+  const { LINUX_COMMANDS_DICT, HTTP_STATUS_DICT, COMMON_PORTS_DICT } = await import('../dist/dict-service.js')
+  assert.ok(LINUX_COMMANDS_DICT.length >= 40, `Linux 命令不足 40 条: ${LINUX_COMMANDS_DICT.length}`)
+  assert.ok(HTTP_STATUS_DICT.length >= 35, `HTTP 状态码不足 35 条: ${HTTP_STATUS_DICT.length}`)
+  assert.ok(COMMON_PORTS_DICT.length >= 40, `常见端口不足 40 条: ${COMMON_PORTS_DICT.length}`)
+
+  const linuxIds = new Set(LINUX_COMMANDS_DICT.map((i) => i.id))
+  for (const id of ['cmd-curl', 'cmd-rsync', 'cmd-journalctl', 'cmd-tmux', 'cmd-sed', 'cmd-chmod', 'cmd-chown', 'cmd-ps', 'cmd-kill', 'cmd-scp', 'cmd-ssh']) {
+    assert.ok(linuxIds.has(id), `缺少 Linux 命令: ${id}`)
+  }
+  const httpCodes = new Set(HTTP_STATUS_DICT.map((i) => i.code))
+  for (const code of [201, 204, 304, 400, 401, 403, 404, 405, 408, 409, 413, 422, 429, 500, 502, 503, 504]) {
+    assert.ok(httpCodes.has(code), `缺少 HTTP 状态码: ${code}`)
+  }
+  const ports = new Set(COMMON_PORTS_DICT.map((i) => i.port))
+  for (const port of [22, 80, 443, 3306, 5173, 5432, 5672, 6379, 6443, 9090, 9092, 9200, 11211, 27017]) {
+    assert.ok(ports.has(port), `缺少默认端口: ${port}`)
+  }
+})
+
+test('跨分类全局搜索：支持「全部」视图与单分类下自动跨三类检索', async () => {
+  createHost()
+  const view = await mount(DefaultCommand)
+  try {
+    // 当前在 linux 分类，直接搜 502 应自动跨分类命中 HTTP 502
+    await view.search('502')
+    assert.ok(view.item('502'), 'linux 分类下搜 502 应跨分类命中 HTTP 502')
+
+    // 直接搜 6379 应跨分类命中 Redis 端口
+    await view.search('6379')
+    assert.ok(view.item('6379'), 'linux 分类下搜 6379 应跨分类命中 Redis 6379')
+
+    // 切换至 all 全部视图，应同时展示三大分类条目
+    await view.dropdown('all')
+    assert.equal(view.tree().props.searchBarAccessory.props.value, 'all')
+    assert.ok(view.item('cmd-curl'))
+    assert.ok(view.item('502'))
+    assert.ok(view.item('6379'))
+  } finally {
+    view.unmount()
+  }
+})

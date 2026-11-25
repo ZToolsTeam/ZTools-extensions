@@ -1,15 +1,42 @@
 import type { RegexMatchResult } from './types.js'
+import { t } from './i18n.js'
 
-/** 纯匹配算法；生产入口只能在可终止的 Worker 中执行，不能直接放进界面渲染。 */
-export function runRegexMatch(rawInput: string, testText: string, defaultFlags = 'g'): RegexMatchResult {
+export interface RegexEngineMessages {
+  empty: string
+  patternTooLong: string
+  textTooLong: string
+  outputTooLarge: string
+}
+
+export function getRegexEngineMessages(): RegexEngineMessages {
+  return {
+    empty: t('regexErrEmpty'),
+    patternTooLong: t('regexErrPatternTooLong'),
+    textTooLong: t('regexErrTextTooLong'),
+    outputTooLarge: t('regexErrOutputTooLarge')
+  }
+}
+
+/** 纯匹配核心算法（零外部闭包依赖，可安全序列化进 Web Worker / worker_threads 执行）。 */
+export function runRegexMatchCore(
+  rawInput: string,
+  testText: string,
+  defaultFlags = 'g',
+  messages: RegexEngineMessages = {
+    empty: 'Empty regex',
+    patternTooLong: 'Regex exceeds 2000 characters',
+    textTooLong: 'Test text exceeds 50000 characters',
+    outputTooLarge: 'Match output too large'
+  }
+): RegexMatchResult {
   const started = performance.now()
   const result: RegexMatchResult = { isValidRegex: false, totalMatches: 0, elapsedMs: 0, matches: [] }
   try {
     const input = String(rawInput ?? '').trim()
     const text = String(testText ?? '')
-    if (!input) throw new Error('请输入待测试的正则表达式')
-    if (input.length > 2000) throw new Error('正则表达式不能超过 2000 个字符')
-    if (text.length > 50_000) throw new Error('待测文本不能超过 50000 个字符，请缩小测试范围')
+    if (!input) throw new Error(messages.empty)
+    if (input.length > 2000) throw new Error(messages.patternTooLong)
+    if (text.length > 50_000) throw new Error(messages.textTooLong)
     const slash = input.lastIndexOf('/')
     const literal = input.startsWith('/') && slash > 0
     const pattern = literal ? input.slice(1, slash) : input
@@ -23,7 +50,7 @@ export function runRegexMatch(rawInput: string, testText: string, defaultFlags =
     let outputSize = 0
     const reserve = (value: string) => {
       outputSize += value.length + 64
-      if (outputSize > 256_000) throw new Error('匹配结果过大，请减少捕获组或缩小待测文本')
+      if (outputSize > 256_000) throw new Error(messages.outputTooLarge)
     }
     // 标准迭代器自动处理 Unicode 和空匹配前进，无 g 时仍只保留第一次命中。
     for (const match of text.matchAll(regex)) {
@@ -47,4 +74,9 @@ export function runRegexMatch(rawInput: string, testText: string, defaultFlags =
   }
   result.elapsedMs = Number((performance.now() - started).toFixed(2))
   return result
+}
+
+/** 纯匹配算法；生产入口只能在可终止的 Worker 中执行，不能直接放进界面渲染。 */
+export function runRegexMatch(rawInput: string, testText: string, defaultFlags = 'g'): RegexMatchResult {
+  return runRegexMatchCore(rawInput, testText, defaultFlags, getRegexEngineMessages())
 }

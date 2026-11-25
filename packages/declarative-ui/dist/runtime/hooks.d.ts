@@ -1,4 +1,5 @@
 import { EffectCallback } from "./context.js";
+import { type CreateTranslatorOptions, type MessageCatalog, type SupportedLocale, type Translator } from "./locale.js";
 /**
  * 声明式微状态 Hook: useState
  */
@@ -22,18 +23,34 @@ export declare function usePopoutState<T>(key: string, initialValue: T | (() => 
 /**
  * 声明式微副作用 Hook: useEffect
  */
-export declare function useEffect(effect: EffectCallback, deps?: any[]): void;
+export declare function useEffect(effect: EffectCallback, deps?: readonly unknown[]): void;
 /**
  * 声明式记忆化 Hook: useMemo
  */
-export declare function useMemo<T>(factory: () => T, deps?: any[]): T;
+export declare function useMemo<T>(factory: () => T, deps?: readonly unknown[]): T;
 /**
  * 声明式回调 Hook: useCallback
  */
-export declare function useCallback<T extends (...args: any[]) => any>(callback: T, deps?: any[]): T;
+export declare function useCallback<T extends (...args: never[]) => unknown>(callback: T, deps?: readonly unknown[]): T;
 /**
  * 声明式引用 Hook: useRef
  */
 export declare function useRef<T>(initialValue: T): {
     current: T;
 };
+/**
+ * 声明式语言 Hook: useLocale
+ * 订阅运行时语言变更，语言切换时自动触发组件重绘，卸载时成对清理监听器。
+ */
+export declare function useLocale(): string;
+export interface UseI18nResult<K extends string = string> {
+    locale: SupportedLocale;
+    t: Translator<K>;
+    formatNumber: (value: number, options?: Intl.NumberFormatOptions) => string;
+    formatDate: (value: Date | number | string, options?: Intl.DateTimeFormatOptions) => string;
+}
+/**
+ * 声明式多语言组合 Hook: useI18n
+ * 组合 useLocale() 与 createTranslator()，并提供绑定当前响应式 locale 的 Intl 数字/日期格式化函数。
+ */
+export declare function useI18n<T extends Record<string, string> = Record<string, string>>(messages: Record<string, MessageCatalog<T>>, options?: CreateTranslatorOptions): UseI18nResult<Extract<keyof T, string>>;

@@ -2,7 +2,9 @@
 // 宿主替身按真实链路返回：内置处理器结果 → dllplugin_call 路由（无 data 时补一层 data）→ IPC 外层 { success, data }
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
+const {
   fetchContextMenuEntries,
   toggleContextMenuEntry,
   switchWin11ClassicMenu,
@@ -10,8 +12,13 @@ import {
   findTruncatedLocations,
   buildSummaryText,
   win11ModeLabel,
-  HOST_SCAN_LIMIT_PER_LOCATION
-} from '../dist/logic.js'
+  HOST_SCAN_LIMIT_PER_LOCATION,
+  SCOPE_LABELS,
+  getScopeLabel,
+  getForbiddenReason,
+  getNoHostError,
+  getUnknownScopeLabel
+} = await import('../dist/logic.js')
 
 const HKCU_FILE = 'HKEY_CURRENT_USER\\Software\\Classes\\*\\shell'
 const HKLM_DIR = 'HKEY_LOCAL_MACHINE\\Software\\Classes\\Directory\\shell'
@@ -286,4 +293,36 @@ test('状态条文字：读取失败、重新扫描失败、扫描中、成功�
     '共 2 项 · 已启用 1 项 · 已禁用 0 项 · 状态未识别 1 项 · 1 个位置达到扫描上限，可能未列全'
   )
   assert.deepEqual([null, true, false].map(win11ModeLabel), ['未识别', '经典完整', '默认折叠'])
+})
+
+test('i18n 热切换：运行时在 zh-CN 与 en-US 之间切换时，getter 与动态函数文案实时更新不冻结', () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhFile = SCOPE_LABELS.file
+    const zhDir = SCOPE_LABELS.directory
+    const zhBg = SCOPE_LABELS.background
+    const zhForbidden = getForbiddenReason()
+    const zhNoHost = getNoHostError()
+    const zhUnknown = getUnknownScopeLabel()
+    assert.equal(getScopeLabel('file'), zhFile)
+    assert.match(zhFile, /[\u4e00-\u9fa5]/)
+
+    setRuntimeLocale('en-US')
+    const enFile = SCOPE_LABELS.file
+    const enDir = SCOPE_LABELS.directory
+    const enBg = SCOPE_LABELS.background
+    const enForbidden = getForbiddenReason()
+    const enNoHost = getNoHostError()
+    const enUnknown = getUnknownScopeLabel()
+    assert.equal(getScopeLabel('file'), enFile)
+    assert.notEqual(enFile, zhFile)
+    assert.notEqual(enDir, zhDir)
+    assert.notEqual(enBg, zhBg)
+    assert.notEqual(enForbidden, zhForbidden)
+    assert.notEqual(enNoHost, zhNoHost)
+    assert.notEqual(enUnknown, zhUnknown)
+    assert.doesNotMatch(`${enFile} ${enDir} ${enBg} ${enForbidden} ${enNoHost} ${enUnknown}`, /[\u4e00-\u9fa5]/)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

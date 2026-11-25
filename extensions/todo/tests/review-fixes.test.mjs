@@ -16,15 +16,16 @@ test('单条待办的动作不再重复 List 级的「新建 / 清空已完成�
   const view = await mount(TodoCommand)
   const itemTitles = view.actions(view.items()[0]).map((a) => a.props.title)
   const globalTitles = view.actions(null).map((a) => a.props.title)
-  assert.deepEqual(itemTitles, ['标为已完成', '复制待办标题', '删除此待办'])
+  assert.deepEqual(itemTitles, ['标为已完成', '编辑待办', '复制待办标题', '删除此待办'])
   for (const t of itemTitles) assert.equal(globalTitles.includes(t), false, `「${t}」重复出现在全局动作里`)
 })
 
-test('空状态条目直接复用 List 级动作，不另造一份同名动作', async () => {
+test('空列表不放可选中的占位条目，用空状态说明；回车与动作面板直接使用 List 级动作', async () => {
   const view = await mount(TodoCommand)
-  const titles = (n) => view.actions(n).map((a) => a.props.title)
-  assert.deepEqual(titles(view.items()[0]), titles(null))
-  assert.deepEqual(titles(null), ['新建待办事项'])
+  assert.deepEqual(view.items(), [])
+  assert.equal(view.emptyView().props.description, '在上方输入内容后按回车即可添加')
+  assert.equal(view.emptyView().props.actions, undefined, '空状态不另造一份同名动作')
+  assert.deepEqual(view.actions(null).map((a) => a.props.title), ['新建待办事项'])
 })
 
 test('「填写详情后添加」把搜索框里的文字预填为标题；表单只有「保存」一个动作', async () => {
@@ -64,7 +65,7 @@ test('[数据损坏] 读回损坏数据：暂停修改，确认后完整备份�
   const broken = [createTodo('好条目'), { id: 'bad', title: '' }]
   seed(broken)
   const view = await mount(TodoCommand)
-  assert.equal(view.items()[0].props.title, '待办数据已损坏，已暂停修改')
+  assert.equal(view.emptyView().props.title, '待办数据已损坏，已暂停修改')
   // 取消确认：原数据不动
   host.setConfirm(false)
   await view.run(null, '备份原数据并重新开始')
@@ -76,7 +77,7 @@ test('[数据损坏] 读回损坏数据：暂停修改，确认后完整备份�
   const backupKey = [...host.storage.keys()].find((k) => k.startsWith(`${TODOS_STORAGE_KEY}.backup-`))
   assert.ok(backupKey, '应写入备份项')
   assert.deepEqual(JSON.parse(host.storage.get(backupKey)), broken)
-  assert.equal(view.items()[0].props.title, '还没有待办')
+  assert.equal(view.emptyView().props.title, '还没有待办')
 })
 
 test('[故障注入] 备份写入失败时不清空原数据，并如实提示', async () => {
@@ -139,4 +140,18 @@ test('只有存在已完成待办时才提供「清空已完成待办」，清�
   await view.run(null, '清空已完成待办'); await tick()
   assert.deepEqual(saved(), [])
   assert.equal(has(), false)
+})
+
+test('[旧客户端] SDK 没有 List.EmptyView 时退回不带动作的占位条目，不崩溃', async () => {
+  const sdk = await import('@ztools/declarative-ui')
+  const original = sdk.List.EmptyView
+  delete sdk.List.EmptyView
+  try {
+    const view = await mount(TodoCommand)
+    assert.equal(view.emptyView(), null)
+    assert.equal(view.items()[0].props.title, '还没有待办')
+    assert.equal(view.items()[0].props.actions, undefined)
+  } finally {
+    sdk.List.EmptyView = original
+  }
 })

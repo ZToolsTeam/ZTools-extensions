@@ -1,9 +1,13 @@
 {
   "id": "md-to-office",
   "name": "AI文档转Word",
-  "version": "1.0.7",
+  "version": "1.0.10",
   "description": "本地将 Markdown 文本或文件转换为 Word 新副本，保留标题、列表、表格和代码块，支持公文、商务和学术排版及富文本复制",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -49,5 +53,52 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Markdown to Word",
+      "description": "Convert Markdown text or files locally into Word (.docx) copies preserving headings, lists, tables, and code blocks, with formal, business, and academic styles plus rich-text copy.",
+      "keywords": [
+        "markdown",
+        "word",
+        "docx",
+        "convert",
+        "office",
+        "export"
+      ],
+      "features": {
+        "md-to-office-workbench": {
+          "explain": "Edit or load Markdown, choose a document style, and export a Word copy",
+          "cmds": [
+            "md to word",
+            "markdown to word",
+            "md to docx",
+            "export word"
+          ]
+        },
+        "md-to-office-clipboard-fast": {
+          "explain": "Convert clipboard Markdown to formatted rich text ready to paste into Word",
+          "cmds": [
+            "copy for word",
+            "clipboard to word",
+            "rich text paste"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

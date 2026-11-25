@@ -1,3 +1,5 @@
+[English](en/getting-started.md) | **简体中文**
+
 # 开发入门
 
 本文带你从零做出第一个插件：创建、编译、测试、在 ZTools 客户端里试用，再提交 Pull Request。示例插件 ID 用 `my-tool`，换成你自己的即可。
@@ -31,10 +33,11 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
 
 | 文件 | 作用 |
 | --- | --- |
-| `plugin.json` | 插件清单：名称、版本、入口、图标、权限、支持的平台 |
-| `src/index.tsx` | 界面：一个可搜索的短语列表，回车复制 |
+| `plugin.json` | 插件清单：名称、版本、分类、多语言元数据、入口、图标、权限、支持的平台 |
+| `src/index.tsx` | 界面：一个可搜索的短语列表，回车复制，随宿主语言自动切换文案 |
+| `src/i18n.ts` | 双语词典（`zh-CN` / `en-US`），通过 `createTranslator` 维护界面文案 |
 | `src/items.ts` | 示例数据和过滤逻辑，和界面分开，方便测试 |
-| `tests/index.test.mjs` | 测试：清单、过滤逻辑（含异常输入）、渲染结果 |
+| `tests/index.test.mjs` | 测试：清单、过滤逻辑（含异常输入）、渲染与语言切换结果 |
 | `icon.svg` | 单色图标 |
 | `tsconfig.json` | 编译配置，指向仓库里的 SDK 类型声明 |
 | `package.json` | 只用来把编译产物标成 ES 模块，不需要装依赖 |
@@ -49,6 +52,15 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
   "version": "1.0.0",
   "description": "一句话说明插件做什么",
   "author": "你的GitHub用户名",
+  "category": ["办公效率"],
+  "categoryId": "productivity",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "My Tool",
+      "description": "One-line description of what the plugin does"
+    }
+  },
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "mode": "view",
@@ -66,6 +78,7 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
 | 选项 | 说明 |
 | --- | --- |
 | `--platform cross` / `windows` / `macos` | 生成哪些平台的 `targets`，默认 `cross`（两个平台都写）。按你实际能测试的平台选 |
+| `--category <分类>` | 市场分类（1–2 项，逗号分隔，同时接受中文标准分类与英文 slug 如 `productivity` / `developer`） |
 | `--author <名字>` | 推荐填写 GitHub 用户名，也可填写实际团队名称；默认 `ZTools Developer` 是占位值，投稿前必须替换 |
 | `--force` | 目录已存在时覆盖 |
 | `--help` | 查看全部用法 |
@@ -81,15 +94,22 @@ npm run create-plugin -- my-tool "我的工具" "一句话说明插件做什么"
 `src/index.tsx` 的核心部分：
 
 ```tsx
-import React, { List, ActionPanel, Action, Icon, Clipboard, showToast, Toast, useState } from "@ztools/declarative-ui";
+import React, { List, ActionPanel, Action, Icon, Clipboard, showToast, Toast, useState, useLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import { SAMPLE_ITEMS, filterItems } from "./items.js";
 
 export default function Command() {
+  useLocale();
   const [searchText, setSearchText] = useState<string>("");
   const items = filterItems(SAMPLE_ITEMS, searchText);
 
   return (
-    <List searchBarPlaceholder="搜索短语" searchText={searchText} onSearchTextChange={setSearchText}>
+    <List
+      navigationTitle={t("navigationTitle")}
+      searchBarPlaceholder={t("searchPlaceholder")}
+      searchText={searchText}
+      onSearchTextChange={setSearchText}
+    >
       {items.map((item) => (
         <List.Item
           key={item.id}
@@ -100,8 +120,8 @@ export default function Command() {
           accessories={[{ tag: item.category }]}
           actions={
             <ActionPanel>
-              <Action.CopyToClipboard title="复制内容" content={item.content} />
-              <Action title="复制标题" icon={Icon.CopyClipboard} onAction={async () => { /* … */ }} />
+              <Action.CopyToClipboard title={t("copyContent")} content={item.content} />
+              <Action title={t("copyTitle")} icon={Icon.CopyClipboard} onAction={async () => { /* … */ }} />
             </ActionPanel>
           }
         />
@@ -114,9 +134,10 @@ export default function Command() {
 几个要点：
 
 - **默认导出的函数就是插件入口**，返回一个声明式视图（这里是 `List`）。
-- **所有东西都从 `@ztools/declarative-ui` 引入**，包括 `React` 和 `useState` 等 Hook。不能引入第三方 npm 包，原因见 [API 参考 · 可用模块](api.md#可用模块)。
+- **所有东西都从 `@ztools/declarative-ui` 引入**，包括 `React` 和 `useState`、`useLocale` 等 Hook。不能引入第三方 npm 包，原因见 [API 参考 · 可用模块](api.md#可用模块)。
+- **多语言支持**：将展示文案集中在 `src/i18n.ts`（`createTranslator`），组件入口调用 `useLocale()` 订阅宿主语言切换；同时在 `plugin.json` 中补全 `defaultLocale`、`categoryId` 与 `i18n["en-US"]`，完整说明见 [API 参考 · 国际化（i18n）](api.md#国际化i18n)。
 - **动作的顺序有含义**：`ActionPanel` 里第 1 个动作是回车（`Enter`）触发的主动作，第 2 个是 `⌘/Ctrl+Enter` 触发的次动作，其余收进 `⌘/Ctrl+K` 打开的动作面板。
-- **相对路径引入要写 `.js` 后缀**（`./items.js`），因为编译后是 `dist/items.js`。
+- **相对路径引入要写 `.js` 后缀**（`./items.js`、`./i18n.js`），因为编译后是 `dist/items.js`、`dist/i18n.js`。
 
 示例是最简单的「单栏列表」。你的插件该用哪种布局，按 [界面规范 · 选择布局](ui-guidelines.md#选择布局) 判断；仓库里的现成插件（例如 [`extensions/process-monitor`](../extensions/process-monitor/)、[`extensions/disk-analyzer`](../extensions/disk-analyzer/)、[`extensions/screenshot`](../extensions/screenshot/)）可以直接参考。
 
@@ -242,7 +263,7 @@ Windows（把路径换成 ZTools 的安装目录；免安装版就是解压目�
 ## 8. 提交 Pull Request
 
 1. Fork 本仓库，在自己的分支上提交 `extensions/my-tool/` 下的源码、清单、图标和测试（`dist/` 已被忽略，不用管）。
-2. 按 [贡献指南](../CONTRIBUTING.md) 跑一遍合并前检查。
+2. 按 [贡献指南](../CONTRIBUTING.zh-CN.md) 跑一遍合并前检查。
 3. 发起 Pull Request，按模板写清楚改了什么、在哪些系统上验证过、为什么需要这些权限。
 
 审核会看什么见 [审核标准](review.md)；版本号、平台声明、草稿和下架的规则见 [发布规则](publishing.md)。PR 合并后由官方发布到插件市场。

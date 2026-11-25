@@ -1,12 +1,15 @@
 // 测试用：按客户端局域网共享处理器的行为模拟 LanSharePlugin（状态、启动 / 停止、按路径加文件、按 id 切换与移除）
 // 与客户端一致：加文件时服务未运行会顺带启动；不存在的路径被跳过；按 id 找不到文件时返回失败
 export function installLanHost(host, { existing = [] } = {}) {
+  let seq = 0
   const state = {
     running: false,
     port: 8765,
     files: new Map(),
     dialog: { canceled: true },
+    folderDialog: { canceled: true },
     startError: null,
+    removeFailIds: new Set(),
     existing: new Set(existing)
   }
   const status = (extra = {}) => ({
@@ -39,8 +42,8 @@ export function installLanHost(host, { existing = [] } = {}) {
         const added = []
         for (const p of params.paths || []) {
           if (!state.existing.has(p)) continue
-          const id = `id${state.files.size + 1}`
-          const item = { id, name: p.split('\\').pop(), path: p, size: 2048, sizeBytes: 2048, shared: true, isDirectory: false }
+          const id = `id${++seq}`
+          const item = { id, name: p.split(/[\\/]/).pop(), path: p, size: 2048, sizeBytes: 2048, shared: true, isDirectory: false }
           state.files.set(id, item)
           added.push(item)
         }
@@ -53,13 +56,19 @@ export function installLanHost(host, { existing = [] } = {}) {
         file.shared = params.shared
         return status({ updatedFile: file })
       }
-      case 'removeSharedFile':
-        state.files.delete(String(params.id ?? ''))
+      case 'removeSharedFile': {
+        const id = String(params.id ?? '')
+        if (state.removeFailIds.has(id)) {
+          return { ok: false, success: false, error: `文件已被占用: ${id}` }
+        }
+        state.files.delete(id)
         return status()
+      }
       default:
         return { ok: false, success: false, error: `Unsupported LanSharePlugin function: ${func}` }
     }
   }
   host.ipc.window_show_open_dialog = async () => state.dialog
+  host.ipc.window_show_select_folder_dialog = async () => state.folderDialog
   return state
 }

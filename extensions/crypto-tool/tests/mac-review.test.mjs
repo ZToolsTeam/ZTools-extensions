@@ -80,14 +80,13 @@ test('HMAC：消息与密钥都为空时显示中性提示、不能复制；只�
   } finally { form.unmount() }
 })
 
-test('UUID：搜索框默认留空显示占位；留空生成 1 个；非法数量仍报错', async () => {
+test('UUID：搜索框默认留空显示占位并打开即自动生成；非法数量仍报错', async () => {
   const view = await mount(genUuid)
   try {
     assert.equal(view.tree().props.searchText, '')
-    await view.run(view.item('uuid-result'), '生成 UUID')
-    assert.match(view.item('uuid-result').props.title, /已生成 1 个/)
-    await view.search('abc')
-    await view.run(view.item('uuid-result'), '生成 UUID')
+    assert.match(view.item('uuid-item-0').props.title, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    await view.search('0')
+    await view.run(view.item('uuid-error'), '重新生成')
     assert.match(host.lastToast().title, /失败/)
   } finally { view.unmount() }
 })

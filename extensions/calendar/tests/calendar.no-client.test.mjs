@@ -1,14 +1,18 @@
 // 不在 ZTools 客户端里运行时：不显示示例日程，新建 / 读取 / 删除如实报不可用，不在内存里假装保存
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import CalendarCommand, {
-  NOT_IN_CLIENT_MESSAGE,
+
+setRuntimeLocale('zh-CN')
+const {
+  default: CalendarCommand,
+  getNotInClientMessage,
   createCalendarEvent,
   deleteCalendarEvent,
   fetchCalendarPage,
   exportCalendarIcs
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 const host = createHost()
 
@@ -31,7 +35,7 @@ test('界面只显示“需要在 ZTools 客户端中使用”，没有示例日
   const items = view.items()
   assert.equal(items.length, 1)
   assert.equal(items[0].props.id, 'calendar-client-required')
-  assert.equal(items[0].props.title, NOT_IN_CLIENT_MESSAGE)
+  assert.equal(items[0].props.title, getNotInClientMessage())
   assert.equal(view.text().includes('评审'), false)
   assert.equal(host.ipcCalls.length, 0)
   assert.equal(host.toasts.length, 0)

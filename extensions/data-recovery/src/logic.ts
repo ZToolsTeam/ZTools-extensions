@@ -1,3 +1,4 @@
+import { getLocale } from '@ztools/declarative-ui'
 type DynamicBridge = ReturnType<typeof JSON.parse>;
 /**
  * 回收站文件取回：由客户端列出 Windows 回收站（C、D、E 盘）里的文件，把勾选的文件复制到桌面的恢复文件夹。
@@ -8,6 +9,7 @@ type DynamicBridge = ReturnType<typeof JSON.parse>;
  * - 任何一个文件失败都如实列出原因，不改用其他方式顶替
  */
 
+import { t } from "./i18n.js";
 import {
   formatBytes,
   getRealSystemPath,
@@ -17,14 +19,19 @@ import {
   showRealItemInFolder,
   type NativeInvocationResult
 } from "./native-ipc.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes };
 export type { NativeInvocationResult };
 
 export const FORBIDDEN_TARGET_PATTERN =
   /(^|[\\/])(Windows|System32|SysWOW64|Program Files|Program Files \(x86\)|\.\.)($|[\\/])/i;
-export const FORBIDDEN_REASON = "不能向系统目录写入恢复文件，路径中也不能包含 ..";
-export const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+export function getNotInClientMessage(): string {
+  return t("notInClientMessage");
+}
+export function getForbiddenReason(): string {
+  return t("forbiddenReason");
+}
 export const RESTORE_FOLDER_NAME = "ZToolsRecovered";
 
 export type RecoveryCategory = "all" | "documents" | "images" | "media" | "archives_code" | "other";
@@ -36,38 +43,52 @@ export interface RecoveryCategoryMeta {
   exts: string[];
 }
 
-export const RECOVERY_CATEGORIES: RecoveryCategoryMeta[] = [
+const CATEGORY_DEFS: Array<{
+  id: Exclude<RecoveryCategory, "all">;
+  nameKey: "catDocumentsName" | "catImagesName" | "catMediaName" | "catArchivesCodeName" | "catOtherName";
+  subtitleKey: "catDocumentsSubtitle" | "catImagesSubtitle" | "catMediaSubtitle" | "catArchivesCodeSubtitle" | "catOtherSubtitle";
+  exts: string[];
+}> = [
   {
     id: "documents",
-    name: "文档",
-    subtitle: "Word / Excel / PPT / PDF / 文本",
+    nameKey: "catDocumentsName",
+    subtitleKey: "catDocumentsSubtitle",
     exts: [".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt", ".pdf", ".md", ".txt", ".csv", ".wps"]
   },
   {
     id: "images",
-    name: "图片",
-    subtitle: "PNG / JPG / PSD / RAW 等",
+    nameKey: "catImagesName",
+    subtitleKey: "catImagesSubtitle",
     exts: [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".psd", ".svg", ".raw", ".cr2", ".heic"]
   },
   {
     id: "media",
-    name: "视频音频",
-    subtitle: "MP4 / MOV / MP3 / WAV 等",
+    nameKey: "catMediaName",
+    subtitleKey: "catMediaSubtitle",
     exts: [".mp4", ".mov", ".mkv", ".avi", ".mp3", ".wav", ".flac", ".m4a"]
   },
   {
     id: "archives_code",
-    name: "压缩包与代码",
-    subtitle: "ZIP / 7z / RAR / SQL / 源代码",
+    nameKey: "catArchivesCodeName",
+    subtitleKey: "catArchivesCodeSubtitle",
     exts: [".zip", ".7z", ".rar", ".tar", ".gz", ".sql", ".json", ".ts", ".js", ".py"]
   },
   {
     id: "other",
-    name: "其他",
-    subtitle: "不属于以上类型的文件",
+    nameKey: "catOtherName",
+    subtitleKey: "catOtherSubtitle",
     exts: []
   }
 ];
+
+export function getRecoveryCategories(): RecoveryCategoryMeta[] {
+  return CATEGORY_DEFS.map((c) => ({
+    id: c.id,
+    name: t(c.nameKey),
+    subtitle: t(c.subtitleKey),
+    exts: c.exts
+  }));
+}
 
 export interface RecoverableFileItem {
   id: string;
@@ -118,10 +139,11 @@ export function createEmptyRecoverySnapshot(error?: string): DataRecoverySnapsho
 
 export function classifyRecoveryExt(extRaw: string): RecoveryCategoryMeta {
   const ext = String(extRaw || "").toLowerCase();
-  for (const cat of RECOVERY_CATEGORIES) {
+  const categories = getRecoveryCategories();
+  for (const cat of categories) {
     if (cat.exts.includes(ext)) return cat;
   }
-  return RECOVERY_CATEGORIES.find((c) => c.id === "other")!;
+  return categories.find((c) => c.id === "other")!;
 }
 
 function hasClientHost(hostBridge?: DynamicBridge): boolean {
@@ -136,12 +158,12 @@ function formatModified(raw: DynamicBridge): string {
   const iso = typeof raw?.modifiedAt === "string" ? Date.parse(raw.modifiedAt) : NaN;
   const ms = Number.isFinite(iso) ? iso : Number(raw?.deletedAtMs);
   if (!Number.isFinite(ms) || ms <= 0) return "";
-  return new Date(ms).toLocaleString();
+  return new Date(ms).toLocaleString(getLocale());
 }
 
 export async function fetchRecoverableFiles(hostBridge?: DynamicBridge): Promise<DataRecoverySnapshot> {
   if (!hasClientHost(hostBridge)) {
-    return createEmptyRecoverySnapshot(NOT_IN_CLIENT_MESSAGE);
+    return createEmptyRecoverySnapshot(getNotInClientMessage());
   }
   try {
     const [desktop, hostScanRes] = await Promise.all([
@@ -152,7 +174,9 @@ export async function fetchRecoverableFiles(hostBridge?: DynamicBridge): Promise
 
     if (!hostScanRes.ok || !hostScanRes.data) {
       return {
-        ...createEmptyRecoverySnapshot(`读取回收站失败：${hostScanRes.error || hostScanRes.message || "客户端没有返回结果"}`),
+        ...createEmptyRecoverySnapshot(
+          t("scanFailed", { error: resolveErrorMessage(hostScanRes, t("hostNoResult")) })
+        ),
         restoreTargetDir
       };
     }
@@ -191,11 +215,11 @@ export async function fetchRecoverableFiles(hostBridge?: DynamicBridge): Promise
       restoreTargetDir,
       items,
       totalSizeBytes: items.reduce((s, i) => s + i.sizeBytes, 0),
-      updatedAt: new Date().toLocaleTimeString(),
-      ...(restoreTargetDir ? {} : { error: "无法获取桌面路径，不能恢复文件" })
+      updatedAt: new Date().toLocaleTimeString(getLocale()),
+      ...(restoreTargetDir ? {} : { error: t("desktopUnavailable") })
     };
   } catch (err) {
-    return createEmptyRecoverySnapshot(`读取回收站失败：${errorText(err)}`);
+    return createEmptyRecoverySnapshot(t("scanFailed", { error: errorText(err) }));
   }
 }
 
@@ -247,9 +271,9 @@ export async function restoreSelectedFiles(
     outputDir: "",
     message
   });
-  if (!baseDir) return empty("无法获取桌面路径，不能恢复文件");
-  if (FORBIDDEN_TARGET_PATTERN.test(baseDir)) return empty(FORBIDDEN_REASON);
-  if (!items || items.length === 0) return empty("请先勾选要恢复的文件");
+  if (!baseDir) return empty(t("desktopUnavailable"));
+  if (FORBIDDEN_TARGET_PATTERN.test(baseDir)) return empty(getForbiddenReason());
+  if (!items || items.length === 0) return empty(t("selectFilesFirst"));
 
   const outputDir = `${baseDir}\\${restoreRunFolderName(now)}`;
   const used = new Set<string>();
@@ -261,11 +285,11 @@ export async function restoreSelectedFiles(
     const src = String(item?.cachePath || "").trim();
     const name = String(item?.name || "").trim();
     if (!src || !name || /[\\/]/.test(name) || name === "." || name === "..") {
-      failed.push({ name: name || src || "（未知文件）", error: "文件路径无效" });
+      failed.push({ name: name || src || t("unknownFile"), error: t("invalidFilePath") });
       continue;
     }
     if (FORBIDDEN_TARGET_PATTERN.test(src)) {
-      failed.push({ name, error: FORBIDDEN_REASON });
+      failed.push({ name, error: getForbiddenReason() });
       continue;
     }
     const dest = `${outputDir}\\${uniqueName(name, used)}`;
@@ -278,18 +302,27 @@ export async function restoreSelectedFiles(
       restoredPaths.push(String(res.data?.targetPath || dest));
       restoredBytes += item.sizeBytes;
     } else {
-      failed.push({ name, error: res.error || res.message || "复制失败" });
+      failed.push({ name, error: resolveErrorMessage(res, t("copyFailed")) });
     }
   }
 
-  const failureText = failed[0] ? `${failed[0].name}：${failed[0].error}` : "";
+  const failureText = failed[0] ? `${failed[0].name}: ${failed[0].error}` : "";
   let message: string;
   if (failed.length === 0) {
-    message = `已将 ${restoredPaths.length} 个文件 (${formatBytes(restoredBytes)}) 复制到 ${outputDir}`;
+    message = t("restoreSuccessMsg", {
+      count: restoredPaths.length,
+      size: formatBytes(restoredBytes),
+      dir: outputDir
+    });
   } else if (restoredPaths.length === 0) {
-    message = `恢复失败，${failed.length} 个文件均未复制。${failureText}`;
+    message = t("restoreAllFailedMsg", { count: failed.length, detail: failureText });
   } else {
-    message = `已复制 ${restoredPaths.length} 个文件到 ${outputDir}，${failed.length} 个失败。${failureText}`;
+    message = t("restorePartialMsg", {
+      okCount: restoredPaths.length,
+      dir: outputDir,
+      failCount: failed.length,
+      detail: failureText
+    });
   }
 
   return {

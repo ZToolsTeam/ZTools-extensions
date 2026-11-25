@@ -11,3 +11,5 @@ export type { CacheOptions, CacheSubscriber } from "./cache.js";
 export * from "./host-error.js";
 export * from "./secure-storage.js";
 export * from "./process.js";
+export { SUPPORTED_LOCALES, DEFAULT_LOCALE, SYSTEM_LOCALE, stripLocaleSuffix, matchSupportedLocale, resolveLocale, getLocale, setRuntimeLocale, onLocaleChange, createTranslator } from "../runtime/locale.js";
+export type { SupportedLocale, LocaleChangeListener, TranslationParamValue, TranslationParams, CreateTranslatorOptions, MessageCatalog, Translator } from "../runtime/locale.js";

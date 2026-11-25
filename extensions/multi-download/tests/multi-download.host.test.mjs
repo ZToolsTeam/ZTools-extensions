@@ -1,7 +1,10 @@
 // 本插件业务逻辑的宿主集成测试：用宿主替身与可注入的 fetch 模拟客户端与本机 aria2，覆盖成功与各类失败路径
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as multiDownload from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 function createRealHostStub(handlers = {}) {
   const calls = []
@@ -32,7 +35,7 @@ function createRealHostStub(handlers = {}) {
 }
 
 const called = (host, channel) => host.calls.filter((c) => c.channel === channel)
-const preset16 = multiDownload.THREAD_SPLIT_PRESETS[0]
+const preset16 = multiDownload.getThreadSplitPresets()[0]
 
 /** 模拟本机 aria2 JSON-RPC：按 method 返回响应体，记录请求 */
 function aria2Fetch(responder) {
@@ -50,16 +53,9 @@ const aria2Offline = async () => {
   throw new TypeError('fetch failed: connect ECONNREFUSED 127.0.0.1:6800')
 }
 
-test('multi-download: 扫描下载文件夹、读取磁盘空间与 aria2 状态', async () => {
+test('multi-download: 挂载快照只读取下载路径、磁盘空间、aria2 状态与剪贴板，不扫描目录', async () => {
   const host = createRealHostStub({
     system_get_path: () => 'C:\\Users\\RealUser\\Downloads',
-    system_search_files: () => ({
-      files: [
-        { name: 'ubuntu-24.04.iso', path: 'C:\\Users\\RealUser\\Downloads\\ubuntu-24.04.iso', is_dir: false, size: 4096000, mtime: 1710000000 }
-      ],
-      total_matches: 1,
-      total_bytes: 4096000
-    }),
     system_get_disk_usage: () => ({ total: 500 * 1024 ** 3, used: 377 * 1024 ** 3, available: 123 * 1024 ** 3, percent: 75 }),
     clipboard_read_text: () => 'magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567'
   })
@@ -69,20 +65,65 @@ test('multi-download: 扫描下载文件夹、读取磁盘空间与 aria2 状态
   assert.equal(snap.downloadDir, 'C:\\Users\\RealUser\\Downloads')
   assert.equal(snap.driveInfoAvailable, true)
   assert.equal(snap.driveFreeBytes, 123 * 1024 ** 3)
-  assert.equal(snap.files.length, 1)
-  assert.equal(snap.files[0].category, 'iso_image')
+  assert.deepEqual(snap.files, [])
+  assert.equal(snap.totalSizeBytes, 0)
   assert.equal(snap.aria2Status.online, true)
   assert.equal(snap.aria2Status.version, '1.37.0')
   assert.equal(snap.sniffedProtocol, '磁力链接')
   assert.equal(fetchImpl.requests[0].url, 'http://127.0.0.1:6800/jsonrpc')
   assert.equal(fetchImpl.requests[0].body.method, 'aria2.getVersion')
   assert.equal(multiDownload.isDriveLowOnSpace(snap), false)
+  assert.equal(called(host, 'system_search_files').length, 0)
+  assert.equal(called(host, 'filesystem_get_directory_contents').length, 0)
+  assert.equal(called(host, 'system_list_common_folders').length, 0)
+  assert.deepEqual(called(host, 'system_get_path').map((c) => c.payload.name), ['downloads'])
 })
 
-test('multi-download: 磁盘空间读不到时标记为未知，不拿别的盘或 0 冒充；aria2 拒绝时如实记录原因', async () => {
+test('multi-download: 导入规则不限扩展名且保留既有分类统计，未知大小不填 0', () => {
+  assert.equal(multiDownload.MULTI_DOWNLOAD_IMPORT_RULES.extensions, undefined)
+  const items = [
+    multiDownload.toDownloadedFileItem({
+      path: 'D:\\DL\\setup.exe',
+      name: 'setup.exe',
+      parentDir: 'D:\\DL',
+      extension: '.exe',
+      sizeBytes: 1024,
+      lastModifiedMs: 100
+    }),
+    multiDownload.toDownloadedFileItem({
+      path: 'D:\\DL\\bundle.tar',
+      name: 'bundle.tar',
+      parentDir: 'D:\\DL',
+      extension: '.tar',
+      sizeBytes: null,
+      lastModifiedMs: null
+    }),
+    multiDownload.createClientDownloadedItem('D:\\DL\\ubuntu.iso', 4096)
+  ]
+  assert.equal(items[0].category, 'installer')
+  assert.equal(items[1].category, 'archive')
+  assert.equal(items[1].sizeBytes, null)
+  assert.equal(items[2].category, 'iso_image')
+
+  const stats = multiDownload.computeDownloadStats(items)
+  assert.equal(stats.totalSizeBytes, 5120)
+  assert.equal(stats.categoryStats.find((s) => s.category === 'archive')?.count, 1)
+})
+
+test('multi-download: 磁盘空间读不到或下载路径为空时不拿别的盘冒充；aria2 拒绝时如实记录原因', async () => {
+  const noPath = await multiDownload.fetchMultiDownloadSnapshot(
+    createRealHostStub({
+      system_get_path: () => '',
+      system_get_disk_usage: () => ({ total: 100, used: 10, available: 90 }),
+      clipboard_read_text: () => ''
+    }),
+    { fetchImpl: aria2Offline }
+  )
+  assert.equal(noPath.downloadDir, '')
+  assert.equal(noPath.driveInfoAvailable, false)
+
   const host = createRealHostStub({
     system_get_path: () => 'D:\\Downloads',
-    system_search_files: () => ({ files: [], total_matches: 0 }),
     system_get_disk_usage: ({ drive }) => {
       if (drive.startsWith('C')) return { total: 100, used: 10, available: 90 }
       throw new Error('无法读取磁盘')
@@ -95,7 +136,7 @@ test('multi-download: 磁盘空间读不到时标记为未知，不拿别的盘�
   assert.equal(snap.driveFreeBytes, 0)
   assert.equal(multiDownload.isDriveLowOnSpace(snap), false)
   assert.equal(snap.aria2Status.online, false)
-  assert.equal(snap.aria2Status.error, 'Unauthorized')
+  assert.equal(snap.aria2Status.error, 'aria2 返回错误')
 
   const offline = await multiDownload.probeAria2JsonRpc({ fetchImpl: aria2Offline })
   assert.equal(offline.online, false)
@@ -141,7 +182,7 @@ test('multi-download: aria2 拒绝任务时返回失败，不悄悄换成别的�
   const res = await multiDownload.startMultiThreadDownloadTask('https://example.com/file.zip', 'C:\\D', preset16, host, { fetchImpl })
   assert.equal(res.ok, false)
   assert.equal(res.error, 'ARIA2_REJECTED')
-  assert.match(res.message, /Unauthorized/)
+  assert.match(res.message, /aria2 返回错误/)
   assert.equal(host.calls.length, 0)
 })
 
@@ -279,5 +320,5 @@ test('multi-download: 链接识别不因畸形转义抛错，档位文字不再�
   assert.equal(r.url, 'https://example.com/%E0%A4%A.zip')
   assert.equal(r.suggestedFileName, '%E0%A4%A.zip')
   assert.equal(multiDownload.detectDownloadUrlFromText('https://example.com/a%20b.zip').suggestedFileName, 'a b.zip')
-  assert.doesNotMatch(JSON.stringify(multiDownload.THREAD_SPLIT_PRESETS), /极速|千兆|加速/)
+  assert.doesNotMatch(JSON.stringify(multiDownload.getThreadSplitPresets()), /极速|千兆|加速/)
 })

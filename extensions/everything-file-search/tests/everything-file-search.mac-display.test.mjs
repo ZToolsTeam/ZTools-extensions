@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { truncatePath, getFileCategory, sortAndFilterFiles, moveToTrash } from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 test('macOS 长路径缩写保持 / 分隔，不显示成 Windows 的反斜杠；Windows 路径仍用反斜杠', () => {
   const mac = '/Users/tester/Library/Mobile Documents/com~apple~CloudDocs/项目/2026/季度报告/最终版.pdf'
@@ -33,7 +36,16 @@ test('回收与文件夹提示按平台使用废纸篓 / 访达或回收站 / �
       assert.equal(res.success, false)
       assert.equal(res.message, `文件夹不能在这里移入${trash}，请在${manager}中操作`)
     }
+    setRuntimeLocale('en-US')
+    for (const [platform, trash, manager] of [['MacIntel', 'Trash', 'Finder'], ['Win32', 'Recycle Bin', 'Explorer']]) {
+      Object.defineProperty(globalThis, 'navigator', { value: { platform }, configurable: true, writable: true })
+      const res = await moveToTrash('/x/dir', {}, true)
+      assert.equal(res.success, false)
+      assert.equal(res.message, `Folders cannot be moved to ${trash} here; use ${manager}`)
+      assert.ok(!/[\u4e00-\u9fa5]|\{[a-z]+\}/i.test(res.message))
+    }
   } finally {
+    setRuntimeLocale('zh-CN')
     if (saved) Object.defineProperty(globalThis, 'navigator', saved); else delete globalThis.navigator
   }
 })

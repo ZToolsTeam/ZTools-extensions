@@ -10,11 +10,16 @@ import React, {
   confirmAlert,
   showToast,
   useEffect,
+  useLocale,
   useMemo,
   useNavigation,
   useState,
   useRef
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
+import {
+  createCompatFileInputProps
+} from './host-compat.js'
 import {
   addCustomDownloadDirectory,
   cleanExpiredDownloads,
@@ -40,6 +45,7 @@ import type {
   DownloadFileCategory,
   DownloadsDashboardSummary
 } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 function getCategoryIcon(category: Exclude<DownloadFileCategory, 'all'>): string {
   switch (category) {
@@ -71,13 +77,19 @@ export function installerExtensionsLabel(platform: string | undefined): string {
 /** 网盘与下载器筛选项只列当前平台上存在的客户端；IDM 只有 Windows 版。 */
 export function netdiskFilterLabel(platform: string | undefined): string {
   return platform === 'windows' || platform === undefined
-    ? '网盘与下载器 (百度 / 夸克 / 阿里 / 迅雷 / IDM)'
-    : '网盘与下载器 (百度 / 夸克 / 阿里 / 迅雷)'
+    ? t('netdiskLabelWin')
+    : t('netdiskLabelOther')
 }
 
 /** 摘要按当前筛选结果计数；筛选后数量与总数不同时再补总数。 */
 export function filteredSummaryText(shown: number, total: number, sourceCount: number, partial: boolean, issueCount: number): string {
-  return `已显示 ${shown} 个文件${shown !== total ? `（共 ${total} 个）` : ''} · ${sourceCount} 个目录${partial ? ' · 仅部分结果' : ''}${issueCount ? ` · ${issueCount} 项读取异常` : ''}`
+  return t('summaryText', {
+    shown,
+    totalPart: shown !== total ? t('summaryTotalPart', { total }) : '',
+    sources: sourceCount,
+    partialPart: partial ? t('summaryPartialPart') : '',
+    issuePart: issueCount ? t('summaryIssuePart', { count: issueCount }) : ''
+  })
 }
 
 function resolveInitialFilterFromFeature(featureCode?: string): string {
@@ -98,6 +110,7 @@ export function AddCustomDownloadDirectoryForm(props: {
   onAdded: (dirPath: string) => void
   onRemoved: (dirPath: string) => void
 }) {
+  useLocale()
   const { pop } = useNavigation()
   const [selectedDir, setSelectedDir] = useState('')
   const busy = useRef(false)
@@ -106,11 +119,11 @@ export function AddCustomDownloadDirectoryForm(props: {
 
   return (
     <Form
-      navigationTitle="管理自定义下载监控目录"
+      navigationTitle={t('formNavTitle')}
       actions={
         <ActionPanel>
           <Action.SubmitForm
-            title="选择并添加目录"
+            title={t('formSubmitTitle')}
             icon={Icon.Plus}
             onSubmit={async () => {
               if (busy.current || !alive.current) return
@@ -121,18 +134,18 @@ export function AddCustomDownloadDirectoryForm(props: {
                 setSelectedDir(selected)
                 const res = await addCustomDownloadDirectory(selected, undefined, () => alive.current)
                 if (!alive.current) return
-                if (!res.ok || !res.path) throw new Error(res.error || '目录未能保存')
-                await showToast({ style: Toast.Style.Success, title: '已添加自定义目录', message: res.path })
+                if (!res.ok || !res.path) throw new Error(resolveErrorMessage(res, t('errDirNotSaved')))
+                await showToast({ style: Toast.Style.Success, title: t('toastDirAdded'), message: res.path })
                 if (alive.current) { props.onAdded(res.path); pop() }
               } catch (error) {
-                if (alive.current) await showToast({ style: Toast.Style.Failure, title: '添加目录失败', message: error instanceof Error ? error.message : String(error) })
+                if (alive.current) await showToast({ style: Toast.Style.Failure, title: t('toastDirAddFailed'), message: error instanceof Error ? error.message : String(error) })
               } finally { busy.current = false }
             }}
           />
           {props.customDirs.map((customDir) => (
             <Action
               key={`rm-${customDir}`}
-              title={`移除自定义目录: ${customDir}`}
+              title={t('actionRemoveCustomDir', { dir: customDir })}
               icon={Icon.Trash}
               style={Action.Style.Destructive}
               onAction={async () => {
@@ -142,10 +155,10 @@ export function AddCustomDownloadDirectoryForm(props: {
                   await removeCustomDownloadDirectory(customDir)
                   if (!alive.current) return
                   props.onRemoved(customDir)
-                  await showToast({ style: Toast.Style.Success, title: '已移除目录配置', message: '文件保持原样' })
+                  await showToast({ style: Toast.Style.Success, title: t('toastDirRemoved'), message: t('toastDirRemovedMsg') })
                   pop()
                 } catch (error) {
-                  if (alive.current) await showToast({ style: Toast.Style.Failure, title: '未能保存目录配置', message: error instanceof Error ? error.message : String(error) })
+                  if (alive.current) await showToast({ style: Toast.Style.Failure, title: t('toastDirSaveFailed'), message: error instanceof Error ? error.message : String(error) })
                 } finally { busy.current = false }
 
               }}
@@ -154,19 +167,22 @@ export function AddCustomDownloadDirectoryForm(props: {
         </ActionPanel>
       }
     >
-      <Form.Description title="说明" text="通过系统窗口选择要聚合的文件夹，授予访问权限后保存；目录变化后执行刷新。移除配置不会删除文件。" />
-      {selectedDir && <Form.Description title="上次选择的目录" text={selectedDir} />}
+      <Form.Description title={t('formDescTitle')} text={t('formDescText')} />
+      {selectedDir && <Form.Description title={t('formLastSelectedTitle')} text={selectedDir} />}
     </Form>
   )
 }
 
 export function DownloadFileDetailView({ entry }: { entry: DownloadEntry }) {
-  const content = `文件：${entry.name}
-来源：${entry.sourceLabel}
-类型：${getDownloadCategoryLabel(entry.category)}
-大小：${entry.sizeFormatted}
-修改时间：${entry.modifiedAt}
-路径：${entry.path}`
+  useLocale()
+  const content = t('detailContent', {
+    name: entry.name,
+    source: entry.sourceLabel,
+    category: getDownloadCategoryLabel(entry.category),
+    size: entry.sizeFormatted,
+    modified: entry.modifiedAt,
+    path: entry.path
+  })
   let size = 3
   for (const run of content.matchAll(/`+/g)) size = Math.max(size, run[0].length + 1)
   const fence = '`'.repeat(size)
@@ -179,6 +195,7 @@ export default function DownloadsManagerCommand(props?: {
   launchContext?: { featureCode?: string }
   featureCode?: string
 }) {
+  const locale = useLocale()
   const { push } = useNavigation()
   const activeFeatureCode = props?.launchContext?.featureCode || props?.featureCode
   const cleanInstallersMode = activeFeatureCode === 'downloads-clean-installers'
@@ -196,7 +213,7 @@ export default function DownloadsManagerCommand(props?: {
   const [platform, setPlatform] = useState<string | undefined>(undefined)
   const imAutoDiscovery = platform === 'windows'
   // macOS 的回收站叫“废纸篓”
-  const trashName = platform === 'macos' ? '废纸篓' : '回收站'
+  const trashName = platform === 'macos' ? t('trashMac') : t('trashWin')
   const generation = useRef(0), alive = useRef(true), busy = useRef(false)
   useEffect(() => () => { alive.current = false; generation.current++ }, [])
   useEffect(() => {
@@ -219,7 +236,7 @@ export default function DownloadsManagerCommand(props?: {
       if (!alive.current || request !== generation.current) return
       const message = error instanceof Error ? error.message : String(error)
       setLoadError(message)
-      await showToast({ style: Toast.Style.Failure, title: '下载列表未更新', message })
+      await showToast({ style: Toast.Style.Failure, title: t('toastListNotUpdated'), message })
     } finally {
       if (alive.current && request === generation.current) setIsLoading(false)
     }
@@ -227,11 +244,36 @@ export default function DownloadsManagerCommand(props?: {
   useEffect(() => { void reloadDownloads() }, [])
   useEffect(() => { setFilterValue(resolveInitialFilterFromFeature(activeFeatureCode)) }, [activeFeatureCode])
 
+  const switchToDirectory = async (rawDir: string) => {
+    if (busy.current) return
+    const target = (rawDir || '').trim()
+    if (!target) return
+    const request = ++generation.current
+    setIsLoading(true); setLoadError('')
+    try {
+      const result = await scanDownloadsDirectory(target)
+      if (!alive.current || request !== generation.current) return
+      setCustomDirs(prev => prev.includes(result.downloadDir) ? prev : [result.downloadDir, ...prev])
+      setSummary(result)
+    } catch (error) {
+      if (!alive.current || request !== generation.current) return
+      const message = error instanceof Error ? error.message : String(error)
+      setLoadError(message)
+      await showToast({ style: Toast.Style.Failure, title: t('toastListNotUpdated'), message })
+    } finally {
+      if (alive.current && request === generation.current) setIsLoading(false)
+    }
+  }
+
+  const fileInputProps = createCompatFileInputProps((files) => {
+    if (files.length > 0) void switchToDirectory(files[0]!)
+  }, { allowDirectories: true })
+
   const runMutation = async (operation: () => Promise<void>) => {
     if (busy.current || !alive.current) return
     busy.current = true; generation.current++; setIsLoading(true)
     try { await operation() }
-    catch (error) { if (alive.current) await showToast({ style: Toast.Style.Failure, title: '操作未完成', message: error instanceof Error ? error.message : String(error) }) }
+    catch (error) { if (alive.current) await showToast({ style: Toast.Style.Failure, title: t('toastOpNotCompleted'), message: error instanceof Error ? error.message : String(error) }) }
     finally { busy.current = false; if (alive.current) setIsLoading(false) }
   }
   const isInstallerCleanMode = filterValue === 'type:installer'
@@ -251,8 +293,8 @@ export default function DownloadsManagerCommand(props?: {
       return [
         {
           id: 'sec-installers',
-          title: '可清理安装包（按体积从大到小）',
-          subtitle: `${filteredEntries.length} 个安装包 · 共 ${summary.installerSizeFormatted}`,
+          title: t('secInstallersTitle'),
+          subtitle: t('secInstallersSub', { count: filteredEntries.length, size: summary.installerSizeFormatted }),
           items: filteredEntries
         }
       ]
@@ -273,37 +315,37 @@ export default function DownloadsManagerCommand(props?: {
     if (todayItems.length > 0) {
       sections.push({
         id: 'sec-today',
-        title: '今日新增',
-        subtitle: `${todayItems.length} 项`,
+        title: t('secTodayTitle'),
+        subtitle: t('itemCountSub', { count: todayItems.length }),
         items: todayItems
       })
     }
     if (weekItems.length > 0) {
       sections.push({
         id: 'sec-week',
-        title: '近 7 天',
-        subtitle: `${weekItems.length} 项`,
+        title: t('secWeekTitle'),
+        subtitle: t('itemCountSub', { count: weekItems.length }),
         items: weekItems
       })
     }
     if (olderItems.length > 0 || sections.length === 0) {
       sections.push({
         id: 'sec-older',
-        title: sections.length === 0 ? '下载与接收记录' : '更早之前',
-        subtitle: `${olderItems.length} 项`,
+        title: sections.length === 0 ? t('secAllRecordsTitle') : t('secOlderTitle'),
+        subtitle: t('itemCountSub', { count: olderItems.length }),
         items: olderItems
       })
     }
     return sections
-  }, [filteredEntries, isInstallerCleanMode, summary.installerSizeFormatted])
+  }, [filteredEntries, isInstallerCleanMode, summary.installerSizeFormatted, locale])
 
   const cleanVisible = async (installers: boolean) => runMutation(async () => {
     const candidates = filteredEntries.filter(item => !item.isPinned && (installers ? item.category === 'installer' : item.ageDays !== null && item.ageDays >= 30 && item.sizeBytes >= 100 * 1024 * 1024))
     if (!candidates.length) {
-      await showToast({ style: Toast.Style.Failure, title: '当前列表没有符合条件的未保护文件' }); return
+      await showToast({ style: Toast.Style.Failure, title: t('toastNoUnprotectedMatch') }); return
     }
-    const confirmed = await confirmAlert({ title: `将当前列表中 ${candidates.length} 个文件移入${trashName}？`,
-      message: candidates.map(item => item.path).join('\n') + `\n仅处理这些文件；保护项会跳过。移入${trashName}不会立即释放磁盘空间。` })
+    const confirmed = await confirmAlert({ title: t('confirmCleanTitle', { count: candidates.length, trash: trashName }),
+      message: t('confirmCleanMsg', { paths: candidates.map(item => item.path).join('\n'), trash: trashName }) })
     if (!confirmed || !alive.current) return
     const result = installers ? await cleanRedundantInstallers(candidates, undefined, () => alive.current) : await cleanExpiredDownloads(candidates, 30, 100 * 1024 * 1024, undefined, () => alive.current)
     const remaining = new Set(result.remainingEntries.map(item => item.id)), targets = new Set(candidates.map(item => item.id))
@@ -311,8 +353,8 @@ export default function DownloadsManagerCommand(props?: {
     setSummary(current => computeDashboardSummary(current.downloadDir, current.entries.filter(item => !targets.has(item.id) || remaining.has(item.id)), current.sources, current))
     const failures = result.failedPaths?.length ?? 0
     await showToast({ style: failures || !result.cleanedCount ? Toast.Style.Failure : Toast.Style.Success,
-      title: `已移入${trashName} ${result.cleanedCount} 个${failures ? `，失败 ${failures} 个` : ''}`,
-      message: result.error || `移动文件合计 ${result.freedFormatted}；${trashName}保留原文件。` })
+      title: t('toastMovedSummary', { trash: trashName, okCount: result.cleanedCount, failPart: failures ? t('toastMovedFailPart', { failCount: failures }) : '' }),
+      message: resolveErrorMessage(result, t('toastMovedMsg', { size: result.freedFormatted, trash: trashName })) })
   })
   const handleCleanInstallers = () => cleanVisible(true)
   const handleCleanLargeOldFiles = () => cleanVisible(false)
@@ -336,13 +378,13 @@ export default function DownloadsManagerCommand(props?: {
     const openAction = (
       <Action
         key="open"
-        title="打开文件"
+        title={t('actionOpenFile')}
         icon={Icon.Document}
         onAction={async () => {
           const ok = await openDownloadItem(item.path)
           await showToast({
             style: ok ? Toast.Style.Success : Toast.Style.Failure,
-            title: ok ? `已打开: ${item.name}` : '无法打开文件',
+            title: ok ? t('toastOpened', { name: item.name }) : t('toastOpenFailed'),
             message: item.path
           })
         }}
@@ -351,14 +393,14 @@ export default function DownloadsManagerCommand(props?: {
     const revealAction = (
       <Action
         key="reveal"
-        title="打开所在文件夹并选中"
+        title={t('actionRevealFolder')}
         icon={Icon.Folder}
         shortcut={{ modifiers: ['ctrl'], key: 'enter' }}
         onAction={async () => {
           const ok = await revealDownloadItem(item.path)
           await showToast({
             style: ok ? Toast.Style.Success : Toast.Style.Failure,
-            title: ok ? '已在文件管理器中定位文件' : '无法定位文件',
+            title: ok ? t('toastRevealed') : t('toastRevealFailed'),
             message: item.path
           })
         }}
@@ -367,15 +409,15 @@ export default function DownloadsManagerCommand(props?: {
     const copyEntityAction = (
       <Action
         key="copy-entity"
-        title="复制文件实体（可直接粘贴到微信/桌面）"
+        title={t('actionCopyEntity')}
         icon={Icon.Clipboard}
         shortcut={{ modifiers: ['ctrl', 'shift'], key: 'c' }}
         onAction={async () => {
           const res = await copyDownloadFileEntity(item.path)
           await showToast({
             style: res.ok ? Toast.Style.Success : Toast.Style.Failure,
-            title: res.ok ? `已复制文件实体: ${item.name}` : '复制文件实体失败',
-            message: res.ok ? '可粘贴到支持文件粘贴的应用或文件夹' : res.error
+            title: res.ok ? t('toastCopiedEntity', { name: item.name }) : t('toastCopyEntityFailed'),
+            message: res.ok ? t('toastCopiedEntityHint') : res.error
           })
         }}
       />
@@ -383,14 +425,14 @@ export default function DownloadsManagerCommand(props?: {
     const copyPathAction = (
       <Action
         key="copy-path"
-        title="复制完整路径"
+        title={t('actionCopyPath')}
         icon={Icon.Clipboard}
         shortcut={{ modifiers: ['ctrl'], key: 'c' }}
         onAction={async () => {
           const ok = await copyDownloadFilePath(item.path)
           await showToast({
             style: ok ? Toast.Style.Success : Toast.Style.Failure,
-            title: ok ? '已复制完整路径' : '复制路径失败',
+            title: ok ? t('toastCopiedPath') : t('toastCopyPathFailed'),
             message: item.path
           })
         }}
@@ -399,7 +441,7 @@ export default function DownloadsManagerCommand(props?: {
     const pinAction = (
       <Action
         key="pin"
-        title={item.isPinned ? '取消置顶保护' : '置顶并保护（跳过自动清理）'}
+        title={item.isPinned ? t('actionUnpin') : t('actionPin')}
         icon={Icon.Pin}
         shortcut={{ modifiers: ['ctrl'], key: 'p' }}
         onAction={() => runMutation(async () => {
@@ -411,22 +453,22 @@ export default function DownloadsManagerCommand(props?: {
     const trashAction = (
       <Action
         key="trash"
-        title={`移入${trashName}`}
+        title={t('actionMoveToTrash', { trash: trashName })}
         icon={Icon.Trash}
         style={Action.Style.Destructive}
         shortcut={{ modifiers: ['ctrl'], key: 'backspace' }}
         onAction={() => runMutation(async () => {
           const confirmed = await confirmAlert({
-            title: `确认将「${item.name}」移入${trashName}？`,
-            message: `文件大小: ${item.sizeFormatted}\n来源: ${item.path}`
+            title: t('confirmTrashTitle', { name: item.name, trash: trashName }),
+            message: t('confirmTrashMsg', { size: item.sizeFormatted, path: item.path })
           })
           if (!confirmed || !alive.current) return
           const res = await trashDownloadItem(summary.entries, item.id)
           if (!res.ok) {
             await showToast({
               style: Toast.Style.Failure,
-              title: `移入${trashName}失败`,
-              message: res.error || '文件可能正在被占用'
+              title: t('toastTrashFailed', { trash: trashName }),
+              message: resolveErrorMessage(res, t('toastFileBusy'))
             })
             return
           }
@@ -434,8 +476,8 @@ export default function DownloadsManagerCommand(props?: {
           setSummary(current => computeDashboardSummary(current.downloadDir, current.entries.filter(entry => entry.id !== item.id), current.sources, current))
           await showToast({
             style: Toast.Style.Success,
-            title: `已移入${trashName}: ${item.name}`,
-            message: `文件大小 ${item.sizeFormatted}，仍保留在${trashName}`
+            title: t('toastTrashed', { trash: trashName, name: item.name }),
+            message: t('toastTrashedMsg', { size: item.sizeFormatted, trash: trashName })
           })
         })}
       />
@@ -447,27 +489,27 @@ export default function DownloadsManagerCommand(props?: {
 
   // 列表为空时没有可清理的文件，不提供清理动作
   const renderGlobalActions = (includeClean = true) => (
-    <ActionPanel.Section title={includeClean ? '批量清理与渠道配置' : '渠道配置'}>
+    <ActionPanel.Section title={includeClean ? t('secGlobalCleanAndConfig') : t('secGlobalConfig')}>
       {includeClean && <Action
-        title="清理当前列表的未保护安装包"
+        title={t('actionCleanInstallers')}
         icon={Icon.Trash}
         style={Action.Style.Destructive}
         shortcut={{ modifiers: ['ctrl', 'shift'], key: 'backspace' }}
         onAction={handleCleanInstallers}
       />}
       {includeClean && <Action
-        title="清理当前列表中 30 天前的大文件 (≥ 100 MB)"
+        title={t('actionCleanOldLarge')}
         icon={Icon.Trash}
         style={Action.Style.Destructive}
         onAction={handleCleanLargeOldFiles}
       />}
       <Action
-        title="管理下载目录"
+        title={t('actionManageDirs')}
         icon={Icon.Plus}
         onAction={openCustomDirManager}
       />
       <Action
-        title="刷新全渠道扫描"
+        title={t('actionRefreshAll')}
         icon={Icon.ArrowClockwise}
         shortcut={{ modifiers: ['ctrl'], key: 'r' }}
         onAction={() => reloadDownloads(customDirs)}
@@ -477,65 +519,62 @@ export default function DownloadsManagerCommand(props?: {
 
   return (
     <List
-      navigationTitle="下载管理"
-      searchBarPlaceholder={imAutoDiscovery
-        ? '检索文件名、后缀(.exe/.pdf/.zip)或来源(微信/百度网盘/夸克/QQ)...'
-        : '检索文件名、后缀(.dmg/.pdf/.zip)或来源(系统下载/百度网盘/夸克)...'}
+      {...fileInputProps}
+      navigationTitle={t('navTitle')}
+      searchBarPlaceholder={imAutoDiscovery ? t('searchPlaceholderWin') : t('searchPlaceholderOther')}
       isLoading={isLoading}
       isShowingDetail={false}
       searchText={searchQuery}
       onSearchTextChange={(q: string) => setSearchQuery(q)}
       filterBar={{
-        summaryText: loadError ? '读取失败，旧结果保留，请刷新重试' : filteredSummaryText(filteredEntries.length, summary.totalCount, summary.sources.length, summary.partial, summary.scanIssues.length)
+        summaryText: loadError ? t('summaryLoadError') : filteredSummaryText(filteredEntries.length, summary.totalCount, summary.sources.length, summary.partial, summary.scanIssues.length)
       }}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="按来源渠道或文件类型筛选"
+          tooltip={t('filterTooltip')}
           value={filterValue}
           onChange={(val: string) => setFilterValue(val)}
         >
-          <List.Dropdown.Section title="按来源渠道">
-            <List.Dropdown.Item title="全渠道汇总" value="all" />
+          <List.Dropdown.Section title={t('filterSecChannel')}>
+            <List.Dropdown.Item title={t('chanAll')} value="all" />
             <List.Dropdown.Item
-              title={imAutoDiscovery ? '办公 IM 接收 (微信 / 企微 / QQ / 飞书 / 钉钉)' : '办公 IM 接收（仅 Windows 自动发现，可添加自定义目录）'}
+              title={imAutoDiscovery ? t('filterImWin') : t('filterImOther')}
               value="im"
             />
             <List.Dropdown.Item title={netdiskFilterLabel(platform)} value="netdisk" />
-            <List.Dropdown.Item title="浏览器与系统下载" value="browser" />
-            <List.Dropdown.Item title="自定义监控目录" value="custom" />
+            <List.Dropdown.Item title={t('chanBrowser')} value="browser" />
+            <List.Dropdown.Item title={t('chanCustom')} value="custom" />
           </List.Dropdown.Section>
-          <List.Dropdown.Section title="按文件类型">
+          <List.Dropdown.Section title={t('filterSecType')}>
             <List.Dropdown.Item
-              title={`安装包 (${installerExtensionsLabel(platform)}) [${summary.installerCount}]`}
+              title={t('filterInstallerItem', { exts: installerExtensionsLabel(platform), count: summary.installerCount })}
               value="type:installer"
             />
-            <List.Dropdown.Item title="办公文档 (.pdf / .docx / .xlsx / .pptx)" value="type:document" />
-            <List.Dropdown.Item title="压缩归档 (.zip / .7z / .rar / .tar)" value="type:archive" />
-            <List.Dropdown.Item title="图片设计 (.png / .jpg / .webp / .svg)" value="type:image" />
-            <List.Dropdown.Item title="音视频媒体 (.mp4 / .mkv / .mp3 / .wav)" value="type:media" />
-            <List.Dropdown.Item title="代码与数据 (.json / .sql / .ts / .py)" value="type:code" />
+            <List.Dropdown.Item title={t('filterDocumentItem')} value="type:document" />
+            <List.Dropdown.Item title={t('filterArchiveItem')} value="type:archive" />
+            <List.Dropdown.Item title={t('filterImageItem')} value="type:image" />
+            <List.Dropdown.Item title={t('filterMediaItem')} value="type:media" />
+            <List.Dropdown.Item title={t('filterCodeItem')} value="type:code" />
           </List.Dropdown.Section>
         </List.Dropdown>
       }
     >
       {filteredEntries.length === 0 ? (
-        <List.Section title="当前筛选状态">
+        <List.Section title={t('emptySecTitle')}>
           <List.Item
             id="downloads-empty"
             icon={{ source: Icon.Folder, tintColor: Color.SecondaryText }}
-            title={isLoading ? '正在扫描下载与接收目录...' : loadError || summary.scanIssues.length ? '读取未完成，不能判断目录是否为空' : filterValue === 'im' && !imAutoDiscovery ? '当前系统不自动发现微信、QQ、企业微信等接收目录' : '当前筛选条件下暂无下载文件'}
-            subtitle={filterValue === 'im' && !imAutoDiscovery
-              ? '自动发现只支持 Windows；可在聊天软件设置里查看文件保存位置，再通过动作面板添加为自定义下载目录'
-              : '可切换右上角渠道筛选（全渠道 / 办公 IM / 网盘下载 / 安装包），或通过动作面板添加自定义下载目录'}
+            title={isLoading ? t('emptyScanningTitle') : loadError || summary.scanIssues.length ? t('emptyIncompleteTitle') : filterValue === 'im' && !imAutoDiscovery ? t('emptyNoImTitle') : t('emptyNoMatchTitle')}
+            subtitle={filterValue === 'im' && !imAutoDiscovery ? t('emptyNoImSub') : t('emptyDefaultSub')}
             actions={
               <ActionPanel>
                 {filterValue === 'im' && !imAutoDiscovery && <Action
-                  title="添加自定义目录"
+                  title={t('actionAddCustomDir')}
                   icon={Icon.Plus}
                   onAction={openCustomDirManager}
                 />}
                 {(filterValue !== 'all' || searchQuery) && <Action
-                  title="重置为全渠道汇总"
+                  title={t('actionResetFilter')}
                   icon={Icon.ArrowClockwise}
                   onAction={() => {
                     setFilterValue('all')
@@ -569,9 +608,9 @@ export default function DownloadsManagerCommand(props?: {
                   getDownloadCategoryLabel(item.category)
                 ]}
                 accessories={[
-                  ...(item.isPinned ? [{ tag: { value: '已置顶', color: Color.SecondaryText } }] : []),
+                  ...(item.isPinned ? [{ tag: { value: t('tagPinned'), color: Color.SecondaryText } }] : []),
                   { text: item.sizeFormatted },
-                  { text: item.ageDays === null ? '修改时间未知' : item.ageDays === 0 ? `今天 ${item.modifiedAt.slice(11)}` : `${item.ageDays} 天前` }
+                  { text: item.ageDays === null ? t('unknownModifiedTime') : item.ageDays === 0 ? t('ageToday', { time: item.modifiedAt.slice(11) }) : t('ageDaysAgo', { days: item.ageDays }) }
                 ]}
                 actions={
                   <ActionPanel>
@@ -586,9 +625,9 @@ export default function DownloadsManagerCommand(props?: {
           </List.Section>
         ))
       )}
-      {(loadError || summary.scanIssues.length > 0) && <List.Section title="读取异常">
-        {loadError && <List.Item id="downloads-load-error" title="读取或保护设置失败" subtitle={loadError} actions={<ActionPanel>{renderGlobalActions()}</ActionPanel>} />}
-        {summary.scanIssues.map((issue, index) => <List.Item key={index} id={`scan-issue-${index}`} title={issue.path} subtitle={issue.message} actions={<ActionPanel><Action title="刷新下载列表" icon={Icon.ArrowClockwise} onAction={() => reloadDownloads()} /></ActionPanel>} />)}
+      {(loadError || summary.scanIssues.length > 0) && <List.Section title={t('secIssuesTitle')}>
+        {loadError && <List.Item id="downloads-load-error" title={t('loadErrorItemTitle')} subtitle={loadError} actions={<ActionPanel>{renderGlobalActions()}</ActionPanel>} />}
+        {summary.scanIssues.map((issue, index) => <List.Item key={index} id={`scan-issue-${index}`} title={issue.path} subtitle={issue.message} actions={<ActionPanel><Action title={t('actionRefreshList')} icon={Icon.ArrowClockwise} onAction={() => reloadDownloads()} /></ActionPanel>} />)}
       </List.Section>}
     </List>
   )

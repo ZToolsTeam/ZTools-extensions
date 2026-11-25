@@ -6,9 +6,12 @@ import React, {
   Color,
   useState,
   useMemo,
+  useLocale,
+  getLocale
 } from '@ztools/declarative-ui'
 import type { CalcMode, ChmodRoleBreakdown } from './types.js'
 import { calculateIpv4Cidr, convertChmod } from './chmod-cidr-service.js'
+import { t } from './i18n.js'
 
 export * from './types.js'
 export * from './chmod-cidr-service.js'
@@ -22,13 +25,15 @@ const PRESET_CIDRS = [
   '203.0.113.42/32',
 ]
 
-const PRESET_CHMODS = [
-  { code: '755', desc: '可执行程序 / 公开目录标准权限 (rwxr-xr-x)' },
-  { code: '644', desc: '常规配置文件 / 静态资源标准权限 (rw-r--r--)' },
-  { code: '600', desc: 'SSH 私钥 (~/.ssh/id_ed25519) 严格私有权限 (rw-------)' },
-  { code: '700', desc: '私有目录 (~/.ssh) 仅属主可访问权限 (rwx------)' },
-  { code: '777', desc: '全放开读写执行权限（存在安全风险）' },
-]
+function getPresetChmods() {
+  return [
+    { code: '755', desc: t('preset755Desc') },
+    { code: '644', desc: t('preset644Desc') },
+    { code: '600', desc: t('preset600Desc') },
+    { code: '700', desc: t('preset700Desc') },
+    { code: '777', desc: t('preset777Desc') },
+  ]
+}
 
 /** 常用网段排除与当前计算结果同一网段的项，避免第一行结果和下面的预设重复 */
 export function presetCidrsExcluding(networkAddress?: string, prefixLength?: number): string[] {
@@ -44,9 +49,10 @@ export function presetCidrsExcluding(networkAddress?: string, prefixLength?: num
 }
 
 /** 常用权限排除与当前结果相同的项 */
-export function presetChmodsExcluding(octal?: string): typeof PRESET_CHMODS {
-  if (!octal) return PRESET_CHMODS
-  return PRESET_CHMODS.filter((item) => {
+export function presetChmodsExcluding(octal?: string): Array<{ code: string; desc: string }> {
+  const presets = getPresetChmods()
+  if (!octal) return presets
+  return presets.filter((item) => {
     try {
       return convertChmod(item.code).octal !== octal
     } catch {
@@ -56,6 +62,7 @@ export function presetChmodsExcluding(octal?: string): typeof PRESET_CHMODS {
 }
 
 export function ChmodCidrCalcCommand() {
+  const locale = useLocale()
   const [mode, setMode] = useState<CalcMode>('cidr')
   const [queryText, setQueryText] = useState<string>('192.168.1.0/24')
 
@@ -70,7 +77,7 @@ export function ChmodCidrCalcCommand() {
         error: err instanceof Error ? err.message : String(err),
       }
     }
-  }, [mode, queryText])
+  }, [mode, queryText, locale])
 
   const chmodState = useMemo(() => {
     if (mode !== 'chmod') return null
@@ -83,15 +90,15 @@ export function ChmodCidrCalcCommand() {
         error: err instanceof Error ? err.message : String(err),
       }
     }
-  }, [mode, queryText])
+  }, [mode, queryText, locale])
 
   return (
     <List
       isShowingDetail={true}
       searchBarPlaceholder={
         mode === 'cidr'
-          ? '输入 IPv4/CIDR（如 192.168.1.0/24、192.168.1.5 255.255.255.0）...'
-          : '输入八进制权限（如 755、4755）或符号权限（如 rwxr-xr-x）...'
+          ? t('searchPlaceholderCidr')
+          : t('searchPlaceholderChmod')
       }
       searchText={queryText}
       onSearchTextChange={(val: string) => {
@@ -108,7 +115,7 @@ export function ChmodCidrCalcCommand() {
       }}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="切换计算器模式"
+          tooltip={t('dropdownTooltip')}
           value={mode}
           onChange={(val: string) => {
             const nextMode = val as CalcMode
@@ -116,22 +123,22 @@ export function ChmodCidrCalcCommand() {
             setQueryText(nextMode === 'cidr' ? '192.168.1.0/24' : '755')
           }}
         >
-          <List.Dropdown.Item title="IPv4 CIDR 子网计算器" value="cidr" />
-          <List.Dropdown.Item title="Linux chmod 权限推演" value="chmod" />
+          <List.Dropdown.Item title={t('modeCidrTitle')} value="cidr" />
+          <List.Dropdown.Item title={t('modeChmodTitle')} value="chmod" />
         </List.Dropdown>
       }
     >
       {mode === 'cidr' && cidrState && !cidrState.ok && (
-        <List.Section title="CIDR 网段格式错误">
+        <List.Section title={t('sectionCidrError')}>
           <List.Item
             id="cidr-error"
-            title="无法解析 IPv4 CIDR"
+            title={t('cidrErrorTitle')}
             subtitle={cidrState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: '输入错误' }]}
+            accessories={[{ tag: t('tagInputError') }]}
             detail={
               <List.Item.Detail
-                markdown={`### IPv4 CIDR 校验错误\n\n\`\`\`text\n${cidrState.error}\n\`\`\`\n\n示例格式：\`192.168.1.0/24\`、\`10.0.0.0/8\`、\`172.16.0.1/32\`。`}
+                markdown={t('cidrErrorMd', { error: cidrState.error })}
               />
             }
           />
@@ -139,27 +146,31 @@ export function ChmodCidrCalcCommand() {
       )}
 
       {mode === 'cidr' && cidrState && cidrState.ok && (
-        <List.Section title="IPv4 CIDR 子网规划计算结果">
+        <List.Section title={t('sectionCidrResult')}>
           <List.Item
             id="cidr-main"
             title={`${cidrState.result.networkAddress}/${cidrState.result.prefixLength}`}
-            subtitle={`可用 ${cidrState.result.usableHosts.toLocaleString()} 台主机`}
+            subtitle={t('cidrUsableSub', { count: cidrState.result.usableHosts.toLocaleString(getLocale()) })}
             icon={Icon.Wifi}
             detail={
               <List.Item.Detail
-                markdown={`**${cidrState.result.addressScope}**\n\n${cidrState.result.usageHint}\n\n二进制掩码：\n\n\`\`\`text\n${cidrState.result.netmaskBinary}\n\`\`\``}
+                markdown={t('cidrDetailMd', {
+                  scope: cidrState.result.addressScope,
+                  hint: cidrState.result.usageHint,
+                  binary: cidrState.result.netmaskBinary
+                })}
                 metadata={
                   <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label title="可用范围" text={`${cidrState.result.firstUsableIp} ~ ${cidrState.result.lastUsableIp}`} />
-                    <List.Item.Detail.Metadata.Label title="子网掩码" text={cidrState.result.netmask} />
-                    <List.Item.Detail.Metadata.Label title="反掩码" text={cidrState.result.wildcardMask} />
+                    <List.Item.Detail.Metadata.Label title={t('metaUsableRange')} text={`${cidrState.result.firstUsableIp} ~ ${cidrState.result.lastUsableIp}`} />
+                    <List.Item.Detail.Metadata.Label title={t('metaNetmask')} text={cidrState.result.netmask} />
+                    <List.Item.Detail.Metadata.Label title={t('metaWildcard')} text={cidrState.result.wildcardMask} />
                     <List.Item.Detail.Metadata.Label
-                      title={cidrState.result.hasBroadcast ? "广播地址" : "范围末地址（无独立广播）"}
+                      title={cidrState.result.hasBroadcast ? t('metaBroadcast') : t('metaEndAddress')}
                       text={cidrState.result.broadcastAddress}
                     />
                     <List.Item.Detail.Metadata.Separator />
-                    <List.Item.Detail.Metadata.Label title="总地址数" text={`${cidrState.result.totalHosts.toLocaleString()} 个`} />
-                    <List.Item.Detail.Metadata.Label title="输入地址" text={cidrState.result.ipAddress} />
+                    <List.Item.Detail.Metadata.Label title={t('metaTotalHosts')} text={t('metaTotalHostsVal', { count: cidrState.result.totalHosts.toLocaleString(getLocale()) })} />
+                    <List.Item.Detail.Metadata.Label title={t('metaInputIp')} text={cidrState.result.ipAddress} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -167,15 +178,15 @@ export function ChmodCidrCalcCommand() {
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard
-                  title="复制可用 IP 范围"
+                  title={t('actionCopyRange')}
                   content={`${cidrState.result.firstUsableIp} - ${cidrState.result.lastUsableIp}`}
                 />
                 <Action.CopyToClipboard
-                  title="复制子网掩码"
+                  title={t('actionCopyNetmask')}
                   content={cidrState.result.netmask}
                 />
                 <Action.CopyToClipboard
-                  title="复制网络地址/CIDR"
+                  title={t('actionCopyCidr')}
                   content={`${cidrState.result.networkAddress}/${cidrState.result.prefixLength}`}
                 />
               </ActionPanel>
@@ -187,12 +198,12 @@ export function ChmodCidrCalcCommand() {
               key={preset}
               id={`preset-cidr-${preset}`}
               title={preset}
-              subtitle="常用网段 · 按回车载入"
+              subtitle={t('presetCidrSub')}
               icon={Icon.Globe}
               actions={
                 <ActionPanel>
                   <Action
-                    title={`计算 ${preset}`}
+                    title={t('actionCalcPreset', { preset })}
                     icon={Icon.Play}
                     onAction={() => setQueryText(preset)}
                   />
@@ -204,16 +215,16 @@ export function ChmodCidrCalcCommand() {
       )}
 
       {mode === 'chmod' && chmodState && !chmodState.ok && (
-        <List.Section title="chmod 权限表达式错误">
+        <List.Section title={t('sectionChmodError')}>
           <List.Item
             id="chmod-error"
-            title="无法解析 chmod 权限值"
+            title={t('chmodErrorTitle')}
             subtitle={chmodState.error}
             icon={Icon.ExclamationMark}
-            accessories={[{ tag: '格式错误' }]}
+            accessories={[{ tag: t('tagFormatError') }]}
             detail={
               <List.Item.Detail
-                markdown={`### chmod 权限格式错误\n\n\`\`\`text\n${chmodState.error}\n\`\`\``}
+                markdown={t('chmodErrorMd', { error: chmodState.error })}
               />
             }
           />
@@ -221,7 +232,7 @@ export function ChmodCidrCalcCommand() {
       )}
 
       {mode === 'chmod' && chmodState && chmodState.ok && (
-        <List.Section title="Linux chmod 权限位双向推演">
+        <List.Section title={t('sectionChmodResult')}>
           <List.Item
             id="chmod-main"
             title={`${chmodState.result.octal}  (${chmodState.result.lsSymbolic})`}
@@ -229,28 +240,28 @@ export function ChmodCidrCalcCommand() {
             icon={chmodState.result.isWorldWritable ? Icon.ExclamationMark : Icon.Shield}
             accessories={[
               chmodState.result.isWorldWritable
-                ? { tag: { value: '高危全局可写', color: Color.Red } }
+                ? { tag: { value: t('tagWorldWritable'), color: Color.Red } }
                 : { tag: chmodState.result.symbolic },
             ]}
             detail={
               <List.Item.Detail
-                markdown={`### 权限矩阵\n\n${
+                markdown={`${t('chmodMatrixHeader')}\n\n${
                   chmodState.result.securityWarning
                     ? `> **${chmodState.result.securityWarning}**\n\n`
                     : ''
-                }| 角色 | 八进制 | 符号 | 读取 (r=4) | 写入 (w=2) | 执行 (x=1) |\n| :--- | :---: | :---: | :---: | :---: | :---: |\n${chmodState.result.roles
+                }${t('chmodTableHeader')}\n| :--- | :---: | :---: | :---: | :---: | :---: |\n${chmodState.result.roles
                   .map(
                     (r: ChmodRoleBreakdown) =>
                       `| ${r.role} | \`${r.digit}\` | \`${r.symbolic}\` | ${
-                        r.read ? '允许' : '-'
-                      } | ${r.write ? '允许' : '-'} | ${r.execute ? '允许' : '-'} |`,
+                        r.read ? t('chmodAllow') : '-'
+                      } | ${r.write ? t('chmodAllow') : '-'} | ${r.execute ? t('chmodAllow') : '-'} |`,
                   )
-                  .join('\n')}\n\n### 终端命令\n\`\`\`bash\n${
+                  .join('\n')}\n\n${t('chmodCommandsTitle')}\n\`\`\`bash\n${
                   chmodState.result.chmodCommand
                 }\n${chmodState.result.chmodRecursiveCommand}\n\`\`\``}
                 metadata={
                   <List.Item.Detail.Metadata>
-                    <List.Item.Detail.Metadata.Label title="特殊权限位" text={chmodState.result.specialBits.join(" / ") || "无"} />
+                    <List.Item.Detail.Metadata.Label title={t('metaSpecialBits')} text={chmodState.result.specialBits.join(" / ") || t('metaNone')} />
                   </List.Item.Detail.Metadata>
                 }
               />
@@ -258,15 +269,15 @@ export function ChmodCidrCalcCommand() {
             actions={
               <ActionPanel>
                 <Action.CopyToClipboard
-                  title="复制 chmod 命令"
+                  title={t('actionCopyChmodCmd')}
                   content={chmodState.result.chmodCommand}
                 />
                 <Action.CopyToClipboard
-                  title="复制八进制权限值"
+                  title={t('actionCopyOctal')}
                   content={chmodState.result.octal}
                 />
                 <Action.CopyToClipboard
-                  title="复制符号权限值"
+                  title={t('actionCopySymbolic')}
                   content={chmodState.result.symbolic}
                 />
               </ActionPanel>
@@ -281,16 +292,16 @@ export function ChmodCidrCalcCommand() {
               subtitle={item.desc}
               icon={Icon.Key}
               // 预设列表保持灰阶，只给有风险的 777 标注；只有实际计算结果是全局可写时才用红色警示
-              accessories={item.code === '777' ? [{ tag: '全局可写' }] : []}
+              accessories={item.code === '777' ? [{ tag: t('tagWorldWritableShort') }] : []}
               actions={
                 <ActionPanel>
                   <Action
-                    title={`查看 chmod ${item.code} 详情`}
+                    title={t('actionViewChmodDetail', { code: item.code })}
                     icon={Icon.Play}
                     onAction={() => setQueryText(item.code)}
                   />
                   <Action.CopyToClipboard
-                    title={`复制 chmod ${item.code}`}
+                    title={t('actionCopyChmodCode', { code: item.code })}
                     content={`chmod ${item.code} `}
                   />
                 </ActionPanel>

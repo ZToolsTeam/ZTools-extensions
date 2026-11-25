@@ -1,8 +1,8 @@
 {
   "id": "archive-manager",
   "name": "解压与压缩",
-  "description": "不解压就能查看本机 ZIP 压缩包里的文件，可整包解压或只提取勾选的文件；只支持 ZIP，不提供压缩打包",
-  "version": "1.1.7",
+  "description": "选择或拖入 ZIP 压缩包直接查看包内文件，可整包解压或只提取勾选的文件；只支持 ZIP，不提供压缩打包",
+  "version": "1.1.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -10,6 +10,10 @@
   "category": [
     "文件管理",
     "办公效率"
+  ],
+  "categoryId": [
+    "files",
+    "productivity"
   ],
   "keywords": [
     "zip",
@@ -45,6 +49,7 @@
   ],
   "permissions": [
     "fs",
+    "dialog",
     "clipboard",
     "shell"
   ],
@@ -58,5 +63,50 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "ZIP Archive Manager",
+      "description": "Select or drop ZIP archives to browse contents and extract all or selected files. Supports ZIP inspection and extraction only (no archive creation).",
+      "keywords": [
+        "zip",
+        "archive",
+        "unzip",
+        "extract",
+        "decompress",
+        "files"
+      ],
+      "features": {
+        "archive-inspect": {
+          "explain": "Browse ZIP archive contents and extract all or selected files",
+          "cmds": [
+            "unzip",
+            "zip",
+            "archive",
+            "extract zip",
+            "inspect zip"
+          ]
+        },
+        "archive-docs": {
+          "explain": "Extract office documents from a ZIP archive",
+          "cmds": [
+            "extract docs",
+            "archive docs",
+            "unzip documents"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png"
+    }
+  ]
 }

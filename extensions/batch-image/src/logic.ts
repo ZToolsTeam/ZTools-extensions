@@ -1,7 +1,7 @@
 /**
  * 批量图片压缩与格式转换：业务逻辑层
  *
- * - 扫描本机 图片 / 下载 / 桌面 目录下的图片（.png / .jpg / .jpeg / .webp / .bmp）
+ * - 图片由用户选择文件、选择文件夹、拖入或从剪贴板添加，插件不会自动扫描本机目录
  * - 6 个处理方案，参数映射到宿主图片处理接口真实支持的取值（画质 q70 / q85 / q95，缩放 source / max1920 / max1280）
  * - 逐张调用宿主处理，每张图都显式指定输出路径：输出前避开已存在的同名文件，绝不覆盖原图
  * - 只展示宿主返回的真实结果（输出路径、体积、尺寸），读不到的信息标为未识别，不做估算
@@ -10,12 +10,14 @@
 import {
   callHostTransport,
   formatBytes,
-  getRealSystemPath,
   invokeDllPluginCapability,
-  createDirectoryScanner,
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
+import { friendlyFileError } from './file-import.js'
+import type { FileImportRules, FileImportTransport, ImportedFile } from './file-import.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -90,102 +92,112 @@ export interface ImageProcessSettings {
 
 export const DLL_PLUGIN_NAME = 'BatchImagePlugin'
 export const FORBIDDEN_TARGET_PATTERN = new RegExp('\\\\Windows\\\\System32|\\.\\.\\\\|\\.\\./', 'i')
-export const FORBIDDEN_REASON = '图片批处理输出路径不可指向系统受保护目录或包含路径穿越'
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
 export const IMAGE_SIZE_LIMIT_300KB = 300 * 1024
 /** 输出文件名后缀：<原文件名>_opt.<扩展名> */
 export const OUTPUT_SUFFIX = '_opt'
 const MAX_NAME_ATTEMPTS = 20
 
-export const QUALITY_OPTIONS: Array<{ label: string; value: QualityTier }> = [
-  { label: '中：画质 85，PNG 每通道保留 5 位色深', value: 'q85' },
-  { label: '低：画质 70，PNG 每通道保留 4 位色深', value: 'q70' },
-  { label: '高：画质 95，PNG 不降色深', value: 'q95' }
-]
+export function getQualityOptions(): Array<{ label: string; value: QualityTier }> {
+  return [
+    { label: t('qualityMedium'), value: 'q85' },
+    { label: t('qualityLow'), value: 'q70' },
+    { label: t('qualityHigh'), value: 'q95' }
+  ]
+}
 
-export const RESIZE_OPTIONS: Array<{ label: string; value: ResizePreset }> = [
-  { label: '保持原始尺寸', value: 'source' },
-  { label: '最长边不超过 1920px', value: 'max1920' },
-  { label: '最长边不超过 1280px', value: 'max1280' }
-]
+export function getResizeOptions(): Array<{ label: string; value: ResizePreset }> {
+  return [
+    { label: t('resizeSource'), value: 'source' },
+    { label: t('resizeMax1920'), value: 'max1920' },
+    { label: t('resizeMax1280'), value: 'max1280' }
+  ]
+}
 
-export const FORMAT_OPTIONS: Array<{ label: string; value: OutputFormat }> = [
-  { label: '保持原格式', value: 'keep' },
-  { label: 'JPG', value: 'jpg' },
-  { label: 'PNG', value: 'png' }
-]
+export function getFormatOptions(): Array<{ label: string; value: OutputFormat }> {
+  return [
+    { label: t('formatKeep'), value: 'keep' },
+    { label: 'JPG', value: 'jpg' },
+    { label: 'PNG', value: 'png' }
+  ]
+}
 
-export const IMAGE_WORKSHOP_PRESETS: ImageWorkshopPreset[] = [
-  {
-    id: 'preset-smart-lossless',
-    title: '常规压缩',
-    subtitle: '保持原格式与尺寸，按中档画质重新编码；JPG 与 PNG 都会有轻微画质损失',
-    tag: '常规压缩',
-    method: 'BatchCompressImage',
-    defaultFormat: 'keep',
-    defaultQuality: 'q85',
-    defaultResize: 'source',
-    grayscale: false
-  },
-  {
-    id: 'preset-extreme-300k',
-    title: '报销/政务附件压缩（检查 300KB）',
-    subtitle: '转为 JPG、低档画质、最长边不超过 1280px，处理后标出仍超过 300KB 的图片',
-    tag: '附件 300KB',
-    method: 'BatchCompressImage',
-    defaultFormat: 'jpg',
-    defaultQuality: 'q70',
-    defaultResize: 'max1280',
-    grayscale: false,
-    sizeLimitBytes: IMAGE_SIZE_LIMIT_300KB
-  },
-  {
-    id: 'preset-to-jpg',
-    title: '批量转 JPG',
-    subtitle: '转为 JPG 格式；带透明背景的图片转换后，透明区域可能变成黑色',
-    tag: '转 JPG',
-    method: 'BatchConvertFormat',
-    defaultFormat: 'jpg',
-    defaultQuality: 'q85',
-    defaultResize: 'source',
-    grayscale: false
-  },
-  {
-    id: 'preset-to-png',
-    title: '批量转 PNG',
-    subtitle: '转为 PNG 格式并保留透明通道；由 JPG 转换时文件通常会变大',
-    tag: '转 PNG',
-    method: 'BatchConvertFormat',
-    defaultFormat: 'png',
-    defaultQuality: 'q95',
-    defaultResize: 'source',
-    grayscale: false
-  },
-  {
-    id: 'preset-scale-1920',
-    title: '限制最长边 1920px',
-    subtitle: '最长边超过 1920px 的图片按比例缩小，较小的图片保持原尺寸',
-    tag: '限制尺寸',
-    method: 'BatchResizeResolution',
-    defaultFormat: 'keep',
-    defaultQuality: 'q85',
-    defaultResize: 'max1920',
-    grayscale: false
-  },
-  {
-    id: 'preset-doc-grayscale',
-    title: '扫描件转灰度',
-    subtitle: '把文档照片或扫描件转为灰度图',
-    tag: '转灰度',
-    method: 'BatchGrayscaleDoc',
-    defaultFormat: 'keep',
-    defaultQuality: 'q85',
-    defaultResize: 'source',
-    grayscale: true
-  }
-]
+export function getImageWorkshopPresets(): ImageWorkshopPreset[] {
+  return [
+    {
+      id: 'preset-smart-lossless',
+      title: t('presetLosslessTitle'),
+      subtitle: t('presetLosslessSub'),
+      tag: t('presetLosslessTag'),
+      method: 'BatchCompressImage',
+      defaultFormat: 'keep',
+      defaultQuality: 'q85',
+      defaultResize: 'source',
+      grayscale: false
+    },
+    {
+      id: 'preset-extreme-300k',
+      title: t('presetGovTitle'),
+      subtitle: t('presetGovSub'),
+      tag: t('presetGovTag'),
+      method: 'BatchCompressImage',
+      defaultFormat: 'jpg',
+      defaultQuality: 'q70',
+      defaultResize: 'max1280',
+      grayscale: false,
+      sizeLimitBytes: IMAGE_SIZE_LIMIT_300KB
+    },
+    {
+      id: 'preset-to-jpg',
+      title: t('presetJpgTitle'),
+      subtitle: t('presetJpgSub'),
+      tag: t('presetJpgTag'),
+      method: 'BatchConvertFormat',
+      defaultFormat: 'jpg',
+      defaultQuality: 'q85',
+      defaultResize: 'source',
+      grayscale: false
+    },
+    {
+      id: 'preset-to-png',
+      title: t('presetPngTitle'),
+      subtitle: t('presetPngSub'),
+      tag: t('presetPngTag'),
+      method: 'BatchConvertFormat',
+      defaultFormat: 'png',
+      defaultQuality: 'q95',
+      defaultResize: 'source',
+      grayscale: false
+    },
+    {
+      id: 'preset-scale-1920',
+      title: t('preset1920Title'),
+      subtitle: t('preset1920Sub'),
+      tag: t('preset1920Tag'),
+      method: 'BatchResizeResolution',
+      defaultFormat: 'keep',
+      defaultQuality: 'q85',
+      defaultResize: 'max1920',
+      grayscale: false
+    },
+    {
+      id: 'preset-doc-grayscale',
+      title: t('presetGrayTitle'),
+      subtitle: t('presetGraySub'),
+      tag: t('presetGrayTag'),
+      method: 'BatchGrayscaleDoc',
+      defaultFormat: 'keep',
+      defaultQuality: 'q85',
+      defaultResize: 'source',
+      grayscale: true
+    }
+  ]
+}
 
 export function getCapabilityItems(): ImageWorkshopPreset[] {
-  return IMAGE_WORKSHOP_PRESETS.map((item) => ({ ...item }))
+  return getImageWorkshopPresets().map((item) => ({ ...item }))
 }
 
 export function filterCapabilityItems(items: ImageWorkshopPreset[], query: string): ImageWorkshopPreset[] {
@@ -208,27 +220,27 @@ export function validateInvocationPayload(
   params: unknown
 ): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errInvalidMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errInvalidMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errInvalidParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: t('errSecurityIntercepted', { reason: t('forbiddenReason') }) }
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < 0 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: t('errParamOutOfRange', { key }) }
       }
     }
   }
@@ -243,7 +255,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateInvocationPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(resolveErrorMessage(check, t('errValidationFailed')))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -256,9 +268,31 @@ export async function invokeNativeCapability(
   }
 }
 
-export const IMAGE_EXT_REGEX = /\.(?:png|jpg|jpeg|webp|bmp)$/i
-/** 本插件生成的输出文件（*_opt、*_opt_2、*_opt_<时间>），扫描时不再重复列入 */
-const DERIVED_OUTPUT_REGEX = /_opt(?:_\d+){0,2}\.(?:png|jpg|jpeg|webp|bmp)$/i
+export const IMAGE_EXT_REGEX = /\.(?:png|jpg|jpeg|webp|bmp|gif|tiff|avif)$/i
+/** 可导入的图片扩展名（与 IMAGE_EXT_REGEX 一致） */
+export const IMAGE_IMPORT_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.avif'] as const
+/** 本插件生成的输出文件（*_opt、*_opt_2、*_opt_<时间>），导入文件夹时不再重复列入 */
+export const DERIVED_OUTPUT_REGEX = /_opt(?:_\d+){0,2}\.(?:png|jpg|jpeg|webp|bmp|gif|tiff|avif)$/i
+
+/** 是否为本插件生成的输出文件 */
+export function isDerivedOutputName(name: string): boolean {
+  return DERIVED_OUTPUT_REGEX.test(String(name || ''))
+}
+
+/** 界面说明支持的图片格式 */
+export const IMAGE_IMPORT_SUPPORTED_TEXT = 'PNG / JPG / WebP / BMP / GIF / TIFF / AVIF'
+
+/** 图片导入规则：仅接受支持的图片格式，排除本插件输出文件及系统受保护路径 */
+export const IMAGE_IMPORT_RULES: FileImportRules = {
+  extensions: IMAGE_IMPORT_EXTENSIONS,
+  excludeFile: (name) => isDerivedOutputName(name),
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+}
+
+/** 将宿主调用适配为共享导入模块所需的 transport */
+export function createImageImportTransport(hostOverride?: unknown): FileImportTransport {
+  return (method, params) => callHostTransport<unknown>(method, params, hostOverride)
+}
 
 function splitPath(filePath: string): { dir: string; fileName: string; base: string; ext: string } {
   const sepIdx = Math.max(filePath.lastIndexOf('\\'), filePath.lastIndexOf('/'))
@@ -335,7 +369,7 @@ export async function chooseOutputPath(
     const candidate = buildOutputCandidate(sourcePath, targetExt, suffix)
     if (!reserved.has(key(candidate)) && key(candidate) !== sourceKey) return take(candidate)
   }
-  throw new Error('无法为输出文件生成不重复的文件名')
+  throw new Error(t('errCannotGenUniqueName'))
 }
 
 /** 把宿主单张图片的处理结果解析为界面结果；缺少输出信息时按失败处理，不当作成功 */
@@ -348,17 +382,17 @@ export function parseHostImageResult(
   const errors = Array.isArray(payload.errors) ? (payload.errors as Array<Record<string, unknown>>) : []
   if (errors.length > 0) {
     const first = errors[0]
-    return { status: 'failed', error: String(first?.error || first?.message || '宿主报告处理失败') }
+    return { status: 'failed', error: resolveErrorMessage(first, t('errHostFailed')) }
   }
   const results = Array.isArray(payload.results) ? (payload.results as Array<Record<string, unknown>>) : []
   const r = results[0]
   if (!r || typeof r !== 'object') {
-    return { status: 'failed', error: '宿主未返回处理结果，无法确认是否已生成输出文件' }
+    return { status: 'failed', error: t('errHostNoResult') }
   }
   const outputPath = typeof r.outputPath === 'string' ? r.outputPath.trim() : ''
   const outputBytes = Number(r.outputBytes ?? r.sizeBytes)
   if (!outputPath || !Number.isFinite(outputBytes) || outputBytes <= 0) {
-    return { status: 'failed', error: '宿主返回的结果缺少输出文件路径或大小' }
+    return { status: 'failed', error: t('errHostMissingOutput') }
   }
   const rawOriginal = Number(r.originalBytes)
   const originalBytes = Number.isFinite(rawOriginal) && rawOriginal > 0 ? rawOriginal : fallbackOriginalBytes
@@ -387,7 +421,7 @@ export async function processImageFile(
 ): Promise<ImageProcessOutcome> {
   const targetExt = resolveTargetExtension(file.path, settings.outputFormat)
   if (!targetExt) {
-    return { status: 'failed', error: '无法识别图片扩展名，请指定输出格式' }
+    return { status: 'failed', error: t('errUnknownExt') }
   }
   try {
     const outputPath = await chooseOutputPath(file.path, targetExt, reserved, batchTag, hostOverride)
@@ -404,24 +438,35 @@ export async function processImageFile(
       hostOverride
     )
     if (!res.ok) {
-      return { status: 'failed', error: res.error || '宿主图片处理返回失败' }
+      return { status: 'failed', error: friendlyFileError(resolveErrorMessage(res, t('errHostReturnFailed'))) }
     }
     return parseHostImageResult(res.data, file.sizeBytes, settings.sizeLimitBytes)
   } catch (err) {
-    return { status: 'failed', error: err instanceof Error ? err.message : String(err) }
+    return { status: 'failed', error: friendlyFileError(err) }
   }
 }
 
-/** 逐张处理；每张完成后回调一次，单张失败不影响其余图片 */
+/**
+ * 逐张处理；每张完成后回调一次，单张失败不影响其余图片。
+ * shouldSkip 返回 true 的图片（如处理中被移出列表）不再调用宿主，也不产生结果。
+ */
 export async function processImageBatch(
   files: Array<Pick<RealImageFileItem, 'id' | 'path' | 'sizeBytes'>>,
   settings: ImageProcessSettings,
-  options: { hostOverride?: unknown; batchTag?: string; onItem?: (id: string, outcome: ImageProcessOutcome) => void } = {}
+  options: {
+    hostOverride?: unknown
+    batchTag?: string
+    onItem?: (id: string, outcome: ImageProcessOutcome) => void
+    onStart?: (id: string) => void
+    shouldSkip?: (id: string) => boolean
+  } = {}
 ): Promise<Map<string, ImageProcessOutcome>> {
   const reserved = new Set<string>()
   const batchTag = options.batchTag || makeBatchTag()
   const outcomes = new Map<string, ImageProcessOutcome>()
   for (const file of files) {
+    if (options.shouldSkip?.(file.id)) continue
+    options.onStart?.(file.id)
     const outcome = await processImageFile(file, settings, reserved, batchTag, options.hostOverride)
     outcomes.set(file.id, outcome)
     options.onItem?.(file.id, outcome)
@@ -512,6 +557,56 @@ export async function readImageFileSize(filePath: string, hostOverride?: unknown
   return Number.isFinite(size) && size >= 0 ? size : null
 }
 
+/** 从文件选择框或路径列表中提取合法的图片绝对路径 */
+export function extractSelectedImagePaths(raw: unknown, limit = 200): string[] {
+  if (!raw || typeof raw !== 'object') return []
+  const record = raw as Record<string, unknown>
+  if (record.canceled === true) return []
+  const lines: string[] = []
+  if (typeof record.filePath === 'string') {
+    lines.push(record.filePath)
+  }
+  if (Array.isArray(record.filePaths)) {
+    for (const item of record.filePaths) {
+      if (typeof item === 'string') {
+        lines.push(item)
+      } else if (item && typeof item === 'object' && typeof (item as { path?: unknown }).path === 'string') {
+        lines.push((item as { path: string }).path)
+      }
+    }
+  }
+  return parseClipboardImagePaths(lines.join('\n'), limit)
+}
+
+/** 从宿主 plugin_files_dropped 事件载荷中提取合法的图片绝对路径 */
+export function extractDroppedImagePaths(envelopeOrPayload: unknown, limit = 200): string[] {
+  if (!envelopeOrPayload || typeof envelopeOrPayload !== 'object') return []
+  const obj = envelopeOrPayload as Record<string, unknown>
+  const innerPayload =
+    obj.payload && typeof obj.payload === 'object' ? (obj.payload as Record<string, unknown>) : obj
+  const rawFiles = Array.isArray(innerPayload.files)
+    ? innerPayload.files
+    : Array.isArray(obj.files)
+      ? obj.files
+      : []
+  return extractSelectedImagePaths({ canceled: false, filePaths: rawFiles }, limit)
+}
+
+/** 从系统剪贴板读取直接复制的图片文件列表（clipboard_read_files） */
+export async function readClipboardImageFilePaths(hostOverride?: unknown): Promise<string[]> {
+  const res = await callHostTransport<unknown>('clipboard_read_files', {}, hostOverride)
+  if (!res.ok || !res.data) return []
+  const data = res.data as Record<string, unknown> | unknown[]
+  const list = Array.isArray(data)
+    ? data
+    : Array.isArray((data as { files?: unknown }).files)
+      ? ((data as { files: unknown[] }).files)
+      : []
+  return extractSelectedImagePaths({ canceled: false, filePaths: list })
+}
+
+let imageItemSeq = 0
+
 /** 由路径构造队列项；大小由调用方传入（读不到时为 null） */
 export function makeImageItem(id: string, filePath: string, sizeBytes: number | null, parentDirOverride?: string): RealImageFileItem {
   const { dir, fileName, ext } = splitPath(filePath)
@@ -525,66 +620,10 @@ export function makeImageItem(id: string, filePath: string, sizeBytes: number | 
   }
 }
 
-export type ImageWorkspaceSnapshot = RealImageFileItem[] & {
-  error?: string
-  scannedDirs: string[]
-  files: RealImageFileItem[]
-  items: RealImageFileItem[]
-  presets: ImageWorkshopPreset[]
-  /** 至少一个目录只返回了部分文件（宿主扫描达到上限或每个目录最多列出的数量） */
-  truncated: boolean
-}
-
-export const SCAN_TOP_N_PER_DIR = 50
-
-export async function fetchRealImageWorkspace(hostOverride?: unknown): Promise<ImageWorkspaceSnapshot> {
-  const scanner = createDirectoryScanner(hostOverride)
-  const [picturesDir, downloadsDir, desktopDir] = await Promise.all([
-    getRealSystemPath('pictures', hostOverride),
-    getRealSystemPath('downloads', hostOverride),
-    getRealSystemPath('desktop', hostOverride)
-  ])
-
-  const scannedDirs = [picturesDir, downloadsDir, desktopDir].filter(Boolean)
-  if (scannedDirs.length === 0) {
-    throw new Error('无法获取图片、下载、桌面目录的路径')
-  }
-  const files: RealImageFileItem[] = []
-  const seenPaths = new Set<string>()
-  let truncated = false
-
-  for (const dir of scannedDirs) {
-    const scan = await scanner.scan(dir, {
-      maxDepth: 2,
-      maxFiles: 220,
-      collectTopN: SCAN_TOP_N_PER_DIR,
-      filterExt: IMAGE_EXT_REGEX,
-      hostOverride
-    })
-    if (scan.truncated || scan.files.length >= SCAN_TOP_N_PER_DIR) truncated = true
-    for (const f of scan.files) {
-      if (f.sizeBytes <= 0) continue
-      if (!IMAGE_EXT_REGEX.test(f.name)) continue
-      // 跳过本插件生成的输出文件，避免对输出再次处理
-      if (DERIVED_OUTPUT_REGEX.test(f.name)) continue
-      const normPath = f.path.toLowerCase()
-      if (seenPaths.has(normPath)) continue
-      seenPaths.add(normPath)
-      files.push(makeImageItem(`img-${files.length}-${f.path}`, f.path, f.sizeBytes, dir))
-    }
-  }
-
-  files.sort((a, b) => (b.sizeBytes ?? -1) - (a.sizeBytes ?? -1))
-
-  const snapshot = Object.assign([...files], {
-    scannedDirs,
-    files,
-    items: files,
-    presets: getCapabilityItems(),
-    error: scanner.error,
-    truncated
-  })
-  return snapshot
+/** 把共享导入模块返回的文件转为图片队列项，使用单调递增编号防止移除后重加发生 id 冲突 */
+export function toImageItem(file: ImportedFile): RealImageFileItem {
+  imageItemSeq += 1
+  return makeImageItem(`img-${imageItemSeq}-${file.path}`, file.path, file.sizeBytes, file.parentDir)
 }
 
 export async function openImageFileLocation(filePath: string, hostOverride?: unknown): Promise<boolean> {
@@ -596,29 +635,29 @@ export async function trashImageFileItem(
   hostOverride?: unknown
 ): Promise<{ ok: boolean; error?: string }> {
   if (!filePath || FORBIDDEN_TARGET_PATTERN.test(filePath)) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: t('forbiddenReason') }
   }
   return trashRealItem(filePath, hostOverride)
 }
 
 /** 结果状态的短标签（列表行右侧） */
 export function describeOutcomeTag(result: ImageProcessOutcome | undefined): string {
-  if (!result) return '待处理'
-  if (result.status === 'failed') return '失败'
-  if (result.overLimitBytes !== null) return `超过 ${formatBytes(result.overLimitBytes)}`
-  if (result.notSmaller) return `未变小 · ${formatBytes(result.outputBytes)}`
+  if (!result) return t('tagPending')
+  if (result.status === 'failed') return t('tagFailed')
+  if (result.overLimitBytes !== null) return t('tagOverLimit', { size: formatBytes(result.overLimitBytes) })
+  if (result.notSmaller) return t('tagNotSmaller', { size: formatBytes(result.outputBytes) })
   const pct =
     result.originalBytes !== null && result.originalBytes > 0
       ? ` (-${Math.round(((result.originalBytes - result.outputBytes) / result.originalBytes) * 100)}%)`
       : ''
-  return `已输出 ${formatBytes(result.outputBytes)}${pct}`
+  return t('tagOutput', { size: formatBytes(result.outputBytes), pct })
 }
 
 /** 结果说明（列表行副标题） */
 export function describeOutcomeDetail(result: ImageProcessOutcome | undefined, parentDir: string): string {
   if (!result) return parentDir
-  if (result.status === 'failed') return `失败原因：${result.error}`
+  if (result.status === 'failed') return t('detailFailed', { error: result.error })
   const outName = splitPath(result.outputPath).fileName
-  const dims = result.width > 0 && result.height > 0 ? `${result.width}×${result.height}` : '尺寸未识别'
-  return `输出 ${outName} · ${dims}`
+  const dims = result.width > 0 && result.height > 0 ? `${result.width}×${result.height}` : t('dimsUnknown')
+  return t('detailOutput', { name: outName, dims })
 }

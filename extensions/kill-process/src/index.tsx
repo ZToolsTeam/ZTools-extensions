@@ -8,15 +8,16 @@ import {
   Color,
   showToast,
   Toast,
-  useNavigation
+  useNavigation,
+  useLocale
 } from "@ztools/declarative-ui";
 import { useState, useEffect } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import { isRealElectronHost } from "./native-ipc.js";
 import {
   ProcessInfo,
   ProcessSortBy,
   KillMode,
-  NOT_IN_CLIENT_MESSAGE,
   loadProcesses,
   filterAndSortProcesses,
   isSystemCriticalProcess,
@@ -24,11 +25,12 @@ import {
   confirmAndTerminate,
   revealProcessInExplorer
 } from "./process-manager.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from "./process-manager.js";
 
 function formatCpu(proc: ProcessInfo): string {
-  return proc.cpuPercent === null ? "CPU 未知" : `CPU ${proc.cpuPercent.toFixed(1)}%`;
+  return proc.cpuPercent === null ? t("cpuUnknown") : `CPU ${proc.cpuPercent.toFixed(1)}%`;
 }
 
 /**
@@ -41,6 +43,7 @@ export function ProcessDetailView({
   process: ProcessInfo;
   onKilled?: (pid: number) => void;
 }) {
+  useLocale();
   const { pop } = useNavigation();
   const isCritical = process.isSystemCritical || isSystemCriticalProcess(process.name) || isSystemCriticalProcess(process.pid);
   const isPosixPath = process.path?.startsWith("/") ? true : undefined;
@@ -48,44 +51,44 @@ export function ProcessDetailView({
   const forceCmd = getKillCommandLine(process.pid, "force", isPosixPath);
   const treeCmd = getKillCommandLine(process.pid, "tree", isPosixPath);
   const facts = [
-    process.user ? `**用户**: \`${process.user}\`` : "",
-    process.threads !== null ? `**线程数**: \`${process.threads}\`` : "",
-    process.arch ? `**架构**: \`${process.arch}\`` : ""
+    process.user ? t("userFact", { val: process.user }) : "",
+    process.threads !== null ? t("threadsFact", { val: process.threads }) : "",
+    process.arch ? t("archFact", { val: process.arch }) : ""
   ].filter(Boolean);
 
   const markdown = `
-# 进程详情: ${process.name} (PID: ${process.pid})
+${t("detailHeading", { name: process.name, pid: process.pid })}
 
 ${facts.length > 0 ? `> ${facts.join(" | ")}\n` : ""}
 ${
   isCritical
-    ? `> **系统关键进程**：结束后可能导致系统无响应或桌面重启，插件不允许结束。\n`
+    ? t("criticalWarn")
     : ""
 }
 
 ---
 
-### 资源占用
-- **内存（工作集）**: \`${process.memoryMB.toFixed(1)} MB\` (${(process.memoryMB / 1024).toFixed(2)} GB)
-- **CPU**: \`${process.cpuPercent === null ? "未知" : `${process.cpuPercent.toFixed(1)}%`}\`
+${t("resHeading")}
+${t("memLine", { mb: process.memoryMB.toFixed(1), gb: (process.memoryMB / 1024).toFixed(2) })}
+- **CPU**: \`${process.cpuPercent === null ? t("unknown") : `${process.cpuPercent.toFixed(1)}%`}\`
 
 ---
 
-### 程序路径与命令行
+${t("pathHeading")}
 \`\`\`powershell
-# 程序路径
-${process.path || "（客户端没有提供）"}
+${t("commentPath")}
+${process.path || t("notProvided")}
 
-# 启动命令行
-${process.commandLine || "（客户端没有提供）"}
+${t("commentCmd")}
+${process.commandLine || t("notProvided")}
 
-# 结束进程
+${t("commentGraceful")}
 ${gracefulCmd}
 
-# 强制结束
+${t("commentForce")}
 ${forceCmd}
 
-# 结束进程树
+${t("commentTree")}
 ${treeCmd}
 \`\`\`
   `;
@@ -94,20 +97,20 @@ ${treeCmd}
     const res = await confirmAndTerminate(process, mode);
     if (!res) return;
     if (!res.success) {
-      await showToast(Toast.Style.Failure, "结束失败", res.message);
+      await showToast(Toast.Style.Failure, t("killFailed"), res.message);
       return;
     }
     onKilled?.(process.pid);
-    await showToast(Toast.Style.Success, res.alreadyExited ? "进程已退出" : "进程已结束", res.message);
+    await showToast(Toast.Style.Success, res.alreadyExited ? t("procExited") : t("procKilled"), res.message);
     pop();
   };
 
   const handleReveal = async () => {
     const ok = await revealProcessInExplorer(process.path);
     if (ok) {
-      await showToast(Toast.Style.Success, "已在资源管理器中定位", process.path);
+      await showToast(Toast.Style.Success, t("revealedToast"), process.path);
     } else {
-      await showToast(Toast.Style.Failure, "无法在资源管理器中定位", process.path);
+      await showToast(Toast.Style.Failure, t("revealFailedToast"), process.path);
     }
   };
 
@@ -117,67 +120,67 @@ ${treeCmd}
       navigationTitle={`${process.name} [PID: ${process.pid}]`}
       metadata={
         <Detail.Metadata>
-          <Detail.Metadata.Label title="进程标识 (PID)" text={String(process.pid)} icon={Icon.Key} />
-          <Detail.Metadata.Label title="CPU 占用率" text={process.cpuPercent === null ? "未知" : `${process.cpuPercent.toFixed(1)}%`} icon={Icon.Clock} />
-          <Detail.Metadata.Label title="内存占用" text={`${process.memoryMB.toFixed(1)} MB`} icon={Icon.Document} />
-          {process.user ? <Detail.Metadata.Label title="运行用户" text={process.user} icon={Icon.Pencil} /> : null}
-          {process.threads !== null ? <Detail.Metadata.Label title="线程数量" text={String(process.threads)} icon={Icon.Pin} /> : null}
-          {process.arch ? <Detail.Metadata.Label title="体系架构" text={process.arch} icon={Icon.Gear} /> : null}
+          <Detail.Metadata.Label title={t("metaPid")} text={String(process.pid)} icon={Icon.Key} />
+          <Detail.Metadata.Label title={t("metaCpu")} text={process.cpuPercent === null ? t("unknown") : `${process.cpuPercent.toFixed(1)}%`} icon={Icon.Clock} />
+          <Detail.Metadata.Label title={t("metaMem")} text={`${process.memoryMB.toFixed(1)} MB`} icon={Icon.Document} />
+          {process.user ? <Detail.Metadata.Label title={t("metaUser")} text={process.user} icon={Icon.Pencil} /> : null}
+          {process.threads !== null ? <Detail.Metadata.Label title={t("metaThreads")} text={String(process.threads)} icon={Icon.Pin} /> : null}
+          {process.arch ? <Detail.Metadata.Label title={t("metaArch")} text={process.arch} icon={Icon.Gear} /> : null}
           <Detail.Metadata.Separator />
-          <Detail.Metadata.TagList title="进程安全状态">
+          <Detail.Metadata.TagList title={t("metaSecurity")}>
             {isCritical ? (
-              <Detail.Metadata.TagList.Item text="系统核心保护" color={Color.Red} />
+              <Detail.Metadata.TagList.Item text={t("tagCritical")} color={Color.Red} />
             ) : (
-              <Detail.Metadata.TagList.Item text="常规应用进程" color={Color.SecondaryText} />
+              <Detail.Metadata.TagList.Item text={t("tagNormalProc")} color={Color.SecondaryText} />
             )}
             <Detail.Metadata.TagList.Item
-              text={(process.cpuPercent ?? 0) > 15 ? "高 CPU 负载" : "正常负载"}
+              text={(process.cpuPercent ?? 0) > 15 ? t("tagHighCpu") : t("tagNormalLoad")}
               color={(process.cpuPercent ?? 0) > 15 ? Color.Red : Color.SecondaryText}
             />
           </Detail.Metadata.TagList>
         </Detail.Metadata>
       }
       actions={
-        <ActionPanel title={`进程操作: ${process.name} (PID: ${process.pid})`}>
+        <ActionPanel title={t("procActionsTitle", { name: process.name, pid: process.pid })}>
           <Action
-            title="结束进程"
+            title={t("killGraceful")}
             icon={Icon.Trash}
             onAction={() => handleExecuteKill("graceful")}
           />
           <Action
-            title="强制结束"
+            title={t("killForce")}
             icon={Icon.XMarkCircle}
             shortcut={{ modifiers: ["ctrl"], key: "return" }}
             onAction={() => handleExecuteKill("force")}
           />
           <Action
-            title="结束进程树"
+            title={t("killTree")}
             icon={Icon.Trash}
             shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}
             onAction={() => handleExecuteKill("tree")}
           />
           {process.path ? (
             <Action
-              title="在资源管理器中定位"
+              title={t("revealInExplorer")}
               icon={Icon.Folder}
               shortcut={{ modifiers: ["ctrl"], key: "o" }}
               onAction={handleReveal}
             />
           ) : null}
           <Action.CopyToClipboard
-            title="复制 PID"
+            title={t("copyPid")}
             content={String(process.pid)}
             icon={Icon.Key}
           />
           {process.path ? (
             <Action.CopyToClipboard
-              title="复制程序路径"
+              title={t("copyPath")}
               content={process.path}
               icon={Icon.Document}
             />
           ) : null}
           <Action.CopyToClipboard
-            title="复制强制结束命令 (taskkill)"
+            title={t("copyForceCmd")}
             content={forceCmd}
             icon={Icon.CopyClipboard}
           />
@@ -191,9 +194,10 @@ ${treeCmd}
  * 结束进程主命令
  */
 export default function KillProcessCommand() {
+  useLocale();
   const inClient = isRealElectronHost();
   const [processes, setProcesses] = useState<ProcessInfo[]>([]);
-  const [loadError, setLoadError] = useState<string>(() => (inClient ? "" : NOT_IN_CLIENT_MESSAGE));
+  const [loadError, setLoadError] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(() => inClient);
   const [sortBy, setSortBy] = useState<ProcessSortBy>("memory");
   const [searchText, setSearchText] = useState("");
@@ -219,7 +223,7 @@ export default function KillProcessCommand() {
           setLoadError("");
         } else {
           // 刷新失败时保留上一次的列表，并在状态条提示数据可能已过期
-          setLoadError(res.error || "读取进程列表失败");
+          setLoadError(resolveErrorMessage(res, t("loadFailed")));
         }
       } finally {
         if (active) setIsLoading(false);
@@ -253,49 +257,54 @@ export default function KillProcessCommand() {
     if (!res) return;
     if (res.success) {
       setProcesses(prev => prev.filter(p => p.pid !== proc.pid));
-      await showToast(Toast.Style.Success, res.alreadyExited ? "进程已退出" : "进程已结束", res.message);
+      await showToast(Toast.Style.Success, res.alreadyExited ? t("procExited") : t("procKilled"), res.message);
     } else {
-      await showToast(Toast.Style.Failure, "结束失败", res.message);
+      await showToast(Toast.Style.Failure, t("killFailed"), res.message);
     }
   };
 
   const handleReveal = async (proc: ProcessInfo) => {
     const ok = await revealProcessInExplorer(proc.path);
     if (ok) {
-      await showToast(Toast.Style.Success, "已在资源管理器中定位", proc.path);
+      await showToast(Toast.Style.Success, t("revealedToast"), proc.path);
     } else {
-      await showToast(Toast.Style.Failure, "无法在资源管理器中定位", proc.path);
+      await showToast(Toast.Style.Failure, t("revealFailedToast"), proc.path);
     }
   };
 
   const handleRefresh = async () => {
     if (!isRealElectronHost()) {
-      await showToast(Toast.Style.Failure, "无法刷新", NOT_IN_CLIENT_MESSAGE);
+      await showToast(Toast.Style.Failure, t("cannotRefresh"), t("notInClient"));
       return;
     }
     const res = await loadProcesses();
     if (res.ok) {
       setProcesses(res.processes);
       setLoadError("");
-      await showToast(Toast.Style.Success, "进程列表已刷新", `当前进程: ${res.processes.length}`);
+      await showToast(Toast.Style.Success, t("refreshedToast"), t("refreshedDesc", { count: res.processes.length }));
     } else {
-      setLoadError(res.error || "读取进程列表失败");
-      await showToast(Toast.Style.Failure, "刷新失败", res.error);
+      setLoadError(resolveErrorMessage(res, t("loadFailed")));
+      await showToast(Toast.Style.Failure, t("refreshFailed"), res.error);
     }
   };
 
   const totalMemory = sortedList.reduce((acc, cur) => acc + cur.memoryMB, 0);
-  const summaryText = loadError
+  const effectiveError = !inClient ? t("notInClient") : loadError;
+  const summaryText = effectiveError
     ? processes.length > 0
-      ? `数据可能已过期：${loadError}`
-      : loadError
-    : `进程 ${sortedList.length} 个 · 内存合计 ${(totalMemory / 1024).toFixed(2)} GB · ${autoRefresh ? "每 2 秒自动刷新" : "已暂停自动刷新"}`;
+      ? t("staleSummary", { error: effectiveError })
+      : effectiveError
+    : t("summaryText", {
+        count: sortedList.length,
+        gb: (totalMemory / 1024).toFixed(2),
+        refreshState: autoRefresh ? t("autoRefreshOn") : t("autoRefreshOff")
+      });
 
   return (
     <List
       isLoading={isLoading}
-      navigationTitle="结束进程"
-      searchBarPlaceholder="搜索进程名、PID 或程序路径..."
+      navigationTitle={t("navTitle")}
+      searchBarPlaceholder={t("searchPlaceholder")}
       searchText={searchText}
       onSearchTextChange={setSearchText}
       filterBar={{
@@ -303,7 +312,7 @@ export default function KillProcessCommand() {
         actions: [
           {
             id: "toggle-auto-refresh",
-            label: autoRefresh ? "暂停自动刷新" : "开启自动刷新",
+            label: autoRefresh ? t("pauseAutoRefresh") : t("resumeAutoRefresh"),
             style: "secondary",
             onAction: () => {
               setAutoRefresh(prev => !prev);
@@ -311,7 +320,7 @@ export default function KillProcessCommand() {
           },
           {
             id: "refresh-proc",
-            label: "立即刷新",
+            label: t("refreshNow"),
             style: "secondary",
             onAction: () => {
               void handleRefresh();
@@ -321,25 +330,25 @@ export default function KillProcessCommand() {
       }}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="排序指标"
+          tooltip={t("sortTooltip")}
           value={sortBy}
           onChange={newVal => setSortBy(newVal as ProcessSortBy)}
         >
-          <List.Dropdown.Item title="按内存占用降序 (Memory)" value="memory" />
-          <List.Dropdown.Item title="按 CPU 占用率降序 (CPU)" value="cpu" />
-          <List.Dropdown.Item title="按进程名称排序 (Name)" value="name" />
-          <List.Dropdown.Item title="按 PID 升序 (PID)" value="pid" />
+          <List.Dropdown.Item title={t("sortMem")} value="memory" />
+          <List.Dropdown.Item title={t("sortCpu")} value="cpu" />
+          <List.Dropdown.Item title={t("sortName")} value="name" />
+          <List.Dropdown.Item title={t("sortPid")} value="pid" />
         </List.Dropdown>
       }
       actions={
-        <ActionPanel title="全局操作">
+        <ActionPanel title={t("globalActions")}>
           <Action
-            title="刷新进程列表"
+            title={t("refreshList")}
             icon={Icon.Repeat}
             onAction={handleRefresh}
           />
           <Action
-            title={autoRefresh ? "暂停 2 秒自动刷新" : "恢复 2 秒自动刷新"}
+            title={autoRefresh ? t("pause2sRefresh") : t("resume2sRefresh")}
             icon={autoRefresh ? Icon.Clock : Icon.Bolt}
             shortcut={{ modifiers: ["ctrl", "shift"], key: "r" }}
             onAction={() => setAutoRefresh(prev => !prev)}
@@ -347,7 +356,7 @@ export default function KillProcessCommand() {
         </ActionPanel>
       }
     >
-      <List.Section title={`进程 (${sortedList.length})`}>
+      <List.Section title={t("sectionProcs", { count: sortedList.length })}>
         {sortedList.map(proc => {
           const isHighCpu = (proc.cpuPercent ?? 0) >= 15;
           const isHighMem = proc.memoryMB >= 1000;
@@ -355,7 +364,7 @@ export default function KillProcessCommand() {
           const subtitleParts = [
             `${proc.memoryMB.toFixed(1)} MB`,
             formatCpu(proc),
-            proc.threads !== null ? `${proc.threads} 线程` : "",
+            proc.threads !== null ? t("threadsUnit", { count: proc.threads }) : "",
             proc.arch || ""
           ].filter(Boolean);
 
@@ -367,35 +376,35 @@ export default function KillProcessCommand() {
               subtitle={subtitleParts.join(" • ")}
               icon={isCritical ? Icon.Shield : isHighCpu ? Icon.ExclamationMark : Icon.Terminal}
               accessories={[
-                ...(isCritical ? [{ tag: { value: "系统关键" } }] : []),
-                ...(isHighMem ? [{ tag: { value: "高内存" } }] : []),
-                ...(isHighCpu ? [{ tag: { value: "高 CPU", color: Color.Red } }] : []),
+                ...(isCritical ? [{ tag: { value: t("badgeCritical") } }] : []),
+                ...(isHighMem ? [{ tag: { value: t("badgeHighMem") } }] : []),
+                ...(isHighCpu ? [{ tag: { value: t("badgeHighCpu"), color: Color.Red } }] : []),
                 { text: `${proc.memoryMB.toFixed(0)} MB` },
                 { text: formatCpu(proc) }
               ]}
               actions={
                 <ActionPanel title={`${proc.name} (PID: ${proc.pid})`}>
                   <Action
-                    title="结束进程"
+                    title={t("killGraceful")}
                     icon={Icon.Trash}
                     onAction={() => handleKill(proc, "graceful")}
                   />
                   <Action
-                    title="强制结束"
+                    title={t("killForce")}
                     icon={Icon.XMarkCircle}
                     style={Action.Style.Destructive}
                     shortcut={{ modifiers: ["ctrl"], key: "return" }}
                     onAction={() => handleKill(proc, "force")}
                   />
                   <Action
-                    title="结束进程树"
+                    title={t("killTree")}
                     icon={Icon.Trash}
                     style={Action.Style.Destructive}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}
                     onAction={() => handleKill(proc, "tree")}
                   />
                   <Action.Push
-                    title="查看进程详情与命令行"
+                    title={t("viewDetails")}
                     icon={Icon.Eye}
                     shortcut={{ modifiers: ["ctrl"], key: "d" }}
                     target={
@@ -407,33 +416,33 @@ export default function KillProcessCommand() {
                   />
                   {proc.path ? (
                     <Action
-                      title="在资源管理器中定位"
+                      title={t("revealInExplorer")}
                       icon={Icon.Folder}
                       shortcut={{ modifiers: ["ctrl"], key: "o" }}
                       onAction={() => handleReveal(proc)}
                     />
                   ) : null}
                   <Action.CopyToClipboard
-                    title="复制 PID"
+                    title={t("copyPid")}
                     content={String(proc.pid)}
                     icon={Icon.Key}
                     shortcut={{ modifiers: ["ctrl"], key: "c" }}
                   />
                   {proc.path ? (
                     <Action.CopyToClipboard
-                      title="复制程序路径"
+                      title={t("copyPath")}
                       content={proc.path}
                       icon={Icon.Document}
                       shortcut={{ modifiers: ["ctrl", "shift"], key: "c" }}
                     />
                   ) : null}
                   <Action.CopyToClipboard
-                    title="复制 taskkill 命令"
+                    title={t("copyTaskkillCmd")}
                     content={`taskkill /F /PID ${proc.pid}`}
                     icon={Icon.CopyClipboard}
                   />
                   <Action
-                    title="刷新进程列表"
+                    title={t("refreshList")}
                     icon={Icon.Repeat}
                     shortcut={{ modifiers: ["ctrl"], key: "r" }}
                     onAction={handleRefresh}

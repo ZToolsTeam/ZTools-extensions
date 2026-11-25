@@ -117,7 +117,7 @@ test('带用户名或密码的书签不提供“打开网页”（客户端会�
 })
 
 test('全部来源都读不了（只有 Safari 没权限）时，按浏览器筛选给出该浏览器自己的结论，Safari 原因放进读取详情', async () => {
-  const { UnreadableSourcesError, FULL_DISK_ACCESS_GUIDE } = await import('../dist/index.js')
+  const { UnreadableSourcesError, getFullDiskAccessGuide } = await import('../dist/index.js')
   const safariOnly = { success: true, bookmarks: [], warnings: ['Safari / 默认：没有读取权限'], sourcesRead: 0 }
   assert.throws(() => validateScan(safariOnly), error => error instanceof UnreadableSourcesError && error.warnings[0].startsWith('Safari'))
   host.ipc.browser_bookmarks_scan = async () => structuredClone(safariOnly)
@@ -142,7 +142,7 @@ test('全部来源都读不了（只有 Safari 没权限）时，按浏览器筛
   assert.match(all.tree().props.filterBar.summaryText, /^没有可读取的浏览器/)
   const titles = all.actions(empty).map(a => a.props.title)
   assert.deepEqual(titles, ['复制完全磁盘访问设置路径', '刷新书签', '读取详情'])
-  assert.equal(all.actions(empty)[0].props.content, FULL_DISK_ACCESS_GUIDE)
+  assert.equal(all.actions(empty)[0].props.content, getFullDiskAccessGuide())
   // 处理权限后刷新成功，空状态与提示都消失
   host.ipc.browser_bookmarks_scan = async () => reply([item('s1', 'safari')])
   await all.run(empty, '刷新书签'); await tick()
@@ -155,7 +155,7 @@ test('客户端调用整体失败时，所选浏览器下也如实显示读取�
   host.ipc.browser_bookmarks_scan = async () => { throw new Error('IPC timeout') }
   const view = await open('bookmarks-chrome')
   assert.equal(view.items()[0].props.title, '未能读取 Chrome 书签')
-  assert.equal(view.items()[0].props.subtitle, 'IPC timeout')
+  assert.equal(view.items()[0].props.subtitle, '读取浏览器书签失败')
   assert.ok(view.actions(view.items()[0]).some(a => a.props.title === '刷新书签'))
   assert.ok(!view.actions(view.items()[0]).some(a => a.props.title === '复制完全磁盘访问设置路径'))
 })

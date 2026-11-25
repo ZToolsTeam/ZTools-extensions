@@ -54,8 +54,14 @@ test('预览文案校验、CSS 转义、许可链接限制与缺字提示', () =
   assert.doesNotMatch(previewMarkdown({ ...preview('Winter'), fallbacks: ['LastResort'] }), /回退字体|由所选字体绘制/)
 })
 test('旧宿主提示升级，不调用 DLL 或伪造字体', async () => {
-  globalThis.__ztoolsElectron.transport.methods = {}; const v = await open()
-  assert.equal(v.items().length, 0); assert.match(v.text(), /升级/); assert.equal(host.ipcCalls.length, 0)
+  const prevMethods = globalThis.__ztoolsElectron.transport.methods
+  globalThis.__ztoolsElectron.transport.methods = {}
+  try {
+    const v = await open()
+    assert.equal(v.items().length, 0); assert.match(v.text(), /升级/); assert.equal(host.ipcCalls.length, 0)
+  } finally {
+    globalThis.__ztoolsElectron.transport.methods = prevMethods
+  }
 })
 
 test('自定义预览表单传回实际输入，并拒绝空白内容', async () => {
@@ -64,4 +70,43 @@ test('自定义预览表单传回实际输入，并拒绝空白内容', async ()
   const field = () => v.tree().children.find(node => node.type === 'Form.TextArea')
   field().props.onChange(' '); await tick(); await v.actions()[0].props.onSubmit(); assert.equal(saved, ''); assert.match(host.lastToast().title, /请输入/)
   field().props.onChange('ZTools 字体 123'); await tick(); await v.actions()[0].props.onSubmit(); assert.equal(saved, 'ZTools 字体 123')
+})
+
+test('许可标签使用事实中性文案并在详情提示以官方授权协议为准；无商业误导特征词', async () => {
+  const manifest = JSON.parse(fs.readFileSync(new URL('../plugin.json', import.meta.url)))
+  assert.doesNotMatch(JSON.stringify(manifest), /free-commercial|commercial-risk|commercial fonts|免费商用|商用风险/)
+  const v = await open()
+  await delay()
+  await tick()
+  assert.equal(v.item('Example').props.accessories.some(a => a.tag === '含内嵌许可信息'), true)
+  assert.equal(v.item('Winter').props.accessories.some(a => a.tag === '未检出许可信息'), true)
+  assert.match(v.item('Winter').props.detail.props.markdown, /仅反映字体文件内嵌元数据，商用前请以官方授权协议为准/)
+})
+
+test('收藏与取消收藏字体：LocalStorage 持久化、置顶展示与收藏筛选', async () => {
+  const v = await open()
+  // 初始顺序：Winter 在前，Example 在后
+  assert.deepEqual(v.items().map(i => i.props.id), ['Winter', 'Example'])
+
+  // 收藏 Example 后自动置顶并持久化到 LocalStorage
+  await v.run(v.item('Example'), '收藏字体')
+  await tick()
+  assert.deepEqual(v.items().map(i => i.props.id), ['Example', 'Winter'])
+  assert.equal(v.item('Example').props.accessories.some(a => a.tooltip === '已收藏'), true)
+
+  // 切换到“已收藏字体”筛选仅展示 Example
+  v.tree().props.searchBarAccessory.props.onChange('favorites')
+  await tick()
+  assert.deepEqual(v.items().map(i => i.props.id), ['Example'])
+
+  // 重新挂载后仍保持持久化收藏状态
+  v.unmount()
+  const v2 = await open()
+  await tick()
+  assert.deepEqual(v2.items().map(i => i.props.id), ['Example', 'Winter'])
+
+  // 取消收藏后恢复原顺序
+  await v2.run(v2.item('Example'), '取消收藏')
+  await tick()
+  assert.deepEqual(v2.items().map(i => i.props.id), ['Winter', 'Example'])
 })

@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 /**
  * 文本行级差异对比（线性空间 Myers O(ND) 算法）
  *
@@ -226,7 +228,7 @@ export function diffText(left: string, right: string, options: DiffOptions = {})
   const a = splitLines(left, true);
   const b = splitLines(right, true);
   if (a.length > MAX_DIFF_LINES || b.length > MAX_DIFF_LINES) {
-    throw new Error(`文本超过 ${MAX_DIFF_LINES} 行，暂不支持对比`);
+    throw new Error(t("maxLinesExceeded", { max: MAX_DIFF_LINES }));
   }
   const leftUnterminated = a.length > 0 && !left.endsWith("\n");
   const rightUnterminated = b.length > 0 && !right.endsWith("\n");
@@ -314,18 +316,18 @@ export function hunkPreviewMarkdown(h: DiffHunk): string {
   if (h.lines.length <= MAX_PREVIEW_LINES) return fencedDiffMarkdown(formatHunk(h));
   const shown = { ...h, lines: h.lines.slice(0, MAX_PREVIEW_LINES) };
   const body = formatHunk(shown).split("\n").slice(1).join("\n");
-  return `${fencedDiffMarkdown(`${hunkHeader(h)}\n${body}`)}\n\n这一处共 ${h.lines.length} 行，预览只显示前 ${MAX_PREVIEW_LINES} 行；完整内容请复制这一处差异或差异报告。`;
+  return `${fencedDiffMarkdown(`${hunkHeader(h)}\n${body}`)}\n\n${t("previewTruncated", { total: h.lines.length, shown: MAX_PREVIEW_LINES })}`;
 }
 
 /** 统一格式（unified diff）报告，可直接粘贴到代码评审或 git apply */
-export function formatUnifiedDiff(result: DiffResult, leftName = "左侧", rightName = "右侧"): string {
+export function formatUnifiedDiff(result: DiffResult, leftName = t("sideLeft"), rightName = t("sideRight")): string {
   if (result.identical) return "";
   return [`--- ${leftName}`, `+++ ${rightName}`, ...result.hunks.map(formatHunk), ""].join("\n");
 }
 
 export function describeHunk(h: DiffHunk): string {
   const parts: string[] = [];
-  if (h.removed) parts.push(`删除 ${h.removed} 行`);
-  if (h.added) parts.push(`新增 ${h.added} 行`);
-  return parts.join("，");
+  if (h.removed) parts.push(t("hunkRemoved", { count: h.removed }));
+  if (h.added) parts.push(t("hunkAdded", { count: h.added }));
+  return parts.join(t("hunkJoiner"));
 }

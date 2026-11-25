@@ -54,5 +54,5 @@ test('同结构对象数组递归合并数字类型；空数组和非法输入�
   assert.match(jsonToRustStruct('[{"value":1},{"value":2.5}]'), /pub value: f64/)
   assert.match(jsonToGoStruct('[{"value":1},{"value":2.5}]'), /Value\s+float64/)
   assert.match(jsonToRustStruct('[]'), /Vec<serde_json::Value>/)
-  assert.match(jsonToGoStruct('bad'), /无法生成/)
+  assert.match(jsonToGoStruct('bad'), /无法生成|Failed to generate/)
 })

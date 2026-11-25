@@ -1,4 +1,4 @@
-export type DictCategory = 'linux' | 'http' | 'port'
+export type DictCategory = 'all' | 'linux' | 'http' | 'port'
 
 export type LinuxCommandGroup = 'file' | 'text' | 'system' | 'net' | 'disk' | 'security'
 

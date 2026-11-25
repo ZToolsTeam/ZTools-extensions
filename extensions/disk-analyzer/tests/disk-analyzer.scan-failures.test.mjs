@@ -2,6 +2,7 @@
 // 时，可读目录照常展示，失败目录连同原因如实列出；全部失败才算扫描失败。真实声明式运行时 + 模拟 macOS 宿主。
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import DiskAnalyzerCommand from '../dist/index.js'
 import { fetchDiskAnalysisSnapshot, describeScanFailure } from '../dist/logic.js'
@@ -154,7 +155,55 @@ test('失败原因整理：去掉目录前缀、空值兜底、Windows 路径给
   assert.equal(describeScanFailure('/a', new Error('/a: 目录扫描结果无效')), '目录扫描结果无效')
   assert.equal(describeScanFailure('/a', new Error('')), '目录扫描失败')
   assert.equal(describeScanFailure('/a', undefined), '目录扫描失败')
-  assert.equal(describeScanFailure('D:\\', new Error('PERMISSION_DENIED')), 'PERMISSION_DENIED（请确认当前账户有权读取该目录后重新扫描）')
-  assert.equal(describeScanFailure('/a', 'EPERM: operation not permitted'), 'EPERM: operation not permitted（可在「系统设置 › 隐私与安全性 › 文件与文件夹」中允许 ZTools 访问后重新扫描）')
+  assert.equal(
+    describeScanFailure('D:\\', new Error('PERMISSION_DENIED')),
+    '目录扫描失败（请确认当前账户有权读取该目录后重新扫描）'
+  )
+  assert.equal(
+    describeScanFailure('D:\\', Object.assign(new Error('PERMISSION_DENIED'), { code: 'PERMISSION_DENIED' })),
+    '权限不足，无法执行该操作（请确认当前账户有权读取该目录后重新扫描）'
+  )
+  assert.equal(
+    describeScanFailure('/a', 'EPERM: operation not permitted'),
+    '目录扫描失败（可在「系统设置 › 隐私与安全性 › 文件与文件夹」中允许 ZTools 访问后重新扫描）'
+  )
   assert.equal(describeScanFailure('/a', new Error('设备未就绪')), '设备未就绪')
+
+  try {
+    setRuntimeLocale('en-US')
+    assert.equal(
+      describeScanFailure('D:\\', new Error('PERMISSION_DENIED')),
+      'PERMISSION_DENIED (Verify read permission for this directory and rescan)'
+    )
+    assert.equal(
+      describeScanFailure('/a', 'EPERM: operation not permitted'),
+      'EPERM: operation not permitted (Grant access in System Settings > Privacy & Security > Files and Folders, then rescan)'
+    )
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
+})
+
+test('失败原因整理：剥离目录前缀后保留结构化 errorCode / errorDetails，英文模式正确本地化', () => {
+  try {
+    setRuntimeLocale('en-US')
+    const errWithCode = Object.assign(new Error('/Users/demo/Secret: 权限不足'), {
+      errorCode: 'PERMISSION_DENIED'
+    })
+    const permMsg = describeScanFailure('/Users/demo/Secret', errWithCode)
+    assert.match(permMsg, /^Permission denied/)
+    assert.equal(/[\u4e00-\u9fa5]/.test(permMsg), false)
+
+    const objWithHostCode = {
+      error: '/Users/demo/Missing: 目录不存在',
+      errorCode: 'INTERNAL_ERROR',
+      errorDetails: { hostCode: 'FILE_NOT_FOUND' }
+    }
+    assert.equal(
+      describeScanFailure('/Users/demo/Missing', objWithHostCode),
+      'Target file or directory not found'
+    )
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

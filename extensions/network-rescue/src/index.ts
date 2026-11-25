@@ -5,27 +5,45 @@ import {
   Icon,
   Color,
   Clipboard,
+  useLocale,
   useState,
   useEffect,
+  confirmAlert,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   type NetworkRescueItem,
   type RescueFilterMode,
-  NETWORK_RESCUE_ITEMS,
+  getNetworkRescueItems,
   runNetworkDiagnostics,
   executeNetworkRepair,
   batchExecuteNetworkRepairs,
   filterNetworkRescueItems
 } from './logic.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './logic.js'
 
+const HIGH_RISK_CONFIRM_KEYS: Record<
+  string,
+  {
+    titleKey: 'confirmWinsockTitle' | 'confirmFirewallTitle' | 'confirmDhcpTitle' | 'confirmNlaTitle'
+    msgKey: 'confirmWinsockMsg' | 'confirmFirewallMsg' | 'confirmDhcpMsg' | 'confirmNlaMsg'
+  }
+> = {
+  'reset-winsock': { titleKey: 'confirmWinsockTitle', msgKey: 'confirmWinsockMsg' },
+  'reset-firewall': { titleKey: 'confirmFirewallTitle', msgKey: 'confirmFirewallMsg' },
+  'renew-dhcp': { titleKey: 'confirmDhcpTitle', msgKey: 'confirmDhcpMsg' },
+  'restart-nla': { titleKey: 'confirmNlaTitle', msgKey: 'confirmNlaMsg' }
+}
+
 export function NetworkRescueCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [filterMode, setFilterMode] = useState<RescueFilterMode>('all')
-  const [items, setItems] = useState<NetworkRescueItem[]>(NETWORK_RESCUE_ITEMS)
+  const [items, setItems] = useState<NetworkRescueItem[] | null>(null)
   const [diagnosticError, setDiagnosticError] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
@@ -38,8 +56,8 @@ export function NetworkRescueCommand() {
       if (showNotice) {
         showToast({
           style: snap.ok ? Toast.Style.Success : Toast.Style.Failure,
-          title: snap.ok ? '网络诊断已完成' : '网络诊断失败',
-          message: snap.error || `告警 ${snap.warningCount} 项 · 未检测 ${snap.unknownCount} 项`
+          title: snap.ok ? t('toastDiagDone') : t('toastDiagFailed'),
+          message: resolveErrorMessage(snap, t('toastDiagStats', { warning: snap.warningCount, unknown: snap.unknownCount }))
         })
       }
     } finally {
@@ -52,6 +70,15 @@ export function NetworkRescueCommand() {
   }, [])
 
   async function handleRepairItem(item: NetworkRescueItem) {
+    const riskConfirm = HIGH_RISK_CONFIRM_KEYS[item.id]
+    if (riskConfirm) {
+      const confirmed = await confirmAlert({
+        title: t(riskConfirm.titleKey),
+        message: t(riskConfirm.msgKey, { command: item.command }),
+        primaryAction: { title: t('confirmRepairPrimary'), style: 'destructive' }
+      })
+      if (!confirmed) return
+    }
     const res = await executeNetworkRepair(item.id)
     if (res.ok) {
       await refreshDiagnostics(false)
@@ -63,68 +90,93 @@ export function NetworkRescueCommand() {
     } else {
       showToast({
         style: Toast.Style.Failure,
-        title: '修复执行失败',
+        title: t('toastRepairFailedTitle'),
         message: res.message
       })
     }
   }
 
+  const baseItems = getNetworkRescueItems()
+  const baseById = new Map(baseItems.map((item) => [item.id, item]))
+  const activeItems = (items ?? baseItems).map((item) => {
+    const localized = baseById.get(item.id)
+    if (!localized) return item
+    return {
+      ...item,
+      title: localized.title,
+      subtitle: localized.subtitle,
+      categoryLabel: localized.categoryLabel,
+      ...(item.status === 'unknown' ? { statusText: localized.statusText } : {})
+    }
+  })
+
   async function handleRepairAllWarnings() {
-    const warningIds = items.filter((i) => i.status === 'warning' || i.status === 'error').map((i) => i.id)
+    const warningItems = activeItems.filter((i) => i.status === 'warning' || i.status === 'error')
+    const warningIds = warningItems.map((i) => i.id)
+    const highRiskWarnings = warningItems.filter((i) => Boolean(HIGH_RISK_CONFIRM_KEYS[i.id]))
+    if (highRiskWarnings.length > 0) {
+      const confirmed = await confirmAlert({
+        title: t('confirmBatchHighRiskTitle', { count: warningIds.length }),
+        message: t('confirmBatchHighRiskMsg', {
+          items: highRiskWarnings.map((i) => `• ${i.title}`).join('\n')
+        }),
+        primaryAction: { title: t('confirmRepairPrimary'), style: 'destructive' }
+      })
+      if (!confirmed) return
+    }
     const res = await batchExecuteNetworkRepairs(warningIds)
     if (res.ok && res.repairedCount > 0) {
       await refreshDiagnostics(false)
       showToast({
         style: Toast.Style.Success,
         title: res.summary,
-        message: '已重新诊断，请查看各项实际状态'
+        message: t('toastBatchDoneMessage')
       })
     } else {
       showToast({
         style: Toast.Style.Failure,
-        title: '批量修复未完成',
+        title: t('toastBatchFailedTitle'),
         message: res.summary
       })
     }
   }
 
-  const filtered = filterNetworkRescueItems(items, searchText, filterMode)
-  const unknownCount = items.filter(item => item.status === 'unknown').length
-  const warningCount = items.filter((i) => i.status === 'warning' || i.status === 'error').length
+  const filtered = filterNetworkRescueItems(activeItems, searchText, filterMode)
+  const unknownCount = activeItems.filter(item => item.status === 'unknown').length
+  const warningCount = activeItems.filter((i) => i.status === 'warning' || i.status === 'error').length
 
   return List({
-    navigationTitle: '网络断网诊断与急救箱',
-    searchBarPlaceholder: '搜索网络急救项 (如: DNS 缓存, 残留系统代理, Winsock 重置, Hosts 劫持, DHCP)...',
+    navigationTitle: t('navTitle'),
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '筛选网络急救分类',
+      tooltip: t('filterTooltip'),
       value: filterMode,
       onChange: (val: string) => setFilterMode(val as RescueFilterMode),
       children: [
-        List.Dropdown.Item({ title: '全部急救项 (All Rescue Items)', value: 'all' }),
-        List.Dropdown.Item({ title: '异常告警项 (Warnings Only)', value: 'warning' }),
-        List.Dropdown.Item({ title: 'DNS与代理修复 (DNS & Proxy)', value: 'dns_proxy' }),
-        List.Dropdown.Item({ title: '协议栈重置 (Winsock & Firewall)', value: 'stack_reset' })
+        List.Dropdown.Item({ title: t('filterAll'), value: 'all' }),
+        List.Dropdown.Item({ title: t('filterWarning'), value: 'warning' }),
+        List.Dropdown.Item({ title: t('filterDnsProxy'), value: 'dns_proxy' }),
+        List.Dropdown.Item({ title: t('filterStackReset'), value: 'stack_reset' })
       ]
     }),
     filterBar: {
-      summaryText: diagnosticError || `已有结果 ${items.length - unknownCount} 项 · 告警 ${warningCount} 项 · 未检测 ${unknownCount} 项`,
+      summaryText: diagnosticError || t('summaryBar', { checked: activeItems.length - unknownCount, warning: warningCount, unknown: unknownCount }),
       actions: [
         {
           id: 'rediagnose',
-          label: '重新诊断全网',
-          title: '重新诊断全网',
+          label: t('btnRediagnose'),
+          title: t('btnRediagnose'),
           style: 'secondary',
           onAction: () => void refreshDiagnostics(true)
-        },
-
+        }
       ]
     },
     children: [
       List.Section({
-        title: `网络故障诊断与一键修复项 (${filtered.length})`,
+        title: t('sectionTitle', { count: filtered.length }),
         children: filtered.map((item) => {
           const isWarning = item.status === 'warning' || item.status === 'error'
           return List.Item({
@@ -135,7 +187,7 @@ export function NetworkRescueCommand() {
             accessories: [
               {
                 tag: {
-                  value: isWarning ? '异常告警' : item.status === 'unknown' ? '未检测' : '检查通过',
+                  value: isWarning ? t('tagWarning') : item.status === 'unknown' ? t('tagUnknown') : t('tagHealthy'),
                   ...(isWarning ? { color: Color.Red } : {})
                 }
               },
@@ -145,25 +197,25 @@ export function NetworkRescueCommand() {
               title: item.title,
               children: [
                 Action({
-                  title: `一键执行修复 (${item.categoryLabel})`,
+                  title: t('actionRunRepair', { category: item.categoryLabel }),
                   icon: Icon.Bolt,
                   onAction: () => handleRepairItem(item)
                 }),
                 Action({
-                  title: '复制底层修复命令',
+                  title: t('actionCopyCommand'),
                   icon: Icon.Clipboard,
                   shortcut: { modifiers: ['ctrl'], key: 'return' },
                   onAction: async () => {
                     await Clipboard.copy(item.command)
                     showToast({
                       style: Toast.Style.Success,
-                      title: '已复制修复命令',
+                      title: t('toastCopiedCommand'),
                       message: item.command
                     })
                   }
                 }),
                 Action({
-                  title: '重新诊断全网连通性',
+                  title: t('actionRediagnose'),
                   icon: Icon.ArrowClockwise,
                   shortcut: { modifiers: ['ctrl'], key: 'r' },
                   onAction: () => refreshDiagnostics(true)
@@ -171,7 +223,7 @@ export function NetworkRescueCommand() {
                 ...(warningCount > 0
                   ? [
                       Action({
-                        title: `批量修复全部 ${warningCount} 项异常`,
+                        title: t('actionBatchRepair', { count: warningCount }),
                         icon: Icon.Checkmark,
                         onAction: () => handleRepairAllWarnings()
                       })

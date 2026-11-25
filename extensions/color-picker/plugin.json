@@ -1,7 +1,7 @@
 {
   "id": "color-picker",
   "name": "取色与配色",
-  "version": "2.1.6",
+  "version": "2.1.7",
   "description": "支持 HEX / RGB / HSL / CMYK 色值实时互转、WCAG 无障碍对比度检测与常用色板收藏",
   "author": "ZTools Team",
   "entry": "dist/index.js",
@@ -61,7 +61,60 @@
     }
   ],
   "category": [
-    "设计工具"
+    "图像媒体"
   ],
-  "minAppVersion": "1.1.8.3"
+  "categoryId": "media",
+  "minAppVersion": "1.1.8.3",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Color Picker",
+      "description": "Convert between HEX, RGB, HSL, OKLCH, and CMYK color formats in real time, check WCAG accessibility contrast ratios, and save favorite palettes.",
+      "keywords": [
+        "color",
+        "hex",
+        "rgb",
+        "hsl",
+        "oklch",
+        "cmyk",
+        "wcag",
+        "contrast",
+        "palette"
+      ],
+      "features": {
+        "convert-color": {
+          "explain": "Convert color values between HEX, RGB, HSL, OKLCH, and CMYK",
+          "cmds": [
+            "color convert",
+            "hex to rgb",
+            "rgb to hex",
+            "oklch",
+            "cmyk",
+            "hsl"
+          ]
+        },
+        "contrast-check": {
+          "explain": "Check WCAG accessibility contrast ratio between foreground and background colors",
+          "cmds": [
+            "contrast",
+            "wcag",
+            "contrast check",
+            "color accessibility"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png",
+          "title": "Color Format Conversion"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01.png",
+      "title": "颜色格式换算"
+    }
+  ]
 }

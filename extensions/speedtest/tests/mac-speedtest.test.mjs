@@ -27,7 +27,7 @@ test('失败重测清除旧结果，保留真正错误，不转换成断网或�
  const v=await open();await v.run(v.item('bandwidth'),'开始测量带宽');host.ipc.network_speedtest=async()=>{throw Error('Apple测试服务不可达')}
  await v.run(v.item('bandwidth'),'重新测量带宽');assert.match(v.text(),/不可达/);assert.doesNotMatch(v.text(),/125.0|下载 0/)
  host.ipc.network_speedtest=async()=>({...diagnosis(),nodes:[{...sample(),samplesMs:[],latencyMs:null,jitterMs:null,error:'ECONNREFUSED'}]})
- await v.tree().props.filterBar.actions[0].onAction();assert.match(v.text(),/ECONNREFUSED/);assert.doesNotMatch(v.text(),/网络已断开/)
+ await v.tree().props.filterBar.actions[0].onAction();assert.match(v.text(),/ECONNREFUSED/);assert.match(v.text(),/拒绝连接/);assert.doesNotMatch(v.text(),/平均 未提供|网络已断开/)
 })
 test('畸形回执与不一致样本拒绝，不把缺失指标写成零',async()=>{
  for(const patch of [{downloadMbps:undefined},{downloadMbps:0},{baseRttMs:'1'},{interfaceName:[]},{durationMs:0},{checkedAt:'bad'}]){host.ipc.network_speedtest=async()=>({...bandwidth(),...patch});await assert.rejects(measureBandwidth('a'),/真实数据/)}

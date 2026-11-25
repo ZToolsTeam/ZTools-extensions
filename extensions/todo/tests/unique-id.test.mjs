@@ -11,5 +11,5 @@ test('随机标识能力不可用时拒绝新增，不使用固定后缀',async 
  const original=Object.getOwnPropertyDescriptor(globalThis,'crypto')
  Object.defineProperty(globalThis,'crypto',{configurable:true,value:{}})
  t.after(()=>Object.defineProperty(globalThis,'crypto',original))
- assert.throws(()=>createTodo('甲'),/唯一标识/)
+ assert.throws(()=>createTodo('甲'),/唯一标识|unique ID/i)
 })

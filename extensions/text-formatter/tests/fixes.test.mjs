@@ -363,3 +363,54 @@ test('示例文本每行显示宽度不超过 44（中文按 2 计），详情�
     if (original) Object.defineProperty(globalThis, 'navigator', original); else delete globalThis.navigator
   }
 })
+
+test('直接粘贴结果回前台：作为次动作 (Ctrl+Enter) 调用 Clipboard.paste，空结果与失败如实提示', async () => {
+  const localHost = createHost()
+  const view = await mount(TextFormatterCommand, localHost)
+  try {
+    await view.run(view.item('source-text'), '编辑待排版文本')
+    let form = await mountPushed(localHost)
+    await form.fill('text', 'hello world')
+    await form.run(null, '应用文本')
+    await tick()
+    form.unmount()
+
+    const actions = view.actions(view.item('upper-case'))
+    assert.equal(actions[1].props.title, '粘贴到前台: 全部大写')
+    assert.deepEqual(actions[1].props.shortcut, { modifiers: ['ctrl'], key: 'return' })
+
+    const bridge = getDeclarativeBridge()
+    const pasted = []
+    const origPaste = bridge.pasteToActive
+    bridge.pasteToActive = async (text) => { pasted.push(text) }
+    try {
+      await view.run(view.item('upper-case'), '粘贴到前台: 全部大写')
+      assert.deepEqual(pasted, ['HELLO WORLD'])
+      assert.equal(localHost.lastToast().style, Toast.Style.Success)
+      assert.match(localHost.lastToast().title, /已粘贴回前台/)
+
+      // 空结果不调用 paste
+      await view.run(view.item('source-text'), '编辑待排版文本')
+      form = await mountPushed(localHost)
+      await form.fill('text', '你好世界')
+      await form.run(null, '应用文本')
+      await tick()
+      form.unmount()
+      await view.run(view.item('camel-case'), '粘贴到前台: 驼峰命名 (camelCase)')
+      assert.equal(pasted.length, 1)
+      assert.equal(localHost.lastToast().style, Toast.Style.Failure)
+      assert.equal(localHost.lastToast().title, '没有可粘贴的内容')
+
+      // paste 失败如实提示
+      bridge.pasteToActive = async () => { throw new Error('前台窗口不可用') }
+      await view.run(view.item('upper-case'), '粘贴到前台: 全部大写')
+      assert.equal(localHost.lastToast().style, Toast.Style.Failure)
+      assert.equal(localHost.lastToast().title, '粘贴失败')
+      assert.match(localHost.lastToast().message, /前台窗口不可用/)
+    } finally {
+      bridge.pasteToActive = origPaste
+    }
+  } finally {
+    view.unmount()
+  }
+})

@@ -237,6 +237,7 @@ test('错误分类边界：空值、未知错误原样保留，权限与文件�
   assert.equal(classifyHostFileError('FILE_ERROR'), 'missing')
   assert.equal(classifyHostFileError('文件或目录不存在'), 'missing')
   assert.equal(describeHostFileError('', '/x'), '/x')
-  assert.equal(describeHostFileError('service crashed', '/x'), 'service crashed')
+  assert.equal(describeHostFileError('service crashed', '/x'), '/x')
+  assert.equal(describeHostFileError('索引服务崩溃', '/x'), '索引服务崩溃')
   assert.equal(describeHostFileError('FILE_ERROR', '/x'), '文件可能已被移动或删除，请重新搜索')
 })

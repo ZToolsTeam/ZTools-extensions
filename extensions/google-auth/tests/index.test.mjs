@@ -117,3 +117,79 @@ test('从剪贴板导入 otpauth 链接：成功写入加密存储；非链接�
     assert.ok(view.items().some(i => i.props.title.startsWith('me@x.com')))
   } finally { view.unmount() }
 })
+
+test('[敏感剪贴板] 复制原始密钥走 clipboard_copy_text(sensitive: true)，取消不复制，TOTP 口令复制保持顺手', async () => {
+  const acc = createAccount({ name: 'GitHub', secret: 'JBSWY3DPEHPK3PXP' })
+  ss.put(ACCOUNTS_STORAGE_KEY, [acc])
+  host.ipc.clipboard_copy_text = async () => ({ success: true, clearAfterMs: 30000 })
+
+  const view = await mount(GoogleAuthCommand)
+  try {
+    await tick()
+    const item = view.items().find((i) => i.props.title.startsWith('GitHub'))
+
+    // 取消确认：不调用敏感剪贴板也不写普通剪贴板
+    host.setConfirm(false)
+    await view.run(item, '复制 Base32 密钥')
+    assert.equal(host.ipcCalls.filter(([m]) => m === 'clipboard_copy_text').length, 0)
+    assert.equal(host.clipboard.text, '')
+
+    // 确认后走敏感剪贴板
+    host.setConfirm(true)
+    await view.run(item, '复制 Base32 密钥')
+    const sensitiveCalls = host.ipcCalls.filter(([m]) => m === 'clipboard_copy_text')
+    assert.equal(sensitiveCalls.length, 1)
+    assert.deepEqual(sensitiveCalls[0][1], { text: 'JBSWY3DPEHPK3PXP', sensitive: true })
+    assert.equal(host.clipboard.text, '', '走宿主敏感剪贴板时不写普通 Clipboard.copy')
+    assert.equal(host.lastToast().title, '已复制密钥')
+    assert.match(host.lastToast().message, /30 秒后自动清除/)
+
+    // 切英文验证 i18n 提示
+    host.setLocale('en-US')
+    await tick()
+    await view.run(view.items().find((i) => i.props.title.startsWith('GitHub')), 'Copy Base32 Secret')
+    assert.equal(host.lastToast().title, 'Secret Copied')
+    assert.match(host.lastToast().message, /30s/)
+    host.setLocale('zh-CN')
+    await tick()
+
+    // TOTP 动态口令复制保持顺手（无需确认直接复制）
+    const confirmsBefore = host.confirms.length
+    await view.run(view.items().find((i) => i.props.title.startsWith('GitHub')), '复制动态口令')
+    assert.equal(host.confirms.length, confirmsBefore)
+    assert.match(host.clipboard.text, /^\d{6}$/)
+  } finally { view.unmount() }
+})
+
+test('[敏感剪贴板降级与异常] 旧宿主优雅降级 Clipboard.copy，明确权限/写入失败不降级且如实报错', async () => {
+  const acc = createAccount({ name: 'AWS', secret: 'JBSWY3DPEHPK3PXP' })
+  ss.put(ACCOUNTS_STORAGE_KEY, [acc])
+  const view = await mount(GoogleAuthCommand)
+  try {
+    await tick()
+    const item = view.items().find((i) => i.props.title.startsWith('AWS'))
+
+    // 1. 宿主未实现 clipboard_copy_text（NOT_SUPPORTED）-> 优雅降级到 Clipboard.copy
+    await view.run(item, '复制 Base32 密钥')
+    assert.equal(host.clipboard.text, 'JBSWY3DPEHPK3PXP')
+    assert.equal(host.lastToast().title, '已复制密钥')
+    assert.match(host.lastToast().message, /手动清空/)
+
+    // 2. 旧宿主成功但未返回 clearAfterMs -> 不重复写 Clipboard.copy，按非敏感提示
+    host.clipboard.text = ''
+    host.ipc.clipboard_copy_text = async () => ({ success: true })
+    await view.run(item, '复制 Base32 密钥')
+    assert.equal(host.clipboard.text, '')
+    assert.match(host.lastToast().message, /手动清空/)
+
+    // 3. 宿主明确返回非不支持类失败（PERMISSION_DENIED）-> 不降级写普通剪贴板，弹失败提示
+    host.clipboard.text = ''
+    host.ipc.clipboard_copy_text = async () => {
+      throw Object.assign(new Error('剪贴板写入被拒绝'), { code: 'PERMISSION_DENIED' })
+    }
+    await view.run(item, '复制 Base32 密钥')
+    assert.equal(host.clipboard.text, '')
+    assert.equal(host.lastToast().title, '复制失败')
+    assert.match(host.lastToast().message, /剪贴板写入被拒绝/)
+  } finally { view.unmount() }
+})

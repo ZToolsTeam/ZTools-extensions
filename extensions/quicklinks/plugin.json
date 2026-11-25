@@ -1,9 +1,13 @@
 {
   "id": "quicklinks",
   "name": "网页快开",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "聚合多平台快捷搜索与工作流网址组批量打开，支持自定义 {query} 变量与热键直达",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -63,6 +67,69 @@
         "新建网址快开",
         "添加快开"
       ]
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Quicklinks & Web Groups",
+      "description": "Launch multi-platform quick searches with custom {query} placeholders and open grouped workflow URLs in batches.",
+      "keywords": [
+        "quicklinks",
+        "search",
+        "urls",
+        "bookmarks",
+        "workflow",
+        "web"
+      ],
+      "features": {
+        "quicklinks-all": {
+          "explain": "Browse and search all configured quicklinks and URL workflow groups",
+          "cmds": [
+            "quicklinks",
+            "web links",
+            "shortcuts",
+            "wk"
+          ]
+        },
+        "quicklinks-search-engines": {
+          "explain": "Run parameterized searches on GitHub, Google, Zhihu, Bilibili, and more",
+          "cmds": [
+            "multi search",
+            "search engines",
+            "quick search"
+          ]
+        },
+        "quicklinks-open-groups": {
+          "explain": "Open a saved group of workflow web pages all at once",
+          "cmds": [
+            "open url group",
+            "workflow tabs",
+            "batch urls"
+          ]
+        },
+        "quicklinks-new": {
+          "explain": "Create a new custom quicklink or multi-URL workflow group",
+          "cmds": [
+            "add quicklink",
+            "new quicklink",
+            "create url group"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

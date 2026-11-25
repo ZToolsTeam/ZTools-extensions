@@ -1,6 +1,8 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import * as logic from '../dist/logic.js'
 import {
   fetchHardwareTelemetrySnapshot,
@@ -164,7 +166,7 @@ test('hardware-info: 负数 / 非数字 / 小数电量按「电量未知」处�
   }
   for (const [handler, reason] of [
     [async () => { throw new Error('pmset 超时') }, /pmset 超时/],
-    [async () => ({ success: false, error: { code: 'PROCESS_ERROR' } }), /PROCESS_ERROR/],
+    [async () => ({ success: false, error: { code: 'PROCESS_ERROR' } }), /进程操作失败/],
     [async () => 'garbage', /返回数据无效/]
   ]) {
     const snap = await fetchHardwareTelemetrySnapshot(makeHardwareHost(handler))

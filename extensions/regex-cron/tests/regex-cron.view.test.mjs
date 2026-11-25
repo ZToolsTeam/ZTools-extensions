@@ -138,9 +138,10 @@ test('正则字典详情用可换行的行内代码显示长正则，银行卡�
 })
 
 test('Cron 常用模板均为五位 Linux 写法、可解析且不与默认输入重复', async () => {
-  const { CRON_TEMPLATES, parseAndExplainCron } = await import('../dist/index.js')
-  assert.ok(CRON_TEMPLATES.length >= 3)
-  for (const tpl of CRON_TEMPLATES) {
+  const { getCronTemplates, parseAndExplainCron } = await import('../dist/index.js')
+  const templates = getCronTemplates()
+  assert.ok(templates.length >= 3)
+  for (const tpl of templates) {
     assert.equal(tpl.expr.trim().split(/\s+/).length, 5, `${tpl.id} 应为五位`)
     assert.doesNotMatch(tpl.expr, /\?|[A-Z]{3}/, `${tpl.id} 不应含 Quartz 写法`)
     assert.equal(parseAndExplainCron(tpl.expr).isValid, true, tpl.id)

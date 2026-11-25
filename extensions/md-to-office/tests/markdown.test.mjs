@@ -142,3 +142,87 @@ test('字数与结构块只在文档条目显示，状态栏与左栏不重复�
   host.ipc.clipboard_read_text = async () => ({ success: true, text: '   ' }); await button(v, 'clipboard')
   assert.match(v.tree().props.filterBar.summaryText, /请输入 Markdown/); assert.equal(v.item('document').props.title, '测试文档')
 })
+
+test('支持通过 plugin_files_dropped 拖入 Markdown 文件读取并分析，非支持格式提示错误', async () => {
+  const listeners = new Map()
+  const prevFeatures = globalThis.window.__ztoolsDeclarativeFeatures
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  try {
+    const v = await open()
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/image.png'] } })
+    await tick()
+    assert.match(host.lastToast().message || host.lastToast().title, /\.md/)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/dropped.md'] } })
+    await tick()
+    assert.equal(v.item('document').props.title, '文件内容')
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = prevFeatures
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 pasteFiles 粘贴 Markdown 文件与 pasteText 粘贴 Markdown 源码直接预览', async () => {
+  const v = await open()
+  await v.pasteFiles(['/tmp/pasted.md'])
+  await tick()
+  assert.equal(v.item('document').props.title, '文件内容')
+
+  await v.pasteText('# 粘贴标题\n\n粘贴正文内容')
+  await tick()
+  assert.equal(v.item('document').props.title, '粘贴标题')
+})
+
+test('导出 .docx 成功后记录最近导出路径，并在动作面板与列表暴露直接打开与定位动作；取消/失败不污染记录', async () => {
+  const v = await open()
+  // 导出前不展示最近导出条目与打开/定位动作
+  assert.throws(() => v.item('exported-file'), /找不到列表项/)
+  assert.ok(!v.actions(v.item('document')).some(a => a.props.title === '直接打开文档'))
+
+  // 取消或失败不记录导出路径
+  host.ipc.window_show_save_dialog = async () => ({ canceled: true })
+  await v.run(v.item('document'), '另存 Word 新副本')
+  assert.throws(() => v.item('exported-file'), /找不到列表项/)
+
+  host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/tmp/fail.docx' })
+  host.ipc.markdown_document = async () => { throw new Error('磁盘空间不足') }
+  await v.run(v.item('document'), '另存 Word 新副本')
+  assert.throws(() => v.item('exported-file'), /找不到列表项/)
+
+  // 导出成功后同时在 document 动作面板与 exported-file 项提供直接打开与文件管理器定位
+  host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/tmp/final-report.docx' })
+  host.ipc.markdown_document = async p => ({
+    success: true,
+    summary: summary(p.markdown),
+    status: 'committed',
+    size: 20480,
+    name: 'final-report.docx'
+  })
+  await v.run(v.item('document'), '另存 Word 新副本')
+
+  const docActions = v.actions(v.item('document'))
+  const docOpen = docActions.find(a => a.props.title === '直接打开文档')
+  const docReveal = docActions.find(a => a.props.title === '在文件管理器中定位')
+  assert.equal(docOpen?.type, 'Action.Open')
+  assert.equal(docOpen?.props.target, '/tmp/final-report.docx')
+  assert.equal(docReveal?.type, 'Action.ShowInFinder')
+  assert.equal(docReveal?.props.path, '/tmp/final-report.docx')
+
+  const exportedItem = v.item('exported-file')
+  assert.equal(exportedItem.props.title, '最近导出：final-report.docx')
+  assert.equal(exportedItem.props.subtitle, '/tmp/final-report.docx')
+  const exportedActions = v.actions(exportedItem)
+  assert.equal(exportedActions[0].type, 'Action.Open')
+  assert.equal(exportedActions[0].props.target, '/tmp/final-report.docx')
+  assert.equal(exportedActions[1].type, 'Action.ShowInFinder')
+  assert.equal(exportedActions[1].props.path, '/tmp/final-report.docx')
+})

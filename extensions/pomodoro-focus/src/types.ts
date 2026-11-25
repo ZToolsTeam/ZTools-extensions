@@ -1,5 +1,6 @@
 export type PomodoroPhase = 'idle' | 'focus' | 'short_break' | 'long_break'
 export type CountdownCategory = 'work' | 'finance' | 'life'
+export type CountdownRepeat = 'none' | 'monthly' | 'yearly'
 
 export interface PomodoroState {
   phase: PomodoroPhase
@@ -15,6 +16,7 @@ export interface CountdownItem {
   targetDate: string
   category: CountdownCategory
   isRecurring: boolean
+  repeat?: CountdownRepeat
   createdAt: number
 }
 

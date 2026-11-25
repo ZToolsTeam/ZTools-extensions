@@ -1,11 +1,97 @@
 import { setActiveNavigation } from "../api/navigation.js";
+import { onLocaleChange } from "./locale.js";
+const MAX_TREE_COMPARE_DEPTH = 128;
+function isOmittedJsonValue(value) {
+    return value === undefined || typeof value === "function" || typeof value === "symbol";
+}
+function areJsonValuesEqual(a, b, depth) {
+    if (a === b)
+        return typeof a !== "bigint";
+    if (depth > MAX_TREE_COMPARE_DEPTH)
+        return false;
+    if (typeof a === "bigint" || typeof b === "bigint")
+        return false;
+    if (a && typeof a === "object" && typeof a.toJSON === "function") {
+        a = a.toJSON();
+    }
+    if (b && typeof b === "object" && typeof b.toJSON === "function") {
+        b = b.toJSON();
+    }
+    if (a === b)
+        return typeof a !== "bigint";
+    if (typeof a === "number" && !Number.isFinite(a))
+        a = null;
+    if (typeof b === "number" && !Number.isFinite(b))
+        b = null;
+    if (a === b)
+        return true;
+    if (!a || !b || typeof a !== "object" || typeof b !== "object") {
+        return false;
+    }
+    const aIsArray = Array.isArray(a);
+    if (aIsArray !== Array.isArray(b))
+        return false;
+    if (aIsArray) {
+        const arrA = a;
+        const arrB = b;
+        const len = arrA.length;
+        if (len !== arrB.length)
+            return false;
+        for (let i = 0; i < len; i++) {
+            const va = isOmittedJsonValue(arrA[i]) ? null : arrA[i];
+            const vb = isOmittedJsonValue(arrB[i]) ? null : arrB[i];
+            if (va === vb) {
+                if (typeof va === "bigint")
+                    return false;
+                continue;
+            }
+            if (!areJsonValuesEqual(va, vb, depth + 1))
+                return false;
+        }
+        return true;
+    }
+    const objA = a;
+    const objB = b;
+    let countA = 0;
+    for (const key in objA) {
+        if (!Object.prototype.hasOwnProperty.call(objA, key))
+            continue;
+        const va = objA[key];
+        if (isOmittedJsonValue(va))
+            continue;
+        countA++;
+        if (!Object.prototype.hasOwnProperty.call(objB, key))
+            return false;
+        const vb = objB[key];
+        if (isOmittedJsonValue(vb))
+            return false;
+        if (va === vb) {
+            if (typeof va === "bigint")
+                return false;
+            continue;
+        }
+        if (!areJsonValuesEqual(va, vb, depth + 1))
+            return false;
+    }
+    let countB = 0;
+    for (const key in objB) {
+        if (!Object.prototype.hasOwnProperty.call(objB, key))
+            continue;
+        if (isOmittedJsonValue(objB[key]))
+            continue;
+        countB++;
+        if (countB > countA)
+            return false;
+    }
+    return countA === countB;
+}
 export function areViewTreesEqual(a, b) {
     if (a === b)
         return true;
     if (!a || !b || typeof a !== "object" || typeof b !== "object")
         return false;
     try {
-        return JSON.stringify(a) === JSON.stringify(b);
+        return areJsonValuesEqual(a, b, 0);
     }
     catch {
         return false;
@@ -26,6 +112,7 @@ export class DeclarativeRenderInstance {
     navigationHandler;
     popoutSeed = null;
     popoutRegistry = new Map();
+    unsubscribeLocale = null;
     constructor(component, options) {
         this.component = component;
         this.onUpdateCallback = options?.onUpdate;
@@ -49,6 +136,9 @@ export class DeclarativeRenderInstance {
             // 拷一份 key 表：宿主传入的对象不会被改动，也不受原型链上的属性影响
             this.popoutSeed = new Map(Object.entries(seed));
         }
+        this.unsubscribeLocale = onLocaleChange(() => {
+            this.scheduleRender();
+        });
     }
     /** 取出并删除某个 key 的交接初值（只用一次） */
     consumePopoutSeed(key) {
@@ -208,6 +298,10 @@ export class DeclarativeRenderInstance {
         if (!this.isMounted)
             return;
         this.isMounted = false;
+        if (this.unsubscribeLocale) {
+            this.unsubscribeLocale();
+            this.unsubscribeLocale = null;
+        }
         for (const hook of this.hooks) {
             if (hook.type === "effect" && typeof hook.cleanup === "function") {
                 const cleanup = hook.cleanup;

@@ -1,9 +1,9 @@
 /**
- * 视频下载界面（布局二：左侧当前链接与链接类型 + 右侧可勾选的本机视频列表）
+ * 视频下载界面（布局二：左侧当前链接与链接类型 + 右侧本次下载与手动导入的视频列表）
  *
  * - 搜索框右侧下拉框选择 yt-dlp 命令的画质与音轨档位（视频直链按原文件下载，不受档位影响）
- * - 单行状态条显示当前链接的处理方式、档位与勾选汇总，只保留 1 个全局「重新扫描」按钮
- * - 移入回收站只处理已勾选的视频，执行前必须确认
+ * - 顶栏固定「选择文件」「选择文件夹」2 个全局按钮，并支持拖入/粘贴文件夹展开导入
+ * - 右栏仅展示本次下载完成或手动导入的视频，移入回收站只处理已勾选项且执行前必须确认
  */
 
 import {
@@ -15,33 +15,62 @@ import {
   confirmAlert,
   showToast,
   useEffect,
-  useState
+  useLocale,
+  useRef,
+  useState,
+  getLocale
 } from "@ztools/declarative-ui";
 import { isRealElectronHost } from "./native-ipc.js";
 import {
-  STREAM_PLATFORMS,
-  VIDEO_QUALITY_PRESETS,
+  getStreamPlatforms,
+  getVideoQualityPresets,
+  VIDEO_IMPORT_RULES,
+  VIDEO_IMPORT_SUPPORTED_TEXT,
   copyYtDlpCommand,
+  createDownloadedVideoItem,
+  createVideoImportTransport,
   describeVideoLink,
   downloadDirectVideo,
   fetchVideoDownloaderSnapshot,
   formatBytes,
   openLocalVideoFile,
   openLocalVideoFolder,
+  toLocalMediaVideoItem,
   trashLocalVideoFiles,
+  type LocalMediaVideoItem,
   type NativeInvocationResult,
   type VideoDownloaderSnapshot,
   type VideoQualityPresetId
 } from "./logic.js";
+import { t } from "./i18n.js";
+import {
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  pathKey,
+  pickFiles,
+  pickFolder,
+  summarizeImport,
+  type FileImportResult,
+  type NormalizedFileInput
+} from "./file-import.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
-export const OUTSIDE_CLIENT_TEXT = "需要在 ZTools 客户端中使用";
+export function getOutsideClientText(): string {
+  return t("outsideClient");
+}
 const LINK_PATTERN = /(https?:\/\/|\bBV[0-9A-Za-z]{10}\b)/i;
 
 function createEmptySnapshot(): VideoDownloaderSnapshot {
+  const platforms = getStreamPlatforms();
   return {
     saveDir: "",
     clipboardUrl: "",
-    detectedPlatform: STREAM_PLATFORMS[STREAM_PLATFORMS.length - 1],
+    detectedPlatform: platforms[platforms.length - 1],
     videos: [],
     totalSizeBytes: 0,
     updatedAt: ""
@@ -52,60 +81,210 @@ function baseName(p: string): string {
   return p.split(/[\\/]/).pop() || p;
 }
 
+function formatVideoSize(bytes: number | null): string {
+  return bytes === null ? t("sizeUnknown") : formatBytes(bytes);
+}
+
+function isDeclarativeFileInputSupported(): boolean {
+  if (typeof window === "undefined") return true;
+  const w = window as unknown as { __ztoolsDeclarativeFeatures?: { fileInput?: boolean } };
+  return w.__ztoolsDeclarativeFeatures?.fileInput === true;
+}
+
 export function VideoDownloaderCommand() {
+  useLocale();
   const inClient = isRealElectronHost();
+  const transport = createVideoImportTransport();
   const [snapshot, setSnapshot] = useState<VideoDownloaderSnapshot>(() => createEmptySnapshot());
+  const [videos, setVideos] = useState<LocalMediaVideoItem[]>([]);
   const [selectedQuality, setSelectedQuality] = useState<VideoQualityPresetId>("q_1080p_mp4");
   const [checkedIds, setCheckedIds] = useState<string[]>([]);
   const [searchText, setSearchText] = useState<string>("");
-  const [statusBanner, setStatusBanner] = useState<string>(inClient ? "" : OUTSIDE_CLIENT_TEXT);
+  const [statusBanner, setStatusBanner] = useState<string>("");
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isImporting, setIsImporting] = useState<boolean>(false);
+  const [importProgress, setImportProgress] = useState<{ visitedDirs: number; matchedFiles: number } | null>(null);
+  const [trashingIds, setTrashingIds] = useState<string[]>([]);
+
+  const mountedRef = useRef<boolean>(true);
+  const busyRef = useRef<boolean>(false);
+  const importSeqRef = useRef<number>(0);
+  const importAbortRef = useRef<AbortController | null>(null);
+  const videosRef = useRef<LocalMediaVideoItem[]>([]);
+  videosRef.current = videos;
 
   const reportResult = async (res: NativeInvocationResult) => {
+    if (!mountedRef.current) return;
     setStatusBanner(res.message);
     if (res.error === "CANCELED") return;
     await showToast({ style: res.ok ? Toast.Style.Success : Toast.Style.Failure, title: res.message });
   };
 
-  const reloadVideoSnapshot = async () => {
+  const refreshHostMeta = async () => {
     if (!inClient) {
-      setStatusBanner(OUTSIDE_CLIENT_TEXT);
+      setStatusBanner("");
       return;
     }
     setIsLoading(true);
     try {
       const data = await fetchVideoDownloaderSnapshot();
+      if (!mountedRef.current) return;
       setSnapshot(data);
-      // 扫描后不自动勾选，只保留仍然存在的已勾选项
-      const existing = new Set(data.videos.map((v) => v.id));
-      setCheckedIds((prev) => prev.filter((id) => existing.has(id)));
     } catch (err) {
-      setStatusBanner(`扫描本机视频失败: ${err instanceof Error ? err.message : String(err)}`);
+      if (!mountedRef.current) return;
+      setStatusBanner(t("errRefreshMeta", { err: err instanceof Error ? err.message : String(err) }));
     } finally {
-      setIsLoading(false);
+      if (mountedRef.current) setIsLoading(false);
     }
   };
 
+  const requireClient = (): boolean => {
+    if (inClient) return true;
+    setStatusBanner("");
+    void showToast({ style: Toast.Style.Failure, title: t("outsideClient") });
+    return false;
+  };
+
+  const commitImportedVideos = (result: FileImportResult) => {
+    const incoming = result.files.map((f) => toLocalMediaVideoItem(f, t("sourceManualImport")));
+    const { merged, added, duplicates } = mergeByPath(videosRef.current, incoming, (v) => v.path);
+    if (added.length > 0) {
+      videosRef.current = merged;
+      setVideos(merged);
+      setStatusBanner("");
+    }
+    const summary = summarizeImport(result, { added: added.length, duplicates }, VIDEO_IMPORT_SUPPORTED_TEXT);
+    if (summary) {
+      void showToast({
+        style: summary.ok ? Toast.Style.Success : Toast.Style.Failure,
+        title: summary.title,
+        message: summary.message
+      });
+    }
+  };
+
+  const runVideoImport = async (
+    task: (signal: AbortSignal, onProgress: (p: { visitedDirs: number; matchedFiles: number }) => void) => Promise<FileImportResult>
+  ) => {
+    if (!requireClient()) return;
+    importAbortRef.current?.abort();
+    const controller = new AbortController();
+    importAbortRef.current = controller;
+    const seq = ++importSeqRef.current;
+    setIsImporting(true);
+    setImportProgress(null);
+    try {
+      const result = await task(controller.signal, (p) => {
+        if (mountedRef.current && seq === importSeqRef.current) setImportProgress(p);
+      });
+      if (!mountedRef.current || seq !== importSeqRef.current) return;
+      commitImportedVideos(result);
+    } catch (err) {
+      if (!mountedRef.current || seq !== importSeqRef.current) return;
+      void showToast({ style: Toast.Style.Failure, title: t("toastImportFailed"), message: friendlyFileError(err) });
+    } finally {
+      if (mountedRef.current && seq === importSeqRef.current) {
+        importAbortRef.current = null;
+        setIsImporting(false);
+        setImportProgress(null);
+      }
+    }
+  };
+
+  const handlePickFiles = () => {
+    void runVideoImport(() => pickFiles(transport, VIDEO_IMPORT_RULES, { title: t("pickFilesTitle"), filterName: t("pickFilesFilter") }));
+  };
+
+  const handlePickFolder = () => {
+    void runVideoImport(async (signal, onProgress) => {
+      const picked = await pickFolder(transport, { title: t("pickFolderTitle"), defaultPath: snapshot.saveDir || undefined });
+      if (picked.canceled) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true };
+      if (picked.error || !picked.folderPath) {
+        return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: resolveErrorMessage(picked, t("errNoFolderSelected")) };
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const ok = await confirmAlert({
+          title: t("confirmVolumeRootTitle", { root: picked.folderPath }),
+          message: t("confirmVolumeRootMsg"),
+          primaryAction: { title: t("actionContinueImport"), style: "default" }
+        });
+        if (!ok) return { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true };
+      }
+      return collectFolderFiles(transport, picked.folderPath, VIDEO_IMPORT_RULES, { signal, onProgress });
+    });
+  };
+
+  const handleFileInput = (input: NormalizedFileInput) => {
+    void runVideoImport((signal, onProgress) =>
+      expandInputPaths(transport, input.paths, VIDEO_IMPORT_RULES, {
+        knownDirectories: input.directories,
+        signal,
+        onProgress
+      })
+    );
+  };
+
   useEffect(() => {
-    void reloadVideoSnapshot();
+    mountedRef.current = true;
+    if (inClient) void refreshHostMeta();
+
+    let cleanupDrop: (() => void) | undefined;
+    if (!isDeclarativeFileInputSupported()) {
+      const ztools = (
+        globalThis as {
+          window?: {
+            ztools?: {
+              events?: {
+                on?: (event: string, cb: (payload: unknown) => void) => (() => void) | void;
+                off?: (event: string, cb: (payload: unknown) => void) => void;
+              };
+            };
+          };
+        }
+      ).window?.ztools;
+      if (typeof ztools?.events?.on === "function") {
+        const handler = (raw: unknown) => {
+          const input = normalizeFileInput(raw);
+          if (input.paths.length > 0) handleFileInput(input);
+        };
+        const off = ztools.events.on("plugin_files_dropped", handler);
+        cleanupDrop = () => {
+          if (typeof off === "function") off();
+          else ztools.events?.off?.("plugin_files_dropped", handler);
+        };
+      }
+    }
+
+    return () => {
+      mountedRef.current = false;
+      importSeqRef.current += 1;
+      importAbortRef.current?.abort();
+      cleanupDrop?.();
+    };
   }, []);
+
+  const fileInputProps = createImportInputProps(handleFileInput, {
+    dropTitle: t("dropTitle"),
+    dropSubtitle: t("dropSubtitle")
+  });
 
   const trimmedSearch = searchText.trim();
   const searchHasLink = LINK_PATTERN.test(trimmedSearch);
   const activeInputText = searchHasLink ? trimmedSearch : snapshot.clipboardUrl;
   const link = describeVideoLink(activeInputText);
+  const qualityPresets = getVideoQualityPresets();
   const currentQuality =
-    VIDEO_QUALITY_PRESETS.find((q) => q.id === selectedQuality) || VIDEO_QUALITY_PRESETS[1];
+    qualityPresets.find((q) => q.id === selectedQuality) || qualityPresets[1];
   const keyword = searchHasLink ? "" : trimmedSearch.toLowerCase();
 
-  const filteredVideos = snapshot.videos.filter((video) => {
+  const filteredVideos = videos.filter((video) => {
     if (!keyword) return true;
     return `${video.name} ${video.path} ${video.sourceDirLabel}`.toLowerCase().includes(keyword);
   });
 
   const checkedSet = new Set(checkedIds);
-  const selectedVideos = snapshot.videos.filter((v) => checkedSet.has(v.id));
-  const selectedTotalBytes = selectedVideos.reduce((acc, item) => acc + item.sizeBytes, 0);
+  const selectedVideos = videos.filter((v) => checkedSet.has(v.id));
+  const selectedTotalBytes = selectedVideos.reduce((acc, item) => acc + (item.sizeBytes ?? 0), 0);
 
   const toggleVideoCheck = (id: string) => {
     setCheckedIds((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
@@ -122,34 +301,83 @@ export function VideoDownloaderCommand() {
     }
   };
 
-  const runAndReport = async (task: () => Promise<NativeInvocationResult>, reloadOnSuccess = false) => {
+  const handleRemoveVideo = (video: LocalMediaVideoItem) => {
+    if (trashingIds.includes(video.id)) {
+      void showToast({ style: Toast.Style.Failure, title: t("toastTrashingWait") });
+      return;
+    }
+    const next = videosRef.current.filter((item) => item.id !== video.id);
+    videosRef.current = next;
+    setVideos(next);
+    setCheckedIds((prev) => prev.filter((id) => id !== video.id));
+    setStatusBanner("");
+  };
+
+  const handleClearVideos = () => {
+    if (busyRef.current) {
+      void showToast({ style: Toast.Style.Failure, title: t("toastBusyWait") });
+      return;
+    }
+    importSeqRef.current += 1;
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+    setIsImporting(false);
+    setImportProgress(null);
+    videosRef.current = [];
+    setVideos([]);
+    setCheckedIds([]);
+    setStatusBanner("");
+  };
+
+  const appendDownloadedVideo = (filePath: string, sizeBytes?: number) => {
+    const item = createDownloadedVideoItem(filePath, sizeBytes);
+    const targetKey = pathKey(item.path);
+    const existsIdx = videosRef.current.findIndex((v) => pathKey(v.path) === targetKey);
+    const next =
+      existsIdx >= 0
+        ? videosRef.current.map((v, idx) => (idx === existsIdx ? { ...item, id: v.id } : v))
+        : [...videosRef.current, item];
+    videosRef.current = next;
+    setVideos(next);
+  };
+
+  const runAndReport = async (
+    task: () => Promise<NativeInvocationResult>,
+    onSuccess?: (res: NativeInvocationResult) => void
+  ) => {
+    busyRef.current = true;
     setIsLoading(true);
     try {
       const res = await task();
+      if (!mountedRef.current) return;
       await reportResult(res);
-      if (res.ok && reloadOnSuccess) await reloadVideoSnapshot();
+      if (res.ok && onSuccess) onSuccess(res);
     } catch (err) {
+      if (!mountedRef.current) return;
       await reportResult({
         ok: false,
         code: -1,
         error: "UNEXPECTED_ERROR",
-        message: `操作失败: ${err instanceof Error ? err.message : String(err)}`
+        message: t("errUnexpectedOp", { err: err instanceof Error ? err.message : String(err) })
       });
     } finally {
-      setIsLoading(false);
+      busyRef.current = false;
+      if (mountedRef.current) setIsLoading(false);
     }
-  };
-
-  const requireClient = (): boolean => {
-    if (inClient) return true;
-    setStatusBanner(OUTSIDE_CLIENT_TEXT);
-    return false;
   };
 
   const handleLinkPrimary = async () => {
     if (!requireClient()) return;
     if (link.directExt) {
-      await runAndReport(() => downloadDirectVideo(link.url, snapshot.saveDir), true);
+      await runAndReport(
+        () => downloadDirectVideo(link.url, snapshot.saveDir),
+        (res) => {
+          const data = res.data as { path?: unknown; size?: unknown } | undefined;
+          if (typeof data?.path === "string" && data.path) {
+            appendDownloadedVideo(data.path, typeof data.size === "number" ? data.size : undefined);
+          }
+        }
+      );
     } else {
       await runAndReport(() => copyYtDlpCommand(link.url, snapshot.saveDir, currentQuality));
     }
@@ -179,77 +407,126 @@ export function VideoDownloaderCommand() {
   const handleTrashChecked = async () => {
     const targets = selectedVideos;
     if (targets.length === 0) {
-      setStatusBanner("请先勾选要移入回收站的视频");
+      setStatusBanner(t("bannerCheckBeforeTrash"));
       return;
     }
     const preview = targets
       .slice(0, 5)
       .map((v) => v.name)
       .join("\n");
-    const more = targets.length > 5 ? `\n等 ${targets.length} 个文件` : "";
+    const more = targets.length > 5 ? t("moreFilesCount", { count: targets.length }) : "";
     const confirmed = await confirmAlert({
-      title: `把 ${targets.length} 个视频移入回收站？`,
-      message: `共 ${formatBytes(selectedTotalBytes)}，可在系统回收站中恢复。\n${preview}${more}`,
-      primaryAction: { title: "移入回收站", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("confirmTrashTitle", { count: targets.length }),
+      message: t("confirmTrashMsg", { size: formatBytes(selectedTotalBytes), preview, more }),
+      primaryAction: { title: t("actionMoveToTrash"), style: "destructive" },
+      dismissAction: { title: t("actionCancel") }
     });
     if (!confirmed) {
-      setStatusBanner("已取消移入回收站");
+      setStatusBanner(t("bannerTrashCancelled"));
       return;
     }
+    busyRef.current = true;
     setIsLoading(true);
+    setTrashingIds(targets.map((v) => v.id));
     try {
       const res = await trashLocalVideoFiles(
         targets.map((v) => v.path),
         targets
       );
+      if (!mountedRef.current) return;
       const failedText =
         res.failed.length > 0
-          ? `；${res.failed.length} 个失败：${res.failed
-              .slice(0, 3)
-              .map((f) => `${baseName(f.path)}（${f.reason}）`)
-              .join("、")}`
+          ? t("trashFailedPart", {
+              count: res.failed.length,
+              details: res.failed
+                .slice(0, 3)
+                .map((f) => `${baseName(f.path)} (${f.reason})`)
+                .join(", ")
+            })
           : "";
       const message =
         res.deletedCount > 0
-          ? `已将 ${res.deletedCount} 个视频移入回收站（${formatBytes(res.freedBytes)}）${failedText}`
-          : `没有视频被移入回收站${failedText}`;
+          ? t("msgTrashedCount", { count: res.deletedCount, size: formatBytes(res.freedBytes), failed: failedText })
+          : t("msgNoneTrashed", { failed: failedText });
       setStatusBanner(message);
       await showToast({
         style: res.failed.length === 0 ? Toast.Style.Success : Toast.Style.Failure,
         title: message
       });
-      // 失败的条目保持勾选，方便重试；成功的条目取消勾选
-      const failedSet = new Set(res.failed.map((f) => f.path));
-      setCheckedIds((prev) => prev.filter((id) => failedSet.has(id)));
-      await reloadVideoSnapshot();
+      const failedKeys = new Set(res.failed.map((f) => pathKey(f.path)));
+      const targetKeys = new Set(targets.map((t) => pathKey(t.path)));
+      const remaining = videosRef.current.filter((v) => {
+        const key = pathKey(v.path);
+        return !targetKeys.has(key) || failedKeys.has(key);
+      });
+      videosRef.current = remaining;
+      setVideos(remaining);
+      const remainingIds = new Set(remaining.map((v) => v.id));
+      setCheckedIds((prev) => prev.filter((id) => remainingIds.has(id)));
     } finally {
-      setIsLoading(false);
+      busyRef.current = false;
+      if (mountedRef.current) {
+        setIsLoading(false);
+        setTrashingIds([]);
+      }
     }
   };
 
-  const maxVideoBytes = Math.max(1, ...filteredVideos.map((v) => v.sizeBytes));
+  const maxVideoBytes = Math.max(1, ...filteredVideos.map((v) => v.sizeBytes ?? 0));
+  const allChecked = filteredVideos.length > 0 && filteredVideos.every((v) => checkedSet.has(v.id));
+  const someChecked = filteredVideos.some((v) => checkedSet.has(v.id));
 
   const linkSummary = !link.url
-    ? "未识别到视频链接"
+    ? t("errNoStreamUrl")
     : link.directExt
-      ? `视频直链（${link.directExt.toUpperCase()}）可下载`
-      : `${link.platform.name} 链接：只能复制 yt-dlp 命令（${currentQuality.badge}）`;
-  const summaryText =
-    statusBanner ||
-    `${linkSummary} · 本机视频 ${filteredVideos.length} 个 (已选 ${selectedVideos.length} 个 / ${formatBytes(selectedTotalBytes)})`;
+      ? t("linkSummaryDirect", { ext: link.directExt.toUpperCase() })
+      : t("linkSummaryCmd", { platform: link.platform.name, badge: currentQuality.badge });
+  const summaryText = isImporting
+    ? t("summaryImporting", { dirs: importProgress?.visitedDirs ?? 0, files: importProgress?.matchedFiles ?? 0 })
+    : !inClient
+      ? t("outsideClient")
+      : statusBanner
+        ? statusBanner
+        : videos.length === 0
+          ? t("summaryEmptyList", { link: linkSummary })
+          : t("summaryWithList", { link: linkSummary, count: filteredVideos.length, selected: selectedVideos.length, size: formatBytes(selectedTotalBytes) });
 
   const linkPrimaryTitle = !link.url
-    ? "重新读取剪贴板链接"
+    ? t("actionRereadClipboard")
     : link.directExt
-      ? "下载视频直链"
-      : `复制 yt-dlp 命令（${currentQuality.badge}）`;
+      ? t("actionDownloadDirect")
+      : t("actionCopyYtDlpBadge", { badge: currentQuality.badge });
+
+  const pickFilesAction = () =>
+    Action({
+      title: t("actionPickFiles"),
+      icon: Icon.Plus,
+      shortcut: { modifiers: ["ctrl"], key: "o" },
+      onAction: handlePickFiles
+    });
+
+  const pickFolderAction = () =>
+    Action({
+      title: t("actionPickFolder"),
+      icon: Icon.Folder,
+      shortcut: { modifiers: ["ctrl", "shift"], key: "o" },
+      onAction: handlePickFolder
+    });
+
+  const clearListAction = () =>
+    Action({
+      title: t("actionClearList"),
+      icon: Icon.Trash,
+      style: Action.Style.Destructive,
+      shortcut: { modifiers: ["ctrl", "shift"], key: "backspace" },
+      onAction: handleClearVideos
+    });
 
   const trashAction = () =>
     Action({
-      title: `移入回收站（已勾选 ${selectedVideos.length} 个 / ${formatBytes(selectedTotalBytes)}）`,
+      title: t("actionTrashSelected", { count: selectedVideos.length, size: formatBytes(selectedTotalBytes) }),
       icon: Icon.Trash,
-      style: "destructive",
+      style: Action.Style.Destructive,
       onAction: handleTrashChecked
     });
 
@@ -261,52 +538,60 @@ export function VideoDownloaderCommand() {
           icon: !link.url ? Icon.ArrowClockwise : link.directExt ? Icon.Download : Icon.Clipboard,
           onAction: !link.url
             ? async () => {
-                setStatusBanner(inClient ? "" : OUTSIDE_CLIENT_TEXT);
-                await reloadVideoSnapshot();
+                setStatusBanner("");
+                await refreshHostMeta();
               }
             : handleLinkPrimary
         }),
         Action({
-          title: "打开视频文件夹",
+          title: t("actionOpenVideoFolder"),
           icon: Icon.Folder,
           onAction: handleOpenFolder
         }),
         ...(link.url && link.directExt
           ? [
               Action({
-                title: `复制 yt-dlp 命令（${currentQuality.badge}）`,
+                title: t("actionCopyYtDlpBadge", { badge: currentQuality.badge }),
                 icon: Icon.Clipboard,
                 onAction: handleCopyCommand
               })
             ]
           : []),
-        ...(selectedVideos.length > 0 ? [trashAction()] : [])
+        ...(selectedVideos.length > 0 ? [trashAction()] : []),
+        ActionPanel.Section({
+          title: t("sectionList"),
+          children: [
+            pickFilesAction(),
+            pickFolderAction(),
+            ...(videos.length > 0 ? [clearListAction()] : [])
+          ]
+        })
       ]
     });
 
   const leftNavNodes = [
     List.Item({
       id: "nav-current-link",
-      title: link.url ? `当前链接 · ${link.platform.name}` : "当前链接",
-      subtitle: link.url || "复制视频链接后点「重新扫描」，或把链接、BV 号粘贴到搜索框",
+      title: link.url ? t("navCurrentLinkWithPlat", { platform: link.platform.name }) : t("navCurrentLink"),
+      subtitle: link.url || t("navCurrentLinkSub"),
       icon: Icon.Link,
       accessories: [
         {
           tag: {
-            value: !link.url ? "未识别" : link.directExt ? "可直接下载" : "复制 yt-dlp 命令"
+            value: !link.url ? t("tagUnrecognized") : link.directExt ? t("tagDirectDownloadable") : t("handlerCopyCmd")
           }
         }
       ],
       actions: linkActions()
     }),
-    ...STREAM_PLATFORMS.map((platform) => {
+    ...getStreamPlatforms().map((platform) => {
       const isDetected = Boolean(link.url) && link.platform.id === platform.id;
       return List.Item({
         id: `nav-plat-${platform.id}`,
         title: platform.name,
         subtitle: platform.features,
         icon: Icon.Globe,
-        accessories: [{ tag: { value: isDetected ? "当前链接" : platform.handlerName } }],
+        accessories: [{ tag: { value: isDetected ? t("tagCurrentLink") : platform.handlerName } }],
         actions: linkActions()
       });
     })
@@ -314,8 +599,8 @@ export function VideoDownloaderCommand() {
 
   const subListItems = filteredVideos.map((video) => {
     const isChecked = checkedSet.has(video.id);
-    const ratio = Math.min(1, video.sizeBytes / maxVideoBytes);
-    const dateStr = video.mtimeMs > 0 ? new Date(video.mtimeMs).toLocaleDateString() : "";
+    const isTrashing = trashingIds.includes(video.id);
+    const dateStr = video.mtimeMs > 0 ? new Date(video.mtimeMs).toLocaleDateString(getLocale()) : "";
 
     return List.Item({
       id: `vid-item-${video.id}`,
@@ -327,46 +612,93 @@ export function VideoDownloaderCommand() {
       onCheckChange: () => toggleVideoCheck(video.id),
       onToggleCheck: () => toggleVideoCheck(video.id),
       accessories: [
-        { progress: ratio },
+        ...(video.sizeBytes !== null ? [{ progress: Math.min(1, video.sizeBytes / maxVideoBytes) }] : []),
         { tag: { value: video.sourceDirLabel } },
-        { text: formatBytes(video.sizeBytes) }
+        { text: formatVideoSize(video.sizeBytes) }
       ],
       actions: ActionPanel({
         children: [
           Action({
-            title: "用默认程序打开",
+            title: t("actionOpenDefault"),
             icon: Icon.Play,
             onAction: () => handleOpenVideo(video.path)
           }),
           Action({
-            title: "在资源管理器中显示",
+            title: t("actionRevealInExplorer"),
             icon: Icon.Folder,
             onAction: () => handleShowVideo(video.path)
           }),
           Action({
-            title: isChecked ? "取消勾选" : "勾选",
+            title: isChecked ? t("actionUncheck") : t("actionCheck"),
             icon: Icon.CheckCircle,
             onAction: () => toggleVideoCheck(video.id)
           }),
-          ...(selectedVideos.length > 0 ? [trashAction()] : [])
+          ...(selectedVideos.length > 0 ? [trashAction()] : []),
+          ActionPanel.Section({
+            title: t("sectionList"),
+            children: [
+              ...(isTrashing
+                ? []
+                : [
+                    Action({
+                      title: t("actionRemoveFromList"),
+                      icon: Icon.Minus,
+                      shortcut: { modifiers: ["ctrl"], key: "backspace" },
+                      onAction: () => handleRemoveVideo(video)
+                    })
+                  ]),
+              pickFilesAction(),
+              pickFolderAction(),
+              Action({
+                title: allChecked ? t("actionUnselectAll") : t("actionSelectAll"),
+                icon: Icon.CheckCircle,
+                shortcut: { modifiers: ["ctrl"], key: "a" },
+                onAction: toggleAllVisible
+              }),
+              clearListAction()
+            ]
+          })
         ]
       })
     });
   });
 
-  const allChecked = filteredVideos.length > 0 && filteredVideos.every((v) => checkedSet.has(v.id));
-  const someChecked = filteredVideos.some((v) => checkedSet.has(v.id));
+  const emptyText = !inClient
+    ? t("outsideClient")
+    : keyword && videos.length > 0
+      ? t("emptyNoMatch")
+      : t("emptyNoFiles");
 
   return List({
-    isLoading,
-    searchBarPlaceholder: "粘贴视频链接或 BV 号，或搜索本机视频文件名...",
+    ...fileInputProps,
+    isLoading: isLoading || isImporting,
+    searchBarPlaceholder: t("searchPlaceholder"),
     onSearchTextChange: (text: string) => setSearchText(text),
     isShowingDetail: false,
+    actions: ActionPanel({
+      children: [
+        pickFilesAction(),
+        pickFolderAction(),
+        Action({
+          title: t("actionRereadClipboard"),
+          icon: Icon.ArrowClockwise,
+          onAction: () => {
+            setStatusBanner("");
+            void refreshHostMeta();
+          }
+        }),
+        Action({
+          title: t("actionOpenVideoFolder"),
+          icon: Icon.Folder,
+          onAction: handleOpenFolder
+        })
+      ]
+    }),
     searchBarAccessory: List.Dropdown({
-      tooltip: "yt-dlp 命令的画质与音轨档位（视频直链按原文件下载）",
+      tooltip: t("qualityTooltip"),
       value: selectedQuality,
       onChange: (val) => setSelectedQuality(val as VideoQualityPresetId),
-      children: VIDEO_QUALITY_PRESETS.map((preset) =>
+      children: qualityPresets.map((preset) =>
         List.Dropdown.Item({
           title: preset.name,
           value: preset.id
@@ -377,20 +709,25 @@ export function VideoDownloaderCommand() {
       summaryText,
       actions: [
         {
-          id: "rescan",
-          title: "重新扫描",
+          id: "pick-files",
+          label: t("btnPickFiles"),
+          title: t("btnPickFiles"),
           style: "secondary",
-          onAction: () => {
-            setStatusBanner(inClient ? "" : OUTSIDE_CLIENT_TEXT);
-            void reloadVideoSnapshot();
-          }
+          onAction: handlePickFiles
+        },
+        {
+          id: "pick-folder",
+          label: t("btnPickFolder"),
+          title: t("btnPickFolder"),
+          style: "secondary",
+          onAction: handlePickFolder
         }
       ]
     },
     subList: {
-      title: `本机视频 (${filteredVideos.length} 个 · 已选 ${formatBytes(selectedTotalBytes)})`,
+      title: t("subListTitle", { count: filteredVideos.length, size: formatBytes(selectedTotalBytes) }),
       subtitle: snapshot.saveDir,
-      emptyText: inClient ? "「视频」和「下载」文件夹里没有找到视频文件" : OUTSIDE_CLIENT_TEXT,
+      emptyText,
       checkable: filteredVideos.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: () => toggleAllVisible(),
@@ -398,8 +735,8 @@ export function VideoDownloaderCommand() {
     },
     children: [
       List.Section({
-        title: "链接",
-        subtitle: "平台链接只能复制 yt-dlp 命令",
+        title: t("sectionLinksTitle"),
+        subtitle: t("sectionLinksSub"),
         children: leftNavNodes
       })
     ]

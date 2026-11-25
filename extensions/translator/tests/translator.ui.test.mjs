@@ -210,16 +210,35 @@ test('变量命名命令：中文经客户端翻译成英文后给出 camelCase�
 test('[故障注入] 读取翻译记录失败时显示失败原因，不影响翻译', async () => {
   installTranslator()
   host.ipc.translator_get_history = async () => {
-    throw new Error('database is locked')
+    throw Object.assign(new Error('database is locked'), { code: 'DATABASE_LOCKED' })
   }
   const view = await mount(TranslatorCommand, host)
   await tick(10)
   const failed = view.item('history-failed')
-  assert.match(failed.props.subtitle, /database is locked/)
+  assert.match(failed.props.subtitle, /本地数据库正被占用/)
   await view.search('meeting')
   await tick(10)
   assert.equal(view.item('translation-result').props.title, '会议')
   view.unmount()
+
+  // 无结构化错误码的纯英文错误：zh-CN 安全回退中文文案，en-US 透传原始错误
+  host.ipc.translator_get_history = async () => {
+    throw new Error('database is locked')
+  }
+  const zhView = await mount(TranslatorCommand, host)
+  await tick(10)
+  assert.equal(zhView.item('history-failed').props.subtitle, '读取翻译记录失败')
+  zhView.unmount()
+
+  host.setLocale('en-US')
+  try {
+    const enView = await mount(TranslatorCommand, host)
+    await tick(10)
+    assert.match(enView.item('history-failed').props.subtitle, /database is locked/)
+    enView.unmount()
+  } finally {
+    host.setLocale('zh-CN')
+  }
 })
 
 test('不在客户端里运行：只显示“需要在 ZTools 客户端中使用”，不显示示例译文或示例记录', async () => {

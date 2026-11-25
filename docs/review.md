@@ -1,3 +1,5 @@
+[English](en/review.md) | **简体中文**
+
 # 审核标准
 
 插件以 Pull Request 的形式提交到本仓库，新插件和已有插件的每次更新都走同一套流程：
@@ -45,6 +47,11 @@
 - 亮色主题；
 - 不含个人信息：真实姓名、账号、手机号、邮箱、本机用户目录、内网 IP、MAC 地址、真实文件名等一律不能出现，示例数据用虚构内容；
 - 格式、大小与尺寸由清单校验检查，不合格的 CI 会直接失败。
+
+### 多语言完整
+
+- `plugin.json` 建议声明 `defaultLocale`、`categoryId` 与 `i18n["en-US"]`（至少包含准确的英文 `name` 与 `description`）；若含 `features`，`i18n.<locale>.features` 的键名必须与顶层 `features[].code` 一一对应。
+- 使用 `src/i18n.ts`（`createTranslator`）与 `useLocale()` 适配中英文切换：`zh-CN` 与 `en-US` 的键集合、`{var}` 占位符必须完全一致，不允许空字符串译文，且在英文界面下不残留硬编码中文提示或错误文案。
 
 ### 权限必要
 

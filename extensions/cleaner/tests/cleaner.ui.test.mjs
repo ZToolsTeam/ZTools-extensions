@@ -211,3 +211,35 @@ test('TEMP 读取失败时显示错误，不退回插件隔离目录', async () 
   await assert.rejects(() => logic.fetchCleanRulesAndScan(), /读取用户 TEMP 失败/);
   assert.equal(host.ipcCalls.some(([m]) => m === 'system_search_files'), false);
 });
+
+test('安全红线：分组行与文件行 Enter 主动作不触发全局清理，清理动作退至次动作与顶栏按钮', async () => {
+  const host = createHost()
+  installCleanerHost(host)
+  const view = await mount(CleanerCommand)
+  await waitFor(view, loaded)
+
+  // 1. 分组行主动作应切换勾选（或查看样本），而非全局清理
+  const temp = subItems(view).find(it => it.props.id === 'group-sys-temp')
+  const groupActions = view.actions(temp)
+  assert.ok(!groupActions[0].props.title.startsWith('清理已勾选'), '分组行 Enter 主动作不能触发全局清理')
+  assert.match(groupActions[0].props.title, /勾选此项/)
+  const groupCleanAct = cleanAction(view, temp)
+  assert.ok(groupCleanAct && groupCleanAct.props.shortcut, '清理动作应作为次动作并带快捷键')
+
+  // 无样本文件的分组主动作为查看样本明细
+  const edge = subItems(view).find(it => it.props.id === 'group-browser-edge')
+  assert.ok(!view.actions(edge)[0].props.title.startsWith('清理已勾选'))
+
+  // 顶栏存在清理主按钮
+  const topClean = view.tree().props.filterBar.actions.find(a => a.id === 'clean-selected')
+  assert.ok(topClean && topClean.disabled === false)
+
+  // 2. 切换到文件行视图：文件行主动作应为定位文件，而非全局清理
+  view.item('nav-clean-files').props.onSelect()
+  await tick(5)
+  const fileRow = subItems(view)[0]
+  const fileActions = view.actions(fileRow)
+  assert.equal(fileActions[0].props.title, '在资源管理器定位')
+  const fileCleanAct = cleanAction(view, fileRow)
+  assert.ok(fileCleanAct && fileCleanAct.props.shortcut)
+})

@@ -6,6 +6,9 @@
 
 import { Icon, confirmAlert } from "@ztools/declarative-ui";
 import { callHostTransport } from "./native-ipc.js";
+import { t } from "./i18n.js";
+import { resolveErrorMessage } from './error-i18n.js'
+import { SYSTEM_ACTION_ZH_KEYWORDS } from "./system-actions.zh-data.js";
 
 export type SystemCategory = "power" | "audio" | "maintenance";
 
@@ -36,131 +39,168 @@ export interface SystemActionResult {
 }
 
 export const SYSTEM_ACTIONS_PLUGIN = "SystemActionsPlugin";
-export const HOST_REQUIRED_MESSAGE = "需要在 ZTools 客户端中使用";
+export function getHostRequiredMessage(): string {
+  return t("hostRequired");
+}
 
 export const CATEGORY_TITLES: Record<SystemCategory, string> = {
-  power: "电源与会话",
-  audio: "系统声音",
-  maintenance: "文件与维护"
+  get power() {
+    return t("catPower");
+  },
+  get audio() {
+    return t("catAudio");
+  },
+  get maintenance() {
+    return t("catMaintenance");
+  }
 };
 
+type SystemActionSpec = Omit<SystemActionItem, "title" | "description" | "confirmationMessage"> & {
+  titleKey: Parameters<typeof t>[0];
+  descKey: Parameters<typeof t>[0];
+  confirmKey?: Parameters<typeof t>[0];
+};
+
+function createSystemAction(spec: SystemActionSpec): SystemActionItem {
+  const { titleKey, descKey, confirmKey, keywords, ...rest } = spec;
+  const zhKeywords = SYSTEM_ACTION_ZH_KEYWORDS[rest.id] ?? [];
+  const item: SystemActionItem = {
+    ...rest,
+    keywords: [...(keywords ?? []), ...zhKeywords],
+    get title() {
+      return t(titleKey);
+    },
+    get description() {
+      return t(descKey);
+    },
+    ...(confirmKey
+      ? {
+          get confirmationMessage() {
+            return t(confirmKey);
+          }
+        }
+      : {})
+  };
+  return item;
+}
+
 export const SYSTEM_ACTIONS: readonly SystemActionItem[] = Object.freeze([
-  {
+  createSystemAction({
     id: "lock-screen",
-    title: "锁定屏幕",
-    description: "立即锁定电脑，回来时需要重新登录",
+    titleKey: "itemTitleLockScreen",
+    descKey: "itemDescLockScreen",
     category: "power",
     icon: Icon.Lock,
-    keywords: ["lock", "锁屏", "锁定"],
+    keywords: ["lock"],
     invoke: { kind: "method", method: "system_lock", params: {} }
-  },
-  {
+  }),
+  createSystemAction({
     id: "sleep",
-    title: "睡眠",
-    description: "让电脑进入睡眠状态",
+    titleKey: "itemTitleSleep",
+    descKey: "itemDescSleep",
     category: "power",
     icon: Icon.Moon,
-    keywords: ["sleep", "suspend", "睡眠", "待机"],
+    keywords: ["sleep", "suspend"],
     invoke: { kind: "method", method: "system_sleep", params: {} }
-  },
-  {
+  }),
+  createSystemAction({
     id: "hibernate",
-    title: "休眠",
-    description: "把内存内容写入硬盘后断电，需要系统已启用休眠功能",
+    titleKey: "itemTitleHibernate",
+    descKey: "itemDescHibernate",
     category: "power",
     icon: Icon.Power,
-    keywords: ["hibernate", "休眠", "深度休眠"],
+    keywords: ["hibernate"],
     invoke: { kind: "method", method: "system_hibernate", params: {} }
-  },
-  {
+  }),
+  createSystemAction({
     id: "restart",
-    title: "重新启动",
-    description: "立即重启电脑",
+    titleKey: "itemTitleRestart",
+    descKey: "itemDescRestart",
     category: "power",
     icon: Icon.RotateClockwise,
     destructive: true,
-    confirmationMessage: "确认立即重新启动电脑？未保存的内容可能会丢失。",
-    keywords: ["restart", "reboot", "重启"],
+    confirmKey: "confirmRestart",
+    keywords: ["restart", "reboot"],
     invoke: { kind: "method", method: "system_restart", params: { force: false } }
-  },
-  {
+  }),
+  createSystemAction({
     id: "shut-down",
-    title: "关机",
-    description: "立即关闭电脑",
+    titleKey: "itemTitleShutDown",
+    descKey: "itemDescShutDown",
     category: "power",
     icon: Icon.Power,
     destructive: true,
-    confirmationMessage: "确认立即关闭电脑？未保存的内容可能会丢失。",
-    keywords: ["shutdown", "power off", "关机"],
+    confirmKey: "confirmShutDown",
+    keywords: ["shutdown", "power off"],
     invoke: { kind: "method", method: "system_shutdown", params: { force: false, timeout: 0 } }
-  },
-  {
+  }),
+  createSystemAction({
     id: "log-out",
-    title: "注销",
-    description: "退出当前用户，回到登录界面",
+    titleKey: "itemTitleLogOut",
+    descKey: "itemDescLogOut",
     category: "power",
     icon: Icon.Circle,
     destructive: true,
-    confirmationMessage: "确认注销当前用户？未保存的内容可能会丢失。",
-    keywords: ["logout", "sign out", "注销", "登出"],
+    confirmKey: "confirmLogOut",
+    keywords: ["logout", "sign out"],
     invoke: { kind: "method", method: "system_logout", params: { force: false } }
-  },
-  {
+  }),
+  createSystemAction({
     id: "toggle-mute",
-    title: "切换系统静音",
-    description: "静音或恢复系统声音，相当于按一次键盘上的静音键",
+    titleKey: "itemTitleToggleMute",
+    descKey: "itemDescToggleMute",
     category: "audio",
     icon: Icon.SpeakerOff,
-    keywords: ["mute", "unmute", "静音", "恢复声音"],
+    keywords: ["mute", "unmute"],
     invoke: { kind: "system-actions", func: "toggleMute" }
-  },
-  {
+  }),
+  createSystemAction({
     id: "volume-up",
-    title: "调高系统音量",
-    description: "相当于按一次键盘上的音量加键",
+    titleKey: "itemTitleVolumeUp",
+    descKey: "itemDescVolumeUp",
     category: "audio",
     icon: Icon.ArrowUp,
-    keywords: ["volume up", "调高音量", "音量加", "大声"],
+    keywords: ["volume up"],
     invoke: { kind: "system-actions", func: "volumeUp" }
-  },
-  {
+  }),
+  createSystemAction({
     id: "volume-down",
-    title: "调低系统音量",
-    description: "相当于按一次键盘上的音量减键",
+    titleKey: "itemTitleVolumeDown",
+    descKey: "itemDescVolumeDown",
     category: "audio",
     icon: Icon.ArrowDown,
-    keywords: ["volume down", "调低音量", "音量减", "小声"],
+    keywords: ["volume down"],
     invoke: { kind: "system-actions", func: "volumeDown" }
-  },
-  {
+  }),
+  createSystemAction({
     id: "toggle-hidden-files",
-    title: "切换显示隐藏的文件",
-    description: "切换资源管理器的“显示隐藏的项目”设置",
+    titleKey: "itemTitleToggleHiddenFiles",
+    descKey: "itemDescToggleHiddenFiles",
     category: "maintenance",
     icon: Icon.Folder,
-    keywords: ["hidden files", "隐藏文件", "显示隐藏文件"],
+    keywords: ["hidden files"],
     invoke: { kind: "system-actions", func: "toggleHiddenFiles" }
-  },
-  {
+  }),
+  createSystemAction({
     id: "empty-trash",
-    title: "清空回收站",
-    description: "永久删除回收站里的全部文件",
+    titleKey: "itemTitleEmptyTrash",
+    descKey: "itemDescEmptyTrash",
     category: "maintenance",
     icon: Icon.Trash,
     destructive: true,
-    confirmationMessage: "确认永久清空回收站？清空后文件无法从回收站还原。",
-    keywords: ["empty recycle bin", "empty trash", "清空回收站"],
+    confirmKey: "confirmEmptyTrash",
+    keywords: ["empty recycle bin", "empty trash"],
     invoke: { kind: "system-actions", func: "emptyTrash" }
-  },
-  {
+  }),
+  createSystemAction({
     id: "toggle-caffeinate",
-    title: "开启或关闭防止熄屏",
-    description: "让屏幕保持常亮、电脑不自动睡眠，再执行一次关闭；退出 ZTools 后失效",
+    titleKey: "itemTitleToggleCaffeinate",
+    descKey: "itemDescToggleCaffeinate",
     category: "maintenance",
     icon: Icon.Bolt,
-    keywords: ["caffeinate", "keep awake", "prevent sleep", "防休眠", "防止熄屏", "常亮"],
+    keywords: ["caffeinate", "keep awake", "prevent sleep"],
     invoke: { kind: "execute-action", actionKey: "toggle-caffeinate" }
-  }
+  })
 ]);
 
 /**
@@ -194,21 +234,19 @@ function readRecord(value: unknown): Record<string, unknown> {
 function describeSuccess(item: SystemActionItem, data: Record<string, unknown>): string {
   switch (item.id) {
     case "hibernate":
-      return "已发送休眠指令";
+      return t("successHibernate");
     case "toggle-hidden-files":
-      if (typeof data.showHiddenFiles !== "boolean") return "已切换隐藏文件的显示设置";
-      return data.showHiddenFiles
-        ? "已设为显示隐藏的文件，已打开的资源管理器窗口刷新后生效"
-        : "已设为不显示隐藏的文件，已打开的资源管理器窗口刷新后生效";
+      if (typeof data.showHiddenFiles !== "boolean") return t("successHiddenToggled");
+      return data.showHiddenFiles ? t("successHiddenShown") : t("successHiddenHidden");
     case "empty-trash":
-      return data.alreadyEmpty === true ? "回收站本来就是空的" : "已清空回收站";
+      return data.alreadyEmpty === true ? t("successTrashAlreadyEmpty") : t("successTrashEmptied");
     case "toggle-caffeinate": {
       const state = readRecord(data.state);
-      if (typeof state.caffeinated !== "boolean") return "已切换防止熄屏";
-      return state.caffeinated ? "已开启防止熄屏，退出 ZTools 后失效" : "已关闭防止熄屏";
+      if (typeof state.caffeinated !== "boolean") return t("successCaffeinateToggled");
+      return state.caffeinated ? t("successCaffeinateOn") : t("successCaffeinateOff");
     }
     default:
-      return `已执行：${item.title}`;
+      return t("successExecuted", { title: item.title });
   }
 }
 
@@ -240,29 +278,29 @@ export async function executeSystemAction(
   const item =
     typeof itemOrId === "string" ? SYSTEM_ACTIONS.find((a) => a.id === itemOrId) : itemOrId;
   if (!item || typeof item !== "object" || !item.invoke) {
-    return { success: false, executed: false, message: `未知的系统操作: ${String(itemOrId || "")}` };
+    return { success: false, executed: false, message: t("unknownAction", { id: String(itemOrId || "") }) };
   }
 
   if (item.destructive) {
     const confirmed = await confirmAlert({
       title: item.title,
-      message: item.confirmationMessage ?? `确认执行「${item.title}」？`,
-      primaryAction: { title: "确认执行", style: "destructive" },
-      dismissAction: { title: "取消" }
+      message: item.confirmationMessage ?? t("confirmGeneric", { title: item.title }),
+      primaryAction: { title: t("confirmBtn"), style: "destructive" },
+      dismissAction: { title: t("cancelBtn") }
     });
     if (!confirmed) {
-      return { success: false, executed: false, canceled: true, message: "已取消，未执行" };
+      return { success: false, executed: false, canceled: true, message: t("canceledResult") };
     }
   }
 
   const res = await callHost(item, options.hostOverride);
   if (!res.ok) {
-    const message = isHostMissing(res.error) ? HOST_REQUIRED_MESSAGE : res.error || `执行失败：${item.title}`;
+    const message = isHostMissing(res.error) ? t("hostRequired") : resolveErrorMessage(res, t("execFailed", { title: item.title }));
     return { success: false, executed: false, message };
   }
   const data = readRecord(res.data);
   if (data.ok === false || data.success === false) {
-    const message = String(data.error || data.message || `执行失败：${item.title}`);
+    const message = resolveErrorMessage(data, t("execFailed", { title: item.title }));
     return { success: false, executed: false, message };
   }
   return { success: true, executed: true, message: describeSuccess(item, data) };

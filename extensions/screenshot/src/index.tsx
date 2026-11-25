@@ -7,8 +7,7 @@
  * - 对外导出 ScreenshotsCommand、ScreenshotDetailView、ScreenshotsManager、defaultScreenshotsManager
  */
 
-import React from "@ztools/declarative-ui";
-import {
+import React, {
   List,
   Detail,
   ActionPanel,
@@ -18,9 +17,13 @@ import {
   showToast,
   Toast,
   Clipboard,
-  confirmAlert
+  confirmAlert,
+  useLocale,
+  useState,
+  useMemo,
+  useEffect
 } from "@ztools/declarative-ui";
-import { useState, useMemo, useEffect } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   ScreenshotItem,
   ScreenshotCategory,
@@ -34,7 +37,7 @@ import {
   buildScreenshotDetailMarkdown,
   fileManagerName,
   type ScreenshotPreviewState,
-  AUTHORIZE_FOLDER_ACTION_TITLE,
+  getAuthorizeFolderActionTitle,
   formatScreenshotSize,
   isOcrSupported,
   trashName
@@ -54,7 +57,7 @@ export { ScreenshotsManager, defaultScreenshotsManager, INITIAL_SCREENSHOTS };
 function formatTotalSize(items: readonly ScreenshotItem[]): string {
   const knownBytes = items.reduce((sum, item) => sum + (item.sizeBytes ?? 0), 0);
   const unknownCount = items.filter((item) => item.sizeBytes === null).length;
-  return `${formatScreenshotSize(knownBytes)}${unknownCount ? ` + ${unknownCount} 张大小未知` : ""}`;
+  return `${formatScreenshotSize(knownBytes)}${unknownCount ? t("totalSizeUnknownNote", { count: unknownCount }) : ""}`;
 }
 
 /** 按宿主真实结果选择提示样式：失败一律用失败样式，不再出现带成功勾的失败提示 */
@@ -84,6 +87,7 @@ export function ScreenshotDetailView({
   item: ScreenshotItem;
   manager?: ScreenshotsManager;
 }) {
+  useLocale();
   const ocrEnabled = isOcrSupported();
   const [preview, setPreview] = useState<ScreenshotPreviewState>({ status: "loading" });
 
@@ -110,50 +114,50 @@ export function ScreenshotDetailView({
     <Detail
       markdown={markdown}
       isLoading={preview.status === "loading"}
-      navigationTitle={`截图详情: ${item.filename}`}
+      navigationTitle={t("detailNavTitle", { name: item.filename })}
       metadata={
         <Detail.Metadata>
-          <Detail.Metadata.Label title="文件名称" text={item.filename} icon={Icon.Image} />
-          <Detail.Metadata.Label title="分辨率" text={item.dimensions} icon={Icon.Monitor} />
-          <Detail.Metadata.Label title="文件大小" text={item.formattedSize} icon={Icon.HardDrive} />
-          <Detail.Metadata.Label title="修改时间" text={item.formattedDate} icon={Icon.Calendar} />
-          <Detail.Metadata.TagList title="状态">
+          <Detail.Metadata.Label title={t("metaFilename")} text={item.filename} icon={Icon.Image} />
+          <Detail.Metadata.Label title={t("metaResolution")} text={item.dimensions} icon={Icon.Monitor} />
+          <Detail.Metadata.Label title={t("metaFileSize")} text={item.formattedSize} icon={Icon.HardDrive} />
+          <Detail.Metadata.Label title={t("metaModified")} text={item.formattedDate} icon={Icon.Calendar} />
+          <Detail.Metadata.TagList title={t("metaStatus")}>
             <Detail.Metadata.TagList.Item
-              text={item.pinned ? "PINNED (已置顶)" : "NORMAL"}
+              text={item.pinned ? t("statusPinned") : t("statusNormal")}
               color={Color.SecondaryText}
             />
           </Detail.Metadata.TagList>
           <Detail.Metadata.Separator />
-          <Detail.Metadata.Label title="存储路径" text={item.path} icon={Icon.Folder} />
+          <Detail.Metadata.Label title={t("metaPath")} text={item.path} icon={Icon.Folder} />
         </Detail.Metadata>
       }
       actions={
-        <ActionPanel title={`截图: ${item.filename}`}>
+        <ActionPanel title={t("panelScreenshotTitle", { name: item.filename })}>
           <Action
-            title="粘贴到活动窗口"
+            title={t("actionPasteActive")}
             icon={Icon.Window}
             onAction={async () => {
               await toastResult(await defaultScreenshotsManager.pasteToActiveWindow(item));
             }}
           />
           <Action
-            title="复制图片本身"
+            title={t("actionCopyImage")}
             icon={Icon.Clipboard}
             onAction={async () => {
               await toastResult(await defaultScreenshotsManager.copyImageToClipboard(item));
             }}
           />
           <Action
-            title="复制图片本地路径"
+            title={t("actionCopyPath")}
             icon={Icon.Document}
             onAction={async () => {
               await Clipboard.copy(item.path);
-              await showToast(Toast.Style.Success, `已复制路径: ${item.path}`);
+              await showToast(Toast.Style.Success, t("copiedPathToast", { path: item.path }));
             }}
           />
           {ocrEnabled ? (
             <Action
-              title="复制提取的文字"
+              title={t("actionCopyOcr")}
               icon={Icon.Text}
               onAction={async () => {
                 const res = await defaultScreenshotsManager.copyOcrText(item);
@@ -169,6 +173,7 @@ export function ScreenshotDetailView({
 }
 
 export function ScreenshotsCommand() {
+  useLocale();
   const isRealHost = isRealElectronHost();
   const ocrEnabled = isOcrSupported();
   const initialList = isRealHost ? [] : [...INITIAL_SCREENSHOTS];
@@ -207,7 +212,7 @@ export function ScreenshotsCommand() {
     defaultScreenshotsManager.loadScreenshots(force).then(applyList).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       setScanError(message);
-      void showToast({ style: Toast.Style.Failure, title: "截图扫描失败", message });
+      void showToast({ style: Toast.Style.Failure, title: t("scanFailedToast"), message });
     });
   };
 
@@ -250,12 +255,12 @@ export function ScreenshotsCommand() {
       } else {
         await showToast(
           Toast.Style.Failure,
-          res.error === "NO_SCREENSHOTS" ? "未找到截图" : "回贴最新截图失败",
+          res.error === "NO_SCREENSHOTS" ? t("notFoundTitle") : t("pasteLatestFailedTitle"),
           res.message
         );
       }
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "回贴最新截图失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("pasteLatestFailedTitle"), errorText(err));
     }
   };
 
@@ -265,16 +270,16 @@ export function ScreenshotsCommand() {
 
   const handleCopyPath = async (item: ScreenshotItem) => {
     await Clipboard.copy(item.path);
-    await showToast(Toast.Style.Success, `已复制路径: ${item.path}`);
+    await showToast(Toast.Style.Success, t("copiedPathToast", { path: item.path }));
   };
 
   const handleCopyOcr = async (item: ScreenshotItem) => {
     try {
       const text = await defaultScreenshotsManager.extractOcr(item);
       await Clipboard.copy(text);
-      await showToast(Toast.Style.Success, `已复制 OCR 文字 (${text.length} 字符)`);
+      await showToast(Toast.Style.Success, t("copiedOcrToast", { len: text.length }));
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "提取 OCR 文字失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("ocrFailedToast"), errorText(err));
     }
   };
 
@@ -301,21 +306,21 @@ export function ScreenshotsCommand() {
   const handleBatchDeleteChecked = async () => {
     const targets = batchTargets;
     if (targets.length === 0) {
-      await showToast(Toast.Style.Failure, "没有可清理的截图", "请先在当前列表中勾选未置顶的截图");
+      await showToast(Toast.Style.Failure, t("noCleanableTitle"), t("noCleanableMsg"));
       return;
     }
     // 本次立即截取的文件在缓存目录，删除后不进废纸篓 / 回收站，确认框里要说清楚
     const captureCount = targets.filter((t) => t.source === "capture").length;
     const confirmed = await confirmAlert({
-      title: `清理 ${targets.length} 张截图？`,
-      message: `仅清理当前列表中可见、已勾选且未置顶的截图；扫描到的截图移入${trashName()}${
-        captureCount ? `，其中 ${captureCount} 张本次立即截取的截图会直接删除、无法恢复` : ""
-      }：\n${targets
-        .slice(0, 5)
-        .map((t) => t.filename)
-        .join("\n")}${targets.length > 5 ? `\n… 等 ${targets.length} 张` : ""}`,
-      primaryAction: { title: "清理", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("confirmBatchTitle", { count: targets.length }),
+      message: t("confirmBatchMsg", {
+        trash: trashName(),
+        captureNote: captureCount ? t("confirmCaptureNote", { count: captureCount }) : "",
+        list: targets.slice(0, 5).map((t) => t.filename).join("\n"),
+        more: targets.length > 5 ? t("confirmMoreItems", { count: targets.length }) : ""
+      }),
+      primaryAction: { title: t("cleanBtn"), style: "destructive" },
+      dismissAction: { title: t("cancelBtn") }
     });
     if (!confirmed) return;
 
@@ -324,17 +329,17 @@ export function ScreenshotsCommand() {
     for (const item of targets) {
       const res = await defaultScreenshotsManager.deleteScreenshot(item);
       if (res.success) deleted.add(item.id);
-      else failures.push(`${item.filename}: ${res.message.replace(/^删除截图失败:\s*/, "")}`);
+      else failures.push(`${item.filename}: ${res.message.replace(/^(?:删除截图失败|Failed to delete screenshot):\s*/, "")}`);
     }
     setItems((prev) => prev.filter((s) => !deleted.has(s.id)));
     setCheckedIds((prev) => prev.filter((id) => !deleted.has(id)));
     if (failures.length === 0) {
-      await showToast(Toast.Style.Success, `已清理 ${deleted.size} 张截图`);
+      await showToast(Toast.Style.Success, t("batchCleanSuccess", { count: deleted.size }));
     } else {
       reloadScreenshots(true);
       await showToast(
         Toast.Style.Failure,
-        `已清理 ${deleted.size} 张，${failures.length} 张失败`,
+        t("batchCleanPartial", { ok: deleted.size, fail: failures.length }),
         failures.slice(0, 3).join("\n")
       );
     }
@@ -346,85 +351,86 @@ export function ScreenshotsCommand() {
       reloadScreenshots();
       await toastResult(res);
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "置顶操作失败", errorText(err));
+      await showToast(Toast.Style.Failure, t("pinFailedToast"), errorText(err));
     }
   };
 
+  const authorizeTitle = getAuthorizeFolderActionTitle();
   const renderActionPanel = (item: ScreenshotItem) => (
-    <ActionPanel title={`截图: ${item.filename}`}>
+    <ActionPanel title={t("panelScreenshotTitle", { name: item.filename })}>
       <Action
-        title="粘贴到活动窗口"
+        title={t("actionPasteActive")}
         icon={Icon.Window}
         onAction={() => handlePasteToActive(item)}
       />
       <Action
-        title="复制图片本身"
+        title={t("actionCopyImage")}
         icon={Icon.Clipboard}
-        shortcut={{ modifiers: ["cmd"], key: "c" }}
+        shortcut={{ modifiers: ["ctrl"], key: "c" }}
         onAction={() => handleCopyImage(item)}
       />
       <Action
-        title="复制图片本地路径"
+        title={t("actionCopyPath")}
         icon={Icon.Document}
-        shortcut={{ modifiers: ["cmd", "shift"], key: "c" }}
+        shortcut={{ modifiers: ["ctrl", "shift"], key: "c" }}
         onAction={() => handleCopyPath(item)}
       />
       {ocrEnabled ? (
         <Action
-          title="复制提取的文字"
+          title={t("actionCopyOcr")}
           icon={Icon.Text}
-          shortcut={{ modifiers: ["cmd", "alt"], key: "c" }}
+          shortcut={{ modifiers: ["ctrl", "alt"], key: "c" }}
           onAction={() => handleCopyOcr(item)}
         />
       ) : null}
       <Action.Push
-        title="查看截图预览"
+        title={t("actionViewPreview")}
         icon={Icon.Eye}
-        shortcut={{ modifiers: ["cmd"], key: "y" }}
+        shortcut={{ modifiers: ["ctrl"], key: "y" }}
         target={<ScreenshotDetailView item={item} />}
       />
       <Action
-        title={`在${fileManagerName(item.path)}中显示`}
+        title={t("actionShowInMgr", { mgr: fileManagerName(item.path) })}
         icon={Icon.Folder}
-        shortcut={{ modifiers: ["cmd"], key: "o" }}
+        shortcut={{ modifiers: ["ctrl"], key: "o" }}
         onAction={() => handleShowInExplorer(item)}
       />
       <Action
-        title="用默认图片查看器打开"
+        title={t("actionOpenDefault")}
         icon={Icon.ArrowRight}
-        shortcut={{ modifiers: ["cmd", "shift"], key: "o" }}
+        shortcut={{ modifiers: ["ctrl", "shift"], key: "o" }}
         onAction={() => handleOpenWithDefault(item)}
       />
       <Action
-        title="立即截取全部屏幕"
+        title={t("actionCaptureNow")}
         icon={Icon.Camera}
         shortcut={{ modifiers: ["ctrl", "shift"], key: "s" }}
         onAction={handleCaptureScreenNow}
       />
       <Action
-        title={item.pinned ? "取消置顶" : "置顶此截图"}
+        title={item.pinned ? t("actionUnpin") : t("actionPin")}
         icon={Icon.Pin}
-        shortcut={{ modifiers: ["cmd"], key: "p" }}
+        shortcut={{ modifiers: ["ctrl"], key: "p" }}
         onAction={() => handleTogglePin(item)}
       />
       <Action
-        title="回贴最新一张截图"
+        title={t("actionPasteLatest")}
         icon={Icon.Clock}
-        shortcut={{ modifiers: ["cmd", "shift"], key: "v" }}
+        shortcut={{ modifiers: ["ctrl", "shift"], key: "v" }}
         onAction={handlePasteLatest}
       />
       <Action
-        title={AUTHORIZE_FOLDER_ACTION_TITLE}
+        title={authorizeTitle}
         icon={Icon.Lock}
         onAction={() => handleAuthorizeFolder(item)}
       />
       <Action
-        title={`批量清理已勾选截图（${batchTargets.length} 项）`}
+        title={t("actionBatchClean", { count: batchTargets.length })}
         icon={Icon.Trash}
         onAction={handleBatchDeleteChecked}
       />
       <Action
-        title="删除此截图"
+        title={t("actionDeleteShot")}
         icon={Icon.Trash}
         shortcut={{ modifiers: ["ctrl"], key: "x" }}
         onAction={() => handleDelete(item)}
@@ -440,7 +446,7 @@ export function ScreenshotsCommand() {
     const isChecked = checkedIds.includes(item.id);
     const sizeRatio = item.sizeBytes === null ? null : Math.min(100, Math.round((item.sizeBytes / maxShotBytes) * 100));
     const knownDims = item.width > 0 && item.height > 0;
-    const tagText = [item.pinned ? "置顶" : "", item.source === "capture" ? "本次截取" : "", knownDims ? item.dimensions : ""]
+    const tagText = [item.pinned ? t("tagPinned") : "", item.source === "capture" ? t("tagCapture") : "", knownDims ? item.dimensions : ""]
       .filter(Boolean)
       .join(" · ");
 
@@ -476,16 +482,23 @@ export function ScreenshotsCommand() {
   return (
     <List
       isShowingDetail={false}
-      searchBarPlaceholder={ocrEnabled ? "搜索截图文件名、路径、分辨率或 OCR 提取文字..." : "搜索截图文件名、路径或分辨率..."}
+      searchBarPlaceholder={ocrEnabled ? t("searchWithOcrPlaceholder") : t("searchNoOcrPlaceholder")}
       onSearchTextChange={setSearchText}
       onSelectionChange={setSelectedId}
       filterBar={{
-        summaryText: scanError ? `截图列表不可用或已过期：${scanError}` : `截图队列共 ${filtered.length} 张（${visibleSize}） · 已置顶 ${visiblePinnedCount} 张${scanFailures.length ? ` · ${scanFailures.length} 个目录未能读取，列表不完整` : ""}`,
+        summaryText: scanError
+          ? t("summaryError", { error: scanError })
+          : t("summaryQueue", {
+              count: filtered.length,
+              size: visibleSize,
+              pinned: visiblePinnedCount,
+              failures: scanFailures.length ? t("summaryFailuresSuffix", { count: scanFailures.length }) : ""
+            }),
         actions: [
           {
             id: "paste-latest",
-            label: "粘贴最新截图",
-            title: "粘贴最新截图",
+            label: t("btnPasteLatest"),
+            title: t("btnPasteLatest"),
             style: "primary",
             onAction: () => {
               void handlePasteLatest();
@@ -493,8 +506,8 @@ export function ScreenshotsCommand() {
           },
           {
             id: "rescan",
-            label: "重新扫描队列",
-            title: "重新扫描队列",
+            label: t("btnRescanQueue"),
+            title: t("btnRescanQueue"),
             style: "secondary",
             onAction: () => {
               reloadScreenshots(true);
@@ -503,37 +516,37 @@ export function ScreenshotsCommand() {
         ]
       }}
       workbenchPanel={{
-        title: "截图截取与回贴工作台",
-        subtitle: "截取全部屏幕 · 截图历史回贴",
+        title: t("wbTitle"),
+        subtitle: t("wbSubtitle"),
         fields: [
           {
             id: "wb-post-action",
-            label: "截取后动作",
+            label: t("wbPostActionLabel"),
             type: "select",
             value: copyAfterCapture,
             onChange: (val) => setCopyAfterCapture(val === "none" ? "none" : "copy"),
             options: [
-              { label: "复制到剪贴板", value: "copy" },
-              { label: "仅加入截图列表", value: "none" }
+              { label: t("wbOptCopy"), value: "copy" },
+              { label: t("wbOptNone"), value: "none" }
             ]
           },
           {
             id: "wb-capture-scope",
-            label: "截取范围",
+            label: t("wbScopeLabel"),
             type: "info",
-            value: "全部显示器"
+            value: t("wbScopeValue")
           },
           {
             id: "wb-save-dir",
-            label: "保存位置",
+            label: t("wbSaveDirLabel"),
             type: "info",
-            value: "ZTools 缓存目录"
+            value: t("wbSaveDirValue")
           }
         ]
       }}
       subList={{
-        title: "截图历史（按修改时间排序）",
-        subtitle: `已选 ${visibleCheckedCount} 项`,
+        title: t("subListTitle"),
+        subtitle: t("subListSubtitle", { count: visibleCheckedCount }),
         checkable: filtered.length > 0,
         checked:
           filtered.length > 0 && filtered.every((s) => checkedIds.includes(s.id))
@@ -548,11 +561,11 @@ export function ScreenshotsCommand() {
             checked ? Array.from(new Set([...prev, ...visible])) : prev.filter((id) => !visible.has(id))
           );
         },
-        emptyText: scanError ? "截图读取失败，请重新扫描" : "当前分类下暂无匹配的截图记录",
+        emptyText: scanError ? t("subListEmptyError") : t("subListEmptyNormal"),
         items: [
           ...scanFailures.map((failure, index) => List.Item({
             id: `scan-failure-${index}`,
-            title: `未能读取：${failure.path}`,
+            title: t("scanFailureTitle", { path: failure.path }),
             subtitle: failure.message,
             icon: Icon.ExclamationMark,
             checkable: false
@@ -561,19 +574,19 @@ export function ScreenshotsCommand() {
         ]
       }}
       actions={
-        <ActionPanel title="屏幕截图全局操作">
+        <ActionPanel title={t("globalActionsTitle")}>
           <Action
-            title="立即截取全部屏幕"
+            title={t("actionCaptureNow")}
             icon={Icon.Camera}
             onAction={handleCaptureScreenNow}
           />
           <Action
-            title="重新扫描截图目录"
+            title={t("actionRescanDir")}
             icon={Icon.Repeat}
             onAction={() => reloadScreenshots(true)}
           />
           <Action
-            title={AUTHORIZE_FOLDER_ACTION_TITLE}
+            title={authorizeTitle}
             icon={Icon.Lock}
             onAction={() => handleAuthorizeFolder()}
           />
@@ -581,18 +594,18 @@ export function ScreenshotsCommand() {
       }
       searchBarAccessory={
         <List.Dropdown
-          tooltip="按分类筛选截图"
+          tooltip={t("categoryTooltip")}
           value={category}
           onChange={(val) => setCategory(val as ScreenshotCategory)}
         >
-          <List.Dropdown.Item title="全部截图" value="all" />
-          <List.Dropdown.Item title="已置顶截图" value="pinned" />
-          <List.Dropdown.Item title="1小时内拍摄" value="recent" />
-          {ocrEnabled ? <List.Dropdown.Item title="包含提取文字" value="ocr" /> : null}
+          <List.Dropdown.Item title={t("catAll")} value="all" />
+          <List.Dropdown.Item title={t("catPinned")} value="pinned" />
+          <List.Dropdown.Item title={t("catRecent")} value="recent" />
+          {ocrEnabled ? <List.Dropdown.Item title={t("catOcr")} value="ocr" /> : null}
         </List.Dropdown>
       }
     >
-      <List.Section title={`系统截图库 (${filtered.length})`}>
+      <List.Section title={t("sectionSystemShots", { count: filtered.length })}>
         {filtered.map((item) => (
           <List.Item
             key={item.id}
@@ -607,21 +620,21 @@ export function ScreenshotsCommand() {
             detail={
               isRealHost ? undefined : (
                 <List.Item.Detail
-                  markdown={ocrEnabled && item.ocrText ? `### OCR 文字提取识别\n\n\`\`\`text\n${item.ocrText}\n\`\`\`` : ""}
+                  markdown={ocrEnabled && item.ocrText ? `${t("ocrDetailHeader")}\`\`\`text\n${item.ocrText}\n\`\`\`` : ""}
                   metadata={
                     <List.Item.Detail.Metadata>
-                      <List.Item.Detail.Metadata.Label title="文件名称" text={item.filename} icon={Icon.Image} />
-                      <List.Item.Detail.Metadata.Label title="分辨率" text={item.dimensions} icon={Icon.Monitor} />
-                      <List.Item.Detail.Metadata.Label title="文件大小" text={item.formattedSize} icon={Icon.HardDrive} />
-                      <List.Item.Detail.Metadata.Label title="修改时间" text={item.formattedDate} icon={Icon.Calendar} />
-                      <List.Item.Detail.Metadata.TagList title="状态">
+                      <List.Item.Detail.Metadata.Label title={t("metaFilename")} text={item.filename} icon={Icon.Image} />
+                      <List.Item.Detail.Metadata.Label title={t("metaResolution")} text={item.dimensions} icon={Icon.Monitor} />
+                      <List.Item.Detail.Metadata.Label title={t("metaFileSize")} text={item.formattedSize} icon={Icon.HardDrive} />
+                      <List.Item.Detail.Metadata.Label title={t("metaModified")} text={item.formattedDate} icon={Icon.Calendar} />
+                      <List.Item.Detail.Metadata.TagList title={t("metaStatus")}>
                         <List.Item.Detail.Metadata.TagList.Item
-                          text={item.pinned ? "PINNED (已置顶)" : "NORMAL"}
+                          text={item.pinned ? t("statusPinned") : t("statusNormal")}
                           color={Color.SecondaryText}
                         />
                       </List.Item.Detail.Metadata.TagList>
                       <List.Item.Detail.Metadata.Separator />
-                      <List.Item.Detail.Metadata.Label title="存储路径" text={item.path} icon={Icon.Folder} />
+                      <List.Item.Detail.Metadata.Label title={t("metaPath")} text={item.path} icon={Icon.Folder} />
                     </List.Item.Detail.Metadata>
                   }
                 />

@@ -1,6 +1,78 @@
+import { getLocale } from "@ztools/declarative-ui";
+
 /**
  * ZTools 时间戳助手核心转换逻辑 (纯函数)
  */
+
+const LOGIC_STRINGS: Record<string, {
+  justNow: string;
+  nowJustNow: string;
+  weekdays: readonly string[];
+  secFuture: (n: number) => string;
+  secPast: (n: number) => string;
+  minFuture: (n: number) => string;
+  minPast: (n: number) => string;
+  hourFuture: (n: number) => string;
+  hourPast: (n: number) => string;
+  dayFuture: (n: number) => string;
+  dayPast: (n: number) => string;
+  monthFuture: (n: number) => string;
+  monthPast: (n: number) => string;
+  yearFuture: (n: number) => string;
+  yearPast: (n: number) => string;
+  errOverflow: string;
+  errInvalidDate: (text: string) => string;
+  errUnparseable: (text: string) => string;
+  errYearRange: (year: number) => string;
+}> = {
+  "zh-CN": {
+    justNow: "刚刚",
+    nowJustNow: "现在 (刚刚)",
+    weekdays: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"],
+    secFuture: (n) => `${n} 秒后`,
+    secPast: (n) => `${n} 秒前`,
+    minFuture: (n) => `${n} 分钟后`,
+    minPast: (n) => `${n} 分钟前`,
+    hourFuture: (n) => `${n} 小时后`,
+    hourPast: (n) => `${n} 小时前`,
+    dayFuture: (n) => `${n} 天后`,
+    dayPast: (n) => `${n} 天前`,
+    monthFuture: (n) => `${n} 个月后`,
+    monthPast: (n) => `${n} 个月前`,
+    yearFuture: (n) => `${n} 年后`,
+    yearPast: (n) => `${n} 年前`,
+    errOverflow: "时间戳数值超出安全表示范围",
+    errInvalidDate: (text) => `「${text}」不是一个存在的日期或时间`,
+    errUnparseable: (text) => `无法解析的时间内容: "${text}"，支持秒/毫秒时间戳，或带年份的标准日期（如 2024-01-31 08:00:00、ISO 8601、RFC 2822）`,
+    errYearRange: (year) => `年份超出合理范围 (${year})，请检查时间戳位数是否混淆`
+  },
+  "en-US": {
+    justNow: "Just now",
+    nowJustNow: "Now (Just now)",
+    weekdays: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    secFuture: (n) => `in ${n}s`,
+    secPast: (n) => `${n}s ago`,
+    minFuture: (n) => `in ${n}m`,
+    minPast: (n) => `${n}m ago`,
+    hourFuture: (n) => `in ${n}h`,
+    hourPast: (n) => `${n}h ago`,
+    dayFuture: (n) => `in ${n}d`,
+    dayPast: (n) => `${n}d ago`,
+    monthFuture: (n) => `in ${n}mo`,
+    monthPast: (n) => `${n}mo ago`,
+    yearFuture: (n) => `in ${n}y`,
+    yearPast: (n) => `${n}y ago`,
+    errOverflow: "Timestamp value exceeds safe numeric range",
+    errInvalidDate: (text) => `"${text}" is not a valid calendar date or time`,
+    errUnparseable: (text) => `Unable to parse "${text}". Supports Unix timestamps (sec/ms) or standard dates (e.g. 2024-01-31 08:00:00, ISO 8601, RFC 2822)`,
+    errYearRange: (year) => `Year (${year}) is out of supported range (1970-2200); check seconds vs. milliseconds`
+  }
+};
+
+function currentStrings() {
+  const loc = getLocale();
+  return LOGIC_STRINGS[loc] ?? LOGIC_STRINGS["en-US"];
+}
 
 export interface ParsedTimeResult {
   valid: boolean;
@@ -35,22 +107,23 @@ export function formatBeijingTime(d: Date): string {
 }
 
 export function getRelativeTime(d: Date, now: Date = new Date()): string {
+  const s = currentStrings();
   const diffSec = Math.round((d.getTime() - now.getTime()) / 1000);
   const absSec = Math.abs(diffSec);
   const isFuture = diffSec > 0;
 
-  if (absSec < 5) return "刚刚";
-  if (absSec < 60) return isFuture ? `${absSec} 秒后` : `${absSec} 秒前`;
+  if (absSec < 5) return s.justNow;
+  if (absSec < 60) return isFuture ? s.secFuture(absSec) : s.secPast(absSec);
   const diffMin = Math.round(absSec / 60);
-  if (diffMin < 60) return isFuture ? `${diffMin} 分钟后` : `${diffMin} 分钟前`;
+  if (diffMin < 60) return isFuture ? s.minFuture(diffMin) : s.minPast(diffMin);
   const diffHour = Math.round(diffMin / 60);
-  if (diffHour < 24) return isFuture ? `${diffHour} 小时后` : `${diffHour} 小时前`;
+  if (diffHour < 24) return isFuture ? s.hourFuture(diffHour) : s.hourPast(diffHour);
   const diffDay = Math.round(diffHour / 24);
-  if (diffDay < 30) return isFuture ? `${diffDay} 天后` : `${diffDay} 天前`;
+  if (diffDay < 30) return isFuture ? s.dayFuture(diffDay) : s.dayPast(diffDay);
   const diffMonth = Math.round(diffDay / 30);
-  if (diffMonth < 12) return isFuture ? `${diffMonth} 个月后` : `${diffMonth} 个月前`;
+  if (diffMonth < 12) return isFuture ? s.monthFuture(diffMonth) : s.monthPast(diffMonth);
   const diffYear = Math.round(diffDay / 365);
-  return isFuture ? `${diffYear} 年后` : `${diffYear} 年前`;
+  return isFuture ? s.yearFuture(diffYear) : s.yearPast(diffYear);
 }
 
 interface DateFields {
@@ -72,9 +145,11 @@ const WEEKDAYS = "(?:mon|tue|wed|thu|fri|sat|sun)";
 const MONTH_NAMES = "(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)";
 const ZONE = "(z|utc|gmt|ut|[+-]\\d{2}:?\\d{2})";
 
+import { ZH_YMD_REGEX_PREFIX } from "./world-clock.zh-data.js";
+
 // 年-月-日[ 时:分[:秒[.毫秒]]][时区]：- / . 年月日 分隔，日期与时间之间用空格或 T（ISO 8601）
 const YMD_RE = new RegExp(
-  "^(\\d{4})[-/.年](\\d{1,2})[-/.月](\\d{1,2})日?(?:[\\sT]+(\\d{1,2}):(\\d{1,2})(?::(\\d{1,2})(?:\\.(\\d{1,9}))?)?)?\\s*" + ZONE + "?$",
+  ZH_YMD_REGEX_PREFIX + ZONE + "?$",
   "i"
 );
 // 美式 月/日/年[ 时:分[:秒]]
@@ -182,6 +257,7 @@ function buildExactDate(f: DateFields): Date | null {
 export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date()): ParsedTimeResult {
   const text = (rawInput || "").trim();
 
+  const s = currentStrings();
   // 空输入默认当前时间
   if (!text) {
     const d = referenceNow;
@@ -193,8 +269,8 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
       localDateTime: formatDateTime(d),
       beijingDateTime: formatBeijingTime(d),
       utcIso: d.toISOString(),
-      relativeTime: "现在 (刚刚)",
-      dayOfWeek: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()]
+      relativeTime: s.nowJustNow,
+      dayOfWeek: s.weekdays[d.getDay()]
     };
   }
 
@@ -204,7 +280,7 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
   if (/^-?\d+$/.test(text)) {
     const num = Number(text);
     if (isNaN(num)) {
-      return { valid: false, error: "时间戳数值超出安全表示范围" };
+      return { valid: false, error: s.errOverflow };
     }
     // 10 位数左右 (秒级)
     if (Math.abs(num) < 1e11) {
@@ -220,7 +296,7 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
     if (fields) {
       date = buildExactDate(fields);
       if (!date) {
-        return { valid: false, error: `「${text}」不是一个存在的日期或时间` };
+        return { valid: false, error: s.errInvalidDate(text) };
       }
     }
   }
@@ -228,7 +304,7 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
   if (!date || isNaN(date.getTime())) {
     return {
       valid: false,
-      error: `无法解析的时间内容: "${text}"，支持秒/毫秒时间戳，或带年份的标准日期（如 2024-01-31 08:00:00、ISO 8601、RFC 2822）`
+      error: s.errUnparseable(text)
     };
   }
 
@@ -237,7 +313,7 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
   if (fullYear < 1970 || fullYear > 2200) {
     return {
       valid: false,
-      error: `年份超出合理范围 (${fullYear})，请检查时间戳位数是否混淆`
+      error: s.errYearRange(fullYear)
     };
   }
 
@@ -250,6 +326,6 @@ export function parseTimeInput(rawInput?: string, referenceNow: Date = new Date(
     beijingDateTime: formatBeijingTime(date),
     utcIso: date.toISOString(),
     relativeTime: getRelativeTime(date, referenceNow),
-    dayOfWeek: ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][date.getDay()]
+    dayOfWeek: s.weekdays[date.getDay()]
   };
 }

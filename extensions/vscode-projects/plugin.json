@@ -1,9 +1,13 @@
 {
   "id": "vscode-projects",
   "name": "最近项目",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "聚合检索 VS Code、Cursor、Trae、Windsurf 与 JetBrains 的本地最近项目，查看 Git 分支并打开编辑器或终端",
   "author": "ZTools Team",
+  "category": [
+    "开发工具"
+  ],
+  "categoryId": "developer",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -58,5 +62,67 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Recent IDE Projects",
+      "description": "Search recent local projects across VS Code, Cursor, Trae, Windsurf, and JetBrains IDEs, view Git branches, and open in editor or terminal.",
+      "keywords": [
+        "projects",
+        "vscode",
+        "cursor",
+        "jetbrains",
+        "ide",
+        "git",
+        "recent"
+      ],
+      "features": {
+        "projects-all": {
+          "explain": "Browse all recent IDE projects and local Git repositories",
+          "cmds": [
+            "projects",
+            "recent projects",
+            "vscode",
+            "cursor",
+            "open project"
+          ]
+        },
+        "projects-vscode-cursor": {
+          "explain": "Filter projects from VS Code, Cursor, Trae, and Windsurf only",
+          "cmds": [
+            "vscode projects",
+            "cursor projects",
+            "trae projects",
+            "windsurf projects"
+          ]
+        },
+        "projects-jetbrains": {
+          "explain": "Filter projects from IntelliJ IDEA, WebStorm, PyCharm, and other JetBrains IDEs",
+          "cmds": [
+            "jetbrains projects",
+            "idea projects",
+            "webstorm projects",
+            "pycharm projects"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/03-interactive.png"
+    }
+  ]
 }

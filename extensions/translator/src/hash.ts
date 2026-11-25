@@ -6,7 +6,34 @@
  * 本文件是唯一源码，构建前由各插件复制到自己的 src/ 目录（与 shared/native-ipc.ts 相同的做法）。
  */
 
+import { getLocale } from "@ztools/declarative-ui";
+
 export type HashAlgorithm = "md5" | "sha1" | "sha256" | "sha512";
+
+const HASH_MESSAGES: Record<string, {
+  invalidHex: string;
+  invalidBase64: string;
+  invalidBase64Length: string;
+  unsupportedAlgorithm: (algorithm: string) => string;
+}> = {
+  "zh-CN": {
+    invalidHex: "不是合法的十六进制字符串",
+    invalidBase64: "不是合法的 Base64 字符串",
+    invalidBase64Length: "Base64 长度不正确",
+    unsupportedAlgorithm: (algorithm) => `不支持的摘要算法: ${algorithm}`
+  },
+  "en-US": {
+    invalidHex: "Invalid hexadecimal string",
+    invalidBase64: "Invalid Base64 string",
+    invalidBase64Length: "Invalid Base64 length",
+    unsupportedAlgorithm: (algorithm) => `Unsupported hash algorithm: ${algorithm}`
+  }
+};
+
+function hashStrings() {
+  const locale = getLocale();
+  return HASH_MESSAGES[locale] ?? HASH_MESSAGES["en-US"];
+}
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -28,7 +55,7 @@ export function bytesToHex(bytes: Uint8Array): string {
 
 export function hexToBytes(hex: string): Uint8Array {
   const clean = (hex ?? "").trim();
-  if (clean.length % 2 !== 0 || /[^0-9a-fA-F]/.test(clean)) throw new Error("不是合法的十六进制字符串");
+  if (clean.length % 2 !== 0 || /[^0-9a-fA-F]/.test(clean)) throw new Error(hashStrings().invalidHex);
   const out = new Uint8Array(clean.length / 2);
   for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
   return out;
@@ -46,9 +73,9 @@ export function bytesToBase64(bytes: Uint8Array): string {
 /** 严格 Base64 解码：兼容 URL-safe 字符与缺省填充，其余非法字符直接报错 */
 export function base64ToBytes(base64: string): Uint8Array {
   let clean = (base64 ?? "").replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
-  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new Error("不是合法的 Base64 字符串");
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) throw new Error(hashStrings().invalidBase64);
   clean = clean.replace(/=+$/, "");
-  if (clean.length % 4 === 1) throw new Error("Base64 长度不正确");
+  if (clean.length % 4 === 1) throw new Error(hashStrings().invalidBase64Length);
   clean += "=".repeat((4 - (clean.length % 4)) % 4);
   const bin = atob(clean);
   const out = new Uint8Array(bin.length);
@@ -239,7 +266,7 @@ const DIGESTS: Record<HashAlgorithm, { fn: (m: Uint8Array) => Uint8Array; block:
 
 function resolve(algorithm: string) {
   const entry = DIGESTS[String(algorithm).toLowerCase().replace("-", "") as HashAlgorithm];
-  if (!entry) throw new Error(`不支持的摘要算法: ${algorithm}`);
+  if (!entry) throw new Error(hashStrings().unsupportedAlgorithm(algorithm));
   return entry;
 }
 

@@ -10,13 +10,14 @@ import {
   Clipboard,
   confirmAlert
 } from "@ztools/declarative-ui";
-import { useState, useEffect, useRef } from "@ztools/declarative-ui";
+import { useState, useEffect, useRef, useLocale, getLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import { FileRecord, SortOption, TypeFilter, FileQuickLookResult, FileActionResult } from "./types.js";
 import {
   formatBytes,
   truncatePath,
   getFileCategory,
-  NOT_IN_CLIENT_MESSAGE,
+  getNotInClientMessage,
   supportsSystemQuickLook,
   sortAndFilterFiles,
   searchLocalFilesDetailed,
@@ -29,11 +30,12 @@ import {
   quickLookFile
 } from "./search-service.js";
 import { isRealElectronHost } from "./native-ipc.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
 /** 文件管理器与回收站的系统叫法：macOS 为「访达」「废纸篓」，Windows 为「资源管理器」「回收站」 */
 const platformNames = () => supportsSystemQuickLook()
-  ? { manager: "访达", trash: "废纸篓" }
-  : { manager: "资源管理器", trash: "回收站" };
+  ? { manager: t("fmMac"), trash: t("trashMac") }
+  : { manager: t("fmWin"), trash: t("trashWin") };
 
 /** 预览页自动计算 SHA-256 的体积上限；更大的文件按需在列表动作里计算，不在打开预览时读完整个大文件 */
 const AUTO_SHA256_MAX_BYTES = 64 * 1024 * 1024;
@@ -59,6 +61,7 @@ export function FileQuickLookDetailView({
   file: FileRecord;
   initialQuickLook?: FileQuickLookResult;
 }) {
+  useLocale();
   const [quickLook, setQuickLook] = useState<FileQuickLookResult | null>(initialQuickLook || null);
   const [sha256, setSha256] = useState<string>("");
 
@@ -73,11 +76,11 @@ export function FileQuickLookDetailView({
     if (file.isDir) {
       setSha256Note("");
     } else if (file.size > AUTO_SHA256_MAX_BYTES) {
-      setSha256Note("文件较大，可在列表动作里按需计算");
+      setSha256Note(t("sha256LargeFileNote"));
     } else {
       void calculateFileSha256(file.path).then(
         (hash) => { if (alive) { setSha256(hash); setSha256Note(""); } },
-        (err) => { if (alive) { setSha256(""); setSha256Note(`未能计算：${err instanceof Error ? err.message : String(err)}`); } }
+        (err) => { if (alive) { setSha256(""); setSha256Note(t("sha256CalcFailedNote", { error: err instanceof Error ? err.message : String(err) })); } }
       );
     }
     return () => { alive = false; };
@@ -90,65 +93,68 @@ export function FileQuickLookDetailView({
   let markdown = `# ${file.name}\n\n`;
 
   if (!ql) {
-    markdown += `正在读取文件内容…`;
+    markdown += t("qlReading");
   } else if (ql.previewType === "error") {
-    markdown += `> **读取异常**: ${ql.error || "无法访问该文件"}\n\n可能原因：文件已被删除、权限不足或宿主未授权读取该路径。${supportsSystemQuickLook() ? "可在动作面板中使用「Quick Look 快速预览」由系统预览。" : "可按 Enter 用默认应用打开。"}`;
+    markdown += t("qlReadErrTitle", {
+      error: resolveErrorMessage(ql, t("qlReadErrDefault")),
+      hint: supportsSystemQuickLook() ? t("qlReadErrHintMac") : t("qlReadErrHintOther")
+    });
   } else if (ql.previewType === "empty") {
-    markdown += `> **空文件**: 该文件长度为 0 字节。`;
+    markdown += t("qlEmptyFileMd");
   } else if (ql.previewType === "directory") {
-    markdown += `### 文件夹内容 (${ql.totalLines ?? 0}${ql.partial ? "+" : ""} 项)\n\n`;
+    markdown += t("qlDirHeading", { count: ql.totalLines ?? 0, plus: ql.partial ? "+" : "" });
     if (ql.dirEntries && ql.dirEntries.length > 0) {
       markdown += ql.dirEntries
-        .map((e) => `- \`${e.name}${e.isDir ? "/" : ""}\`${e.isDir ? " · 文件夹" : ""}`)
+        .map((e) => `- \`${e.name}${e.isDir ? "/" : ""}\`${e.isDir ? t("qlDirSuffix") : ""}`)
         .join("\n");
       if (ql.truncated) {
-        markdown += `\n\n*(仅显示前 25 项，已安全截断)*`;
+        markdown += t("qlDirTruncated");
       }
       if (ql.partial) {
-        markdown += `\n\n*(文件夹条目较多，仅显示部分直接子项)*`;
+        markdown += t("qlDirPartial");
       }
     } else {
-      markdown += ql.partial ? `*(扫描结果不完整，尚未取得直接子项)*` : `*(空文件夹)*`;
+      markdown += ql.partial ? t("qlDirEmptyPartial") : t("qlDirEmpty");
     }
   } else if (ql.previewType === "image") {
-    markdown += `![图片预览](${ql.content})`;
+    markdown += `![${t("qlImageAlt")}](${ql.content})`;
   } else if (ql.previewType === "markdown") {
     markdown += `${ql.content}\n\n`;
     if (ql.truncated) {
-      markdown += `\n\n*(内容超限，已截取前 200 行 / 64KB 防内存爆破)*`;
+      markdown += t("qlTextTruncated");
     }
   } else if (ql.previewType === "code") {
     markdown += `\`\`\`${ql.codeLanguage || ext}\n${ql.content}\n\`\`\`\n\n`;
     if (ql.truncated) {
-      markdown += `*(代码超限，已截取前 200 行 / 64KB 防内存爆破)*`;
+      markdown += t("qlCodeTruncated");
     }
   } else {
-    markdown += `> ${ql.content || "该格式为二进制文件，请使用关联应用直接打开。"}`;
+    markdown += `> ${ql.content || t("qlBinaryFallback")}`;
   }
 
   return (
     <Detail
       markdown={markdown}
-      navigationTitle={`即时预览：${file.name}`}
+      navigationTitle={t("qlNavTitle", { name: file.name })}
       metadata={
         <Detail.Metadata>
-          <Detail.Metadata.Label title="文件名" text={file.name} icon={Icon.Document} />
-          <Detail.Metadata.Label title="所在位置" text={file.path} icon={Icon.Folder} />
+          <Detail.Metadata.Label title={t("metaName")} text={file.name} icon={Icon.Document} />
+          <Detail.Metadata.Label title={t("metaLocation")} text={file.path} icon={Icon.Folder} />
           <Detail.Metadata.Separator />
           <Detail.Metadata.Label
-            title="大小"
-            text={file.isDir ? "文件夹" : formatBytes(file.size)}
+            title={t("metaSize")}
+            text={file.isDir ? t("folderLabel") : formatBytes(file.size)}
             icon={Icon.HardDrive}
           />
           <Detail.Metadata.Label
-            title="修改时间"
-            text={file.mtime > 0 ? new Date(file.mtime).toLocaleString("zh-CN") : "未知"}
+            title={t("metaModified")}
+            text={file.mtime > 0 ? new Date(file.mtime).toLocaleString(getLocale()) : t("unknownTime")}
             icon={Icon.Calendar}
           />
           {ql?.totalLines !== undefined && ql.previewType === "code" && (
             <Detail.Metadata.Label
-              title="行数统计"
-              text={`${ql.totalLines} 行${ql.truncated ? " (已截取前200行)" : ""}`}
+              title={t("metaLines")}
+              text={t("metaLinesText", { count: ql.totalLines, trunc: ql.truncated ? t("metaLinesTruncated") : "" })}
               icon={Icon.List}
             />
           )}
@@ -159,47 +165,47 @@ export function FileQuickLookDetailView({
               icon={Icon.Lock}
             />
           ) : null}
-          <Detail.Metadata.TagList title="分类">
+          <Detail.Metadata.TagList title={t("metaCategory")}>
             <Detail.Metadata.TagList.Item
-              text={file.isDir ? "目录" : `.${ext.toUpperCase() || "FILE"}`}
+              text={file.isDir ? t("metaDirTag") : `.${ext.toUpperCase() || "FILE"}`}
             />
           </Detail.Metadata.TagList>
         </Detail.Metadata>
       }
       actions={
-        <ActionPanel title="文件操作">
+        <ActionPanel title={t("actionPanelOps")}>
           <Action
-            title={file.isDir ? "打开文件夹" : "打开文件"}
+            title={file.isDir ? t("actionOpenFolder") : t("actionOpenFile")}
             icon={file.isDir ? Icon.Folder : Icon.Document}
             onAction={async () => toastResult(await openFile(file.path))}
           />
           <Action
-            title={`在${platformNames().manager}中定位`}
+            title={t("actionRevealInFm", { fm: platformNames().manager })}
             icon={Icon.Folder}
             shortcut={{ modifiers: ["ctrl"], key: "enter" }}
             onAction={async () => toastResult(await revealFile(file.path))}
           />
           {supportsSystemQuickLook() ? (
             <Action
-              title="Quick Look 快速预览"
+              title={t("actionQuickLookSys")}
               icon={Icon.Eye}
               shortcut={{ modifiers: ["ctrl"], key: "y" }}
               onAction={async () => toastResult(await quickLookFile(file.path))}
             />
           ) : null}
           <Action.CopyToClipboard
-            title="复制文件绝对路径"
+            title={t("actionCopyAbsPath")}
             content={file.path}
             shortcut={{ modifiers: ["ctrl", "shift"], key: "c" }}
           />
           <Action.CopyToClipboard
-            title="复制文件名"
+            title={t("actionCopyName")}
             content={file.name}
             shortcut={{ modifiers: ["ctrl", "shift"], key: "n" }}
           />
           {sha256 ? (
             <Action.CopyToClipboard
-              title="复制 SHA-256 哈希值"
+              title={t("actionCopySha256")}
               content={sha256}
               shortcut={{ modifiers: ["ctrl", "shift"], key: "h" }}
             />
@@ -215,13 +221,15 @@ export function FileQuickLookDetailView({
  * 每行的标题 / 路径 / 大小在单行内即可表达完整，不开右侧详情栏；文件真实内容通过「即时预览」查看。
  */
 export default function EverythingFileSearchCommand() {
+  useLocale();
   const [query, setQuery] = useState("");
   const [sortOption, setSortOption] = useState<SortOption>("name-asc");
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   // 不在客户端里运行时直接显示提示，不显示任何示例文件
   const [allFiles, setAllFiles] = useState<FileRecord[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(() => isRealElectronHost());
-  const [searchError, setSearchError] = useState(() => (isRealElectronHost() ? "" : NOT_IN_CLIENT_MESSAGE));
+  const inClient = isRealElectronHost();
+  const [isLoading, setIsLoading] = useState<boolean>(() => inClient);
+  const [searchError, setSearchError] = useState("");
   // 宿主报告搜索范围受限（全盘索引不可用 / Spotlight 失败）时的真实说明
   const [scopeNotice, setScopeNotice] = useState("");
   // 每次检索递增；慢的旧请求晚返回时序号已过期，结果直接丢弃，不能覆盖新关键词的结果
@@ -275,10 +283,10 @@ export default function EverythingFileSearchCommand() {
 
   const handleMoveToTrash = async (file: FileRecord) => {
     const confirmed = await confirmAlert({
-      title: `将「${file.name}」移入${platformNames().trash}？`,
+      title: t("confirmTrashTitle", { name: file.name, trash: platformNames().trash }),
       message: file.path,
-      primaryAction: { title: `移入${platformNames().trash}`, style: "destructive" },
-      dismissAction: { title: "取消" }
+      primaryAction: { title: t("actionMoveToTrash", { trash: platformNames().trash }), style: "destructive" },
+      dismissAction: { title: t("actionCancel") }
     });
     if (!confirmed) return;
     const res = await moveToTrash(file.path, undefined, file.isDir);
@@ -294,27 +302,36 @@ export default function EverythingFileSearchCommand() {
     try {
       const hash = await calculateFileSha256(file.path);
       await Clipboard.copy(hash);
-      await showToast(Toast.Style.Success, `已复制 SHA-256: ${hash.slice(0, 16)}...`);
+      await showToast(Toast.Style.Success, t("toastCopiedSha256", { prefix: hash.slice(0, 16) }));
     } catch (err: unknown) {
       const message = typeof err === "object" && err !== null ? (err as { message?: unknown }).message : undefined;
-      await showToast(Toast.Style.Failure, `计算 SHA-256 失败: ${message ? String(message) : String(err)}`);
+      await showToast(Toast.Style.Failure, t("toastCalcSha256Failed", { error: message ? String(message) : String(err) }));
     }
   };
+
+  const notInClientMsg = getNotInClientMessage();
 
   return (
     <List
       isLoading={isLoading}
       isShowingDetail={false}
-      searchBarPlaceholder="搜索文件名或扩展名..."
+      searchBarPlaceholder={t("searchPlaceholder")}
       onSearchTextChange={handleSearchTextChange}
       filterBar={{
-        summaryText: searchError
-          ? `搜索失败：${searchError}`
-          : `${scopeNotice ? `${scopeNotice} · ` : ""}当前匹配 ${displayedFiles.length} 个文件/目录 · 总大小 ${formatBytes(totalSizeBytes)}${query ? ` · 检索词 "${query}"` : ""}`
+        summaryText: !inClient
+          ? t("summarySearchFailed", { error: notInClientMsg })
+          : searchError
+            ? t("summarySearchFailed", { error: searchError })
+            : t("summaryMatched", {
+                scope: scopeNotice ? `${scopeNotice} · ` : "",
+                count: displayedFiles.length,
+                size: formatBytes(totalSizeBytes),
+                queryPart: query ? t("summaryQueryPart", { query }) : ""
+              })
       }}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="类型筛选与排序"
+          tooltip={t("dropdownTooltip")}
           onChange={(val: string) => {
             if (val.startsWith("sort:")) {
               setSortOption(val.replace("sort:", "") as SortOption);
@@ -323,31 +340,31 @@ export default function EverythingFileSearchCommand() {
             }
           }}
         >
-          <List.Dropdown.Section title="类型筛选">
-            <List.Dropdown.Item title="全部文件与文件夹" value="type:all" />
-            <List.Dropdown.Item title="文档与表格" value="type:document" />
-            <List.Dropdown.Item title="图片与照片" value="type:image" />
-            <List.Dropdown.Item title="视频与影片" value="type:video" />
-            <List.Dropdown.Item title="音频与音乐" value="type:audio" />
-            <List.Dropdown.Item title="压缩文件" value="type:archive" />
-            <List.Dropdown.Item title="源代码与配置" value="type:code" />
-            <List.Dropdown.Item title="文件夹目录" value="type:folder" />
+          <List.Dropdown.Section title={t("secTypeFilter")}>
+            <List.Dropdown.Item title={t("typeAll")} value="type:all" />
+            <List.Dropdown.Item title={t("typeDocument")} value="type:document" />
+            <List.Dropdown.Item title={t("typeImage")} value="type:image" />
+            <List.Dropdown.Item title={t("typeVideo")} value="type:video" />
+            <List.Dropdown.Item title={t("typeAudio")} value="type:audio" />
+            <List.Dropdown.Item title={t("typeArchive")} value="type:archive" />
+            <List.Dropdown.Item title={t("typeCode")} value="type:code" />
+            <List.Dropdown.Item title={t("typeFolder")} value="type:folder" />
           </List.Dropdown.Section>
-          <List.Dropdown.Section title="排序方式">
-            <List.Dropdown.Item title="按名称升序 (A-Z)" value="sort:name-asc" />
-            <List.Dropdown.Item title="按名称降序 (Z-A)" value="sort:name-desc" />
-            <List.Dropdown.Item title="按文件大小 (从大到小)" value="sort:size-desc" />
-            <List.Dropdown.Item title="按文件大小 (从小到大)" value="sort:size-asc" />
-            <List.Dropdown.Item title="按修改时间 (最新优先)" value="sort:mtime-desc" />
-            <List.Dropdown.Item title="按修改时间 (最早优先)" value="sort:mtime-asc" />
+          <List.Dropdown.Section title={t("secSortOption")}>
+            <List.Dropdown.Item title={t("sortNameAsc")} value="sort:name-asc" />
+            <List.Dropdown.Item title={t("sortNameDesc")} value="sort:name-desc" />
+            <List.Dropdown.Item title={t("sortSizeDesc")} value="sort:size-desc" />
+            <List.Dropdown.Item title={t("sortSizeAsc")} value="sort:size-asc" />
+            <List.Dropdown.Item title={t("sortMtimeDesc")} value="sort:mtime-desc" />
+            <List.Dropdown.Item title={t("sortMtimeAsc")} value="sort:mtime-asc" />
           </List.Dropdown.Section>
         </List.Dropdown>
       }
     >
-      {searchError === NOT_IN_CLIENT_MESSAGE ? (
-        <List.Item id="search-error" title={NOT_IN_CLIENT_MESSAGE} subtitle="在 ZTools 中打开「文件秒搜」后再搜索" icon={Icon.ExclamationMark} />
+      {!inClient ? (
+        <List.Item id="search-error" title={notInClientMsg} subtitle={t("notInClientSub")} icon={Icon.ExclamationMark} />
       ) : searchError ? (
-        <List.Item id="search-error" title="读取文件索引失败" subtitle={searchError} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title="重新搜索" onAction={() => runSearch(query, 0)} /></ActionPanel>} />
+        <List.Item id="search-error" title={t("searchErrTitle")} subtitle={searchError} icon={Icon.ExclamationMark} actions={<ActionPanel><Action title={t("actionRetrySearch")} onAction={() => runSearch(query, 0)} /></ActionPanel>} />
       ) : null}
       {displayedFiles.map((file) => {
         const isDir = file.isDir;
@@ -369,17 +386,17 @@ export default function EverythingFileSearchCommand() {
             title={file.name}
             subtitle={truncatePath(file.path)}
             icon={fileIcon}
-            accessories={[{ text: isDir ? "文件夹" : formatBytes(file.size) }]}
+            accessories={[{ text: isDir ? t("folderLabel") : formatBytes(file.size) }]}
             actions={
               <ActionPanel title={file.name}>
-                <ActionPanel.Section title="核心动作">
+                <ActionPanel.Section title={t("secCoreActions")}>
                   <Action
-                    title={isDir ? "打开文件夹" : "打开文件"}
+                    title={isDir ? t("actionOpenFolder") : t("actionOpenFile")}
                     icon={isDir ? Icon.Folder : Icon.Document}
                     onAction={async () => toastResult(await openFile(file.path))}
                   />
                   <Action
-                    title={`在${platformNames().manager}中定位`}
+                    title={t("actionRevealInFm", { fm: platformNames().manager })}
                     icon={Icon.Folder}
                     shortcut={{ modifiers: ["ctrl"], key: "enter" }}
                     onAction={async () => toastResult(await revealFile(file.path))}
@@ -387,39 +404,39 @@ export default function EverythingFileSearchCommand() {
                   {/* 系统快速预览只在 macOS 上有；Windows 上不提供，避免把「在资源管理器中定位」当成预览成功 */}
                   {supportsSystemQuickLook() ? (
                     <Action
-                      title="Quick Look 快速预览"
+                      title={t("actionQuickLookSys")}
                       icon={Icon.Eye}
                       shortcut={{ modifiers: ["ctrl"], key: "y" }}
                       onAction={async () => toastResult(await quickLookFile(file.path))}
                     />
                   ) : null}
                   <Action.Push
-                    title="即时预览"
+                    title={t("actionInstantPreview")}
                     icon={Icon.Eye}
-                    shortcut={{ modifiers: ["ctrl", "shift"], key: "p" }}
+                    shortcut={{ modifiers: ["ctrl", "shift"], key: "y" }}
                     target={() => <FileQuickLookDetailView file={file} />}
                   />
                 </ActionPanel.Section>
 
-                <ActionPanel.Section title="快捷复制">
+                <ActionPanel.Section title={t("secQuickCopy")}>
                   <Action.CopyToClipboard
-                    title="复制文件绝对路径"
+                    title={t("actionCopyAbsPath")}
                     content={file.path}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "c" }}
                   />
                   <Action.CopyToClipboard
-                    title="复制文件名"
+                    title={t("actionCopyName")}
                     content={file.name}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "n" }}
                   />
                   <Action
-                    title="复制文件本身到剪贴板"
+                    title={t("actionCopyFileObj")}
                     icon={Icon.Clipboard}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "v" }}
                     onAction={() => handleCopyFile(file)}
                   />
                   <Action
-                    title="计算并复制 SHA-256"
+                    title={t("actionCalcCopySha256")}
                     icon={Icon.Lock}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "h" }}
                     onAction={() => handleCalculateSha256(file)}
@@ -428,9 +445,9 @@ export default function EverythingFileSearchCommand() {
 
                 {/* 宿主不允许回收文件夹（误删整个目录后果太大），文件夹结果不提供该动作 */}
                 {isDir ? null : (
-                  <ActionPanel.Section title="文件治理">
+                  <ActionPanel.Section title={t("secFileManage")}>
                     <Action
-                      title={`移入${platformNames().trash}`}
+                      title={t("actionMoveToTrash", { trash: platformNames().trash })}
                       icon={Icon.Trash}
                       style="destructive"
                       shortcut={{ modifiers: ["ctrl", "shift"], key: "backspace" }}

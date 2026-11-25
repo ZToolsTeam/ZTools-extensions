@@ -1,0 +1,22 @@
+export var TransportType;
+(function (TransportType) {
+    TransportType["Avb"] = "avb";
+    TransportType["Aggregate"] = "aggregate";
+    TransportType["Airplay"] = "airplay";
+    TransportType["Autoaggregate"] = "autoaggregate";
+    TransportType["Bluetooth"] = "bluetooth";
+    TransportType["BluetoothLowEnergy"] = "bluetoothle";
+    TransportType["BuiltIn"] = "builtin";
+    TransportType["DisplayPort"] = "displayport";
+    TransportType["Firewire"] = "firewire";
+    TransportType["HDMI"] = "hdmi";
+    TransportType["PCI"] = "pci";
+    TransportType["Thunderbolt"] = "thunderbolt";
+    TransportType["Usb"] = "usb";
+    TransportType["Virtual"] = "virtual";
+    TransportType["Headphones"] = "headphones";
+    TransportType["Microphone"] = "microphone";
+    TransportType["Speakers"] = "speakers";
+    TransportType["SPDIF"] = "spdif";
+    TransportType["Unknown"] = "unknown";
+})(TransportType || (TransportType = {}));

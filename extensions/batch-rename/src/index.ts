@@ -1,64 +1,109 @@
 /**
  * 批量重命名（布局二）：左侧选择重命名规则，右侧列出「原名 -> 新名」预览，可勾选后执行。
- * - 搜索框右侧下拉框切换目录（下载、桌面、文档、图片、视频或所选文件夹）
- * - 状态条显示目录、规则、待改名数与同名冲突；冲突项不会执行
- * - 改名用不覆盖的移动接口，执行前确认，本次打开期间可撤销
+ * - 通过「选择文件」「选择文件夹」或拖入 / 粘贴导入文件与文件夹（仅一级直接子文件，支持多次追加去重）
+ * - 选择文件或拖入文件 / 文件夹为「只读预览」，执行改名前按目录通过选目录对话框补充写授权
+ * - 同名冲突按所在目录独立检测，改名使用不覆盖移动接口，执行前确认，本次打开期间可撤销
  */
 
-import { Action, ActionPanel, Icon, List, Toast, confirmAlert, showToast, useEffect, useRef, useState } from "@ztools/declarative-ui";
-import { formatBytes, getRealSystemPath, isRealElectronHost } from "./native-ipc.js";
 import {
+  Action,
+  ActionPanel,
+  Icon,
+  List,
+  Toast,
+  confirmAlert,
+  showToast,
+  useEffect,
+  useLocale,
+  useRef,
+  useState
+} from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
+import { callHostTransport, isRealElectronHost } from "./native-ipc.js";
+import { hostUpgradeError, isDeclarativeFileInputSupported } from "./host-compat.js";
+import {
+  collectFolderFiles,
+  createImportInputProps,
+  expandInputPaths,
+  friendlyFileError,
+  isVolumeRoot,
+  mergeByPath,
+  normalizeFileInput,
+  pathKey,
+  pickFiles,
+  pickFolder,
+  summarizeImport,
+  type FileImportResult,
+  type FileImportRules,
+  type FileImportTransport,
+  type NormalizedFileInput
+} from "./file-import.js";
+import {
+  FORBIDDEN_TARGET_PATTERN,
   MAX_RENAME_FILES,
-  RENAME_RULE_PRESETS,
+  RENAME_RULE_IDS,
   buildRenamePreview,
   conflictReasonText,
   executeRealFileRename,
-  fetchDirectoryFiles,
   fileManagerName,
+  formatBytes,
+  getRenameRulePresets,
+  importedFileToEntry,
+  inspectDirectoryState,
   isPermissionError,
-  isSameOrParentDir,
   openRenameFileLocation,
-  requestFolderAccess,
+  parseDirectoryState,
   undoBatchRenameHistory,
-  type DirectoryFilesResult,
+  type DirectoryStateInfo,
   type RealFileEntry,
   type RenamePreviewItem,
   type RenameRule,
   type RenameRuleType,
-  type RenameUndoEntry,
-  type SourceScope
+  type RenameUndoEntry
 } from "./logic.js";
 import { usePopoutValue } from "./popout-state.js";
-import { hostUpgradeError } from "./host-compat.js";
+import { resolveErrorMessage } from './error-i18n.js'
 
-type SourceDirScope = SourceScope | "custom";
+const IMPORT_RULES: FileImportRules = {
+  maxDepth: 1,
+  maxFiles: MAX_RENAME_FILES,
+  skipEmptyFiles: false,
+  forbiddenPath: FORBIDDEN_TARGET_PATTERN
+};
 
-// 访达里文档目录叫「文稿」、视频目录（~/Movies）叫「影片」
-const IS_MAC_UI = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || "");
-const SOURCE_SCOPES: Array<{ id: SourceDirScope; label: string }> = [
-  { id: "downloads", label: "下载目录" },
-  { id: "desktop", label: "桌面目录" },
-  { id: "documents", label: IS_MAC_UI ? "文稿目录" : "文档目录" },
-  { id: "pictures", label: "图片目录" },
-  { id: "videos", label: IS_MAC_UI ? "影片目录" : "视频目录" }
-];
-
-// 独立窗口带来的值可能来自旧版本或被篡改，逐项校验，不合法就用默认值
-const isSourceScope = (v: unknown): v is SourceDirScope => v === "custom" || SOURCE_SCOPES.some((s) => s.id === v);
-const isText = (v: unknown): v is string => typeof v === "string";
-const isRuleType = (v: unknown): v is RenameRuleType => RENAME_RULE_PRESETS.some((r) => r.id === v);
+const isText = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
+const isRuleType = (v: unknown): v is RenameRuleType => RENAME_RULE_IDS.some((id) => id === v);
 const isPathList = (v: unknown): v is string[] => Array.isArray(v) && v.every(isText);
-
-function stripLeadingEmoji(label: string): string {
-  return label.replace(/^[^\u4e00-\u9fa5A-Za-z0-9(\[_-]+/, "").trim();
-}
+const isPersistedFile = (v: unknown): v is RealFileEntry => {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const r = v as Record<string, unknown>;
+  return (
+    typeof r.name === "string" &&
+    r.name.length > 0 &&
+    typeof r.fullPath === "string" &&
+    r.fullPath.length > 0 &&
+    typeof r.parentDir === "string" &&
+    typeof r.extension === "string" &&
+    (r.sizeBytes === null || (typeof r.sizeBytes === "number" && Number.isFinite(r.sizeBytes) && r.sizeBytes >= 0)) &&
+    typeof r.lastModifiedMs === "number" &&
+    Number.isFinite(r.lastModifiedMs)
+  );
+};
+const isPersistedFileList = (v: unknown): v is RealFileEntry[] => Array.isArray(v) && v.every(isPersistedFile);
 
 function baseNameOf(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, "");
   return trimmed.split(/[\\/]/).pop() || trimmed;
 }
 
-const NOT_IN_CLIENT_MESSAGE = "需要在 ZTools 客户端中使用";
+function parentDirOf(p: string): string {
+  const stripped = String(p || "").replace(/[\\/]+$/, "");
+  const idx = Math.max(stripped.lastIndexOf("/"), stripped.lastIndexOf("\\"));
+  if (idx < 0) return "";
+  if (idx === 0) return stripped.slice(0, 1);
+  const parent = stripped.slice(0, idx);
+  return /^[A-Za-z]:$/.test(parent) ? `${parent}\\` : parent;
+}
 
 function toast(style: "success" | "failure", title: string, message?: string) {
   void showToast({
@@ -68,110 +113,367 @@ function toast(style: "success" | "failure", title: string, message?: string) {
   });
 }
 
-function renamePlanKey(items: RenamePreviewItem[]): string {
-  return items.map((i) => `${i.fullPath}\u0000${i.newName}`).join("\u0001");
+function createInitialDirStates(files: readonly RealFileEntry[], authorizedDirs: readonly string[]): Map<string, DirectoryStateInfo> {
+  const map = new Map<string, DirectoryStateInfo>();
+  for (const dir of authorizedDirs) {
+    const k = pathKey(dir);
+    if (k && !map.has(k)) {
+      map.set(k, { directory: dir, writeAuthorized: true, occupiedNames: [], existingFileNames: [] });
+    }
+  }
+  for (const f of files) {
+    const k = pathKey(f.parentDir);
+    if (k && !map.has(k)) {
+      map.set(k, { directory: f.parentDir, writeAuthorized: false, occupiedNames: [], existingFileNames: [] });
+    }
+  }
+  return map;
+}
+
+function replaceNameInOccupied(names: readonly string[], oldName: string, newName: string): string[] {
+  const idx = names.indexOf(oldName);
+  if (idx >= 0) {
+    const next = [...names];
+    next[idx] = newName;
+    return next;
+  }
+  return [...names, newName];
 }
 
 export function BatchRenameCommand() {
-  // 当前目录的授权随独立窗口转交（宿主只转交本窗口已有的授权），新窗口里不用重新授权即可执行
-  const listingRef = useRef<DirectoryFilesResult | null>(null);
-  // 弹出独立窗口时带走：目录来源、所选文件夹、规则与勾选；撤销记录与目录清单不带（新窗口重新读取目录）
-  const [rawScope, setSourceScope] = usePopoutValue<SourceDirScope>("sourceScope", () => "downloads", isSourceScope, {
-    paths: () => (listingRef.current?.directory ? [listingRef.current.directory] : [])
+  useLocale();
+  const rulePresets = getRenameRulePresets();
+  // 独立窗口交接：同时携带列表文件与已获得写授权的文件夹路径，确保新窗口有权限写入新文件名
+  const [files, setFiles, filesRestored] = usePopoutValue<RealFileEntry[]>("files", () => [], isPersistedFileList, {
+    paths: (items) => items.map((i) => i.fullPath)
   });
-  const [customDir, setCustomDir] = usePopoutValue("customDir", () => "", isText, { paths: (v) => (v ? [v] : []) });
-  // 「所选文件夹」没有带来路径时退回默认目录
-  const sourceScope: SourceDirScope = rawScope === "custom" && !customDir ? "downloads" : rawScope;
-  const [listing, setListing] = useState<DirectoryFilesResult | null>(null);
-  const [ruleType, setRuleType] = usePopoutValue<RenameRuleType>("ruleType", () => "number", isRuleType);
-  const [checkedPaths, setCheckedPaths, checksRestored] = usePopoutValue<string[]>(
-    "checkedPaths",
+  const [authorizedDirs, setAuthorizedDirs, dirsRestored] = usePopoutValue<string[]>(
+    "authorizedDirs",
     () => [],
     isPathList,
-    { paths: (v) => v }
+    { paths: (dirs) => dirs }
   );
-  // 带来的勾选在第一次成功读取目录时生效（只保留仍存在的文件），之后按原规则：新出现的文件默认勾选。
-  // 带来的是空列表时（旧窗口还没读完目录就弹出，分不清是否全部取消）按新开处理
-  const restoreChecksRef = useRef(checksRestored && checkedPaths.length > 0);
+  const [ruleType, setRuleType] = usePopoutValue<RenameRuleType>("ruleType", () => "number", isRuleType);
+  const [checkedPaths, setCheckedPaths] = usePopoutValue<string[]>("checkedPaths", () => [], isPathList, {
+    paths: (v) => v
+  });
+
+  const [dirStates, setDirStates] = useState<Map<string, DirectoryStateInfo>>(() =>
+    createInitialDirStates(files, authorizedDirs)
+  );
   const [searchText, setSearchText] = useState<string>("");
   const [undoStack, setUndoStack] = useState<RenameUndoEntry[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  // 改名 / 撤销互斥：执行中再次触发直接忽略，避免并发改名
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [importTruncated, setImportTruncated] = useState<boolean>(false);
+  const [importProgress, setImportProgress] = useState<{ visitedDirs: number; matchedFiles: number } | null>(null);
+
+  const filesRef = useRef<RealFileEntry[]>(files);
+  filesRef.current = files;
+  const dirStatesRef = useRef<Map<string, DirectoryStateInfo>>(dirStates);
+  dirStatesRef.current = dirStates;
+  const checkedPathsRef = useRef<string[]>(checkedPaths);
+  checkedPathsRef.current = checkedPaths;
   const busyRef = useRef(false);
-  // 每次加载的序号，丢弃过期（已切换目录）的加载结果
-  const loadSeqRef = useRef(0);
-  listingRef.current = listing;
+  const importSeqRef = useRef(0);
+  const importAbortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
 
-  const resolveDirectory = async (scope: SourceDirScope, custom: string): Promise<string> => {
-    if (scope === "custom") return custom;
-    return (await getRealSystemPath(scope)) || "";
-  };
-
-  /** 读取目录并更新列表；同目录重新加载时保留用户的勾选，新出现的文件（如改名结果）默认勾选 */
-  const loadDirectory = async (dirPath: string): Promise<DirectoryFilesResult | null> => {
-    const seq = ++loadSeqRef.current;
-    setIsLoading(true);
-    try {
-      const res = await fetchDirectoryFiles(dirPath);
-      if (seq !== loadSeqRef.current) return null;
-      const prev = listingRef.current;
-      const sameDir = Boolean(prev && prev.directory === res.directory);
-      const prevPaths = new Set(sameDir && prev ? prev.files.map((f) => f.fullPath) : []);
-      const keepRestored = restoreChecksRef.current;
-      restoreChecksRef.current = false;
-      setCheckedPaths((checked) => {
-        const checkedSet = new Set(checked);
-        return res.files
-          .map((f) => f.fullPath)
-          .filter((p) => (keepRestored ? checkedSet.has(p) : !sameDir || checkedSet.has(p) || !prevPaths.has(p)));
-      });
-      listingRef.current = res;
-      setListing(res);
-      return res;
-    } catch (err) {
-      if (seq !== loadSeqRef.current) return null;
-      const failed: DirectoryFilesResult = {
-        directory: dirPath,
-        files: [],
-        occupiedNames: [],
-        authorized: false,
-        partial: false,
-        totalFiles: 0,
-        truncated: false,
-        error: err instanceof Error ? err.message : String(err)
-      };
-      listingRef.current = failed;
-      setListing(failed);
-      return failed;
-    } finally {
-      if (seq === loadSeqRef.current) setIsLoading(false);
+  const syncDirStates = (nextMap: Map<string, DirectoryStateInfo>, currentFiles: readonly RealFileEntry[] = filesRef.current) => {
+    const activeDirMap = new Map<string, string>();
+    for (const f of currentFiles) {
+      const k = pathKey(f.parentDir);
+      if (k && !activeDirMap.has(k)) activeDirMap.set(k, f.parentDir);
     }
-  };
-
-  const reloadCurrent = async () => {
-    const dir = listingRef.current?.directory || (await resolveDirectory(sourceScope, customDir));
-    return loadDirectory(dir);
+    const nextAuthDirs: string[] = [];
+    for (const [k, dirPath] of activeDirMap) {
+      if (nextMap.get(k)?.writeAuthorized === true) {
+        nextAuthDirs.push(dirPath);
+      }
+    }
+    dirStatesRef.current = nextMap;
+    setDirStates(nextMap);
+    setAuthorizedDirs(nextAuthDirs);
   };
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      importSeqRef.current += 1;
+      importAbortRef.current?.abort();
+      importAbortRef.current = null;
+    };
+  }, []);
+
+  // 仅当由独立窗口交接恢复出数据时，核查转交过来的目录写授权与最新占用名；正常新开插件零 IPC 扫描
+  useEffect(() => {
     if (!isRealElectronHost()) return;
+    if (!filesRestored && !dirsRestored) return;
+    const restoredFiles = filesRef.current;
+    const restoredDirs = new Map<string, string>();
+    for (const d of authorizedDirs) {
+      const k = pathKey(d);
+      if (k && !restoredDirs.has(k)) restoredDirs.set(k, d);
+    }
+    for (const f of restoredFiles) {
+      const k = pathKey(f.parentDir);
+      if (k && !restoredDirs.has(k)) restoredDirs.set(k, f.parentDir);
+    }
+    if (restoredDirs.size === 0) return;
+
+    let cancelled = false;
     void (async () => {
-      const dir = await resolveDirectory(sourceScope, customDir);
-      await loadDirectory(dir);
+      const nextStates = new Map(dirStatesRef.current);
+      const existingByDir = new Map<string, Set<string>>();
+      for (const [dirKey, dirPath] of restoredDirs) {
+        const info = await inspectDirectoryState(dirPath);
+        if (cancelled || !mountedRef.current) return;
+        nextStates.set(dirKey, info);
+        if (!info.error) {
+          existingByDir.set(dirKey, new Set(info.existingFileNames));
+        }
+      }
+      // 对于在弹出期间已被磁盘删除的文件（且该目录成功读到了最新列表），同步清理，不自动追加新文件
+      const filteredFiles = filesRef.current.filter((f) => {
+        const set = existingByDir.get(pathKey(f.parentDir));
+        return !set || set.has(f.name);
+      });
+      if (filteredFiles.length !== filesRef.current.length) {
+        const keptKeys = new Set(filteredFiles.map((f) => pathKey(f.fullPath)));
+        setFiles(filteredFiles);
+        setCheckedPaths((prev) => prev.filter((p) => keptKeys.has(pathKey(p))));
+      }
+      syncDirStates(nextStates, filteredFiles);
     })();
-  }, [sourceScope, customDir]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const transport: FileImportTransport = (method, params) => callHostTransport<unknown>(method, params);
+
+  const runImportTask = async (
+    task: (
+      signal: AbortSignal,
+      trackingTransport: FileImportTransport
+    ) => Promise<{
+      result: FileImportResult;
+      pickedFolderPath?: string;
+      abortedEarly?: boolean;
+    }>
+  ) => {
+    const seq = ++importSeqRef.current;
+    importAbortRef.current?.abort();
+    const controller = new AbortController();
+    importAbortRef.current = controller;
+
+    setIsLoading(true);
+    setImportProgress({ visitedDirs: 0, matchedFiles: 0 });
+
+    const inspectedDirs = new Map<string, DirectoryStateInfo>();
+    const trackingTransport: FileImportTransport = async (method, params) => {
+      const res = await callHostTransport<unknown>(method, params);
+      if (method === "filesystem_get_directory_contents" && res.ok && typeof params.path === "string") {
+        const info = parseDirectoryState(params.path, res.data);
+        if (info) inspectedDirs.set(pathKey(params.path), info);
+      }
+      return res;
+    };
+
+    try {
+      const outcome = await task(controller.signal, trackingTransport);
+      if (seq !== importSeqRef.current || !mountedRef.current || controller.signal.aborted) return;
+      if (outcome.abortedEarly) return;
+
+      const { result } = outcome;
+      if (result.canceled) return;
+
+      const uniqueParentDirs = new Map<string, string>();
+      for (const f of result.files) {
+        const k = pathKey(f.parentDir);
+        if (k && !uniqueParentDirs.has(k)) uniqueParentDirs.set(k, f.parentDir);
+      }
+      if (outcome.pickedFolderPath) {
+        const pk = pathKey(outcome.pickedFolderPath);
+        if (pk && !uniqueParentDirs.has(pk)) uniqueParentDirs.set(pk, outcome.pickedFolderPath);
+      }
+
+      for (const [dirKey, dirPath] of uniqueParentDirs) {
+        if (!inspectedDirs.has(dirKey)) {
+          const info = await inspectDirectoryState(dirPath);
+          if (seq !== importSeqRef.current || !mountedRef.current || controller.signal.aborted) return;
+          inspectedDirs.set(dirKey, info);
+        }
+      }
+
+      const prevDirStates = dirStatesRef.current;
+      const nextDirStates = new Map(prevDirStates);
+      let upgradedReadOnlyFolder = false;
+      for (const [dirKey, info] of inspectedDirs) {
+        const prev = prevDirStates.get(dirKey);
+        if (prev && !prev.writeAuthorized && info.writeAuthorized) {
+          upgradedReadOnlyFolder = true;
+        }
+        nextDirStates.set(dirKey, info);
+      }
+
+      const incoming = result.files.map(importedFileToEntry);
+      const { merged, added, duplicates } = mergeByPath(filesRef.current, incoming, (item) => item.fullPath);
+
+      filesRef.current = merged;
+      setFiles(merged);
+      syncDirStates(nextDirStates, merged);
+
+      if (added.length > 0) {
+        setCheckedPaths((prev) => {
+          const existingKeys = new Set(prev.map(pathKey));
+          const extra = added.filter((a) => !existingKeys.has(pathKey(a.fullPath))).map((a) => a.fullPath);
+          return extra.length > 0 ? [...prev, ...extra] : prev;
+        });
+      }
+      if (result.truncated) {
+        setImportTruncated(true);
+      }
+
+      if (added.length === 0 && duplicates > 0 && upgradedReadOnlyFolder) {
+        toast("success", t("authAcquiredTitle"), t("authAcquiredMsg", { count: duplicates }));
+        return;
+      }
+
+      const summaryMsg = summarizeImport(result, { added: added.length, duplicates });
+      if (summaryMsg) {
+        toast(summaryMsg.ok ? "success" : "failure", summaryMsg.title, summaryMsg.message);
+      }
+    } catch (err) {
+      if (seq !== importSeqRef.current || !mountedRef.current || controller.signal.aborted) return;
+      toast("failure", t("importFailedTitle"), friendlyFileError(err));
+    } finally {
+      if (seq === importSeqRef.current && mountedRef.current) {
+        if (importAbortRef.current === controller) {
+          importAbortRef.current = null;
+        }
+        setIsLoading(false);
+        setImportProgress(null);
+      }
+    }
+  };
+
+  const handlePickFiles = () =>
+    runImportTask(async (signal, trackingTransport) => {
+      const result = await pickFiles(trackingTransport, IMPORT_RULES, {
+        title: t("pickFilesTitle")
+      });
+      if (signal.aborted) return { result: { ...result, canceled: true }, abortedEarly: true };
+      return { result };
+    });
+
+  const handlePickFolder = () =>
+    runImportTask(async (signal, trackingTransport) => {
+      const currentSingleDir = (() => {
+        const dirs = Array.from(new Set(filesRef.current.map((f) => f.parentDir).filter(Boolean)));
+        return dirs.length === 1 ? dirs[0] : undefined;
+      })();
+      const picked = await pickFolder(trackingTransport, {
+        title: t("pickFolderTitle"),
+        ...(currentSingleDir ? { defaultPath: currentSingleDir } : {})
+      });
+      if (signal.aborted) {
+        return { result: { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true }, abortedEarly: true };
+      }
+      if (picked.canceled) {
+        return { result: { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true } };
+      }
+      if (picked.error || !picked.folderPath) {
+        return {
+          result: { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: false, error: resolveErrorMessage(picked, t("noFolderSelected")) }
+        };
+      }
+      if (isVolumeRoot(picked.folderPath)) {
+        const confirmed = await confirmAlert({
+          title: t("confirmRootTitle"),
+          message: t("confirmRootMsg", { path: picked.folderPath }),
+          primaryAction: { title: t("confirmRootAction") },
+          dismissAction: { title: t("cancelAction") }
+        });
+        if (!confirmed || signal.aborted) {
+          return {
+            result: { files: [], ignored: 0, truncated: false, failedDirs: [], canceled: true },
+            abortedEarly: true
+          };
+        }
+      }
+      const result = await collectFolderFiles(trackingTransport, picked.folderPath, IMPORT_RULES, {
+        signal,
+        onProgress: (p) => {
+          if (!signal.aborted && mountedRef.current) setImportProgress(p);
+        }
+      });
+      return { result, pickedFolderPath: picked.folderPath };
+    });
+
+  const handleExternalInput = (input: NormalizedFileInput) => {
+    if (input.paths.length === 0) return;
+    return runImportTask(async (signal, trackingTransport) => {
+      const result = await expandInputPaths(trackingTransport, input.paths, IMPORT_RULES, {
+        ...(input.directories ? { knownDirectories: input.directories } : {}),
+        signal,
+        onProgress: (p) => {
+          if (!signal.aborted && mountedRef.current) setImportProgress(p);
+        }
+      });
+      return { result };
+    });
+  };
+
+  const handleExternalInputRef = useRef(handleExternalInput);
+  handleExternalInputRef.current = handleExternalInput;
+
+  // 旧版客户端没有 DeclarativeView 栈顶 onFileInput 路由时，订阅 plugin_files_dropped 并统一走同一导入函数
+  useEffect(() => {
+    if (!isRealElectronHost() || isDeclarativeFileInputSupported()) return;
+    if (typeof window === "undefined") return;
+    const events = (
+      window as unknown as {
+        ztools?: { events?: { on?: (ev: string, cb: (raw: unknown) => void) => (() => void) | void; off?: (ev: string, cb: (raw: unknown) => void) => void } };
+      }
+    ).ztools?.events;
+    if (!events?.on) return;
+    const handler = (raw: unknown) => {
+      const normalized = normalizeFileInput(raw);
+      if (normalized.paths.length > 0) {
+        void handleExternalInputRef.current(normalized);
+      }
+    };
+    const off = events.on("plugin_files_dropped", handler);
+    return () => {
+      if (typeof off === "function") off();
+      else events.off?.("plugin_files_dropped", handler);
+    };
+  }, []);
+
+  const importInputProps = createImportInputProps(
+    (input) => {
+      void handleExternalInput(input);
+    },
+    {
+      dropTitle: t("dropTitle"),
+      dropSubtitle: t("dropSubtitle")
+    }
+  );
 
   if (!isRealElectronHost()) {
     return List({
-      searchBarPlaceholder: "输入「旧词->新词」替换，或输入前缀 / 后缀",
+      searchBarPlaceholder: t("searchPlaceholderShort"),
       children: [
         List.Section({
-          title: "批量重命名",
+          title: t("sectionBatchRename"),
           children: [
             List.Item({
               id: "batch-rename-client-required",
-              title: NOT_IN_CLIENT_MESSAGE,
-              subtitle: "读取和重命名本机文件由 ZTools 客户端完成",
+              title: t("notInClient"),
+              subtitle: t("clientRequiredSub"),
               icon: Icon.Info
             })
           ]
@@ -179,9 +481,6 @@ export function BatchRenameCommand() {
       ]
     });
   }
-
-  const currentDir = listing?.directory || "";
-  const managerName = fileManagerName(currentDir);
 
   const trimmedQuery = searchText.trim();
   const buildActiveRule = (): RenameRule => {
@@ -195,7 +494,6 @@ export function BatchRenameCommand() {
     }
     switch (ruleType) {
       case "prefix":
-        // 没输入前缀时不改名，不用内置示例值
         return { type: "prefix", prefix: trimmedQuery };
       case "date_prefix":
         return { type: "date_prefix" };
@@ -226,14 +524,33 @@ export function BatchRenameCommand() {
       ? ""
       : trimmedQuery.normalize("NFC").toLowerCase();
 
-  const computePreview = (source: DirectoryFilesResult | null): RenamePreviewItem[] => {
-    if (!source) return [];
-    const visible = source.files.filter((file) => !filterKeyword || file.name.normalize("NFC").toLowerCase().includes(filterKeyword));
-    return buildRenamePreview(visible, activeRule, source.occupiedNames);
+  const buildOccupiedMap = (states: ReadonlyMap<string, DirectoryStateInfo>): Map<string, readonly string[]> => {
+    const map = new Map<string, readonly string[]>();
+    for (const [k, info] of states) {
+      map.set(k, info.occupiedNames);
+    }
+    return map;
   };
 
-  const checkedSet = new Set(checkedPaths);
-  const previewItems = computePreview(listing).map((item) => ({ ...item, isChecked: checkedSet.has(item.fullPath) }));
+  const computePreview = (
+    sourceFiles: readonly RealFileEntry[],
+    states: ReadonlyMap<string, DirectoryStateInfo>
+  ): RenamePreviewItem[] => {
+    const visible = sourceFiles.filter(
+      (file) => !filterKeyword || file.name.normalize("NFC").toLowerCase().includes(filterKeyword)
+    );
+    return buildRenamePreview(visible, activeRule, buildOccupiedMap(states));
+  };
+
+  const checkedKeySet = new Set(checkedPaths.map(pathKey));
+  const previewItems = computePreview(files, dirStates).map((item) => {
+    const dirInfo = dirStates.get(pathKey(item.parentDir));
+    return {
+      ...item,
+      isChecked: checkedKeySet.has(pathKey(item.fullPath)),
+      writeAuthorized: dirInfo?.writeAuthorized === true
+    };
+  });
 
   const selectedItems = previewItems.filter((item) => item.isChecked);
   const runnableSelected = selectedItems.filter((item) => item.changed && !item.conflict);
@@ -241,126 +558,325 @@ export function BatchRenameCommand() {
   const conflictCount = previewItems.filter((item) => item.conflict).length;
 
   const toggleFileCheck = (fullPath: string) => {
+    const targetKey = pathKey(fullPath);
     setCheckedPaths((prev) =>
-      prev.includes(fullPath) ? prev.filter((p) => p !== fullPath) : [...prev, fullPath]
+      prev.some((p) => pathKey(p) === targetKey)
+        ? prev.filter((p) => pathKey(p) !== targetKey)
+        : [...prev, fullPath]
     );
   };
 
   const toggleAllVisible = () => {
     const visiblePaths = previewItems.map((item) => item.fullPath);
-    const allChecked = visiblePaths.length > 0 && visiblePaths.every((p) => checkedSet.has(p));
+    const visibleKeys = new Set(visiblePaths.map(pathKey));
+    const allChecked = visiblePaths.length > 0 && visiblePaths.every((p) => checkedKeySet.has(pathKey(p)));
     if (allChecked) {
-      const removeSet = new Set(visiblePaths);
-      setCheckedPaths((prev) => prev.filter((p) => !removeSet.has(p)));
+      setCheckedPaths((prev) => prev.filter((p) => !visibleKeys.has(pathKey(p))));
     } else {
-      setCheckedPaths((prev) => Array.from(new Set([...prev, ...visiblePaths])));
+      setCheckedPaths((prev) => {
+        const existing = new Set(prev.map(pathKey));
+        const added = visiblePaths.filter((p) => !existing.has(pathKey(p)));
+        return [...prev, ...added];
+      });
     }
+  };
+
+  const removeFileFromList = (targetPath: string) => {
+    if (busyRef.current) {
+      toast("failure", t("removeBusy"));
+      return;
+    }
+    const targetKey = pathKey(targetPath);
+    const nextFiles = filesRef.current.filter((f) => pathKey(f.fullPath) !== targetKey);
+    const remainingDirKeys = new Set(nextFiles.map((f) => pathKey(f.parentDir)));
+    const nextDirStates = new Map<string, DirectoryStateInfo>();
+    for (const [k, state] of dirStatesRef.current) {
+      if (remainingDirKeys.has(k)) nextDirStates.set(k, state);
+    }
+    filesRef.current = nextFiles;
+    setFiles(nextFiles);
+    setCheckedPaths((prev) => prev.filter((p) => pathKey(p) !== targetKey));
+    syncDirStates(nextDirStates, nextFiles);
+  };
+
+  const clearAllFiles = () => {
+    if (busyRef.current) {
+      toast("failure", t("clearBusy"));
+      return;
+    }
+    importSeqRef.current += 1;
+    importAbortRef.current?.abort();
+    importAbortRef.current = null;
+    setIsLoading(false);
+    setImportProgress(null);
+    setImportTruncated(false);
+    filesRef.current = [];
+    setFiles([]);
+    setCheckedPaths([]);
+    setUndoStack([]);
+    syncDirStates(new Map(), []);
   };
 
   /**
-   * 通过系统选目录对话框取得 dir 的读写授权。用户选了别的文件夹时切换过去并让用户先确认预览，不直接执行
+   * 为指定目录通过系统选目录对话框请求读写授权，校验路径必须精确匹配 pathKey(picked) === pathKey(dir)
    */
-  const ensureFolderAccess = async (dir: string, title: string): Promise<boolean> => {
-    const access = await requestFolderAccess(dir, title);
-    if (access.error) {
-      toast("failure", "无法取得文件夹授权", access.error);
-      return false;
+  const authorizeDirectoryForWrite = async (
+    dir: string,
+    title: string,
+    workingStates: Map<string, DirectoryStateInfo>
+  ): Promise<{ ok: boolean; reason?: string; state?: DirectoryStateInfo }> => {
+    const dirKey = pathKey(dir);
+    const existing = workingStates.get(dirKey);
+    if (existing?.writeAuthorized === true) {
+      return { ok: true, state: existing };
     }
-    if (access.canceled || !access.folderPath) {
-      toast("failure", "已取消授权，未执行任何改动");
-      return false;
+    const picked = await pickFolder(transport, { title, defaultPath: dir });
+    if (!mountedRef.current) return { ok: false, reason: t("windowClosed") };
+    if (picked.error) return { ok: false, reason: picked.error };
+    if (picked.canceled || !picked.folderPath) return { ok: false, reason: t("authCanceled") };
+    if (pathKey(picked.folderPath) !== dirKey) {
+      return {
+        ok: false,
+        reason: t("authFolderMismatch", { picked: baseNameOf(picked.folderPath), expected: baseNameOf(dir) })
+      };
     }
-    if (!isSameOrParentDir(access.folderPath, dir)) {
-      setCustomDir(access.folderPath);
-      setSourceScope("custom");
-      toast("failure", `已切换到「${baseNameOf(access.folderPath)}」`, "所选文件夹与当前目录不同，请确认新预览后再执行");
-      return false;
+    const inspected = await inspectDirectoryState(dir);
+    if (!mountedRef.current) return { ok: false, reason: t("windowClosed") };
+    workingStates.set(dirKey, inspected);
+    syncDirStates(new Map(workingStates), filesRef.current);
+    if (inspected.hostOutdated) {
+      return { ok: false, reason: hostUpgradeError(t("batchRenameFeature")).message, state: inspected };
     }
-    return true;
+    if (!inspected.writeAuthorized) {
+      return {
+        ok: false,
+        reason: inspected.error ? friendlyFileError(inspected.error) : t("authWriteFailed"),
+        state: inspected
+      };
+    }
+    return { ok: true, state: inspected };
+  };
+
+  /** 将改名或还原成功的结果精确同步到当前内存列表与目录占用名（只更新仍在列表里的条目） */
+  const applyRenameResultsToState = async (
+    mappings: ReadonlyArray<{ oldPath: string; newPath: string; oldName: string; newName: string }>,
+    workingStates: Map<string, DirectoryStateInfo>
+  ) => {
+    if (mappings.length === 0 || !mountedRef.current) return;
+    const byOldKey = new Map(mappings.map((m) => [pathKey(m.oldPath), m]));
+
+    const nextFiles = filesRef.current.map((f) => {
+      const hit = byOldKey.get(pathKey(f.fullPath));
+      if (!hit) return f;
+      const dot = hit.newName.lastIndexOf(".");
+      return {
+        ...f,
+        name: hit.newName,
+        fullPath: hit.newPath,
+        extension: dot > 0 ? hit.newName.slice(dot).toLowerCase() : ""
+      };
+    });
+    filesRef.current = nextFiles;
+    setFiles(nextFiles);
+
+    setCheckedPaths((prev) =>
+      prev.map((p) => {
+        const hit = byOldKey.get(pathKey(p));
+        return hit ? hit.newPath : p;
+      })
+    );
+
+    const touchedDirs = new Map<string, string>();
+    for (const m of mappings) {
+      const dir = parentDirOf(m.oldPath);
+      const k = pathKey(dir);
+      const prevState = workingStates.get(k);
+      if (prevState) {
+        workingStates.set(k, {
+          ...prevState,
+          occupiedNames: replaceNameInOccupied(prevState.occupiedNames, m.oldName, m.newName)
+        });
+      }
+      if (k && dir && !touchedDirs.has(k)) touchedDirs.set(k, dir);
+    }
+
+    for (const [dirKey, dirPath] of touchedDirs) {
+      const refreshed = await inspectDirectoryState(dirPath);
+      if (!mountedRef.current) return;
+      if (!refreshed.error) {
+        workingStates.set(dirKey, refreshed);
+      }
+    }
+    syncDirStates(new Map(workingStates), filesRef.current);
   };
 
   const runRename = async (targets: RenamePreviewItem[], mode: "batch" | "single") => {
-    if (busyRef.current) return;
+    if (busyRef.current) return
     if (targets.length === 0) {
-      toast("failure", conflictCount > 0 ? "没有可执行的改名：存在同名冲突" : "没有需要改名的已勾选文件");
+      toast(
+        "failure",
+        filesRef.current.length === 0
+          ? t("noFilesAdded")
+          : conflictCount > 0
+            ? t("noRunnableConflict")
+            : t("noCheckedNeedRename")
+      );
       return;
     }
+
     busyRef.current = true;
+    setIsProcessing(true);
     setIsLoading(true);
+
     try {
-      const startListing = listingRef.current;
-      if (startListing?.hostOutdated) {
-        toast("failure", "无法改名", hostUpgradeError("批量改名").message);
+      const workingStates = new Map(dirStatesRef.current);
+      const anyHostOutdated = Array.from(workingStates.values()).some((s) => s.hostOutdated);
+      if (anyHostOutdated) {
+        toast("failure", t("cannotRenameTitle"), hostUpgradeError(t("batchRenameFeature")).message);
         return;
       }
-      // 批量改名会一次改动多个文件，先确认；单条改名是用户在动作面板里明确选的，不再追问
+
       if (mode === "batch") {
-        const sample = targets[0];
+        const sample = targets[0]!;
         const confirmed = await confirmAlert({
-          title: `重命名 ${targets.length} 个文件？`,
-          message: `例如：${sample.name} -> ${sample.newName}\n不会覆盖已有文件，本次打开期间可在动作面板撤销。`,
-          primaryAction: { title: "重命名" },
-          dismissAction: { title: "取消" }
+          title: t("confirmBatchTitle", { count: targets.length }),
+          message: t("confirmBatchMsg", { oldName: sample.name, newName: sample.newName }),
+          primaryAction: { title: t("confirmRenameAction") },
+          dismissAction: { title: t("cancelAction") }
         });
-        if (!confirmed) return;
+        if (!confirmed || !mountedRef.current) return;
       }
-      let plan = targets;
-      if (!startListing?.authorized) {
-        const dir = startListing?.directory || targets[0].parentDir;
-        const granted = await ensureFolderAccess(dir, `授权批量重命名「${baseNameOf(dir)}」中的文件`);
-        if (!granted) return;
-        // 授权后读取完整目录并按同样的规则重算；与用户看到的预览不一致时先让用户确认
-        const fresh = await loadDirectory(dir);
-        if (!fresh || !fresh.authorized) {
-          toast("failure", "授权后仍无法读取该文件夹", fresh?.error);
-          return;
-        }
-        const freshByPath = new Map(computePreview(fresh).map((i) => [i.fullPath, i]));
-        const recomputed = targets.map((t) => freshByPath.get(t.fullPath));
-        if (recomputed.some((i) => !i || !i.changed || i.conflict) || renamePlanKey(recomputed as RenamePreviewItem[]) !== renamePlanKey(targets)) {
-          toast("failure", "已读取完整文件清单，预览有变化", "请确认新的预览后再次执行");
-          return;
-        }
-        plan = recomputed as RenamePreviewItem[];
+
+      // 按 parentDir 分组收集尚无写授权的目录，逐个请求写授权并校验选中的正是该目录
+      const targetDirs = new Map<string, string>();
+      for (const item of targets) {
+        const k = pathKey(item.parentDir);
+        if (k && !targetDirs.has(k)) targetDirs.set(k, item.parentDir);
       }
+
+      const unauthorizedDirs = new Map<string, string>();
+      for (const [dirKey, dir] of targetDirs) {
+        const current = workingStates.get(dirKey);
+        if (current?.writeAuthorized === true) continue;
+        const authRes = await authorizeDirectoryForWrite(
+          dir,
+          t("authDirTitle", { name: baseNameOf(dir) }),
+          workingStates
+        );
+        if (!mountedRef.current) return;
+        if (!authRes.ok) {
+          unauthorizedDirs.set(dirKey, authRes.reason || t("authNotObtained"));
+        }
+      }
+
+      // 若全部目录均未取得写授权，不执行任何改名并如实提示
+      if (unauthorizedDirs.size === targetDirs.size) {
+        const reasons = Array.from(unauthorizedDirs.values());
+        if (reasons.every((r) => r === t("authCanceled"))) {
+          toast("failure", t("authCanceledNoChanges"));
+        } else {
+          toast("failure", t("authMissingTitle"), t("authMissingMsg", { reason: reasons[0] }));
+        }
+        return;
+      }
+
+      // 已授权目录读到了完整 occupiedNames，复核一次冲突（防止单文件只读预览期间未察觉同目录已有同名文件）
+      const recomputed = computePreview(filesRef.current, workingStates);
+      const freshByPath = new Map(recomputed.map((item) => [pathKey(item.fullPath), item]));
 
       const history: RenameUndoEntry[] = [];
       const failures: Array<{ name: string; error: string }> = [];
-      for (let i = 0; i < plan.length; i++) {
-        const item = plan[i];
-        const res = await executeRealFileRename(item.fullPath, item.newName);
-        if (res.ok && res.destinationPath) {
-          history.push({ oldPath: item.fullPath, newPath: res.destinationPath, oldName: item.name, newName: item.newName });
+      const skippedUnauthorized: Array<{ name: string; error: string }> = [];
+      const expiredDirKeys = new Set<string>();
+
+      for (const item of targets) {
+        const dirKey = pathKey(item.parentDir);
+        if (unauthorizedDirs.has(dirKey)) {
+          skippedUnauthorized.push({
+            name: item.name,
+            error: t("skippedUnauthorizedMsg", { reason: unauthorizedDirs.get(dirKey) })
+          });
           continue;
         }
-        failures.push({ name: item.name, error: res.error || "改名失败" });
+        if (expiredDirKeys.has(dirKey)) {
+          failures.push({ name: item.name, error: t("skippedExpiredAuth") });
+          continue;
+        }
+        const fresh = freshByPath.get(pathKey(item.fullPath));
+        if (!fresh || !fresh.changed) {
+          failures.push({ name: item.name, error: t("skippedNoChangeOrMissing") });
+          continue;
+        }
+        if (fresh.conflict) {
+          failures.push({
+            name: item.name,
+            error: t("skippedConflict", { reason: conflictReasonText(fresh.conflictReason), newName: fresh.newName })
+          });
+          continue;
+        }
+
+        const res = await executeRealFileRename(item.fullPath, fresh.newName);
+        if (res.ok && res.destinationPath) {
+          history.push({
+            oldPath: item.fullPath,
+            newPath: res.destinationPath,
+            oldName: item.name,
+            newName: fresh.newName
+          });
+          continue;
+        }
+
+        const friendly = friendlyFileError(resolveErrorMessage(res, t("renameFailedDefault")));
+        failures.push({ name: item.name, error: friendly });
         if (isPermissionError(res.error)) {
-          // 授权失效（超时）时后续必然全部失败，停止并如实报告
-          for (const rest of plan.slice(i + 1)) failures.push({ name: rest.name, error: "未执行（文件夹授权已失效）" });
-          break;
+          expiredDirKeys.add(dirKey);
+          const prev = workingStates.get(dirKey);
+          if (prev) {
+            workingStates.set(dirKey, { ...prev, writeAuthorized: false });
+          }
         }
       }
 
-      if (history.length > 0) setUndoStack(history);
-      const total = plan.length;
-      if (failures.length === 0) {
+      if (history.length > 0) {
+        setUndoStack(history);
+      }
+      await applyRenameResultsToState(history, workingStates);
+      if (!mountedRef.current) return;
+
+      const allIssues = [...failures, ...skippedUnauthorized];
+      const total = targets.length;
+      if (allIssues.length === 0) {
         toast(
           "success",
-          mode === "single" ? `已将 ${plan[0].name} 改名为 ${plan[0].newName}` : `已重命名 ${history.length} 个文件`,
-          "可在动作面板撤销"
+          mode === "single"
+            ? t("renameSingleSuccess", { oldName: targets[0]!.name, newName: history[0]!.newName })
+            : t("renameBatchSuccess", { count: history.length }),
+          t("undoHint")
         );
-      } else {
-        const first = failures[0];
+      } else if (history.length === 0) {
+        const first = allIssues[0]!;
         toast(
           "failure",
-          history.length > 0 ? `已重命名 ${history.length}/${total} 个，${failures.length} 个失败` : `重命名失败（0/${total}）`,
-          `${first.name}：${first.error}` + (history.length > 0 ? " · 成功的部分可在动作面板撤销" : "")
+          skippedUnauthorized.length > 0 && failures.length === 0
+            ? t("renameNoneExecuted", { total })
+            : t("renameAllFailed", { total }),
+          `${first.name}: ${first.error}`
+        );
+      } else {
+        const first = allIssues[0]!;
+        const issueNoun = skippedUnauthorized.length === 0 ? t("issueFailed") : t("issueIncomplete");
+        toast(
+          "failure",
+          t("renamePartialTitle", { ok: history.length, total, fail: allIssues.length, noun: issueNoun }),
+          t("renamePartialMsg", { name: first.name, error: first.error })
         );
       }
-      await reloadCurrent();
     } finally {
       busyRef.current = false;
-      setIsLoading(false);
+      if (mountedRef.current) {
+        setIsProcessing(false);
+        setIsLoading(false);
+      }
     }
   };
 
@@ -369,117 +885,204 @@ export function BatchRenameCommand() {
   const handleUndoLastBatch = async () => {
     if (busyRef.current) return;
     if (undoStack.length === 0) {
-      toast("failure", "当前没有可撤销的重命名");
+      toast("failure", t("noUndoAvailable"));
       return;
     }
     busyRef.current = true;
+    setIsProcessing(true);
     setIsLoading(true);
     try {
-      let res = await undoBatchRenameHistory(undoStack);
-      if (res.restoredCount === 0 && res.failed.some((f) => isPermissionError(f.error))) {
-        const dir = listingRef.current?.directory || "";
-        if (await ensureFolderAccess(dir, `授权撤销「${baseNameOf(dir)}」中的重命名`)) {
-          res = await undoBatchRenameHistory(undoStack);
+      const workingStates = new Map(dirStatesRef.current);
+      let pending = [...undoStack];
+      let res = await undoBatchRenameHistory(pending);
+
+      // 若因授权失效失败，按目录逐个补授权后再重试尚未还原的部分
+      if (res.failed.some((f) => isPermissionError(f.error))) {
+        const retryEntries: RenameUndoEntry[] = [];
+        const stillUnauthorized: Array<{ entry: RenameUndoEntry; error: string }> = [];
+        const failedDirCache = new Map<string, string>();
+
+        for (const item of res.failed) {
+          if (!isPermissionError(item.error)) {
+            stillUnauthorized.push(item);
+            continue;
+          }
+          const dir = parentDirOf(item.entry.newPath);
+          const dirKey = pathKey(dir);
+          if (!failedDirCache.has(dirKey)) {
+            const authRes = await authorizeDirectoryForWrite(
+              dir,
+              t("undoAuthDirTitle", { name: baseNameOf(dir) }),
+              workingStates
+            );
+            if (!mountedRef.current) return;
+            failedDirCache.set(dirKey, authRes.ok ? "" : authRes.reason || t("undoAuthMissing"));
+          }
+          const reason = failedDirCache.get(dirKey);
+          if (reason) {
+            stillUnauthorized.push({ entry: item.entry, error: reason });
+          } else {
+            retryEntries.push(item.entry);
+          }
+        }
+
+        if (retryEntries.length > 0) {
+          const retryOrdered = pending.filter((p) => retryEntries.some((r) => pathKey(r.newPath) === pathKey(p.newPath)));
+          const second = await undoBatchRenameHistory(retryOrdered);
+          res = {
+            ok: second.ok && stillUnauthorized.length === 0,
+            restoredCount: res.restoredCount + second.restoredCount,
+            failed: [...stillUnauthorized, ...second.failed]
+          };
+        } else {
+          res = { ...res, failed: stillUnauthorized };
         }
       }
-      setUndoStack(res.failed.map((f) => f.entry).reverse());
+
+      if (!mountedRef.current) return;
+      const failedKeys = new Set(res.failed.map((f) => pathKey(f.entry.newPath)));
+      const restoredEntries = pending.filter((entry) => !failedKeys.has(pathKey(entry.newPath)));
+
+      await applyRenameResultsToState(
+        restoredEntries.map((e) => ({
+          oldPath: e.newPath,
+          newPath: e.oldPath,
+          oldName: e.newName,
+          newName: e.oldName
+        })),
+        workingStates
+      );
+      if (!mountedRef.current) return;
+
+      setUndoStack(res.failed.map((f) => f.entry));
       if (res.failed.length === 0) {
-        toast("success", `已撤销 ${res.restoredCount} 个文件的重命名`);
+        toast("success", t("undoSuccessTitle", { count: res.restoredCount }));
       } else {
-        const first = res.failed[0];
+        const first = res.failed[0]!;
         toast(
           "failure",
-          `已撤销 ${res.restoredCount} 个，${res.failed.length} 个未能还原`,
-          `${first.entry.newName}：${first.error}`
+          t("undoPartialTitle", { ok: res.restoredCount, fail: res.failed.length }),
+          `${first.entry.newName}: ${friendlyFileError(first.error)}`
         );
       }
-      await reloadCurrent();
     } finally {
       busyRef.current = false;
-      setIsLoading(false);
+      if (mountedRef.current) {
+        setIsProcessing(false);
+        setIsLoading(false);
+      }
     }
   };
 
   const revealInFileManager = async (fullPath: string) => {
+    const manager = fileManagerName(fullPath);
     let res = await openRenameFileLocation(fullPath);
     if (!res.ok && isPermissionError(res.error)) {
-      const dir = listingRef.current?.directory || "";
-      if (!(await ensureFolderAccess(dir, `授权访问「${baseNameOf(dir)}」以在${managerName}中显示文件`))) return;
-      void reloadCurrent();
+      const dir = parentDirOf(fullPath);
+      const workingStates = new Map(dirStatesRef.current);
+      const authRes = await authorizeDirectoryForWrite(
+        dir,
+        t("revealAuthTitle", { name: baseNameOf(dir), manager }),
+        workingStates
+      );
+      if (!mountedRef.current) return;
+      if (!authRes.ok) {
+        toast("failure", t("revealFailedTitle", { manager }), authRes.reason);
+        return;
+      }
       res = await openRenameFileLocation(fullPath);
     }
-    if (!res.ok) toast("failure", `无法在${managerName}中显示`, res.error);
+    if (!res.ok) {
+      toast("failure", t("revealFailedTitle", { manager }), friendlyFileError(res.error));
+    }
   };
 
-  const pickFolder = async () => {
-    const access = await requestFolderAccess(currentDir, "选择要批量重命名的文件夹");
-    if (access.error) {
-      toast("failure", "无法打开选择文件夹对话框", access.error);
-      return;
-    }
-    if (access.canceled || !access.folderPath) return;
-    if (sourceScope === "custom" && access.folderPath === customDir) {
-      void loadDirectory(access.folderPath);
-      return;
-    }
-    setCustomDir(access.folderPath);
-    setSourceScope("custom");
-  };
+  const activePresetMeta = rulePresets.find((r) => r.id === ruleType) || rulePresets[0]!;
+  const cleanActiveRuleLabel = trimmedQuery.includes("->") ? t("ruleFindReplace") : activePresetMeta.label;
 
-  const activePresetMeta =
-    RENAME_RULE_PRESETS.find((r) => r.id === ruleType) || RENAME_RULE_PRESETS[0];
-  const cleanActiveRuleLabel = trimmedQuery.includes("->") ? "查找替换" : stripLeadingEmoji(activePresetMeta.label);
+  const uniqueDirs = Array.from(new Set(files.map((f) => f.parentDir).filter(Boolean)));
+  const readOnlyDirCount = Array.from(new Set(files.map((f) => pathKey(f.parentDir)).filter(Boolean))).filter(
+    (k) => dirStates.get(k)?.writeAuthorized !== true
+  ).length;
+  const hasHostOutdated = Array.from(dirStates.values()).some((s) => s.hostOutdated);
 
-  const loadFailed = Boolean(listing && listing.files.length === 0 && listing.error);
-  // 完整路径在右栏标题里；状态条只放目录名，避免长路径把规则、待改名数、冲突数挤出可视区
-  const summaryParts: string[] = [`目录: ${currentDir ? baseNameOf(currentDir) : "读取中"}`];
-  if (loadFailed) {
-    summaryParts.push("目录不存在、为空或无权限读取");
-  } else {
-    summaryParts.push(`规则: ${cleanActiveRuleLabel}`, `待改名 ${changedSelectedCount} 项`);
+  let summaryText = t("summaryEmpty");
+  if (importProgress) {
+    summaryText = t("summaryImporting", { dirs: importProgress.visitedDirs, files: importProgress.matchedFiles });
+  } else if (files.length > 0) {
+    const summaryParts: string[] = [
+      uniqueDirs.length === 1
+        ? t("summarySingleDir", { name: baseNameOf(uniqueDirs[0]!) })
+        : t("summaryMultiDir", { files: files.length, dirs: uniqueDirs.length }),
+      t("summaryRule", { label: cleanActiveRuleLabel }),
+      t("summaryPending", { count: changedSelectedCount })
+    ];
     if (!trimmedQuery && (ruleType === "prefix" || ruleType === "suffix")) {
-      summaryParts.push(ruleType === "prefix" ? "在搜索框输入前缀" : "在搜索框输入后缀");
+      summaryParts.push(ruleType === "prefix" ? t("summaryHintPrefix") : t("summaryHintSuffix"));
     }
-    if (conflictCount > 0) summaryParts.push(`${conflictCount} 项同名冲突（不会执行）`);
-    if (undoStack.length > 0) summaryParts.push(`可撤销 ${undoStack.length} 项`);
-    if (listing && listing.truncated) summaryParts.push(`仅显示前 ${MAX_RENAME_FILES} 个（共 ${listing.totalFiles} 个）`);
-    if (listing?.hostOutdated && isRealElectronHost()) {
-      summaryParts.push("改名需要新版 ZTools");
-    } else if (listing && !listing.authorized && listing.files.length > 0 && isRealElectronHost()) {
-      summaryParts.push(listing.partial ? "预览可能不完整，执行时需授权文件夹" : "执行时需授权文件夹");
+    if (conflictCount > 0) summaryParts.push(t("summaryConflict", { count: conflictCount }));
+    if (undoStack.length > 0) summaryParts.push(t("summaryUndoable", { count: undoStack.length }));
+    if (importTruncated) summaryParts.push(t("summaryTruncated", { max: MAX_RENAME_FILES }));
+    if (hasHostOutdated) {
+      summaryParts.push(t("summaryHostOutdated"));
+    } else if (readOnlyDirCount > 0) {
+      summaryParts.push(
+        readOnlyDirCount === 1
+          ? t("summaryReadOnlySingle")
+          : t("summaryReadOnlyMulti", { count: readOnlyDirCount })
+      );
     }
+    summaryParts.push(t("summaryClearShortcut"));
+    summaryText = summaryParts.join(" · ");
   }
-  const summaryText = summaryParts.join(" · ");
 
-  const maxSizeBytes = Math.max(1, ...previewItems.map((f) => f.sizeBytes));
+  const maxSizeBytes = Math.max(1, ...previewItems.map((f) => f.sizeBytes ?? 0));
 
   const undoAction = () =>
     Action({
-      title: `撤销上一次重命名 (${undoStack.length} 项)`,
+      title: t("actionUndo", { count: undoStack.length }),
       icon: Icon.RotateAntiClockwise,
       onAction: handleUndoLastBatch
     });
 
-  const leftNavNodes = RENAME_RULE_PRESETS.map((preset) => {
-    const cleanLabel = stripLeadingEmoji(preset.label);
-    const isActive = ruleType === preset.id;
+  const pickFilesAction = () =>
+    Action({
+      title: t("actionPickFilesEllipsis"),
+      icon: Icon.Document,
+      shortcut: { modifiers: ["ctrl"], key: "o" },
+      onAction: () => {
+        void handlePickFiles();
+      }
+    });
 
+  const pickFolderAction = () =>
+    Action({
+      title: t("actionPickFolderEllipsis"),
+      icon: Icon.Folder,
+      shortcut: { modifiers: ["ctrl", "shift"], key: "o" },
+      onAction: () => {
+        void handlePickFolder();
+      }
+    });
+
+  const leftNavNodes = rulePresets.map((preset) => {
+    const isActive = ruleType === preset.id;
     return List.Item({
       id: `nav-rule-${preset.id}`,
-      title: cleanLabel,
+      title: preset.label,
       subtitle: preset.desc,
       icon: Icon.Pencil,
       onSelect: () => setRuleType(preset.id),
-      accessories: isActive ? [{ tag: { value: "当前生效" } }] : [],
+      accessories: isActive ? [{ tag: { value: t("tagActiveRule") } }] : [],
       actions: ActionPanel({
         children: [
           Action({
-            title: `切换至「${cleanLabel}」规则`,
+            title: t("actionSwitchRule", { label: preset.label }),
             icon: Icon.CheckCircle,
             onAction: () => setRuleType(preset.id)
           }),
           Action({
-            title: `执行批量重命名 (${changedSelectedCount} 项)`,
+            title: t("actionExecuteBatch", { count: changedSelectedCount }),
             icon: Icon.ArrowRight,
             onAction: executeBatchRename
           }),
@@ -489,19 +1092,24 @@ export function BatchRenameCommand() {
     });
   });
 
+  const allChecked = previewItems.length > 0 && previewItems.every((f) => f.isChecked);
+  const someChecked = previewItems.some((f) => f.isChecked);
+
   const subListItems = previewItems.map((item) => {
-    const ratio = Math.min(1, item.sizeBytes / maxSizeBytes);
+    const sizeKnown = item.sizeBytes !== null;
+    const ratio = sizeKnown ? Math.min(1, item.sizeBytes! / maxSizeBytes) : 0;
     const statusLabel = item.conflict
-      ? "同名冲突"
+      ? t("statusConflict")
       : item.changed
-        ? "待改名"
-        : "保持不变";
+        ? t("statusPending")
+        : t("statusUnchanged");
+    const manager = fileManagerName(item.fullPath);
 
     return List.Item({
       id: `rename-item-${item.fullPath}`,
       title: item.name,
       subtitle: item.conflict
-        ? `-> ${item.newName} (${conflictReasonText(item.conflictReason)}，不会执行)`
+        ? t("itemConflictSub", { newName: item.newName, reason: conflictReasonText(item.conflictReason) })
         : `-> ${item.newName}`,
       icon: Icon.Document,
       checkable: true,
@@ -516,90 +1124,120 @@ export function BatchRenameCommand() {
             color: item.conflict ? "red" : undefined
           }
         },
-        { text: formatBytes(item.sizeBytes) }
+        {
+          tag: {
+            value: item.writeAuthorized ? t("tagAuthorized") : t("tagReadOnly")
+          }
+        },
+        { text: sizeKnown ? formatBytes(item.sizeBytes!) : t("sizeUnknown") }
       ],
       actions: ActionPanel({
         children: [
           Action({
-            title: `执行批量重命名 (${changedSelectedCount} 个已选文件)`,
+            title: t("actionExecuteSelected", { count: changedSelectedCount }),
             icon: Icon.CheckCircle,
             onAction: executeBatchRename
           }),
           Action({
-            title: `在${managerName}中显示`,
+            title: t("actionRevealInManager", { manager }),
             icon: Icon.Folder,
             onAction: () => revealInFileManager(item.fullPath)
           }),
           Action({
-            title: "只改名此文件",
+            title: t("actionRenameSingle"),
             icon: Icon.Document,
             onAction: async () => {
               if (!item.changed) {
-                toast("failure", "此文件按当前规则不需要改名");
+                toast("failure", t("msgNoChangeNeeded"));
                 return;
               }
               if (item.conflict) {
-                toast("failure", `无法改名：${conflictReasonText(item.conflictReason)}`, item.newName);
+                toast("failure", t("msgCannotRenameConflict", { reason: conflictReasonText(item.conflictReason) }), item.newName);
                 return;
               }
               await runRename([item], "single");
             }
           }),
-          ...(undoStack.length > 0 ? [undoAction()] : [])
+          ...(undoStack.length > 0 ? [undoAction()] : []),
+          ActionPanel.Section({
+            title: t("sectionList"),
+            children: [
+              ...(!isProcessing
+                ? [
+                    Action({
+                      title: t("actionRemove"),
+                      icon: Icon.Minus,
+                      shortcut: { modifiers: ["ctrl"], key: "backspace" },
+                      onAction: () => removeFileFromList(item.fullPath)
+                    })
+                  ]
+                : []),
+              pickFilesAction(),
+              pickFolderAction(),
+              Action({
+                title: allChecked ? t("actionDeselectAll") : t("actionSelectAll"),
+                icon: Icon.CheckCircle,
+                shortcut: { modifiers: ["ctrl"], key: "a" },
+                onAction: toggleAllVisible
+              }),
+              Action({
+                title: t("actionClearList"),
+                icon: Icon.Trash,
+                style: Action.Style.Destructive,
+                shortcut: { modifiers: ["ctrl", "shift"], key: "backspace" },
+                onAction: clearAllFiles
+              })
+            ]
+          })
         ]
       })
     });
   });
 
-  const allChecked = previewItems.length > 0 && previewItems.every((f) => f.isChecked);
-  const someChecked = previewItems.some((f) => f.isChecked);
-
-  const dropdownScopes = [
-    ...SOURCE_SCOPES,
-    ...(customDir ? [{ id: "custom" as SourceDirScope, label: `所选文件夹 (${baseNameOf(customDir)})` }] : [])
-  ];
-
   return List({
+    ...importInputProps,
     isLoading,
-    searchBarPlaceholder: "输入「旧词->新词」实时替换，或输入前缀/后缀参数、搜索文件名...",
+    searchBarPlaceholder: t("searchPlaceholder"),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
-    searchBarAccessory: List.Dropdown({
-      tooltip: "切换待重命名的文件夹",
-      value: sourceScope,
-      onChange: (val) => setSourceScope(val as SourceDirScope),
-      children: dropdownScopes.map((s) =>
-        List.Dropdown.Item({
-          title: s.label,
-          value: s.id
-        })
-      )
-    }),
     filterBar: {
       summaryText,
       actions: [
         {
-          id: "pick-folder",
-          title: "选择文件夹",
+          id: "pick-files",
+          title: t("btnPickFiles"),
           style: "secondary",
           onAction: () => {
-            void pickFolder();
+            void handlePickFiles();
           }
         },
         {
-          id: "rescan",
-          title: "重新扫描",
+          id: "pick-folder",
+          title: t("btnPickFolder"),
           style: "secondary",
           onAction: () => {
-            void reloadCurrent();
+            void handlePickFolder();
           }
         }
       ]
     },
+    actions: ActionPanel({
+      children: [
+        pickFilesAction(),
+        pickFolderAction(),
+        ...(undoStack.length > 0 ? [undoAction()] : [])
+      ]
+    }),
     subList: {
-      title: `原名 -> 新名实时对比预览 (${previewItems.length} 项 · 待执行 ${changedSelectedCount} 项)`,
-      subtitle: currentDir,
-      emptyText: loadFailed ? "目录不存在、为空或无权限读取" : "当前目录下暂无可重命名文件",
+      title:
+        files.length > 0
+          ? t("subListTitleWithCount", { total: previewItems.length, changed: changedSelectedCount })
+          : t("subListTitleDefault"),
+      subtitle: uniqueDirs.length === 1 ? uniqueDirs[0] : uniqueDirs.length > 1 ? t("subListSubMultiDir", { count: uniqueDirs.length }) : "",
+      emptyText:
+        files.length === 0
+          ? t("emptyNoFiles")
+          : t("emptyNoMatch"),
       checkable: previewItems.length > 0,
       checked: allChecked ? true : someChecked ? "indeterminate" : false,
       onCheckChange: () => toggleAllVisible(),
@@ -607,8 +1245,8 @@ export function BatchRenameCommand() {
     },
     children: [
       List.Section({
-        title: "重命名规则",
-        subtitle: "选中规则后右侧实时预览新文件名",
+        title: t("sectionRulesTitle"),
+        subtitle: t("sectionRulesSubtitle"),
         children: leftNavNodes
       })
     ]

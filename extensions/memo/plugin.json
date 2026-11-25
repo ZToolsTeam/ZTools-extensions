@@ -2,13 +2,14 @@
   "id": "memo",
   "name": "便签",
   "description": "轻量随手记便签，正文支持 Markdown，可加标签，按标题、正文或标签搜索",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "效率工具"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "permissions": [
     "clipboard"
   ],
@@ -34,5 +35,31 @@
     "笔记",
     "备忘"
   ],
-  "minAppVersion": "1.1.8.3"
+  "minAppVersion": "1.1.8.3",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Quick Notes",
+      "description": "Lightweight scratchpad notes with Markdown body support, custom tags, and instant search across titles, content, and tags.",
+      "keywords": [
+        "memo",
+        "note",
+        "notes",
+        "markdown",
+        "scratchpad",
+        "tags"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png",
+          "title": "Main View"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }
