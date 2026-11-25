@@ -5,16 +5,22 @@ import {
   ActionPanel,
   Action,
   Icon,
-  Color,
   showToast,
   Toast,
   Clipboard
 } from "@ztools/declarative-ui";
-import { useState, useEffect, useMemo, useNavigation } from "@ztools/declarative-ui";
+import { useState, useEffect, useMemo, useNavigation, useLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import RmbCommand from "./rmb.js";
-import CurrencyCommand from "./currency.js";
+import CurrencyCommand, { useRates } from "./currency.js";
 export { default as calcRmb } from "./rmb.js";
 export { default as calcCurrency } from "./currency.js";
+import {
+  parseInlineCurrencyQuery,
+  evaluateInlineCurrency,
+  type RateOrigin,
+  type RateSnapshot
+} from "./currency-rates.js";
 import {
   evaluateCalculatorQuery,
   evaluateMathExpression,
@@ -35,30 +41,113 @@ import { usePopoutValue } from "./popout-state.js";
 
 export * from "./calculator-engine.js";
 
-const DEFAULT_CALC_EXAMPLES = [
-  { expr: "1024 * 768", desc: "分辨率像素点四则运算", category: "数学" },
-  { expr: "sqrt(65536)", desc: "平方根函数计算", category: "数学" },
-  { expr: "2 ^ 16", desc: "指数幂运算", category: "数学" },
-  { expr: "sin(pi / 2)", desc: "三角函数与常数", category: "数学" },
-  { expr: "32px to rem", desc: "前端 CSS px 与 rem 极客换算", category: "换算" },
-  { expr: "2.5rem to px", desc: "CSS rem 转像素（基于 16px）", category: "换算" },
-  { expr: "10km to miles", desc: "公制与英制度量衡换算", category: "换算" },
-  { expr: "5kg to lbs", desc: "重量单位千克转磅", category: "换算" },
-  { expr: "100c to f", desc: "摄氏度与华氏度互转", category: "换算" },
-  { expr: "1024mb to gb", desc: "计算机存储容量二进制换算", category: "换算" },
-  { expr: "0xFF to dec", desc: "十六进制转十进制", category: "进制" },
-  { expr: "255 to hex", desc: "十进制转十六进制（0xFF）", category: "进制" },
-  { expr: "255 to bin", desc: "十进制转二进制（0b11111111）", category: "进制" },
-  { expr: "now + 2 weeks", desc: "未来相对日期与时间推算", category: "日期" },
-  { expr: "#3B82F6", desc: "HEX 颜色预览、互转与 WCAG 对比度", category: "色彩" },
-  { expr: "rgb(59, 130, 246)", desc: "RGB 格式色彩即时检测", category: "色彩" }
+type ExampleCategoryKey = "catMath" | "catUnit" | "catRadix" | "catDate" | "catColor" | "catCurrency";
+type ExampleDescKey =
+  | "eg0Desc" | "eg1Desc" | "eg2Desc" | "eg3Desc" | "eg4Desc" | "eg5Desc"
+  | "eg6Desc" | "eg7Desc" | "eg8Desc" | "eg9Desc" | "eg10Desc" | "eg11Desc"
+  | "eg12Desc" | "eg13Desc" | "eg14Desc" | "eg15Desc" | "eg16Desc";
+
+const DEFAULT_CALC_EXAMPLES: ReadonlyArray<{
+  expr: string;
+  descKey: ExampleDescKey;
+  categoryKey: ExampleCategoryKey;
+  isUnit?: boolean;
+}> = [
+  { expr: "1024 * 768", descKey: "eg0Desc", categoryKey: "catMath" },
+  { expr: "sqrt(65536)", descKey: "eg1Desc", categoryKey: "catMath" },
+  { expr: "2 ^ 16", descKey: "eg2Desc", categoryKey: "catMath" },
+  { expr: "sin(pi / 2)", descKey: "eg3Desc", categoryKey: "catMath" },
+  { expr: "32px to rem", descKey: "eg4Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "2.5rem to px", descKey: "eg5Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "10km to miles", descKey: "eg6Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "5kg to lbs", descKey: "eg7Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "100c to f", descKey: "eg8Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "1024mb to gb", descKey: "eg9Desc", categoryKey: "catUnit", isUnit: true },
+  { expr: "0xFF to dec", descKey: "eg10Desc", categoryKey: "catRadix" },
+  { expr: "255 to hex", descKey: "eg11Desc", categoryKey: "catRadix" },
+  { expr: "255 to bin", descKey: "eg12Desc", categoryKey: "catRadix" },
+  { expr: "now + 2 weeks", descKey: "eg13Desc", categoryKey: "catDate" },
+  { expr: "#3B82F6", descKey: "eg14Desc", categoryKey: "catColor" },
+  { expr: "rgb(59, 130, 246)", descKey: "eg15Desc", categoryKey: "catColor" },
+  { expr: "100 usd to cny", descKey: "eg16Desc", categoryKey: "catCurrency" }
 ];
 
-const HISTORY_TYPE_LABELS: Record<string, string> = { math: "计算", unit: "换算", currency: "汇率", date: "日期", color: "色彩" };
+type HistoryTypeKey = "historyTypeMath" | "historyTypeUnit" | "historyTypeCurrency" | "historyTypeDate" | "historyTypeColor";
 
-/** 结果区第一行的 id：填入输入框后选中它；没有结果时返回 undefined（交给渲染器默认选第一项） */
-function getResultItemId(result: CalculatorQueryResult): string | undefined {
-  if (result.type === "none") return undefined;
+const HISTORY_TYPE_KEYS: Record<string, HistoryTypeKey> = {
+  math: "historyTypeMath",
+  unit: "historyTypeUnit",
+  currency: "historyTypeCurrency",
+  date: "historyTypeDate",
+  color: "historyTypeColor"
+};
+
+interface ResolvedCalculatorResult extends CalculatorQueryResult {
+  readonly loadingCurrency?: boolean;
+}
+
+/** 融合本地同步计算与按需实时汇率结果；无真实汇率时绝不返回估算值 */
+function resolveQueryWithCurrency(
+  input: string,
+  snapshot: RateSnapshot | null,
+  origin: RateOrigin,
+  loading: boolean,
+  rateError: string,
+  locale?: string
+): ResolvedCalculatorResult {
+  const syncResult = evaluateCalculatorQuery(input, { locale });
+  if (syncResult.type !== "none" && !(syncResult.type === "math" && Boolean(syncResult.error))) {
+    return syncResult;
+  }
+  const inlineCurrency = parseInlineCurrencyQuery(input);
+  if (!inlineCurrency) {
+    return syncResult;
+  }
+  if (inlineCurrency.kind === "error") {
+    return {
+      type: "currency",
+      expression: inlineCurrency.expression,
+      formattedAnswer: "",
+      error: inlineCurrency.message
+    };
+  }
+  if (!snapshot) {
+    if (rateError) {
+      return {
+        type: "currency",
+        expression: inlineCurrency.expression,
+        formattedAnswer: "",
+        error: t("currencyNoEstimateError", { error: rateError })
+      };
+    }
+    return {
+      type: "currency",
+      expression: inlineCurrency.expression,
+      formattedAnswer: "",
+      loadingCurrency: loading || true
+    };
+  }
+  const evaluated = evaluateInlineCurrency(inlineCurrency, snapshot, origin);
+  if (evaluated.error) {
+    return {
+      type: "currency",
+      expression: inlineCurrency.expression,
+      formattedAnswer: "",
+      error: evaluated.error
+    };
+  }
+  return {
+    type: "currency",
+    expression: inlineCurrency.expression,
+    formattedAnswer: evaluated.formattedAnswer,
+    fillText: evaluated.fillText,
+    details: evaluated.details
+  };
+}
+
+/** 结果区第一行的 id：填入输入框后选中它；没有稳定结果时返回 undefined */
+function getResultItemId(result: ResolvedCalculatorResult): string | undefined {
+  if (result.type === "none" || result.loadingCurrency) return undefined;
   if (result.type === "color" && result.colorResult) return "color-hex";
   return result.error ? "calc-error" : "calc-success";
 }
@@ -89,10 +178,11 @@ export function calcUnit() {
 }
 
 export default function CalculatorCommand(props?: CalculatorProps) {
+  const locale = useLocale();
   const unitOnly = props?.unitOnly === true;
   const examples = DEFAULT_CALC_EXAMPLES
     .map((eg, idx) => ({ ...eg, idx }))
-    .filter(eg => !unitOnly || eg.category === "换算");
+    .filter((eg) => !unitOnly || eg.isUnit === true);
   const { push } = useNavigation();
   // 当前算式与历史随独立窗口带走：新窗口首帧就能显示，不闪空列表
   const [searchText, setSearchText] = usePopoutValue("searchText", () => "", isText);
@@ -100,18 +190,51 @@ export default function CalculatorCommand(props?: CalculatorProps) {
   const [selectedItemId, setSelectedItemId] = useState<string | undefined>(undefined);
   const [history, setHistory] = usePopoutValue<CalculatorHistoryItem[]>("history", () => [], isHistory);
 
+  // 仅当用户输入匹配汇率换算算式时才按需加载实时汇率；普通四则运算与单位换算零网络开销
+  const inlineCurrencyCandidate = useMemo(() => {
+    const sync = evaluateCalculatorQuery(searchText, { locale });
+    if (sync.type === "none" || (sync.type === "math" && Boolean(sync.error))) {
+      return parseInlineCurrencyQuery(searchText);
+    }
+    return null;
+  }, [searchText, locale]);
+
+  const {
+    snapshot: rateSnapshot,
+    origin: rateOrigin,
+    rateError,
+    loading: rateLoading,
+    loadRates
+  } = useRates({
+    enabled: inlineCurrencyCandidate?.kind === "convert",
+    silentToast: true
+  });
+
   // 历史以插件存储为准：带来的那份只用于首帧，读到存储后覆盖
   useEffect(() => {
     let active = true;
-    void getCalculatorHistory().then(items => { if (active) setHistory(items); }).catch(error => {
-      if (active) void showToast(Toast.Style.Failure, "读取计算历史失败，原数据保留", error instanceof Error ? error.message : String(error));
-    });
-    return () => { active = false; };
+    void getCalculatorHistory()
+      .then((items) => {
+        if (active) setHistory(items);
+      })
+      .catch((error) => {
+        if (active) {
+          void showToast(
+            Toast.Style.Failure,
+            t("historyLoadFailedTitle"),
+            error instanceof Error ? error.message : String(error)
+          );
+        }
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const queryResult: CalculatorQueryResult = useMemo(() => {
-    return evaluateCalculatorQuery(searchText);
-  }, [searchText]);
+  const queryResult: ResolvedCalculatorResult = useMemo(
+    () => resolveQueryWithCurrency(searchText, rateSnapshot, rateOrigin, rateLoading, rateError, locale),
+    [searchText, rateSnapshot, rateOrigin, rateLoading, rateError, locale]
+  );
 
   // 用户在输入框里打字：只更新文字，选中项由渲染器重置到第一项
   const handleSearchTextChange = (text: string) => {
@@ -120,11 +243,17 @@ export default function CalculatorCommand(props?: CalculatorProps) {
   };
 
   // 「填入搜索框」类动作：写回受控输入框，并选中新算出的结果行，按 Enter 即可复制新结果。
-  // 填入的文字算不出结果时（如旧版本存下、现已不支持的历史算式）选中来源条目本身，
-  // 不能交给渲染器默认选第一行，否则 Enter 会作用于不相关的历史项。
+  // 填入的文字当前算不出结果时（如离线状态下的历史汇率项）保留选中来源条目本身，
+  // 避免渲染器默认落到第一条不相关的历史记录。
   const fillSearch = (text: string, sourceItemId?: string) => {
     setSearchText(text);
-    setSelectedItemId(getResultItemId(evaluateCalculatorQuery(text)) ?? sourceItemId);
+    const immediate = resolveQueryWithCurrency(text, rateSnapshot, rateOrigin, rateLoading, rateError, locale);
+    // 若来自历史条目且当前因缺少汇率报错，优先选中来源历史项本身以支持直接回车复制原值
+    if (sourceItemId && immediate.type === "currency" && (immediate.error || immediate.loadingCurrency)) {
+      setSelectedItemId(sourceItemId);
+      return;
+    }
+    setSelectedItemId(getResultItemId(immediate) ?? sourceItemId);
   };
 
   // 修改历史记录：存储读写失败时提示，界面保持原样，不能当作成功
@@ -133,13 +262,13 @@ export default function CalculatorCommand(props?: CalculatorProps) {
       setHistory(await task());
       return true;
     } catch (err: unknown) {
-      await showToast(Toast.Style.Failure, "历史记录保存失败", err instanceof Error ? err.message : String(err));
+      await showToast(Toast.Style.Failure, t("historySaveFailedTitle"), err instanceof Error ? err.message : String(err));
       return false;
     }
   };
 
   const recordCurrentQuery = async () => {
-    if (queryResult.type !== "none" && !queryResult.error) {
+    if (queryResult.type !== "none" && !queryResult.error && !queryResult.loadingCurrency) {
       const type = queryResult.type;
       await updateHistory(() => addCalculatorHistory(queryResult.expression, queryResult.formattedAnswer, type));
     }
@@ -149,13 +278,13 @@ export default function CalculatorCommand(props?: CalculatorProps) {
   // 复制历史项、置顶项或示例时不能把输入框里另一条无关算式顺带写进历史
   const handleCopy = async (text: string, label: string, record = true) => {
     await Clipboard.copy(text);
-    await showToast(Toast.Style.Success, `已复制 ${label}`, text);
+    await showToast(Toast.Style.Success, t("copiedToastTitle", { label }), text);
     if (record) await recordCurrentQuery();
   };
 
   const handlePaste = async (text: string, record = true) => {
     await Clipboard.paste(text);
-    await showToast(Toast.Style.Success, "已发送粘贴请求", text);
+    await showToast(Toast.Style.Success, t("pastedToastTitle"), text);
     if (record) await recordCurrentQuery();
   };
 
@@ -165,30 +294,47 @@ export default function CalculatorCommand(props?: CalculatorProps) {
 
   const handleDeleteHistory = async (id: string) => {
     if (await updateHistory(() => deleteCalculatorHistory(id))) {
-      await showToast(Toast.Style.Success, "已删除历史记录");
+      await showToast(Toast.Style.Success, t("deletedHistoryToast"));
     }
   };
 
   const handleClearHistory = async () => {
     const confirmed = await confirmAlert({
-      title: "清空全部计算历史？",
-      message: `将删除全部 ${history.length} 条记录（含已固定的），且无法恢复。`,
-      primaryAction: { title: "清空", style: "destructive" },
-      dismissAction: { title: "取消" }
+      title: t("clearHistoryConfirmTitle"),
+      message: t("clearHistoryConfirmMessage", { count: history.length }),
+      primaryAction: { title: t("clearHistoryConfirmPrimary"), style: "destructive" },
+      dismissAction: { title: t("cancel") }
     });
     if (!confirmed) return;
-    if (await updateHistory(async () => { await clearCalculatorHistory(); return []; })) {
-      await showToast(Toast.Style.Success, "已清空所有历史计算记录");
+    if (
+      await updateHistory(async () => {
+        await clearCalculatorHistory();
+        return [];
+      })
+    ) {
+      await showToast(Toast.Style.Success, t("clearedHistoryToast"));
     }
   };
 
-  const pinnedItems = history.filter(item => item.pinned);
-  const recentItems = history.filter(item => !item.pinned);
+  const openCurrencyBoard = (initialQuery?: string) => {
+    push(() => CurrencyCommand(initialQuery ? { initialQuery } : undefined));
+  };
+
+  const pinnedItems = history.filter((item) => item.pinned);
+  const recentItems = history.filter((item) => !item.pinned);
 
   return (
     <List
-      actions={ActionPanel({}, [Action({ title: "人民币大写…", icon: Icon.Text, onAction: () => push(RmbCommand) }), Action({ title: "汇率换算…", icon: Icon.Globe, onAction: () => push(CurrencyCommand) })])}
-      searchBarPlaceholder={unitOnly ? "输入换算，如 10km to miles、5kg to lbs、100c to f、1024mb to gb" : "输入算式，如 128*1024、32px to rem、0xFF to dec、now + 2 weeks"}
+      isLoading={Boolean(queryResult.loadingCurrency)}
+      actions={ActionPanel({}, [
+        Action({ title: t("actionOpenRmb"), icon: Icon.Text, onAction: () => push(RmbCommand) }),
+        Action({ title: t("actionOpenCurrency"), icon: Icon.Globe, onAction: () => openCurrencyBoard() })
+      ])}
+      searchBarPlaceholder={
+        unitOnly
+          ? t("placeholderUnitOnly")
+          : t("placeholderDefault")
+      }
       searchText={searchText}
       onSearchTextChange={handleSearchTextChange}
       selectedItemId={selectedItemId}
@@ -196,37 +342,40 @@ export default function CalculatorCommand(props?: CalculatorProps) {
     >
       {/* 1. 色彩速查与双向转换 */}
       {queryResult.type === "color" && queryResult.colorResult && (
-        <List.Section title="色彩识别与即时转换">
+        <List.Section title={t("sectionColor")}>
           <List.Item
             id="color-hex"
             title={queryResult.colorResult.hex}
-            subtitle={`HEX 色彩代码 | 对比度 白:${queryResult.colorResult.contrastWhite}:1 黑:${queryResult.colorResult.contrastBlack}:1`}
+            subtitle={t("colorHexSubtitle", {
+              white: queryResult.colorResult.contrastWhite,
+              black: queryResult.colorResult.contrastBlack
+            })}
             icon={Icon.Eye}
             accessories={[{ text: "HEX" }]}
             actions={
-              <ActionPanel title="色彩动作">
+              <ActionPanel title={t("panelColorActions")}>
                 <Action
-                  title="复制 HEX"
+                  title={t("actionCopyHex")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.hex, "HEX")}
                 />
                 <Action
-                  title="复制 RGB"
+                  title={t("actionCopyRgb")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.rgb, "RGB")}
                 />
                 <Action
-                  title="复制 HSL"
+                  title={t("actionCopyHsl")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.hsl, "HSL")}
                 />
                 <Action
-                  title="复制 CMYK"
+                  title={t("actionCopyCmyk")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.cmyk, "CMYK")}
                 />
                 <Action
-                  title="粘贴到前台应用"
+                  title={t("actionPasteToApp")}
                   icon={Icon.Checkmark}
                   onAction={() => handlePaste(queryResult.colorResult!.hex)}
                 />
@@ -236,13 +385,13 @@ export default function CalculatorCommand(props?: CalculatorProps) {
           <List.Item
             id="color-rgb"
             title={queryResult.colorResult.rgb}
-            subtitle="RGB 格式"
+            subtitle={t("colorRgbSubtitle")}
             icon={Icon.Document}
             accessories={[{ text: "RGB" }]}
             actions={
-              <ActionPanel title="色彩动作">
+              <ActionPanel title={t("panelColorActions")}>
                 <Action
-                  title="复制 RGB"
+                  title={t("actionCopyRgb")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.rgb, "RGB")}
                 />
@@ -252,13 +401,13 @@ export default function CalculatorCommand(props?: CalculatorProps) {
           <List.Item
             id="color-hsl"
             title={queryResult.colorResult.hsl}
-            subtitle="HSL 格式"
+            subtitle={t("colorHslSubtitle")}
             icon={Icon.Document}
             accessories={[{ text: "HSL" }]}
             actions={
-              <ActionPanel title="色彩动作">
+              <ActionPanel title={t("panelColorActions")}>
                 <Action
-                  title="复制 HSL"
+                  title={t("actionCopyHsl")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.hsl, "HSL")}
                 />
@@ -268,13 +417,13 @@ export default function CalculatorCommand(props?: CalculatorProps) {
           <List.Item
             id="color-cmyk"
             title={queryResult.colorResult.cmyk}
-            subtitle="印刷 CMYK 格式"
+            subtitle={t("colorCmykSubtitle")}
             icon={Icon.Document}
             accessories={[{ text: "CMYK" }]}
             actions={
-              <ActionPanel title="色彩动作">
+              <ActionPanel title={t("panelColorActions")}>
                 <Action
-                  title="复制 CMYK"
+                  title={t("actionCopyCmyk")}
                   icon={Icon.CopyClipboard}
                   onAction={() => handleCopy(queryResult.colorResult!.cmyk, "CMYK")}
                 />
@@ -284,63 +433,108 @@ export default function CalculatorCommand(props?: CalculatorProps) {
         </List.Section>
       )}
 
-      {/* 2. 数学运算、单位换算与日期结果 */}
+      {/* 2. 数学运算、单位换算、实时汇率与日期结果 */}
       {queryResult.type !== "none" && queryResult.type !== "color" && (
-        <List.Section title="计算与换算结果">
-          {queryResult.error ? (
+        <List.Section title={t("sectionResult")}>
+          {queryResult.loadingCurrency ? (
+            <List.Item
+              id="calc-loading"
+              title={t("loadingCurrencyTitle")}
+              subtitle={queryResult.expression}
+              icon={Icon.Globe}
+            />
+          ) : queryResult.error ? (
             <List.Item
               id="calc-error"
-              title="输入算式有误"
+              title={queryResult.type === "currency" ? t("currencyErrorTitle") : t("mathErrorTitle")}
               subtitle={queryResult.error}
               icon={Icon.ExclamationMark}
+              actions={
+                queryResult.type === "currency" ? (
+                  <ActionPanel title={t("panelCurrencyActions")}>
+                    <Action
+                      title={t("actionRefreshLiveRates")}
+                      icon={Icon.ArrowClockwise}
+                      onAction={() => loadRates(true)}
+                    />
+                    <Action
+                      title={t("actionOpenCurrencyBoard")}
+                      icon={Icon.Globe}
+                      onAction={() => openCurrencyBoard(queryResult.expression)}
+                    />
+                  </ActionPanel>
+                ) : undefined
+              }
             />
           ) : (
             <List.Item
               id="calc-success"
               title={`= ${queryResult.formattedAnswer}`}
-              subtitle={queryResult.details ? `${queryResult.expression} (${queryResult.details})` : queryResult.expression}
-              icon={Icon.Terminal}
-              accessories={[{ text: "回车复制结果" }]}
+              subtitle={
+                queryResult.details
+                  ? `${queryResult.expression} (${queryResult.details})`
+                  : queryResult.expression
+              }
+              icon={queryResult.type === "currency" ? Icon.Globe : Icon.Terminal}
+              accessories={[{ text: t("accessoryEnterCopy") }]}
               actions={
-                <ActionPanel title="计算器操作">
+                <ActionPanel title={t("panelCalcActions")}>
                   <Action
-                    title="复制计算结果"
+                    title={t("actionCopyResult")}
                     icon={Icon.CopyClipboard}
-                    onAction={() => handleCopy(queryResult.formattedAnswer, "计算结果")}
+                    onAction={() => handleCopy(queryResult.formattedAnswer, t("labelCalcResult"))}
                   />
                   <Action
-                    title="粘贴到前台应用"
+                    title={t("actionPasteToApp")}
                     icon={Icon.Checkmark}
                     shortcut={{ modifiers: ["ctrl", "shift"], key: "v" }}
                     onAction={() => handlePaste(queryResult.formattedAnswer)}
                   />
                   <Action
-                    title="复制完整算式与结果"
+                    title={t("actionCopyFullExpr")}
                     icon={Icon.CopyClipboard}
                     shortcut={{ modifiers: ["ctrl", "alt"], key: "c" }}
-                    onAction={() => handleCopy(`${queryResult.expression} = ${queryResult.formattedAnswer}`, "完整算式")}
+                    onAction={() =>
+                      handleCopy(`${queryResult.expression} = ${queryResult.formattedAnswer}`, t("labelFullExpr"))
+                    }
                   />
                   {queryResult.fillText !== undefined && (
                     <Action
-                      title="将结果填入输入框"
+                      title={t("actionFillInput")}
                       icon={Icon.Pencil}
                       shortcut={{ modifiers: ["ctrl"], key: "e" }}
                       onAction={() => fillSearch(queryResult.fillText!)}
                     />
                   )}
                   <Action
-                    title="保存到历史算式"
+                    title={t("actionSaveToHistory")}
                     icon={Icon.Pin}
                     shortcut={{ modifiers: ["ctrl"], key: "p" }}
                     onAction={async () => {
-                      const saved = await updateHistory(() => addCalculatorHistory(
-                        queryResult.expression,
-                        queryResult.formattedAnswer,
-                        (queryResult.type === "none" ? "math" : queryResult.type) as CalculatorHistoryItem["type"]
-                      ));
-                      if (saved) await showToast(Toast.Style.Success, "已保存到历史记录");
+                      const saved = await updateHistory(() =>
+                        addCalculatorHistory(
+                          queryResult.expression,
+                          queryResult.formattedAnswer,
+                          (queryResult.type === "none" ? "math" : queryResult.type) as CalculatorHistoryItem["type"]
+                        )
+                      );
+                      if (saved) await showToast(Toast.Style.Success, t("savedToHistoryToast"));
                     }}
                   />
+                  {queryResult.type === "currency" && (
+                    <Action
+                      title={t("actionViewAllCurrencies")}
+                      icon={Icon.Globe}
+                      shortcut={{ modifiers: ["ctrl"], key: "r" }}
+                      onAction={() =>
+                        openCurrencyBoard(
+                          inlineCurrencyCandidate?.kind === "convert"
+                            ? `${inlineCurrencyCandidate.amountText} ${inlineCurrencyCandidate.from}`
+                            : queryResult.expression
+                        )
+                      }
+                    />
+                  )}
                 </ActionPanel>
               }
             />
@@ -350,39 +544,39 @@ export default function CalculatorCommand(props?: CalculatorProps) {
 
       {/* 3. 已置顶算式 */}
       {pinnedItems.length > 0 && (
-        <List.Section title="已置顶常用数字与算式">
-          {pinnedItems.map(item => (
+        <List.Section title={t("sectionPinned")}>
+          {pinnedItems.map((item) => (
             <List.Item
               key={item.id}
               id={item.id}
               title={`= ${item.answer}`}
               subtitle={item.expression}
               icon={Icon.Pin}
-              accessories={[{ text: "置顶" }]}
+              accessories={[{ text: t("accessoryPinned") }]}
               actions={
-                <ActionPanel title="置顶项操作">
+                <ActionPanel title={t("panelPinnedActions")}>
                   <Action
-                    title="复制结果"
+                    title={t("actionCopyShort")}
                     icon={Icon.CopyClipboard}
-                    onAction={() => handleCopy(item.answer, "置顶结果", false)}
+                    onAction={() => handleCopy(item.answer, t("labelPinnedResult"), false)}
                   />
                   <Action
-                    title="粘贴到前台"
+                    title={t("actionPasteShort")}
                     icon={Icon.Checkmark}
                     onAction={() => handlePaste(item.answer, false)}
                   />
                   <Action
-                    title="取消置顶"
+                    title={t("actionUnpin")}
                     icon={Icon.Pin}
                     onAction={() => handleTogglePin(item.id)}
                   />
                   <Action
-                    title="填入搜索框"
+                    title={t("actionFillSearch")}
                     icon={Icon.Pencil}
                     onAction={() => fillSearch(item.expression, item.id)}
                   />
                   <Action
-                    title="删除此项"
+                    title={t("actionDeleteItem")}
                     icon={Icon.Trash}
                     onAction={() => handleDeleteHistory(item.id)}
                   />
@@ -395,46 +589,46 @@ export default function CalculatorCommand(props?: CalculatorProps) {
 
       {/* 4. 最近计算历史 */}
       {recentItems.length > 0 && (
-        <List.Section title="近期计算历史">
-          {recentItems.slice(0, 15).map(item => (
+        <List.Section title={t("sectionRecent")}>
+          {recentItems.slice(0, 15).map((item) => (
             <List.Item
               key={item.id}
               id={item.id}
               title={`= ${item.answer}`}
               subtitle={item.expression}
               icon={Icon.Clock}
-              accessories={[{ text: HISTORY_TYPE_LABELS[item.type] ?? "计算" }]}
+              accessories={[{ text: t(HISTORY_TYPE_KEYS[item.type] ?? "historyTypeMath") }]}
               actions={
-                <ActionPanel title="历史项操作">
+                <ActionPanel title={t("panelHistoryActions")}>
                   <Action
-                    title="复制结果"
+                    title={t("actionCopyShort")}
                     icon={Icon.CopyClipboard}
-                    onAction={() => handleCopy(item.answer, "历史结果", false)}
+                    onAction={() => handleCopy(item.answer, t("labelHistoryResult"), false)}
                   />
                   <Action
-                    title="粘贴到前台"
+                    title={t("actionPasteShort")}
                     icon={Icon.Checkmark}
                     onAction={() => handlePaste(item.answer, false)}
                   />
                   <Action
-                    title="置顶此算式"
+                    title={t("actionPinExpr")}
                     icon={Icon.Pin}
                     shortcut={{ modifiers: ["ctrl"], key: "p" }}
                     onAction={() => handleTogglePin(item.id)}
                   />
                   <Action
-                    title="填入搜索框"
+                    title={t("actionFillSearch")}
                     icon={Icon.Pencil}
                     onAction={() => fillSearch(item.expression, item.id)}
                   />
                   <Action
-                    title="删除此项"
+                    title={t("actionDeleteItem")}
                     icon={Icon.Trash}
                     shortcut={{ modifiers: ["ctrl"], key: "x" }}
                     onAction={() => handleDeleteHistory(item.id)}
                   />
                   <Action
-                    title="清空全部历史记录"
+                    title={t("actionClearAllHistory")}
                     icon={Icon.Trash}
                     onAction={handleClearHistory}
                   />
@@ -446,27 +640,27 @@ export default function CalculatorCommand(props?: CalculatorProps) {
       )}
 
       {/* 5. 快速计算、换算与语法示例 */}
-      <List.Section title={unitOnly ? "单位换算示例" : "计算、单位换算与语法示例"}>
+      <List.Section title={unitOnly ? t("sectionExamplesUnit") : t("sectionExamplesAll")}>
         {examples.map(({ idx, ...eg }) => (
           <List.Item
             key={idx}
             id={`eg-${idx}`}
             title={eg.expr}
-            subtitle={eg.desc}
+            subtitle={t(eg.descKey)}
             icon={Icon.Terminal}
             // 单位换算入口里每一行都是“换算”，标签不提供区分信息，只在混合示例里显示分类
-            accessories={unitOnly ? [] : [{ text: eg.category }]}
+            accessories={unitOnly ? [] : [{ text: t(eg.categoryKey) }]}
             actions={
-              <ActionPanel title="快速示例">
+              <ActionPanel title={t("panelExamples")}>
                 <Action
-                  title="填入搜索框并计算"
+                  title={t("actionFillAndCalc")}
                   icon={Icon.Pencil}
                   onAction={() => fillSearch(eg.expr, `eg-${idx}`)}
                 />
                 <Action
-                  title="复制表达式"
+                  title={t("actionCopyExpr")}
                   icon={Icon.CopyClipboard}
-                  onAction={() => handleCopy(eg.expr, "表达式", false)}
+                  onAction={() => handleCopy(eg.expr, t("labelExpr"), false)}
                 />
               </ActionPanel>
             }

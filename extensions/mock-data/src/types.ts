@@ -19,7 +19,7 @@ export interface MockSingleItem {
 export interface MockUserRecord {
   id: string
   name: string
-  gender: '男' | '女'
+  gender: string
   age: number
   idCard: string
   phone: string

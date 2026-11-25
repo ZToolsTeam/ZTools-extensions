@@ -6,12 +6,18 @@ type DynamicBridge = ReturnType<typeof JSON.parse>;
  */
 
 import { invokePluginService, isRealElectronHost, formatBytes } from './native-ipc.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes }
 
 export const DLL_PLUGIN_NAME = 'WeChatMultiPlugin'
-export const HOST_REQUIRED_MESSAGE = '需要在 ZTools 客户端中使用'
-export const LAUNCH_LIMIT_NOTE = '微信已在运行时通常只会切换到已有窗口，是否出现新的登录窗口以实际为准'
+export function getHostRequiredMessage(): string {
+  return t('hostRequired')
+}
+export function getLaunchLimitNote(): string {
+  return t('launchLimitNote')
+}
 
 export interface WechatInstanceItem {
   id: string
@@ -51,7 +57,7 @@ function toInstance(raw: DynamicBridge): WechatInstanceItem | null {
   return {
     id: `wx-proc-${pid}`,
     pid,
-    name: String(raw.name || '微信'),
+    name: String(raw.name || t('defaultProcName')),
     memoryBytes: Number.isFinite(memoryBytes) && memoryBytes > 0 ? memoryBytes : 0,
     startTime: typeof raw.startTime === 'string' ? raw.startTime : ''
   }
@@ -63,15 +69,15 @@ function toInstance(raw: DynamicBridge): WechatInstanceItem | null {
 export async function fetchWechatInstances(hostOverride?: DynamicBridge): Promise<WechatMultiSnapshot> {
   const empty = { installed: false, installPath: '', instances: [] as WechatInstanceItem[] }
   if (!hostAvailable(hostOverride)) {
-    return { ok: false, error: HOST_REQUIRED_MESSAGE, ...empty }
+    return { ok: false, error: t('hostRequired'), ...empty }
   }
   const res = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, 'getStatus', {}, hostOverride)
   if (!res.ok || !res.data || typeof res.data !== 'object') {
-    return { ok: false, error: res.error || '读取微信进程失败', ...empty }
+    return { ok: false, error: resolveErrorMessage(res, t('errReadProcessesFailed')), ...empty }
   }
   const data = res.data
   if (data.ok === false || data.success === false) {
-    return { ok: false, error: String(data.error || '读取微信进程失败'), ...empty }
+    return { ok: false, error: String(resolveErrorMessage(data, t('errReadProcessesFailed'))), ...empty }
   }
   const rawList = Array.isArray(data.instances) ? data.instances : []
   const instances = rawList.map(toInstance).filter((i: WechatInstanceItem | null): i is WechatInstanceItem => i !== null)
@@ -92,7 +98,7 @@ export const fetchWeChatMultiSnapshot = fetchWechatInstances
  */
 export async function launchWechatAgain(hostOverride?: DynamicBridge): Promise<WechatLaunchResult> {
   if (!hostAvailable(hostOverride)) {
-    return { ok: false, pids: [], executablePath: '', message: HOST_REQUIRED_MESSAGE }
+    return { ok: false, pids: [], executablePath: '', message: t('hostRequired') }
   }
   const res = await invokePluginService<DynamicBridge>(DLL_PLUGIN_NAME, 'launchInstance', { count: 1 }, hostOverride)
   const data = res.data
@@ -101,18 +107,18 @@ export async function launchWechatAgain(hostOverride?: DynamicBridge): Promise<W
       ok: false,
       pids: [],
       executablePath: '',
-      message: String((data && typeof data === 'object' && data.error) || res.error || '启动微信失败')
+      message: resolveErrorMessage(data && typeof data === 'object' && data.error ? data : res, t('errLaunchFailed'))
     }
   }
   const pids = Array.isArray(data.pids) ? data.pids.map(Number).filter((n: number) => Number.isInteger(n) && n > 0) : []
   if (pids.length === 0) {
-    return { ok: false, pids: [], executablePath: '', message: '客户端没有返回新进程，微信可能没有启动' }
+    return { ok: false, pids: [], executablePath: '', message: t('errNoNewProcess') }
   }
   return {
     ok: true,
     pids,
     executablePath: String(data.wechatPath || data.installPath || ''),
-    message: '已再次运行微信程序'
+    message: t('msgLaunchedAgain')
   }
 }
 

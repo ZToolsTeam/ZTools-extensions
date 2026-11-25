@@ -13,18 +13,20 @@ import {
   Icon,
   useState,
   useEffect,
+  useLocale,
   showToast,
   Toast,
   confirmAlert
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   type SoftwareItem,
   type AppDataDirItem,
-  SOFTWARE_SMART_CATEGORIES,
-  NOT_IN_CLIENT_MESSAGE,
+  getSoftwareSmartCategories,
+  getNotInClientMessage,
   PROTECTED_SYSTEM_SOFTWARE_PATTERN,
   FORBIDDEN_SOFTWARE_PATTERN,
-  FORBIDDEN_UNINSTALL_REASON,
+  getForbiddenUninstallReason,
   formatBytes,
   formatInstallDate,
   fetchSoftwareList,
@@ -37,17 +39,20 @@ import {
 } from './logic.js'
 
 import { isRealElectronHost } from './native-ipc.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export default function SoftwareManagerCommand() {
+  useLocale()
   const inRealHost = isRealElectronHost()
+  const notInClientMsg = getNotInClientMessage()
   const [searchText, setSearchText] = useState('')
   const [viewMode, setViewMode] = useState<'all' | 'appdata'>('all')
   const [smartCatFilter, setSmartCatFilter] = useState<string>('all')
   const [driveFilter, setDriveFilter] = useState<string>('all')
   const [softwareList, setSoftwareList] = useState<SoftwareItem[]>([])
-  const [listError, setListError] = useState<string>(inRealHost ? '' : NOT_IN_CLIENT_MESSAGE)
+  const [listError, setListError] = useState<string>(inRealHost ? '' : notInClientMsg)
   const [appDataDirs, setAppDataDirs] = useState<AppDataDirItem[]>([])
-  const [appDataError, setAppDataError] = useState<string>(inRealHost ? '' : NOT_IN_CLIENT_MESSAGE)
+  const [appDataError, setAppDataError] = useState<string>(inRealHost ? '' : notInClientMsg)
   const [isLoading, setIsLoading] = useState(inRealHost)
 
   async function refreshData(forceRefresh = false) {
@@ -55,10 +60,10 @@ export default function SoftwareManagerCommand() {
     try {
       const list = await fetchSoftwareList(undefined, forceRefresh)
       setSoftwareList(list.items)
-      setListError(list.ok ? '' : list.error || '读取已安装软件失败')
+      setListError(list.ok ? '' : resolveErrorMessage(list, t('readSoftwareFailed')))
       const dirs = await probeAppDataDirs(list.items)
       setAppDataDirs(dirs.items)
-      setAppDataError(dirs.ok ? '' : dirs.error || '扫描 AppData 失败')
+      setAppDataError(dirs.ok ? '' : resolveErrorMessage(dirs, t('scanAppDataFailed')))
     } finally {
       setIsLoading(false)
     }
@@ -70,26 +75,36 @@ export default function SoftwareManagerCommand() {
 
   async function handleUninstall(item: SoftwareItem) {
     if (FORBIDDEN_SOFTWARE_PATTERN.test(item.name)) {
-      showToast({ style: Toast.Style.Failure, title: '不能卸载', message: `${item.name}：${FORBIDDEN_UNINSTALL_REASON}` })
+      showToast({
+        style: Toast.Style.Failure,
+        title: t('cannotUninstallTitle'),
+        message: t('cannotUninstallMsg', { name: item.name, reason: getForbiddenUninstallReason() })
+      })
       return
     }
     if (!item.uninstallString) {
-      showToast({ style: Toast.Style.Failure, title: '没有卸载程序', message: `系统登记里没有 ${item.name} 的卸载程序` })
+      showToast({
+        style: Toast.Style.Failure,
+        title: t('noUninstallerTitle'),
+        message: t('noUninstallerMsg', { name: item.name })
+      })
       return
     }
 
     const isProtected = PROTECTED_SYSTEM_SOFTWARE_PATTERN.test(item.name) || item.isSystem
     const confirmed = await confirmAlert({
-      title: isProtected ? `卸载系统运行库「${item.name}」？` : `卸载「${item.name}」？`,
+      title: isProtected
+        ? t('confirmUninstallProtected', { name: item.name })
+        : t('confirmUninstallNormal', { name: item.name }),
       message: [
-        isProtected ? '这是系统运行库，卸载后依赖它的软件可能无法启动。' : '',
-        `将启动软件自带的卸载程序：\n${item.uninstallString}`,
-        '是否卸载完成以卸载向导为准。'
+        isProtected ? t('protectedUninstallWarn') : '',
+        t('willLaunchUninstaller', { cmd: item.uninstallString }),
+        t('uninstallWizardNote')
       ]
         .filter(Boolean)
         .join('\n\n'),
       primaryAction: {
-        title: '启动卸载程序',
+        title: t('launchUninstallerBtn'),
         style: 'destructive'
       }
     })
@@ -97,20 +112,24 @@ export default function SoftwareManagerCommand() {
 
     const res = await uninstallSoftware(item)
     if (!res.ok) {
-      showToast({ style: Toast.Style.Failure, title: '启动卸载程序失败', message: res.error })
+      showToast({ style: Toast.Style.Failure, title: t('launchUninstallFailed'), message: res.error })
       return
     }
-    showToast({ style: Toast.Style.Success, title: '卸载程序已启动', message: `${item.name}，请在卸载向导中继续` })
+    showToast({
+      style: Toast.Style.Success,
+      title: t('uninstallerStarted'),
+      message: t('continueInWizard', { name: item.name })
+    })
   }
 
   async function handleLocate(path: string) {
     const ok = await openSoftwareLocation(path)
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: path })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('locateFailed'), message: path })
   }
 
   async function handleLaunch(item: SoftwareItem) {
     const ok = await launchSoftware(item.launchPath || '')
-    if (!ok) showToast({ style: Toast.Style.Failure, title: '启动失败', message: item.launchPath })
+    if (!ok) showToast({ style: Toast.Style.Failure, title: t('launchFailed'), message: item.launchPath })
   }
 
   const filtered = filterSoftwareList(softwareList, searchText, smartCatFilter, driveFilter)
@@ -123,6 +142,7 @@ export default function SoftwareManagerCommand() {
   const appDataTotalBytes = appDataDirs.reduce((s, d) => s + d.sizeBytes, 0)
   const maxSwBytes = Math.max(1, ...filtered.map((s) => s.estimatedSize || 0))
   const maxDirBytes = Math.max(1, ...appDataDirs.map((d) => d.sizeBytes))
+  const smartCategories = getSoftwareSmartCategories()
 
   const rightSubListItems =
     viewMode === 'appdata'
@@ -130,23 +150,29 @@ export default function SoftwareManagerCommand() {
           List.Item({
             id: dir.id,
             title: dir.folderName,
-            subtitle: `${dir.scope} · ${dir.fileCount} 个文件 · ${dir.fullPath}`,
+            subtitle: t('appDataSubtitle', { scope: dir.scope, count: dir.fileCount, path: dir.fullPath }),
             icon: { source: Icon.Folder },
             accessories: [
               { progress: Math.min(1, dir.sizeBytes / maxDirBytes) },
-              { tag: { value: dir.similarSoftwareName ? `名称相近：${dir.similarSoftwareName}` : '未匹配到已安装软件' } },
+              {
+                tag: {
+                  value: dir.similarSoftwareName
+                    ? t('similarSoftwareTag', { name: dir.similarSoftwareName })
+                    : t('unmatchedSoftwareTag')
+                }
+              },
               { text: formatBytes(dir.sizeBytes) }
             ],
             actions: ActionPanel({
               title: dir.folderName,
               children: [
                 Action({
-                  title: '在资源管理器中定位',
+                  title: t('revealInExplorer'),
                   icon: Icon.Folder,
                   onAction: () => handleLocate(dir.fullPath)
                 }),
                 Action.CopyToClipboard({
-                  title: '复制目录路径',
+                  title: t('copyDirPath'),
                   content: dir.fullPath
                 })
               ]
@@ -156,11 +182,12 @@ export default function SoftwareManagerCommand() {
       : filtered.map((item) => {
           const isForbidden = FORBIDDEN_SOFTWARE_PATTERN.test(item.name)
           const isProtected = Boolean(item.isSystem) || PROTECTED_SYSTEM_SOFTWARE_PATTERN.test(item.name)
+          const catMeta = smartCategories.find((c) => c.id === item.smartCategory)
           const meta = [
-            item.publisher || '未知发布商',
-            item.version ? `v${item.version}` : '未知版本',
-            item.installDrive || '安装位置未知',
-            ...(item.installDate ? [`安装于 ${formatInstallDate(item.installDate)}`] : [])
+            item.publisher || t('unknownPublisher'),
+            item.version ? `v${item.version}` : t('unknownVersion'),
+            item.installDrive || t('unknownInstallLoc'),
+            ...(item.installDate ? [t('installedOn', { date: formatInstallDate(item.installDate) })] : [])
           ]
           return List.Item({
             id: item.id,
@@ -169,8 +196,16 @@ export default function SoftwareManagerCommand() {
             icon: { source: isProtected || isForbidden ? Icon.Lock : Icon.AppWindow },
             accessories: [
               { progress: Math.min(1, (item.estimatedSize || 0) / maxSwBytes) },
-              { tag: { value: isForbidden ? '系统组件' : isProtected ? '系统运行库' : item.smartCategoryName || '其他' } },
-              { text: item.estimatedSize > 0 ? formatBytes(item.estimatedSize) : '体积未知' }
+              {
+                tag: {
+                  value: isForbidden
+                    ? t('tagSystemComponent')
+                    : isProtected
+                      ? t('tagSystemRuntime')
+                      : catMeta?.shortName || item.smartCategoryName || t('tagOther')
+                }
+              },
+              { text: item.estimatedSize > 0 ? formatBytes(item.estimatedSize) : t('sizeUnknown') }
             ],
             actions: ActionPanel({
               title: item.name,
@@ -178,7 +213,7 @@ export default function SoftwareManagerCommand() {
                 ...(!isForbidden && item.uninstallString
                   ? [
                       Action({
-                        title: '卸载',
+                        title: t('uninstallAction'),
                         icon: Icon.Trash,
                         style: Action.Style.Destructive,
                         onAction: () => handleUninstall(item)
@@ -188,7 +223,7 @@ export default function SoftwareManagerCommand() {
                 ...(item.installLocation
                   ? [
                       Action({
-                        title: '在资源管理器中定位安装目录',
+                        title: t('locateInstallDir'),
                         icon: Icon.Folder,
                         onAction: () => handleLocate(item.installLocation)
                       })
@@ -197,7 +232,7 @@ export default function SoftwareManagerCommand() {
                 ...(item.launchPath
                   ? [
                       Action({
-                        title: '启动该软件',
+                        title: t('launchAppAction'),
                         icon: Icon.Play,
                         onAction: () => handleLaunch(item)
                       })
@@ -206,7 +241,7 @@ export default function SoftwareManagerCommand() {
                 ...(item.uninstallString
                   ? [
                       Action.CopyToClipboard({
-                        title: '复制卸载命令行',
+                        title: t('copyUninstallCmd'),
                         content: item.uninstallString
                       })
                     ]
@@ -218,30 +253,33 @@ export default function SoftwareManagerCommand() {
 
   const summaryText =
     viewMode === 'appdata'
-      ? appDataError ||
-        `AppData 目录 ${appDataDirs.length} 个 (${formatBytes(appDataTotalBytes)}) · 只读列出，请在资源管理器中自行核对和清理`
+      ? appDataError || t('appDataSummary', { count: appDataDirs.length, bytes: formatBytes(appDataTotalBytes) })
       : listError ||
-        `已安装 ${summary.totalCount} 款 · 登记占用合计 ${formatBytes(summary.totalSizeBytes)}${
-          summary.unknownSizeCount > 0 ? `（${summary.unknownSizeCount} 款未登记体积）` : ''
-        } · 当前显示 ${filtered.length} 款 (${formatBytes(filteredSummary.totalSizeBytes)})`
+        t('softwareSummary', {
+          total: summary.totalCount,
+          bytes: formatBytes(summary.totalSizeBytes),
+          unknownNote: summary.unknownSizeCount > 0 ? t('unknownSizeNote', { count: summary.unknownSizeCount }) : '',
+          shown: filtered.length,
+          shownBytes: formatBytes(filteredSummary.totalSizeBytes)
+        })
 
   const emptyText =
     viewMode === 'appdata'
-      ? appDataError || (isLoading ? '正在扫描...' : '没有找到占用超过 64 KB 的 AppData 目录')
-      : listError || (isLoading ? '正在读取...' : softwareList.length === 0 ? '系统登记的已安装软件清单为空' : '当前分类或盘符下没有软件')
+      ? appDataError || (isLoading ? t('scanningEmpty') : t('noAppDataEmpty'))
+      : listError ||
+        (isLoading ? t('readingEmpty') : softwareList.length === 0 ? t('noSoftwareInstalled') : t('noMatchingSoftware'))
 
   return List({
-    searchBarPlaceholder:
-      viewMode === 'appdata' ? '搜索目录名或路径...' : '搜索软件名称、发布商、版本或安装路径...',
+    searchBarPlaceholder: viewMode === 'appdata' ? t('searchAppDataPlaceholder') : t('searchSoftwarePlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按安装盘符筛选',
+      tooltip: t('driveFilterTooltip'),
       value: driveFilter,
       onChange: (val) => setDriveFilter(val),
       children: [
-        List.Dropdown.Item({ title: `全部盘符 (${softwareList.length})`, value: 'all' }),
+        List.Dropdown.Item({ title: t('allDrives', { count: softwareList.length }), value: 'all' }),
         List.Dropdown.Item({
           title: `C: (${softwareList.filter((s) => s.installDrive === 'C:').length})`,
           value: 'C:'
@@ -251,7 +289,9 @@ export default function SoftwareManagerCommand() {
           value: 'D:'
         }),
         List.Dropdown.Item({
-          title: `其他或未知 (${softwareList.filter((s) => s.installDrive !== 'C:' && s.installDrive !== 'D:').length})`,
+          title: t('otherDrives', {
+            count: softwareList.filter((s) => s.installDrive !== 'C:' && s.installDrive !== 'D:').length
+          }),
           value: 'OTHER'
         })
       ]
@@ -261,26 +301,29 @@ export default function SoftwareManagerCommand() {
       actions: [
         {
           id: 'rescan-all',
-          title: '重新扫描',
+          title: t('rescan'),
           style: 'secondary',
           onAction: () => refreshData(true)
         }
       ]
     },
     subList: {
-      title: viewMode === 'appdata' ? 'AppData 目录（按占用降序，只读）' : '已安装软件（按登记的占用体积降序）',
-      subtitle: viewMode === 'appdata' ? `${visibleDirs.length} 个目录` : `${filtered.length} 款`,
+      title: viewMode === 'appdata' ? t('subListAppDataTitle') : t('subListSoftwareTitle'),
+      subtitle:
+        viewMode === 'appdata'
+          ? t('subListAppDataCount', { count: visibleDirs.length })
+          : t('subListSoftwareCount', { count: filtered.length }),
       emptyText,
       items: rightSubListItems
     },
     children: [
       List.Section({
-        title: '总览',
+        title: t('overviewSection'),
         children: [
           List.Item({
             id: 'sw-nav-all',
-            title: '全部已安装软件',
-            subtitle: `${summary.totalCount} 款`,
+            title: t('allInstalledTitle'),
+            subtitle: t('subListSoftwareCount', { count: summary.totalCount }),
             icon: { source: Icon.AppWindow },
             accessories: [{ text: formatBytes(summary.totalSizeBytes) }],
             onSelect: () => {
@@ -290,8 +333,8 @@ export default function SoftwareManagerCommand() {
           }),
           List.Item({
             id: 'sw-nav-appdata',
-            title: 'AppData 目录',
-            subtitle: `${appDataDirs.length} 个目录 · 只读`,
+            title: t('appDataDirTitle'),
+            subtitle: t('appDataNavSub', { count: appDataDirs.length }),
             icon: { source: Icon.Folder },
             accessories: [{ text: formatBytes(appDataTotalBytes) }],
             onSelect: () => {
@@ -301,14 +344,14 @@ export default function SoftwareManagerCommand() {
         ]
       }),
       List.Section({
-        title: '按名称分类',
-        children: SOFTWARE_SMART_CATEGORIES.map((cat) => {
+        title: t('byCategorySection'),
+        children: smartCategories.map((cat) => {
           const catItems = softwareList.filter((s) => s.smartCategory === cat.id)
           const catBytes = catItems.reduce((acc, s) => acc + (s.estimatedSize || 0), 0)
           return List.Item({
             id: `sw-nav-cat-${cat.id}`,
             title: cat.name,
-            subtitle: `${catItems.length} 款`,
+            subtitle: t('subListSoftwareCount', { count: catItems.length }),
             icon: { source: cat.id === 'runtime_system' ? Icon.Lock : Icon.Folder },
             accessories: [{ text: formatBytes(catBytes) }],
             onSelect: () => {

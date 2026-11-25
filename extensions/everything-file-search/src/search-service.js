@@ -1,3 +1,5 @@
+import { getLocale } from "@ztools/declarative-ui";
+
 export function formatBytes(bytes) {
     if (bytes <= 0 || !Number.isFinite(bytes))
         return "0 B";
@@ -120,12 +122,13 @@ export function sortAndFilterFiles(files, sortOption, typeFilter) {
         result = result.filter((f) => getFileCategory(f.name, f.isDir) === typeFilter);
     }
     const sorted = [...result];
+    const locale = getLocale();
     switch (sortOption) {
         case "name-asc":
-            sorted.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+            sorted.sort((a, b) => a.name.localeCompare(b.name, locale));
             break;
         case "name-desc":
-            sorted.sort((a, b) => b.name.localeCompare(a.name, "zh-CN"));
+            sorted.sort((a, b) => b.name.localeCompare(a.name, locale));
             break;
         case "size-desc":
             sorted.sort((a, b) => b.size - a.size);

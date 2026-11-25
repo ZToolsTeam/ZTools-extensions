@@ -1,4 +1,5 @@
-import { LocalStorage } from "@ztools/declarative-ui";
+import { LocalStorage, getLocale } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   ScreenshotItem,
   ScreenshotCategory,
@@ -13,6 +14,7 @@ import {
   readRealDirectory,
   writeRealClipboardText
 } from "./native-ipc.js";
+import { extractErrorCode, extractHostCode, resolveErrorMessage } from './error-i18n.js'
 
 const PINNED_STORAGE_KEY = "@ztools/screenshots/pinned";
 /** 旧版宿主的截图 id 只编码了路径前 12 字节，同目录所有截图 id 相同；读到这种置顶记录直接丢弃 */
@@ -48,7 +50,7 @@ interface RawScreenshot {
 }
 
 export function formatScreenshotSize(bytes: number | null): string {
-  if (bytes === null) return "未知大小";
+  if (bytes === null) return t("unknownSize");
   if (bytes === 0) return "0 B";
   const units = ["B", "KB", "MB", "GB"];
   const index = Math.min(units.length - 1, Math.max(0, Math.floor(Math.log(bytes) / Math.log(1024))));
@@ -194,9 +196,16 @@ function parentDirOf(filePath: string): string {
   return idx > 0 ? filePath.slice(0, idx) : filePath;
 }
 
-/** 宿主按窗口授权路径：未授权时返回「路径未由当前窗口授权」(PERMISSION_DENIED) */
-function isPermissionError(error: string | undefined): boolean {
-  return /PERMISSION_DENIED|未由当前窗口授权/i.test(String(error || ""));
+/** 宿主按窗口授权路径：优先检查 PERMISSION_DENIED / EACCES / EPERM 错误码，再兼容老宿主文案 */
+function isPermissionError(error: unknown): boolean {
+  const code = extractErrorCode(error).toUpperCase();
+  const hostCode = extractHostCode(error).toUpperCase();
+  if (code === "PERMISSION_DENIED" || code === "EACCES" || code === "EPERM" || hostCode === "PERMISSION_DENIED" || hostCode === "EACCES" || hostCode === "EPERM") {
+    return true;
+  }
+  const raw = typeof error === "string" ? error : error instanceof Error ? error.message : String((error as { error?: unknown } | null)?.error ?? "");
+  // i18n-allow: legacy host fallback
+  return /\b(?:PERMISSION_DENIED|EACCES|EPERM)\b|permission denied|access denied/i.test(raw) || /未由当前窗口授权|拒绝访问/.test(raw);
 }
 
 function hostPlatform(): "mac" | "windows" | "other" {
@@ -214,7 +223,7 @@ export function isOcrSupported(): boolean {
 
 /** 系统回收位置名称：Windows 为回收站，其余（macOS）为废纸篓 */
 export function trashName(): string {
-  return hostPlatform() === "windows" ? "回收站" : "废纸篓";
+  return hostPlatform() === "windows" ? t("trashWin") : t("trashMac");
 }
 
 /** 按修改时间取最新一张（列表排序是置顶优先，不能直接取第一项当“最新”） */
@@ -228,13 +237,13 @@ function modKey(): string {
   return hostPlatform() === "mac" ? "⌘" : "Ctrl+";
 }
 
-export const AUTHORIZE_FOLDER_ACTION_TITLE = "授权访问截图目录";
+export const getAuthorizeFolderActionTitle = (): string => t("authorizeFolderTitle");
 
 /** 把宿主错误整理成给用户看的原因；未授权时提示用户先授权截图目录 */
 export function describeHostError(error: string | undefined, fallback: string): string {
   const msg = String(error || fallback);
   if (isPermissionError(msg)) {
-    return `${msg}。请在动作面板 (${modKey()}K) 中选择「授权访问截图目录」后重试`;
+    return t("permErrorHint", { msg, mod: modKey() });
   }
   return msg;
 }
@@ -295,7 +304,7 @@ export function sniffImageMime(bytes: Uint8Array): string | null {
 
 /** 系统文件管理器名称：按截图路径判断（Windows 路径为资源管理器，其余为访达） */
 export function fileManagerName(samplePath: string): string {
-  return /^[a-zA-Z]:[\\/]|^\\\\/.test(String(samplePath || "")) ? "资源管理器" : "访达";
+  return /^[a-zA-Z]:[\\/]|^\\\\/.test(String(samplePath || "")) ? t("fileMgrExplorer") : t("fileMgrFinder");
 }
 
 export type ScreenshotPreviewResult =
@@ -329,20 +338,20 @@ export function buildScreenshotDetailMarkdown(
     preview.status === "ready"
       ? `![${markdownAlt(item.filename)}](${preview.dataUrl})`
       : preview.status === "loading"
-      ? "正在读取截图…"
-      : `> 预览不可用：${preview.reason.replace(/\r?\n/g, " ")}`;
+      ? t("previewLoading")
+      : t("previewUnavailable", { reason: preview.reason.replace(/\r?\n/g, " ") });
   const ocrBlock =
     ocrEnabled && item.ocrText
-      ? `\n### 识别提取文字\n\n\`\`\`text\n${item.ocrText}\n\`\`\`\n`
+      ? t("detailOcrSection", { text: item.ocrText })
       : "";
   return `${previewBlock}
 
 ---
 ${ocrBlock}
-- **存储路径**: ${inlineCode(item.path)}
-- **分辨率**: ${item.dimensions}
-- **文件大小**: ${item.formattedSize}${item.sizeBytes === null ? "" : ` (${item.sizeBytes.toLocaleString()} bytes)`}
-- **修改时间**: ${item.formattedDate}`;
+${t("detailPathLine", { path: inlineCode(item.path) })}
+${t("detailResLine", { dims: item.dimensions })}
+${t("detailSizeLine", { size: item.formattedSize, bytes: item.sizeBytes === null ? "" : ` (${item.sizeBytes.toLocaleString(getLocale())} ${item.sizeBytes === 1 ? "byte" : "bytes"})` })}
+${t("detailTimeLine", { date: item.formattedDate })}`;
 }
 
 /**
@@ -360,9 +369,9 @@ export const INITIAL_SCREENSHOTS: ScreenshotItem[] = [
     formattedSize: "1.85 MB",
     createdAt: Date.now() - 1000 * 60 * 12,
     modifiedAt: Date.now() - 1000 * 60 * 12,
-    formattedDate: "12分钟前",
+    formattedDate: "12m ago",
     pinned: true,
-    ocrText: `// 示例：读取并解析配置文件
+    ocrText: `// Example: load and parse configuration file
 export async function loadConfig(path: string) {
   const text = await readFile(path, "utf8");
   return JSON.parse(text);
@@ -380,7 +389,7 @@ export async function loadConfig(path: string) {
     formattedSize: "1.07 MB",
     createdAt: Date.now() - 1000 * 60 * 42,
     modifiedAt: Date.now() - 1000 * 60 * 42,
-    formattedDate: "42分钟前",
+    formattedDate: "42m ago",
     pinned: false,
     ocrText: `Error 0x80070005: Access is denied.
 Please run the installer as administrator and try again.`,
@@ -397,7 +406,7 @@ Please run the installer as administrator and try again.`,
     formattedSize: "4.02 MB",
     createdAt: Date.now() - 1000 * 60 * 122,
     modifiedAt: Date.now() - 1000 * 60 * 122,
-    formattedDate: "2小时前",
+    formattedDate: "2h ago",
     pinned: true,
     ocrText: `Active Users: 1,284
 Average Response Time: 120 ms
@@ -416,7 +425,7 @@ Memory Usage: 2.1 GB`,
     formattedSize: "1.95 MB",
     createdAt: Date.now() - 1000 * 60 * 195,
     modifiedAt: Date.now() - 1000 * 60 * 195,
-    formattedDate: "3小时前",
+    formattedDate: "3h ago",
     pinned: false,
     ocrText: `SELECT id, title, created_at
 FROM notes
@@ -435,7 +444,7 @@ ORDER BY created_at DESC LIMIT 10;
     formattedSize: "1.47 MB",
     createdAt: Date.now() - 1000 * 60 * 285,
     modifiedAt: Date.now() - 1000 * 60 * 285,
-    formattedDate: "4小时前",
+    formattedDate: "4h ago",
     pinned: false,
     ocrText: `Pull Request #42: Fix install command in README
 Changes:
@@ -446,7 +455,7 @@ All checks passed. Ready to merge.`,
 ];
 
 
-const UNKNOWN_DIMENSIONS = "未知尺寸";
+const getUnknownDimensions = () => t("unknownDimensions");
 
 function sortScreenshots(items: ScreenshotItem[]): ScreenshotItem[] {
   return items.sort((a, b) => {
@@ -509,12 +518,12 @@ export class ScreenshotsManager {
       path: fullPath,
       width,
       height,
-      dimensions: String(raw.dimensions || (known ? `${width} x ${height}` : UNKNOWN_DIMENSIONS)),
+      dimensions: String(raw.dimensions || (known ? `${width} x ${height}` : getUnknownDimensions())),
       sizeBytes,
       formattedSize: formatScreenshotSize(sizeBytes),
       createdAt,
       modifiedAt,
-      formattedDate: String(raw.formattedDate || new Date(modifiedAt).toLocaleTimeString()),
+      formattedDate: String(raw.formattedDate || new Date(modifiedAt).toLocaleTimeString(getLocale())),
       pinned: Boolean(raw.pinned) || this.pinnedSet.has(id),
       // 严禁拼接 `系统自动提取文件文本 [${filename}]` 假 OCR 文本
       ocrText: hasRealOcr ? String(raw.ocrText).trim() : "",
@@ -529,7 +538,7 @@ export class ScreenshotsManager {
     if (!res.ok) return { ok: false, error: res.error };
     const data = res.data;
     const content = typeof data === "string" ? data : typeof data?.content === "string" ? data.content : "";
-    if (!content) return { ok: false, error: "读取到的图片内容为空" };
+    if (!content) return { ok: false, error: t("readImageEmpty") };
     return { ok: true, base64: content };
   }
 
@@ -538,22 +547,22 @@ export class ScreenshotsManager {
    * 读不到、不是图片或文件过大时返回原因，由界面显示「预览不可用」与真实元数据，绝不画示意图代替
    */
   public async loadPreviewDataUrl(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotPreviewResult> {
-    if (!item || !item.path) return { ok: false, reason: "无效的文件路径" };
+    if (!item || !item.path) return { ok: false, reason: t("invalidFilePath") };
     if (item.sizeBytes !== null && item.sizeBytes > SCREENSHOT_PREVIEW_MAX_BYTES) {
-      return { ok: false, reason: `文件 ${formatScreenshotSize(item.sizeBytes)}，超过预览上限 ${formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES)}` };
+      return { ok: false, reason: t("fileTooLargePreview", { size: formatScreenshotSize(item.sizeBytes), limit: formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES) }) };
     }
     const read = await this.readImageBase64(item.path, hostOverride);
     if (!read.ok || !read.base64) {
-      return { ok: false, reason: `读取图片失败: ${describeHostError(read.error, "宿主未响应")}` };
+      return { ok: false, reason: t("readImageFailed", { reason: describeHostError(read.error, t("hostNoResponse")) }) };
     }
     const base64 = read.base64.replace(/\s+/g, "");
     const approxBytes = Math.floor((base64.length * 3) / 4);
     if (approxBytes > SCREENSHOT_PREVIEW_MAX_BYTES) {
-      return { ok: false, reason: `文件 ${formatScreenshotSize(approxBytes)}，超过预览上限 ${formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES)}` };
+      return { ok: false, reason: t("fileTooLargePreview", { size: formatScreenshotSize(approxBytes), limit: formatScreenshotSize(SCREENSHOT_PREVIEW_MAX_BYTES) }) };
     }
     const head = base64ToBytes(base64.slice(0, 64));
     const mime = head ? sniffImageMime(head) : null;
-    if (!mime) return { ok: false, reason: "文件内容不是可识别的图片格式" };
+    if (!mime) return { ok: false, reason: t("unrecognizedImageFormat") };
     return { ok: true, mime, dataUrl: `data:${mime};base64,${base64}` };
   }
 
@@ -597,22 +606,22 @@ export class ScreenshotsManager {
     if (!capRes.ok) {
       return {
         success: false,
-        message: `截屏失败: ${capRes.error || "screen_capture 未响应"}`,
+        message: t("captureFailedPrefix", { reason: resolveErrorMessage(capRes, t("captureNoResponse")) }),
         error: capRes.error || "CAPTURE_FAILED"
       };
     }
     const raw = (capRes.data && typeof capRes.data === "object" ? capRes.data : {}) as { tempFile?: unknown; path?: unknown; width?: unknown; height?: unknown };
     const filePath = String(raw.tempFile || raw.path || "");
     if (!filePath) {
-      return { success: false, message: "截屏失败: 宿主没有返回截图文件", error: "CAPTURE_NO_FILE" };
+      return { success: false, message: t("captureNoFile"), error: "CAPTURE_NO_FILE" };
     }
 
     const fileSize = await callHostTransport<{ size: number }>("filesystem_get_file_size", { path: filePath }, hostOverride);
     const bytes = fileSize.ok ? fileSize.data?.size : undefined;
     const sizeKnown = typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0;
-    const sizeNotice = sizeKnown ? "" : `；文件大小未知：${fileSize.error || "宿主未返回有效文件大小"}`;
+    const sizeNotice = sizeKnown ? "" : t("sizeUnknownNotice", { reason: resolveErrorMessage(fileSize, t("hostNoValidSize")) });
     const now = new Date();
-    const filename = `屏幕截图 ${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}.png`;
+    const filename = `${t("captureFilenamePrefix")} ${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())} ${pad2(now.getHours())}.${pad2(now.getMinutes())}.${pad2(now.getSeconds())}.png`;
     const item = this.mapHostScreenshot({
       id: `capture:${filePath}`,
       filename,
@@ -627,20 +636,20 @@ export class ScreenshotsManager {
     this.items = sortScreenshots([item, ...this.items.filter((i) => i.path !== item.path)]);
 
     if (!copyToClipboard) {
-      return { success: true, message: `已截取全部屏幕 (${item.dimensions})，已加入列表${sizeNotice}`, screenshot: item };
+      return { success: true, message: t("captureSavedOnly", { dims: item.dimensions, notice: sizeNotice }), screenshot: item };
     }
     const copied = await this.copyImageFile(filePath, hostOverride);
     if (!copied.ok) {
       return {
         success: false,
-        message: `已截取全部屏幕 (${item.dimensions})，但复制到剪贴板失败: ${describeHostError(copied.error, "剪贴板不可用")}${sizeNotice}`,
+        message: t("captureCopyFailed", { dims: item.dimensions, reason: describeHostError(copied.error, t("clipboardUnavailable")), notice: sizeNotice }),
         error: "CAPTURE_COPY_FAILED",
         screenshot: item
       };
     }
     return {
       success: true,
-      message: `已截取全部屏幕 (${item.dimensions}) 并复制到剪贴板，按 ${modKey()}V 粘贴${sizeNotice}`,
+      message: t("captureCopied", { dims: item.dimensions, mod: modKey(), notice: sizeNotice }),
       screenshot: item
     };
   }
@@ -652,16 +661,16 @@ export class ScreenshotsManager {
   public async authorizeFolder(defaultPath?: string, hostOverride?: unknown): Promise<ScreenshotActionResult> {
     const res = await callHostTransport<{ canceled?: unknown; folderPath?: unknown } | null>(
       "window_show_select_folder_dialog",
-      { title: "选择要授权 ZTools 访问的截图目录", ...(defaultPath ? { defaultPath } : {}) },
+      { title: t("selectAuthFolderDialogTitle"), ...(defaultPath ? { defaultPath } : {}) },
       hostOverride
     );
     if (!res.ok) {
-      return { success: false, message: `授权失败: ${res.error || "目录对话框不可用"}`, error: res.error || "AUTHORIZE_FAILED" };
+      return { success: false, message: t("authFailedPrefix", { reason: resolveErrorMessage(res, t("folderDialogUnavailable")) }), error: res.error || "AUTHORIZE_FAILED" };
     }
     if (res.data?.canceled || !res.data?.folderPath) {
-      return { success: false, message: "已取消授权", error: "CANCELED" };
+      return { success: false, message: t("authCanceled"), error: "CANCELED" };
     }
-    return { success: true, message: `已授权访问: ${res.data.folderPath}` };
+    return { success: true, message: t("authSuccess", { path: String(res.data.folderPath) }) };
   }
 
   /**
@@ -731,7 +740,7 @@ export class ScreenshotsManager {
               if (!failure || typeof failure !== "object") return true;
               const value = failure as Record<string, unknown>;
               return typeof value.path !== "string" || !value.path || typeof value.message !== "string" || !value.message;
-            })) throw new Error("截图扫描返回的目录错误信息无效");
+            })) throw new Error(t("invalidScanFailures"));
             scanFailures = failures.map((failure: ScreenshotScanFailure) => ({ path: failure.path, message: failure.message }));
           }
           const rawList = Array.isArray(scanRes.data)
@@ -755,7 +764,8 @@ export class ScreenshotsManager {
           }
         }
 
-        if (!loadedFromHost) throw new Error(scanRes.error || "截图扫描结果无效")
+        if (!scanRes.ok) throw new Error(resolveErrorMessage(scanRes, t("scanFailedToast")))
+        if (!loadedFromHost) throw new Error(t("invalidScanResult"))
       }
     } catch (error) {
       if (strictReal) throw error
@@ -869,12 +879,12 @@ export class ScreenshotsManager {
    */
   public async extractOcr(item: ScreenshotItem, hostOverride?: unknown): Promise<string> {
     if (!item || !item.path) {
-      throw new Error("INVALID_SCREENSHOT_ITEM: 截图路径不能为空");
+      throw new Error(t("errInvalidShotItem"));
     }
 
     const strictReal = isStrictRealHost(hostOverride);
     if (strictReal && !isOcrSupported()) {
-      throw new Error("OCR_NOT_SUPPORTED: 当前平台暂不支持截图文字识别");
+      throw new Error(t("errOcrUnsupported"));
     }
 
     // 1. 优先调用文字识别服务的 recognizeImage
@@ -905,7 +915,7 @@ export class ScreenshotsManager {
     if (strictReal) {
       ;(item as { ocrStatus?: string }).ocrStatus = "failed";
       throw new Error(
-        pluginRes.error || `OCR_EXTRACTION_FAILED: 未能从截图 [${item.filename}] 中识别出有效文本`
+        resolveErrorMessage(pluginRes, t("errOcrFailed", { name: item.filename }))
       );
     }
 
@@ -927,7 +937,7 @@ export class ScreenshotsManager {
     hostOverride?: unknown
   ): Promise<ScreenshotActionResult> {
     if (!item || !item.path) {
-      return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+      return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
     }
 
     let pasteError = "";
@@ -935,13 +945,13 @@ export class ScreenshotsManager {
     if (read.ok && read.base64) {
       const pasteRes = await callHostTransport<unknown>("clipboard_hide_and_paste_image", { image: read.base64 }, hostOverride);
       if (pasteRes.ok) {
-        return { success: true, message: `已将截图 [${item.filename}] 回贴到前台活动窗口`, screenshot: item };
+        return { success: true, message: t("pastedToActiveMsg", { name: item.filename }), screenshot: item };
       }
       pasteError = String(pasteRes.error || "");
     } else if (isPermissionError(read.error)) {
       return {
         success: false,
-        message: `回贴截图失败: ${describeHostError(read.error, "无法读取截图")}`,
+        message: t("pasteFailedPrefix", { reason: describeHostError(read.error, t("cannotReadShot")) }),
         error: "PERMISSION_DENIED",
         screenshot: item
       };
@@ -951,15 +961,17 @@ export class ScreenshotsManager {
     if (copied.ok) {
       return {
         success: true,
-        message: `已复制截图 [${item.filename}]，请按 ${modKey()}V 粘贴到目标窗口${
-          /辅助功能/.test(pasteError) ? "（自动粘贴需在 系统设置 -> 隐私与安全性 -> 辅助功能 中授权 ZTools）" : ""
-        }`,
+        message: t("copiedFallbackPasteMsg", {
+          name: item.filename,
+          mod: modKey(),
+          axHint: /辅助功能|Accessibility/i.test(pasteError) ? t("axPermHint") : ""
+        }),
         screenshot: item
       };
     }
     return {
       success: false,
-      message: `回贴截图失败: ${describeHostError(copied.error, "宿主剪贴板接口未响应")}`,
+      message: t("pasteFailedPrefix", { reason: describeHostError(copied.error, t("clipboardApiNoResponse")) }),
       error: copied.error || "PASTE_FAILED",
       screenshot: item
     };
@@ -987,8 +999,8 @@ export class ScreenshotsManager {
           message:
             ipcRes.data?.message ||
             (ipcRes.data?.pasted
-              ? `已粘贴最新截图: ${target?.filename || "Latest"}`
-              : `已复制最新截图: ${target?.filename || "Latest"}，请按 ${modKey()}V 粘贴`),
+              ? t("pastedLatestMsg", { name: target?.filename || "Latest" })
+              : t("copiedLatestMsg", { name: target?.filename || "Latest", mod: modKey() })),
           screenshot: target
         };
       }
@@ -997,7 +1009,7 @@ export class ScreenshotsManager {
     const list = await this.loadScreenshots(false, hostOverride);
     const latest = newestScreenshot(list);
     if (!latest) {
-      return { success: false, message: "未找到近期截图", error: "NO_SCREENSHOTS" };
+      return { success: false, message: t("noRecentShots"), error: "NO_SCREENSHOTS" };
     }
     return this.pasteToActiveWindow(latest, hostOverride);
   }
@@ -1009,15 +1021,15 @@ export class ScreenshotsManager {
     item: ScreenshotItem,
     hostOverride?: unknown
   ): Promise<ScreenshotActionResult> {
-    if (!item || !item.path) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+    if (!item || !item.path) return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
 
     const copied = await this.copyImageFile(item.path, hostOverride);
     if (copied.ok) {
-      return { success: true, message: `已复制截图到剪贴板: ${item.filename}`, screenshot: item };
+      return { success: true, message: t("copiedImageMsg", { name: item.filename }), screenshot: item };
     }
     return {
       success: false,
-      message: `复制截图失败: ${describeHostError(copied.error, "宿主剪贴板接口未响应")}`,
+      message: t("copyImageFailedPrefix", { reason: describeHostError(copied.error, t("clipboardApiNoResponse")) }),
       error: copied.error || "COPY_FILE_FAILED",
       screenshot: item
     };
@@ -1027,11 +1039,11 @@ export class ScreenshotsManager {
    * 复制图片本地路径
    */
   public async copyImagePath(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
-    if (!item) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+    if (!item) return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
     await writeRealClipboardText(item.path, hostOverride);
     return {
       success: true,
-      message: `已复制路径: ${item.path}`,
+      message: t("copiedPathToast", { path: item.path }),
       screenshot: item
     };
   }
@@ -1040,19 +1052,19 @@ export class ScreenshotsManager {
    * 复制 OCR 提取文字
    */
   public async copyOcrText(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
-    if (!item) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+    if (!item) return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
     try {
       const text = await this.extractOcr(item, hostOverride);
       return {
         success: true,
-        message: `已复制 OCR 提取文字 (${text.length} 字符)`,
+        message: t("copiedOcrMsg", { len: text.length }),
         screenshot: item,
         ocrText: text
       };
     } catch (err: unknown) {
       return {
         success: false,
-        message: errorMessageOf(err) || "OCR 文本提取失败",
+        message: errorMessageOf(err) || t("ocrTextFailedFallback"),
         error: "OCR_FAILED",
         screenshot: item
       };
@@ -1063,36 +1075,36 @@ export class ScreenshotsManager {
    * 在访达 / 资源管理器中定位，按宿主真实结果返回
    */
   public async showInExplorer(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
-    if (!item || !item.path) return { success: false, message: "无效的文件路径", error: "INVALID_PATH" };
+    if (!item || !item.path) return { success: false, message: t("invalidFilePath"), error: "INVALID_PATH" };
 
     const res = await callHostTransport<unknown>("shell_show_item_in_folder", { fullPath: item.path }, hostOverride);
     if (!res.ok) {
       return {
         success: false,
-        message: `定位截图失败: ${describeHostError(res.error, "宿主未响应")}`,
+        message: t("locateFailedPrefix", { reason: describeHostError(res.error, t("hostNoResponse")) }),
         error: res.error || "SHOW_IN_FOLDER_FAILED",
         screenshot: item
       };
     }
-    return { success: true, message: `已在${fileManagerName(item.path)}中定位: ${item.filename}`, screenshot: item };
+    return { success: true, message: t("locatedInMgrMsg", { mgr: fileManagerName(item.path), name: item.filename }), screenshot: item };
   }
 
   /**
    * 用默认图片查看器打开 (Open with Default App)，按宿主真实结果返回
    */
   public async openWithDefaultApp(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
-    if (!item || !item.path) return { success: false, message: "无效的文件路径", error: "INVALID_PATH" };
+    if (!item || !item.path) return { success: false, message: t("invalidFilePath"), error: "INVALID_PATH" };
 
     const res = await callHostTransport<unknown>("shell_open_path", { fullPath: item.path }, hostOverride);
     if (!res.ok) {
       return {
         success: false,
-        message: `打开截图失败: ${describeHostError(res.error, "宿主未响应")}`,
+        message: t("openFailedPrefix", { reason: describeHostError(res.error, t("hostNoResponse")) }),
         error: res.error || "OPEN_FAILED",
         screenshot: item
       };
     }
-    return { success: true, message: `已使用系统默认查看器打开: ${item.filename}`, screenshot: item };
+    return { success: true, message: t("openedDefaultMsg", { name: item.filename }), screenshot: item };
   }
 
   /**
@@ -1100,7 +1112,7 @@ export class ScreenshotsManager {
    * 本次立即截取的缓存文件直接删除。宿主失败时保留列表行并返回失败原因
    */
   public async deleteScreenshot(item: ScreenshotItem, hostOverride?: unknown): Promise<ScreenshotActionResult> {
-    if (!item || !item.path) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+    if (!item || !item.path) return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
 
     if (isStrictRealHost(hostOverride)) {
       const res =
@@ -1110,7 +1122,7 @@ export class ScreenshotsManager {
       if (!res.ok) {
         return {
           success: false,
-          message: `删除截图失败: ${describeHostError(res.error, `宿主未能移入${trashName()}`)}`,
+          message: t("deleteFailedPrefix", { reason: describeHostError(res.error, t("hostTrashFailed", { trash: trashName() })) }),
           error: res.error || "DELETE_FAILED",
           screenshot: item
         };
@@ -1121,7 +1133,7 @@ export class ScreenshotsManager {
         try {
           await fs.promises.unlink(item.path);
         } catch (err: unknown) {
-          return { success: false, message: `删除截图失败: ${errorMessageOf(err) || String(err)}`, error: "DELETE_FAILED", screenshot: item };
+          return { success: false, message: t("deleteFailedPrefix", { reason: errorMessageOf(err) || String(err) }), error: "DELETE_FAILED", screenshot: item };
         }
       }
     }
@@ -1138,7 +1150,7 @@ export class ScreenshotsManager {
 
     return {
       success: true,
-      message: `已删除截图: ${item.filename}`,
+      message: t("deletedShotMsg", { name: item.filename }),
       screenshot: item
     };
   }
@@ -1147,7 +1159,7 @@ export class ScreenshotsManager {
    * 置顶/取消置顶截图
    */
   public async togglePinScreenshot(item: ScreenshotItem): Promise<ScreenshotActionResult> {
-    if (!item) return { success: false, message: "截图记录为空", error: "NULL_ITEM" };
+    if (!item) return { success: false, message: t("nullItemMsg"), error: "NULL_ITEM" };
 
     const nextPinned = !item.pinned;
     if (nextPinned) {
@@ -1164,7 +1176,7 @@ export class ScreenshotsManager {
 
     return {
       success: true,
-      message: nextPinned ? `已置顶截图 [${item.filename}]` : `已取消置顶 [${item.filename}]`,
+      message: nextPinned ? t("pinnedShotMsg", { name: item.filename }) : t("unpinnedShotMsg", { name: item.filename }),
       screenshot: { ...item, pinned: nextPinned }
     };
   }

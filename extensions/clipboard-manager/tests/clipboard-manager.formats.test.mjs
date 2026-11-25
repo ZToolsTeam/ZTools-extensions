@@ -20,7 +20,7 @@ test('文件和图片历史保留原类型，复制粘贴按 ID 调用宿主', a
   await restoreClipboardItem(list[1], true)
   assert.deepEqual(restored, [{ id: 'file-history', paste: false }, { id: 'image-history', paste: true }])
   host.ipc.clipboard_history_restore = async () => ({ success: false, error: 'record missing' })
-  await assert.rejects(restoreClipboardItem(list[0]), /record missing/)
+  await assert.rejects(restoreClipboardItem(list[0]), /恢复剪贴板历史失败/)
 })
 
 test('清空宿主失败不删本地；本地写入失败向调用方报错', async () => {
@@ -55,7 +55,7 @@ test('旧客户端没有按 ID 恢复的接口：文本退回 SDK 复制，图�
 test('同步剪贴板失败时向调用方报错；本地流水粘贴在顶部插入新条目后不重复粘贴同一条', async () => {
   await assert.rejects(
     syncCurrentSystemClipboard([], { clipboard_read_text: async () => { throw new Error('clipboard read failed') } }),
-    /clipboard read failed/
+    /读取系统剪贴板失败/
   )
   pasteSequenceManager.reset()
   const items = [

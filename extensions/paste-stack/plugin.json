@@ -1,15 +1,15 @@
 {
   "id": "paste-stack",
   "name": "纯文本与粘贴栈",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "一键清除剪贴板富文本脏格式转为纯文本；支持多项连续复制入栈、跨窗口依次顺序或倒序自动上屏粘贴",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "效率工具",
-    "办公工具"
+    "办公效率"
   ],
+  "categoryId": "productivity",
   "permissions": [
     "clipboard"
   ],
@@ -72,5 +72,69 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.3"
+  "minAppVersion": "1.1.8.3",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Plain Text & Paste Stack",
+      "description": "Strip rich formatting from clipboard text with one click, or collect multiple copies into a FIFO/LIFO paste queue for sequential pasting across windows.",
+      "keywords": [
+        "paste stack",
+        "clipboard",
+        "plain text",
+        "fifo",
+        "lifo",
+        "queue"
+      ],
+      "features": {
+        "paste-stack-queue": {
+          "explain": "View and manage the paste stack queue and toggle copy-capture mode",
+          "cmds": [
+            "paste stack",
+            "paste queue",
+            "multi copy",
+            "sequential paste"
+          ]
+        },
+        "paste-clean-text": {
+          "explain": "Strip rich formatting from clipboard text while keeping raw code, paths, and whitespace",
+          "cmds": [
+            "clean clipboard text",
+            "plain text",
+            "strip format",
+            "unformatted paste"
+          ]
+        },
+        "paste-stack-fifo": {
+          "explain": "Open and use the paste stack in first-in, first-out (FIFO) order",
+          "cmds": [
+            "fifo paste",
+            "fifo stack",
+            "order paste"
+          ]
+        },
+        "paste-stack-lifo": {
+          "explain": "Open and use the paste stack in last-in, first-out (LIFO) order",
+          "cmds": [
+            "lifo paste",
+            "lifo stack",
+            "reverse paste"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

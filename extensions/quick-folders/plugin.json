@@ -2,13 +2,17 @@
   "id": "quick-folders",
   "name": "常用文件夹",
   "description": "一键打开桌面、下载、文档、AppData 与系统临时目录等高频文件夹，免去层层翻找",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "category": "system",
+  "category": [
+    "文件管理"
+  ],
+  "categoryId": "files",
   "permissions": [
-    "shell"
+    "shell",
+    "dialog"
   ],
   "targets": [
     {
@@ -24,5 +28,33 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Quick Folders",
+      "description": "Open frequently used directories like Desktop, Downloads, Documents, AppData, and Temp with a single click.",
+      "keywords": [
+        "folders",
+        "quick folders",
+        "desktop",
+        "downloads",
+        "appdata",
+        "temp"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

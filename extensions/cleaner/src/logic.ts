@@ -14,6 +14,8 @@ import {
   createDirectoryScanner,
   trashRealItem
 } from './native-ipc.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
@@ -31,14 +33,16 @@ export interface CleanClassMeta {
   category: 'system' | 'browser' | 'app'
 }
 
-export const CLEAN_CLASSES: CleanClassMeta[] = [
-  { classId: 1, name: '系统临时缓存', shortName: '系统临时', color: '#64748b', category: 'system' },
-  { classId: 2, name: '浏览器缓存', shortName: '浏览器缓存', color: '#64748b', category: 'browser' },
-  { classId: 3, name: '开发工具缓存', shortName: '开发缓存', color: '#64748b', category: 'app' },
-  { classId: 4, name: '系统特殊项', shortName: '系统特殊项', color: '#64748b', category: 'system' },
-  { classId: 5, name: '社交办公垃圾', shortName: '社交办公', color: '#64748b', category: 'app' },
-  { classId: 6, name: '大文件残留', shortName: '大文件残留', color: '#64748b', category: 'app' }
-]
+export function getCleanClasses(): CleanClassMeta[] {
+  return [
+    { classId: 1, name: t('classSysTemp'), shortName: t('classSysTempShort'), color: '#64748b', category: 'system' },
+    { classId: 2, name: t('classBrowser'), shortName: t('classBrowser'), color: '#64748b', category: 'browser' },
+    { classId: 3, name: t('classDev'), shortName: t('classDevShort'), color: '#64748b', category: 'app' },
+    { classId: 4, name: t('classSysSpecial'), shortName: t('classSysSpecial'), color: '#64748b', category: 'system' },
+    { classId: 5, name: t('classSocialOffice'), shortName: t('classSocialOfficeShort'), color: '#64748b', category: 'app' },
+    { classId: 6, name: t('classLargeFiles'), shortName: t('classLargeFiles'), color: '#64748b', category: 'app' }
+  ]
+}
 
 export interface CleanGroupItem {
   id: string
@@ -98,7 +102,9 @@ export const DLL_PLUGIN_NAME = 'CleanerPlugin'
 // 安全防线：严禁将系统核心保护目录、注册表配置库、应用安装目录或用户个人文档目录加入垃圾清理范围
 export const FORBIDDEN_TARGET_PATTERN =
   /(?:^|[\\/])(?:System32|SysWOW64|Program Files|Program Files \(x86\)|\.\.)(?:$|[\\/])|^C:\\Windows(?:[\\/](?!Temp(?:$|[\\/])|SoftwareDistribution[\\/]Download(?:$|[\\/])|Minidump(?:$|[\\/])|Prefetch(?:$|[\\/])|Logs(?:$|[\\/])).*)?$|^C:\\Users\\[^\\]+\\Documents\\?$/i
-export const FORBIDDEN_REASON = '严禁将 Windows 系统核心配置库或用户个人文档目录加入垃圾清理范围'
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
 
 /** 汇总各规则扫描到的文件总数与总体积（包含没有作为样本列出的文件） */
 export function computeCleanSummary(
@@ -121,28 +127,28 @@ export function computeCleanSummary(
 
 export function validateCleanPayload(method: string, params: unknown): { valid: boolean; error?: string } {
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: t('errInvalidMethodEmpty') }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: t('errInvalidMethodFormat') }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: t('errInvalidParamsObject') }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: t('errParamTooLong', { key }) }
       }
       if (FORBIDDEN_TARGET_PATTERN.test(val)) {
-        return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+        return { valid: false, error: t('errSecurityIntercepted', { reason: t('forbiddenReason') }) }
       }
     } else if (Array.isArray(val)) {
       for (const item of val) {
         if (typeof item === 'string' && FORBIDDEN_TARGET_PATTERN.test(item)) {
-          return { valid: false, error: `SECURITY_INTERCEPTED: ${FORBIDDEN_REASON}` }
+          return { valid: false, error: t('errSecurityIntercepted', { reason: t('forbiddenReason') }) }
         }
       }
     }
@@ -158,7 +164,7 @@ export async function invokeNativeCapability(
 ): Promise<NativeInvocationResult> {
   const check = validateCleanPayload(method, params)
   if (!check.valid) {
-    throw new Error(check.error || '参数校验失败')
+    throw new Error(resolveErrorMessage(check, t('errValidationFailed')))
   }
   const res = await invokeDllPluginCapability(DLL_PLUGIN_NAME, method, params, hostBridge)
   return {
@@ -242,7 +248,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
   const scanner = createDirectoryScanner(hostOverride)
   const homeDir = await getRealSystemPath('home', hostOverride)
   if (!homeDir) {
-    throw new Error('无法读取当前用户目录，未执行扫描')
+    throw new Error(t('errNoHomeDir'))
   }
   const [diskInfo, env, commonFolders, realDownloads] = await Promise.all([
     fetchSystemDiskInfo(hostOverride),
@@ -252,7 +258,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
   ])
   const tempDir = commonFolders.data?.folders?.find(folder => folder.id === 'temp' && folder.exists)?.path
   if (!commonFolders.ok || !tempDir) {
-    throw new Error(commonFolders.error || '无法获取用户临时文件夹路径，未执行扫描')
+    throw new Error(resolveErrorMessage(commonFolders, t('errNoTempDir')))
   }
   const downloadsDir = realDownloads || env.downloads
   const localAppData = env.localAppData || `${homeDir}\\AppData\\Local`
@@ -275,10 +281,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-sys-temp',
       classId: 1,
       groupId: 101,
-      className: '系统临时缓存',
-      name: '用户临时文件夹 (%TEMP%)',
+      className: t('classSysTemp'),
+      name: t('grpSysTempName'),
       category: 'system',
-      description: '应用运行与安装包解压遗留的临时文件',
+      description: t('grpSysTempDesc'),
       riskLevel: 'safe',
       // C:\Windows\Temp 属于系统目录，客户端不允许插件把其中的文件移入回收站，因此不扫描
       dirs: tempDir ? [tempDir] : [],
@@ -288,10 +294,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-thumb-cache',
       classId: 1,
       groupId: 102,
-      className: '系统临时缓存',
-      name: '资源管理器缩略图与图标缓存',
+      className: t('classSysTemp'),
+      name: t('grpThumbName'),
       category: 'system',
-      description: '资源管理器生成的图片、视频缩略图缓存 (thumbcache_*.db、iconcache_*.db)',
+      description: t('grpThumbDesc'),
       riskLevel: 'safe',
       dirs: [`${localAppData}\\Microsoft\\Windows\\Explorer`],
       filterExt: /thumbcache|iconcache/i,
@@ -301,10 +307,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-browser-edge',
       classId: 2,
       groupId: 201,
-      className: '浏览器缓存',
-      name: 'Microsoft Edge 网页与 GPU 缓存',
+      className: t('classBrowser'),
+      name: t('grpEdgeName'),
       category: 'browser',
-      description: 'Edge 磁盘缓存、Code Cache、GPUCache 与 ShaderCache（不含 Cookie 与已保存的密码）',
+      description: t('grpEdgeDesc'),
       riskLevel: 'safe',
       dirs: [
         `${localAppData}\\Microsoft\\Edge\\User Data\\Default\\Cache`,
@@ -318,10 +324,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-browser-chrome',
       classId: 2,
       groupId: 202,
-      className: '浏览器缓存',
-      name: 'Google Chrome 网页与 GPU 缓存',
+      className: t('classBrowser'),
+      name: t('grpChromeName'),
       category: 'browser',
-      description: 'Chrome 磁盘缓存、Code Cache、GPUCache 与 ShaderCache（不含 Cookie 与已保存的密码）',
+      description: t('grpChromeDesc'),
       riskLevel: 'safe',
       dirs: [
         `${localAppData}\\Google\\Chrome\\User Data\\Default\\Cache`,
@@ -335,10 +341,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-dev-npm',
       classId: 3,
       groupId: 301,
-      className: '开发工具缓存',
-      name: 'npm / pip 包管理器缓存',
+      className: t('classDev'),
+      name: t('grpNpmPipName'),
       category: 'app',
-      description: 'npm-cache 与 pip 下载缓存，删除后再次安装依赖时需要重新下载',
+      description: t('grpNpmPipDesc'),
       riskLevel: 'recommended',
       dirs: [`${localAppData}\\npm-cache`, `${localAppData}\\pip\\cache`],
       defaultChecked: false
@@ -347,10 +353,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-dev-vscode',
       classId: 3,
       groupId: 302,
-      className: '开发工具缓存',
-      name: 'VS Code 缓存与日志',
+      className: t('classDev'),
+      name: t('grpVscodeName'),
       category: 'app',
-      description: 'VS Code 的 CachedData、GPUCache 与运行日志',
+      description: t('grpVscodeDesc'),
       riskLevel: 'safe',
       dirs: [`${roamingAppData}\\Code\\CachedData`, `${roamingAppData}\\Code\\logs`, `${roamingAppData}\\Code\\GPUCache`],
       defaultChecked: true
@@ -359,10 +365,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-crash-dumps',
       classId: 4,
       groupId: 401,
-      className: '系统特殊项',
-      name: '应用崩溃转储与错误报告',
+      className: t('classSysSpecial'),
+      name: t('grpCrashName'),
       category: 'system',
-      description: '应用异常退出生成的 .dmp 转储 (CrashDumps) 与 Windows 错误报告 (WER)',
+      description: t('grpCrashDesc'),
       riskLevel: 'safe',
       dirs: [
         `${localAppData}\\CrashDumps`,
@@ -375,10 +381,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-office-cache',
       classId: 5,
       groupId: 501,
-      className: '社交办公垃圾',
-      name: '桌面客户端公共缓存 (D3DSCache / SquirrelTemp)',
+      className: t('classSocialOffice'),
+      name: t('grpOfficeName'),
       category: 'app',
-      description: 'Direct3D 着色器缓存与桌面客户端自动更新留下的临时安装包',
+      description: t('grpOfficeDesc'),
       riskLevel: 'safe',
       dirs: [`${localAppData}\\D3DSCache`, `${localAppData}\\SquirrelTemp`],
       defaultChecked: true
@@ -387,10 +393,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-wps-backup',
       classId: 5,
       groupId: 502,
-      className: '社交办公垃圾',
-      name: 'WPS Office 备份文件夹',
+      className: t('classSocialOffice'),
+      name: t('grpWpsName'),
       category: 'app',
-      description: 'WPS 自动保存的文档备份，可能是你需要的文档副本，确认不再需要后再勾选',
+      description: t('grpWpsDesc'),
       riskLevel: 'caution',
       dirs: [`${localAppData}\\Kingsoft\\WPS Office\\backup`],
       defaultChecked: false
@@ -399,10 +405,10 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
       id: 'group-downloads-installers',
       classId: 6,
       groupId: 601,
-      className: '大文件残留',
-      name: '“下载”文件夹里的安装包与压缩包',
+      className: t('classLargeFiles'),
+      name: t('grpDownloadsName'),
       category: 'app',
-      description: '“下载”文件夹中的 exe、msi、msix、zip、7z、rar、iso 文件，确认不再需要后再勾选',
+      description: t('grpDownloadsDesc'),
       riskLevel: 'caution',
       dirs: downloadsDir ? [downloadsDir] : [],
       filterExt: /\.(?:exe|msi|msix|zip|7z|rar|iso)$/i,
@@ -423,7 +429,7 @@ export async function fetchCleanRulesAndScan(hostOverride?: DynamicBridge): Prom
         category: def.category,
         description: def.description,
         riskLevel: def.riskLevel,
-        pathHint: def.dirs.join('; ') || '未找到对应目录',
+        pathHint: def.dirs.join('; ') || t('dirNotFound'),
         dirs: def.dirs,
         fileCount: scanned.fileCount,
         totalSizeBytes: scanned.totalSizeBytes,
@@ -462,13 +468,13 @@ export async function executeCleanFiles(
     skippedProtected: 0
   }
   if (unique.length === 0) {
-    return { ...result, error: '没有勾选任何文件' }
+    return { ...result, error: t('errNoCheckedFiles') }
   }
 
   for (const filePath of unique) {
     if (FORBIDDEN_TARGET_PATTERN.test(filePath)) {
       result.skippedProtected += 1
-      result.failed.push({ path: filePath, error: FORBIDDEN_REASON })
+      result.failed.push({ path: filePath, error: t('forbiddenReason') })
       continue
     }
     const delRes = await trashRealItem(filePath, hostOverride)
@@ -476,7 +482,7 @@ export async function executeCleanFiles(
       result.deletedCount += 1
       result.deletedSizeBytes += sizeOf.get(filePath) || 0
     } else {
-      result.failed.push({ path: filePath, error: delRes.error || '移入回收站失败' })
+      result.failed.push({ path: filePath, error: resolveErrorMessage(delRes, t('errMoveToTrashFailed')) })
     }
   }
 
@@ -484,7 +490,7 @@ export async function executeCleanFiles(
   result.failedCount = result.failed.length
   result.ok = result.failedCount === 0
   if (!result.ok) {
-    result.error = `${result.failedCount} 个文件未能移入回收站：${result.failed[0].error}`
+    result.error = t('errFilesNotTrashed', { count: result.failedCount, first: result.failed[0].error })
   }
   return result
 }
@@ -494,18 +500,22 @@ export function summarizeCleanResult(res: CleanExecutionResult): { success: bool
   if (res.ok) {
     return {
       success: true,
-      title: `已移入回收站 ${res.deletedCount} 个文件`,
-      message: `共 ${formatBytes(res.deletedSizeBytes)}，清空回收站后才会释放磁盘空间`
+      title: t('cleanOkTitle', { count: res.deletedCount }),
+      message: t('cleanOkMsg', { size: formatBytes(res.deletedSizeBytes) })
     }
   }
   if (res.deletedCount > 0) {
     return {
       success: false,
-      title: `${res.failedCount} 个文件未能移入回收站`,
-      message: `已移入回收站 ${res.deletedCount} 个文件（${formatBytes(res.deletedSizeBytes)}）；失败原因：${res.failed[0]?.error || '未知'}`
+      title: t('cleanPartialTitle', { count: res.failedCount }),
+      message: t('cleanPartialMsg', {
+        ok: res.deletedCount,
+        size: formatBytes(res.deletedSizeBytes),
+        reason: resolveErrorMessage(res.failed[0], t('errUnknown'))
+      })
     }
   }
-  return { success: false, title: '清理失败', message: res.error || '文件未能移入回收站' }
+  return { success: false, title: t('cleanFailedTitle'), message: resolveErrorMessage(res, t('cleanFailedDefaultMsg')) }
 }
 
 /** 扫描后的默认勾选：默认勾选规则里的样本文件（WPS 备份、包管理器缓存、“下载”里的文件默认不勾选） */
@@ -524,7 +534,7 @@ export async function emptyRecycleBin(
 ): Promise<{ ok: boolean; removedCount?: number; message?: string; error?: string }> {
   const res = await invokeNativeCapability('EmptyRecycleBin', {}, hostOverride)
   if (!res.ok) {
-    return { ok: false, error: res.error || '清空回收站失败' }
+    return { ok: false, error: resolveErrorMessage(res, t('emptyBinFailedDefault')) }
   }
   const d = res.data && typeof res.data === 'object' ? (res.data as Record<string, unknown>) : {}
   return {

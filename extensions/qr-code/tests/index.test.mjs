@@ -110,3 +110,17 @@ test('Wi-Fi 表单生成正确内容；界面无彩色 Emoji', async () => {
   await tick()
   assert.equal(JSON.parse(host.storage.get('ztools_qr_history'))[0].content, 'WIFI:T:WPA;S:家里;P:12345678;;')
 })
+
+test('粘贴二维码图片：支持 Ctrl+V 粘贴图片文件调用 qr_scan 解码并填入内容', async () => {
+  host.ipc.qr_scan = async (params) => {
+    assert.equal(params.path, '/Users/me/qrcode-sample.png')
+    return { text: 'https://ztools.cn/docs/paste' }
+  }
+  const view = await mount(QrCodeCommand)
+  await view.pasteFiles(['/Users/me/qrcode-sample.png'])
+  await tick()
+  assert.equal(view.tree().props.searchText, 'https://ztools.cn/docs/paste')
+  assert.equal(host.lastToast().title, '已识别二维码内容')
+  assert.ok(view.item('live'))
+  view.unmount()
+})

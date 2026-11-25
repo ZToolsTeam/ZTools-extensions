@@ -2,11 +2,18 @@
   "id": "network-rescue",
   "name": "网络修复",
   "description": "一键检测断网原因，支持刷新 DNS 缓存、重置网络配置与清除异常代理，快速恢复正常上网",
-  "version": "2.0.9",
+  "version": "2.0.10",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
-  "category": "system",
+  "category": [
+    "网络工具",
+    "系统工具"
+  ],
+  "categoryId": [
+    "network",
+    "system"
+  ],
   "permissions": [
     "shell",
     "child_process"
@@ -20,5 +27,34 @@
     }
   ],
   "nativeComponents": [],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Network Rescue",
+      "description": "Diagnose connectivity issues with one click, flush DNS cache, reset network configuration, and clear misconfigured proxies to restore internet access.",
+      "keywords": [
+        "network",
+        "fix",
+        "rescue",
+        "troubleshoot",
+        "dns",
+        "proxy",
+        "reset"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

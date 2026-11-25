@@ -1,5 +1,6 @@
 import { callHostTransport } from './native-ipc.js'
-import { CHEATSHEET_SHORTCUTS, HIGH_CONFLICT_HOTKEY_PRESETS } from './cheatsheet-data.js'
+import { getCheatsheetShortcuts, getHighConflictPresets } from './cheatsheet-data.js'
+import { t } from './i18n.js'
 import type {
   CheatsheetShortcutItem,
   HotkeyModeFilter,
@@ -7,6 +8,7 @@ import type {
   HotkeyProbeResultItem,
   ParsedHotkeyCombo
 } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 const MODIFIER_ORDER = ['Ctrl', 'Alt', 'Shift', 'Win'] as const
 const MODIFIER_MAP: Record<string, (typeof MODIFIER_ORDER)[number]> = {
@@ -35,7 +37,7 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
       normalized: '',
       modifiers: [],
       key: '',
-      error: 'EMPTY_HOTKEY_EXPRESSION: 快捷键表达式不能为空'
+      error: t('errEmptyHotkey')
     }
   }
 
@@ -46,13 +48,13 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
       normalized: '',
       modifiers: [],
       key: '',
-      error: `MALFORMED_HOTKEY: 快捷键格式包含连续或末尾加号 (${trimmed})`
+      error: t('errMalformedHotkey', { expr: trimmed })
     }
   }
 
   const tokens = trimmed
     .split('+')
-    .map((t) => t.trim())
+    .map((tok) => tok.trim())
     .filter(Boolean)
 
   if (tokens.length === 0) {
@@ -81,7 +83,7 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
         normalized: '',
         modifiers: [],
         key: '',
-        error: `INVALID_KEY_TOKEN: 不支持的按键名称 "${token}"`
+        error: t('errInvalidKeyToken', { token })
       }
     }
     const normalizedKey =
@@ -99,8 +101,8 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
       key: '',
       error:
         mainKeys.length === 0
-          ? 'MISSING_MAIN_KEY: 缺少主键（如 A、F1、Space）'
-          : 'MULTIPLE_MAIN_KEYS: 一组快捷键只能包含一个主键'
+          ? t('errMissingMainKey')
+          : t('errMultipleMainKeys')
     }
   }
 
@@ -114,7 +116,7 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
       normalized: '',
       modifiers: [],
       key: mainKey,
-      error: 'MISSING_MODIFIER: 普通字母/数字全局热键必须包含 Ctrl / Alt / Shift / Win 修饰键'
+      error: t('errMissingModifier')
     }
   }
 
@@ -128,7 +130,7 @@ export function parseAndNormalizeHotkeyCombo(rawInput: string): ParsedHotkeyComb
 }
 
 export async function probeGlobalHotkeys(
-  presets: readonly HotkeyProbePreset[] = HIGH_CONFLICT_HOTKEY_PRESETS,
+  presets: readonly HotkeyProbePreset[] = getHighConflictPresets(),
   customCombo?: string,
   hostOverride?: unknown
 ): Promise<HotkeyProbeResultItem[]> {
@@ -143,9 +145,9 @@ export async function probeGlobalHotkeys(
         effectivePresets.unshift({
           id: `custom-${parsed.normalized.toLowerCase()}`,
           keyCombo: parsed.normalized,
-          commonVictim: '用户自定义测试组合键',
-          typicalCulprit: '后台常驻进程',
-          modifyGuide: '可在后台软件快捷键设置中排查或绑为新全局热键'
+          commonVictim: t('customPresetVictim'),
+          typicalCulprit: t('customPresetCulprit'),
+          modifyGuide: t('customPresetGuide')
         })
       }
     }
@@ -165,7 +167,7 @@ export async function probeGlobalHotkeys(
 
   // 探测失败不能把所有组合显示成“空闲”
   if (!res.ok || !res.data || res.data.ok === false || !Array.isArray(res.data.results)) {
-    throw new Error(String(res.data?.error ?? res.error ?? '热键探测未完成，不能判断是否空闲'))
+    throw new Error(resolveErrorMessage(res.data?.error ? res.data : res, t('errWinProbeIncomplete')))
   }
   const hostMap = new Map<string, Record<string, unknown>>()
   for (const r of res.data.results as Array<Record<string, unknown>>) {
@@ -184,7 +186,7 @@ export async function probeGlobalHotkeys(
       isSystemReserved ? 'reserved' : rawStatus === 'occupied' || rawStatus === 'free' ? rawStatus : 'unsupported'
     const isOccupied = probeStatus === 'reserved' || probeStatus === 'occupied'
     const suspectApp = isOccupied
-      ? String(hostEntry?.suspectApp || (isSystemReserved ? 'Windows 系统保留' : '系统未提供占用程序'))
+      ? String(hostEntry?.suspectApp || (isSystemReserved ? t('winSuspectReserved') : t('winSuspectUnknown')))
       : null
     const suspectProcess =
       isOccupied && typeof hostEntry?.suspectProcess === 'string'
@@ -201,12 +203,12 @@ export async function probeGlobalHotkeys(
       keyCombo: preset.keyCombo,
       title: preset.commonVictim,
       subtitle: isOccupied
-        ? `占用来源: ${suspectApp} · 解决建议: ${modifyGuide}`
+        ? t('winSubOccupied', { app: suspectApp, guide: modifyGuide })
         : probeStatus === 'unsupported'
-          ? '此组合包含暂不支持检测的按键，无法判断是否被占用'
-          : `本次检测可注册（其他软件的应用内快捷键无法完整检测） · 常被「${preset.typicalCulprit}」抢占`,
-      categoryLabel: isSystemReserved ? '系统内核保留' : probeStatus === 'unsupported' ? '无法检测' : isOccupied ? '已被占用' : '本次可注册',
-      statusText: isOccupied ? '冲突占用' : probeStatus === 'unsupported' ? '无法检测' : '可注册',
+          ? t('winSubUnsupported')
+          : t('winSubFree', { culprit: preset.typicalCulprit }),
+      categoryLabel: isSystemReserved ? t('winCatReserved') : probeStatus === 'unsupported' ? t('winCatUnsupported') : isOccupied ? t('winCatOccupied') : t('winCatFree'),
+      statusText: isOccupied ? t('winStatusOccupied') : probeStatus === 'unsupported' ? t('winCatUnsupported') : t('winStatusFree'),
       probeStatus,
       isOccupied,
       isSystemReserved,
@@ -228,7 +230,7 @@ export async function probeGlobalHotkeys(
 export function filterCheatsheetItems(
   modeFilter: HotkeyModeFilter,
   query = '',
-  items: readonly CheatsheetShortcutItem[] = CHEATSHEET_SHORTCUTS
+  items: readonly CheatsheetShortcutItem[] = getCheatsheetShortcuts()
 ): CheatsheetShortcutItem[] {
   const category = modeFilter.startsWith('sheet:')
     ? modeFilter.slice('sheet:'.length)

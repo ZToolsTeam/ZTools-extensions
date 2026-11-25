@@ -3,11 +3,14 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as batchImage from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const batchImage = await import('../dist/index.js')
 
 const pluginDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const GOV_PRESET = batchImage.IMAGE_WORKSHOP_PRESETS.find((p) => p.id === 'preset-extreme-300k')
-const DEFAULT_PRESET = batchImage.IMAGE_WORKSHOP_PRESETS[0]
+const GOV_PRESET = batchImage.getImageWorkshopPresets().find((p) => p.id === 'preset-extreme-300k')
+const DEFAULT_PRESET = batchImage.getImageWorkshopPresets()[0]
 
 function settingsOf(preset) {
   return {
@@ -113,47 +116,36 @@ function makeHost({ existing = [], exists = 'answer', process }) {
   return { host, calls }
 }
 
-test('batch-image host integration: 真实扫描过滤非图片与本插件输出件，不估算尺寸与压缩体积', async () => {
-  await withRealElectronWindow(
+test('batch-image 导入规则与处理跳过：支持 8 种格式、排除 _opt 输出文件并支持 shouldSkip 跳过已移除条目', async () => {
+  assert.deepEqual(
+    [...batchImage.IMAGE_IMPORT_EXTENSIONS],
+    ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tiff', '.avif']
+  )
+  assert.equal(batchImage.IMAGE_IMPORT_RULES.excludeFile?.('photo_opt.png', 'D:\\Pics\\photo_opt.png'), true)
+  assert.equal(batchImage.IMAGE_IMPORT_RULES.excludeFile?.('photo_opt_2.jpg', 'D:\\Pics\\photo_opt_2.jpg'), true)
+  assert.equal(batchImage.IMAGE_IMPORT_RULES.excludeFile?.('photo_opt_20261116120000.avif', 'D:\\Pics\\photo_opt_20261116120000.avif'), true)
+  assert.equal(batchImage.IMAGE_IMPORT_RULES.excludeFile?.('my_opt_sample.png', 'D:\\Pics\\my_opt_sample.png'), false)
+  assert.equal(batchImage.IMAGE_IMPORT_RULES.forbiddenPath?.test('C:\\Windows\\System32\\a.png'), true)
+
+  // shouldSkip 命中时不再调用宿主也不产出结果
+  const { host, calls } = makeHost({ process: (call) => hostSuccess(call) })
+  const started = []
+  const outcomes = await batchImage.processImageBatch(
+    [
+      { id: '1', path: 'D:\\Pics\\a.png', sizeBytes: 1000 },
+      { id: '2', path: 'D:\\Pics\\b.png', sizeBytes: 1000 }
+    ],
+    settingsOf(DEFAULT_PRESET),
     {
-      system_get_path: ({ name }) => {
-        if (name === 'pictures') return 'D:\\Media\\Pictures'
-        if (name === 'downloads') return 'D:\\Media\\Downloads'
-        if (name === 'desktop') return 'D:\\Media\\Desktop'
-        return ''
-      },
-      system_search_files: ({ query }) => {
-        if (query === 'dir:D:\\Media\\Pictures') {
-          return {
-            files: [
-              { name: 'readme.txt', path: 'D:\\Media\\Pictures\\readme.txt', is_dir: false, size: 4096, mtime: 1700000000 },
-              { name: 'banner_opt.png', path: 'D:\\Media\\Pictures\\banner_opt.png', is_dir: false, size: 120000, mtime: 1700000000 },
-              { name: 'banner_opt_2.png', path: 'D:\\Media\\Pictures\\banner_opt_2.png', is_dir: false, size: 110000, mtime: 1700000000 },
-              { name: 'banner_opt_20261028120000.jpg', path: 'D:\\Media\\Pictures\\banner_opt_20261028120000.jpg', is_dir: false, size: 90000, mtime: 1700000000 },
-              { name: 'zero_byte.png', path: 'D:\\Media\\Pictures\\zero_byte.png', is_dir: false, size: 0, mtime: 1700000000 },
-              { name: 'banner_4k.png', path: 'D:\\Media\\Pictures\\banner_4k.png', is_dir: false, size: 2048000, mtime: 1700000000 }
-            ]
-          }
-        }
-        return { files: [] }
-      }
-    },
-    async () => {
-      const ws = await batchImage.fetchRealImageWorkspace()
-      assert.equal(ws.files.length, 1, '应仅保留非 0 字节且不是 *_opt 输出件的图片')
-      assert.equal(ws.files[0].name, 'banner_4k.png')
-      assert.equal(ws.files[0].sizeBytes, 2048000)
-      assert.equal(ws.files[0].extension, '.png')
-      assert.equal('dimensionsText' in ws.files[0], false, '扫描阶段读不到尺寸，不能按文件大小编造分辨率')
-      assert.equal('estimatedCompressedBytes' in ws.files[0], false, '不再用固定比例估算压缩后体积')
-      assert.equal(ws.truncated, false)
+      hostOverride: host,
+      shouldSkip: (id) => id === '2',
+      onStart: (id) => started.push(id)
     }
   )
-})
-
-test('batch-image 扫描：拿不到任何系统目录时如实报错，不当作"找到 0 张"', async () => {
-  const host = { system_get_path: async () => '' }
-  await assert.rejects(() => batchImage.fetchRealImageWorkspace(host), /无法获取图片、下载、桌面目录/)
+  assert.deepEqual(started, ['1'])
+  assert.equal(calls.length, 1)
+  assert.equal(outcomes.has('1'), true)
+  assert.equal(outcomes.has('2'), false)
 })
 
 test('batch-image beyond happy path: 参数异常、路径穿越拦截、损坏 JSON 与宿主故障注入', async () => {
@@ -380,16 +372,17 @@ test('batch-image 剪贴板路径解析与文件大小读取：只认绝对路�
 })
 
 test('batch-image 能力声明：去掉宿主做不到的合并 PDF 与清除 EXIF，界面选项只含宿主支持的取值', () => {
-  const methods = batchImage.IMAGE_WORKSHOP_PRESETS.map((p) => p.method)
+  const presets = batchImage.getImageWorkshopPresets()
+  const methods = presets.map((p) => p.method)
   assert.equal(methods.includes('MergeImagesToPdf'), false)
-  const ids = batchImage.IMAGE_WORKSHOP_PRESETS.map((p) => p.id)
+  const ids = presets.map((p) => p.id)
   assert.equal(ids.includes('preset-merge-pdf'), false)
   assert.equal(ids.includes('preset-strip-exif'), false)
-  assert.deepEqual(batchImage.FORMAT_OPTIONS.map((o) => o.value), ['keep', 'jpg', 'png'])
-  assert.deepEqual(batchImage.QUALITY_OPTIONS.map((o) => o.value).sort(), ['q70', 'q85', 'q95'])
-  assert.deepEqual(batchImage.RESIZE_OPTIONS.map((o) => o.value), ['source', 'max1920', 'max1280'])
+  assert.deepEqual(batchImage.getFormatOptions().map((o) => o.value), ['keep', 'jpg', 'png'])
+  assert.deepEqual(batchImage.getQualityOptions().map((o) => o.value).sort(), ['q70', 'q85', 'q95'])
+  assert.deepEqual(batchImage.getResizeOptions().map((o) => o.value), ['source', 'max1920', 'max1280'])
 
-  const presetText = JSON.stringify(batchImage.IMAGE_WORKSHOP_PRESETS)
+  const presetText = JSON.stringify(presets)
   assert.equal(/无损瘦身|视觉无损|EXIF|PDF|去除.*阴影/.test(presetText), false, '方案说明不能保留做不到的说法')
 
   const manifest = JSON.parse(fs.readFileSync(path.join(pluginDir, 'plugin.json'), 'utf8'))

@@ -1,9 +1,13 @@
 {
   "id": "hosts-switcher",
   "name": "域名映射",
-  "version": "1.0.9",
+  "version": "1.0.11",
   "description": "保存并切换多套 Hosts 方案；Mac 写入前预览、校验和备份，通过系统授权应用并支持恢复",
   "author": "ZTools Team",
+  "category": [
+    "网络工具"
+  ],
+  "categoryId": "network",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -50,5 +54,59 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Hosts Switcher",
+      "description": "Manage and switch between multiple Hosts profiles. On macOS, previews, validates, and backs up before applying via system authorization with restore support.",
+      "keywords": [
+        "hosts",
+        "dns",
+        "switchhosts",
+        "domain mapping",
+        "network"
+      ],
+      "features": {
+        "hosts-all": {
+          "explain": "View all Hosts profiles, active status, and merged system hosts preview",
+          "cmds": [
+            "hosts",
+            "switchhosts",
+            "hosts switcher",
+            "domain mapping"
+          ]
+        },
+        "hosts-flush-dns": {
+          "explain": "Flush local DNS resolver cache with system authorization",
+          "cmds": [
+            "flush dns",
+            "flushdns",
+            "clear dns"
+          ]
+        },
+        "hosts-new-profile": {
+          "explain": "Create a new custom Hosts profile",
+          "cmds": [
+            "new hosts",
+            "add hosts profile",
+            "create hosts"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

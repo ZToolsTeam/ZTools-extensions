@@ -1,6 +1,6 @@
 import test, { beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { Toast } from '@ztools/declarative-ui'
+import { Toast, setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 import { DockerManagerCommand, commands, containerWebUrl, listContainers, removeContainers, getContainerTailLogs, logMarkdown } from '../dist/index.js'
 const a = 'a'.repeat(64), b = 'b'.repeat(64), sessionId = '12345678-1234-1234-1234-123456789012'
@@ -30,13 +30,42 @@ test('入口挂载即真实读取；显式命令应用筛选；无演示容器',
 test('启动后读取实际列表，未盲目翻转原记录；操作失败保留错误', async () => {
   const v = await open(); await v.run(v.item(a), '启动容器'); assert.equal(rows[0].state, 'running'); assert.match(host.lastToast().title, /状态已更新/)
   host.ipc.docker_manager = async p => { if (p.action === 'control') throw new Error('permission denied'); return { success: true, sessionId, context: 'local', containers: rows, statsError: null } }
-  await v.run(v.item(b), '停止容器'); assert.match(v.text(), /permission denied/); assert.equal(rows[1].state, 'running'); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  await v.run(v.item(b), '停止容器'); assert.match(v.text(), /Docker 请求失败/); assert.doesNotMatch(v.text(), /permission denied/); assert.equal(rows[1].state, 'running'); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  host.ipc.docker_manager = async p => { if (p.action === 'control') throw Object.assign(new Error('permission denied'), { code: 'PERMISSION_DENIED' }); return { success: true, sessionId, context: 'local', containers: rows, statsError: null } }
+  await v.run(v.item(b), '停止容器'); assert.match(v.text(), /权限不足/); assert.equal(rows[1].state, 'running'); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  host.ipc.docker_manager = async p => { if (p.action === 'control') throw new Error('容器进程拒绝停止'); return { success: true, sessionId, context: 'local', containers: rows, statsError: null } }
+  await v.run(v.item(b), '停止容器'); assert.match(v.text(), /容器进程拒绝停止/); assert.equal(rows[1].state, 'running'); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  try {
+    setRuntimeLocale('en-US')
+    host.ipc.docker_manager = async p => { if (p.action === 'control') throw new Error('permission denied'); return { success: true, sessionId, context: 'local', containers: rows, statsError: null } }
+    const vEn = await open()
+    await vEn.run(vEn.item(b), 'Stop Container')
+    assert.match(vEn.text(), /permission denied/)
+    assert.equal(rows[1].state, 'running')
+    assert.equal(host.lastToast().style, Toast.Style.Failure)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })
 test('日志有真实输出才展示预览，失败不变成“暂无日志”或成功提示', async () => {
   const v = await open(); await v.run(v.item(a), '查看日志'); assert.equal(v.tree().props.isShowingDetail, true)
   assert.match(v.item(a).props.detail.props.markdown, /actual output/); assert.match(v.item(a).props.detail.props.markdown, /\[link\]/)
   host.ipc.docker_manager = async () => { throw new Error('driver cannot read logs') }
-  await v.run(v.item(b), '查看日志'); assert.match(v.text(), /driver cannot read logs/); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  await v.run(v.item(b), '查看日志'); assert.match(v.text(), /Docker 请求失败/); assert.doesNotMatch(v.text(), /driver cannot read logs/); assert.doesNotMatch(v.text(), /暂无日志/); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  host.ipc.docker_manager = async () => { throw new Error('当前日志驱动无法读取日志') }
+  await v.run(v.item(b), '查看日志'); assert.match(v.text(), /当前日志驱动无法读取日志/); assert.equal(host.lastToast().style, Toast.Style.Failure)
+  try {
+    setRuntimeLocale('en-US')
+    const baseHandler = host.ipc.docker_manager
+    host.ipc.docker_manager = async p => p.action === 'list' ? { success: true, sessionId, context: 'local', containers: structuredClone(rows), statsError: null } : baseHandler(p)
+    const vEn = await open()
+    host.ipc.docker_manager = async () => { throw new Error('driver cannot read logs') }
+    await vEn.run(vEn.item(b), 'View Logs')
+    assert.match(vEn.text(), /driver cannot read logs/)
+    assert.equal(host.lastToast().style, Toast.Style.Failure)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })
 test('清理先列清单，取消不执行；部分失败明确保留失败项且不报全成功', async () => {
   rows = [container(a), container(b)]; const v = await open(); host.setConfirm(false)

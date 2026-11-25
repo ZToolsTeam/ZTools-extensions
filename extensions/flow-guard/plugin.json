@@ -2,13 +2,17 @@
   "id": "flow-guard",
   "name": "流量监控",
   "description": "查看本机各进程的 TCP / UDP 连接和监听端口，按公网、局域网、本机回环分类，可强制结束正在联网的进程",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具",
     "网络工具"
+  ],
+  "categoryId": [
+    "system",
+    "network"
   ],
   "permissions": [
     "system",
@@ -24,6 +28,35 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Network Traffic Monitor",
+      "description": "Inspect active TCP/UDP connections and listening ports per process, categorized by public, LAN, and loopback addresses, with option to terminate processes.",
+      "keywords": [
+        "network",
+        "traffic",
+        "tcp",
+        "udp",
+        "ports",
+        "connections",
+        "monitor"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

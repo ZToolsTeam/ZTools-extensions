@@ -7,9 +7,11 @@ import {
   useState,
   useEffect,
   useRef,
+  useLocale,
   showToast,
   Toast
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import {
   type ContextMenuEntry,
   type ContextMenuFilterMode,
@@ -20,10 +22,12 @@ import {
   buildSummaryText,
   win11ModeLabel
 } from './logic.js'
+import { resolveErrorMessage } from './error-i18n.js'
+import { WIN11_ROW_ZH_KEYWORDS } from './keywords.zh-data.js'
 
 export * from './logic.js'
 
-const WIN11_ROW_KEYWORDS = 'windows 11 win11 经典 完整 默认 折叠 classic 右键菜单模式'
+const WIN11_ROW_KEYWORDS = `windows 11 win11 classic ${WIN11_ROW_ZH_KEYWORDS}`
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -31,15 +35,15 @@ function errorText(err: unknown): string {
 
 function scanErrorSection(scanError: string, hasEntries: boolean, onRescan: () => Promise<void>) {
   return List.Section({
-    title: '读取异常',
+    title: t('section.scanError'),
     children: [
       List.Item({
         id: 'ctx-scan-error',
-        title: hasEntries ? '重新扫描失败' : '读取右键菜单失败',
+        title: hasEntries ? t('item.rescanFailed') : t('item.scanFailed'),
         subtitle: scanError,
         icon: Icon.ExclamationMark,
         actions: ActionPanel({
-          children: [Action({ title: '重新扫描', icon: Icon.ArrowClockwise, onAction: onRescan })]
+          children: [Action({ title: t('action.rescan'), icon: Icon.ArrowClockwise, onAction: onRescan })]
         })
       })
     ]
@@ -50,22 +54,22 @@ function scanErrorSection(scanError: string, hasEntries: boolean, onRescan: () =
 function win11Section(mode: boolean | null, onSwitch: (useClassic: boolean) => Promise<void>) {
   const actions = [
     mode !== true
-      ? Action({ title: '切换为经典完整右键菜单', icon: Icon.List, onAction: () => onSwitch(true) })
+      ? Action({ title: t('action.switchToClassic'), icon: Icon.List, onAction: () => onSwitch(true) })
       : null,
     mode !== false
-      ? Action({ title: '恢复 Windows 11 默认右键菜单', icon: Icon.ArrowClockwise, onAction: () => onSwitch(false) })
+      ? Action({ title: t('action.restoreWin11'), icon: Icon.ArrowClockwise, onAction: () => onSwitch(false) })
       : null
   ].filter(Boolean)
   return List.Section({
-    title: '系统设置',
+    title: t('section.systemSettings'),
     children: [
       List.Item({
         id: 'ctx-win11-classic',
-        title: 'Windows 11 右键菜单模式',
-        subtitle: '仅 Windows 11 有效；切换后需重启资源管理器或重新登录',
+        title: t('win11.title'),
+        subtitle: t('win11.subtitle'),
         icon: Icon.Gear,
         accessories: [{ text: win11ModeLabel(mode) }],
-        actions: ActionPanel({ title: 'Windows 11 右键菜单模式', children: actions })
+        actions: ActionPanel({ title: t('win11.title'), children: actions })
       })
     ]
   })
@@ -84,31 +88,31 @@ function entryItem(
     icon: item.enabled === null ? Icon.QuestionMark : item.enabled ? Icon.Checkmark : Icon.XMarkCircle,
     accessories: [
       { tag: { value: item.scopeLabel } },
-      { text: item.enabled === null ? '状态未识别' : item.enabled ? '已启用' : '已禁用' }
+      { text: item.enabled === null ? t('status.unknown') : item.enabled ? t('status.enabled') : t('status.disabled') }
     ],
     actions: ActionPanel({
       title: item.title,
       children: [
         canToggle
           ? Action({
-              title: item.enabled ? '禁用该菜单项' : '启用该菜单项',
+              title: item.enabled ? t('action.disableEntry') : t('action.enableEntry'),
               icon: item.enabled ? Icon.XMarkCircle : Icon.Checkmark,
               onAction: () => onToggle(item)
             })
           : null,
         item.registryKey
           ? Action({
-              title: '复制注册表路径',
+              title: t('action.copyRegPath'),
               icon: Icon.Clipboard,
-              onAction: () => onCopy(item.registryKey, '已复制注册表路径')
+              onAction: () => onCopy(item.registryKey, t('toast.copiedRegPath'))
             })
           : null,
         item.command
           ? Action({
-              title: '复制执行命令',
+              title: t('action.copyCommand'),
               icon: Icon.Code,
               shortcut: { modifiers: ['cmd', 'shift'], key: 'c' },
-              onAction: () => onCopy(item.command, '已复制执行命令')
+              onAction: () => onCopy(item.command, t('toast.copiedCommand'))
             })
           : null
       ].filter(Boolean)
@@ -117,6 +121,7 @@ function entryItem(
 }
 
 export function ContextMenuCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [filterMode, setFilterMode] = useState<ContextMenuFilterMode>('all')
   const [entries, setEntries] = useState<ContextMenuEntry[]>([])
@@ -136,8 +141,8 @@ export function ContextMenuCommand() {
       if (request !== generation.current) return
       if (!snap.ok) {
         // 扫描失败不能当成没有菜单项：保留上次结果并显示错误
-        setScanError(snap.error || '读取右键菜单失败')
-        showToast({ style: Toast.Style.Failure, title: '读取右键菜单失败', message: snap.error })
+        setScanError(resolveErrorMessage(snap, t('item.scanFailed')))
+        showToast({ style: Toast.Style.Failure, title: t('item.scanFailed'), message: snap.error })
         return
       }
       setScanError('')
@@ -147,14 +152,14 @@ export function ContextMenuCommand() {
       if (showNotice) {
         showToast({
           style: Toast.Style.Success,
-          title: '已重新扫描右键菜单',
-          message: `已启用 ${snap.enabledCount} 项 · 已禁用 ${snap.disabledCount} 项`
+          title: t('toast.rescanSuccess'),
+          message: t('toast.rescanSummary', { enabled: snap.enabledCount, disabled: snap.disabledCount })
         })
       }
     } catch (err) {
       if (request !== generation.current) return
       setScanError(errorText(err))
-      showToast({ style: Toast.Style.Failure, title: '读取右键菜单失败', message: errorText(err) })
+      showToast({ style: Toast.Style.Failure, title: t('item.scanFailed'), message: errorText(err) })
     } finally {
       if (request === generation.current) setIsLoading(false)
     }
@@ -173,10 +178,10 @@ export function ContextMenuCommand() {
         setEntries((prev) => prev.map((cur) => (cur.id === item.id ? { ...cur, enabled: res.enabled } : cur)))
         showToast({ style: Toast.Style.Success, title: res.message, message: item.registryKey })
       } else {
-        showToast({ style: Toast.Style.Failure, title: '修改右键菜单项失败', message: res.message })
+        showToast({ style: Toast.Style.Failure, title: t('toast.toggleFailed'), message: res.message })
       }
     } catch (err) {
-      showToast({ style: Toast.Style.Failure, title: '修改右键菜单项失败', message: errorText(err) })
+      showToast({ style: Toast.Style.Failure, title: t('toast.toggleFailed'), message: errorText(err) })
     } finally {
       pendingIds.current.delete(item.id)
     }
@@ -189,10 +194,10 @@ export function ContextMenuCommand() {
         setWin11Classic(useClassic)
         showToast({ style: Toast.Style.Success, title: res.message })
       } else {
-        showToast({ style: Toast.Style.Failure, title: '切换 Windows 11 右键菜单模式失败', message: res.message })
+        showToast({ style: Toast.Style.Failure, title: t('toast.switchWin11Failed'), message: res.message })
       }
     } catch (err) {
-      showToast({ style: Toast.Style.Failure, title: '切换 Windows 11 右键菜单模式失败', message: errorText(err) })
+      showToast({ style: Toast.Style.Failure, title: t('toast.switchWin11Failed'), message: errorText(err) })
     }
   }
 
@@ -201,7 +206,7 @@ export function ContextMenuCommand() {
       await Clipboard.copy(text)
       showToast({ style: Toast.Style.Success, title: successTitle, message: text })
     } catch (err) {
-      showToast({ style: Toast.Style.Failure, title: '复制失败', message: errorText(err) })
+      showToast({ style: Toast.Style.Failure, title: t('toast.copyFailed'), message: errorText(err) })
     }
   }
 
@@ -210,21 +215,21 @@ export function ContextMenuCommand() {
   const showWin11Row = filterMode === 'all' && (!query || WIN11_ROW_KEYWORDS.includes(query))
 
   return List({
-    navigationTitle: '右键菜单管理',
-    searchBarPlaceholder: '搜索菜单名称、注册表路径或命令',
+    navigationTitle: t('nav.title'),
+    searchBarPlaceholder: t('search.placeholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '按菜单位置筛选',
+      tooltip: t('filter.tooltip'),
       value: filterMode,
       onChange: (val: string) => setFilterMode(val as ContextMenuFilterMode),
       children: [
-        List.Dropdown.Item({ title: '全部位置', value: 'all' }),
-        List.Dropdown.Item({ title: '所有文件 (*\\shell)', value: 'file' }),
-        List.Dropdown.Item({ title: '文件夹 (Directory\\shell)', value: 'directory' }),
-        List.Dropdown.Item({ title: '文件夹空白处 (Directory\\Background\\shell)', value: 'background' }),
-        List.Dropdown.Item({ title: '已禁用', value: 'disabled' })
+        List.Dropdown.Item({ title: t('filter.all'), value: 'all' }),
+        List.Dropdown.Item({ title: t('filter.file'), value: 'file' }),
+        List.Dropdown.Item({ title: t('filter.directory'), value: 'directory' }),
+        List.Dropdown.Item({ title: t('filter.background'), value: 'background' }),
+        List.Dropdown.Item({ title: t('filter.disabled'), value: 'disabled' })
       ]
     }),
     filterBar: {
@@ -232,8 +237,8 @@ export function ContextMenuCommand() {
       actions: [
         {
           id: 'rescan-reg',
-          label: isLoading ? '正在扫描...' : '重新扫描',
-          title: '重新扫描',
+          label: isLoading ? t('filterBar.scanning') : t('action.rescan'),
+          title: t('action.rescan'),
           style: 'secondary',
           disabled: isLoading,
           onAction: () => void refreshEntries(true)
@@ -244,8 +249,8 @@ export function ContextMenuCommand() {
       scanError ? scanErrorSection(scanError, entries.length > 0, () => refreshEntries(true)) : null,
       showWin11Row ? win11Section(win11Classic, handleSwitchWin11) : null,
       List.Section({
-        title: `右键菜单命令项 (${filtered.length})`,
-        subtitle: '只包含注册表 shell 下的命令项，不包含外壳扩展 (shellex)',
+        title: t('section.entries', { count: filtered.length }),
+        subtitle: t('section.entriesSubtitle'),
         children: filtered.map((item) => entryItem(item, handleToggleEntry, copyText))
       })
     ].filter(Boolean)

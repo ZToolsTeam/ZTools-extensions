@@ -1,5 +1,4 @@
-import React from "@ztools/declarative-ui";
-import {
+import React, {
   List,
   Detail,
   ActionPanel,
@@ -9,14 +8,19 @@ import {
   showToast,
   Toast,
   Clipboard,
-  useNavigation
+  useNavigation,
+  useLocale,
+  useState,
+  useEffect
 } from "@ztools/declarative-ui";
-import { useState, useEffect } from "@ztools/declarative-ui";
+import { t } from "./i18n.js";
 import {
   parseColor,
   convertColor,
+  rgbToOklch,
   generateColorSwatchSvg,
   pickScreenColor,
+  isScreenRecordingPermissionError,
   getSavedPalette,
   saveColorToPalette,
   clearPalette,
@@ -34,18 +38,20 @@ import { isRealElectronHost } from "./native-ipc.js";
 export * from "./converter.js";
 export { convertColor };
 
-const DEFAULT_PALETTE_ITEMS: SavedColorItem[] = [
-  { id: "col_1", name: "ZTools Accent Blue", hex: "#0A84FF", savedAt: "品牌色" },
-  { id: "col_2", name: "Emerald Success", hex: "#30D158", savedAt: "语义色" },
-  { id: "col_3", name: "Amber Warning", hex: "#FF9F0A", savedAt: "语义色" },
-  { id: "col_4", name: "Crimson Alert", hex: "#FF453A", savedAt: "语义色" },
-  { id: "col_5", name: "Mica Surface Dark", hex: "#1E1E24", savedAt: "中性灰阶" },
-  { id: "col_6", name: "Slate Muted Text", hex: "#94A3B8", savedAt: "中性灰阶" },
-  { id: "col_7", name: "Pure Graphite Border", hex: "#334155", savedAt: "中性灰阶" },
-  { id: "col_8", name: "Indigo Primary", hex: "#5E5CE6", savedAt: "品牌色" }
-];
+function getDefaultPaletteItems(): SavedColorItem[] {
+  return [
+    { id: "col_1", name: "ZTools Accent Blue", hex: "#0A84FF", savedAt: t("tagBrand"), tag: "brand" },
+    { id: "col_2", name: "Emerald Success", hex: "#30D158", savedAt: t("tagSemantic"), tag: "semantic" },
+    { id: "col_3", name: "Amber Warning", hex: "#FF9F0A", savedAt: t("tagSemantic"), tag: "semantic" },
+    { id: "col_4", name: "Crimson Alert", hex: "#FF453A", savedAt: t("tagSemantic"), tag: "semantic" },
+    { id: "col_5", name: "Mica Surface Dark", hex: "#1E1E24", savedAt: t("tagNeutral"), tag: "neutral" },
+    { id: "col_6", name: "Slate Muted Text", hex: "#94A3B8", savedAt: t("tagNeutral"), tag: "neutral" },
+    { id: "col_7", name: "Pure Graphite Border", hex: "#334155", savedAt: t("tagNeutral"), tag: "neutral" },
+    { id: "col_8", name: "Indigo Primary", hex: "#5E5CE6", savedAt: t("tagBrand"), tag: "brand" }
+  ];
+}
 
-function formatColorByMode(
+export function formatColorByMode(
   parsed: ColorConversionResult,
   format: "hex" | "rgb" | "hsl" | "oklch" | "tailwind",
   includeHash: boolean
@@ -53,9 +59,7 @@ function formatColorByMode(
   if (format === "rgb") return parsed.cssRgb;
   if (format === "hsl") return parsed.cssHsl;
   if (format === "oklch") {
-    const l = (parsed.hsl.l / 100).toFixed(2);
-    const c = ((parsed.hsl.s / 100) * 0.24).toFixed(3);
-    return `oklch(${l} ${c} ${parsed.hsl.h})`;
+    return rgbToOklch(parsed.rgb).css;
   }
   if (format === "tailwind") {
     const rawHex = includeHash ? parsed.hex : parsed.hex.replace(/^#/, "");
@@ -68,50 +72,40 @@ function formatColorByMode(
  * 颜色可视化与全能合规详情视图
  */
 export function ColorDetailView({ color }: { color: ColorConversionResult }) {
+  useLocale();
   const swatchUrl = generateColorSwatchSvg(color.hex);
   const comp = color.harmonies.complementary;
 
-  const markdown = `
-# 色彩全景与合规检查
-
-![Color Swatch](${swatchUrl})
-
----
-
-### 色彩格式换算
-| 格式 | 值 | 说明 |
-| :--- | :--- | :--- |
-| **HEX** | \`${color.hex}\` | 6 位十六进制色值 |
-| **HEX8** | \`${color.hex8}\` | 带 Alpha 通道的 8 位色值 |
-| **RGB** | \`${color.cssRgb}\` | 红绿蓝标准色彩 |
-| **RGBA** | \`${color.cssRgba}\` | 带透明度色彩 |
-| **HSL** | \`${color.cssHsl}\` | 色相/饱和度/明度 |
-| **HSV** | \`${color.cssHsv}\` | 色相/饱和度/明度 (色度学) |
-| **CMYK** | \`${color.cssCmyk}\` | 四色印刷色彩 |
-| **CSS 变量** | \`${color.cssVar}\` | Web 变量定义 |
-
----
-
-### WCAG 2.1 无障碍对比度测试
-- **与白色文字对比度**: \`${color.wcag.contrastOnWhite}:1\` (评级: **${color.wcag.whiteRating}**)
-- **与黑色文字对比度**: \`${color.wcag.contrastOnBlack}:1\` (评级: **${color.wcag.blackRating}**)
-- **推荐前景色**: 使用 **${color.wcag.recommendedText.toUpperCase()}** 字体可获得最高可读性
-
----
-
-### 衍生专业配色方案
-- **互补色**: \`${comp}\`
-- **类似色**: \`${color.harmonies.analogous[0]}\`, \`${color.harmonies.analogous[1]}\`
-- **三色平衡**: \`${color.harmonies.triadic[0]}\`, \`${color.harmonies.triadic[1]}\`
-- **分裂互补**: \`${color.harmonies.splitComplementary[0]}\`, \`${color.harmonies.splitComplementary[1]}\`
-- **四色矩阵**: \`${color.harmonies.tetradic.join(", ")}\`
-- **单色渐变**: \`${color.harmonies.monochromatic.join(" -> ")}\`
-  `;
+  const markdown = t("detailMarkdown", {
+    swatchUrl,
+    hex: color.hex,
+    hex8: color.hex8,
+    rgb: color.cssRgb,
+    rgba: color.cssRgba,
+    hsl: color.cssHsl,
+    hsv: color.cssHsv,
+    cmyk: color.cssCmyk,
+    cssVar: color.cssVar,
+    whiteContrast: color.wcag.contrastOnWhite,
+    whiteRating: color.wcag.whiteRating,
+    blackContrast: color.wcag.contrastOnBlack,
+    blackRating: color.wcag.blackRating,
+    recText: color.wcag.recommendedText.toUpperCase(),
+    comp,
+    ana0: color.harmonies.analogous[0],
+    ana1: color.harmonies.analogous[1],
+    tri0: color.harmonies.triadic[0],
+    tri1: color.harmonies.triadic[1],
+    split0: color.harmonies.splitComplementary[0],
+    split1: color.harmonies.splitComplementary[1],
+    tetradic: color.harmonies.tetradic.join(", "),
+    mono: color.harmonies.monochromatic.join(" -> ")
+  });
 
   return (
     <Detail
       markdown={markdown}
-      navigationTitle={`颜色详情: ${color.hex}`}
+      navigationTitle={t("detailNavTitle", { hex: color.hex })}
       metadata={
         <Detail.Metadata>
           <Detail.Metadata.Label title="HEX" text={color.hex} icon={Icon.Eye} />
@@ -120,7 +114,7 @@ export function ColorDetailView({ color }: { color: ColorConversionResult }) {
           <Detail.Metadata.Label title="HSV" text={color.cssHsv} icon={Icon.Dot} />
           <Detail.Metadata.Label title="CMYK" text={color.cssCmyk} icon={Icon.Document} />
           <Detail.Metadata.Separator />
-          <Detail.Metadata.TagList title="WCAG 对比度评级">
+          <Detail.Metadata.TagList title={t("wcagTagListTitle")}>
             <Detail.Metadata.TagList.Item
               text={`White: ${color.wcag.whiteRating}`}
               color={Color.SecondaryText}
@@ -133,27 +127,27 @@ export function ColorDetailView({ color }: { color: ColorConversionResult }) {
         </Detail.Metadata>
       }
       actions={
-        <ActionPanel title="色彩操作">
-          <Action.CopyToClipboard title="复制 HEX 色值" content={color.hex} icon={Icon.CopyClipboard} />
-          <Action.CopyToClipboard title="复制 RGB 代码" content={color.cssRgb} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 HSL 代码" content={color.cssHsl} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 HSV 代码" content={color.cssHsv} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 CMYK 代码" content={color.cssCmyk} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 CSS 变量" content={color.cssVar} icon={Icon.Terminal} />
+        <ActionPanel title={t("colorActionsTitle")}>
+          <Action.CopyToClipboard title={t("copyHexValue")} content={color.hex} icon={Icon.CopyClipboard} />
+          <Action.CopyToClipboard title={t("copyRgbCode")} content={color.cssRgb} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyHslCode")} content={color.cssHsl} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyHsvCode")} content={color.cssHsv} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyCmykCode")} content={color.cssCmyk} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyCssVar")} content={color.cssVar} icon={Icon.Terminal} />
           <Action
-            title="直接粘贴 HEX 到前台应用"
+            title={t("pasteHexToActive")}
             icon={Icon.Pencil}
             onAction={async () => {
               await Clipboard.paste(color.hex);
-              await showToast(Toast.Style.Success, `已将 ${color.hex} 粘贴到活动应用`);
+              await showToast(Toast.Style.Success, t("pastedHexToast", { hex: color.hex }));
             }}
           />
           <Action
-            title="收藏到本地调色板"
+            title={t("saveToLocalPalette")}
             icon={Icon.Star}
             onAction={async () => {
-              await saveColorToPalette(`颜色 ${color.hex}`, color.hex);
-              await showToast(Toast.Style.Success, "已保存到调色板");
+              await saveColorToPalette(t("savedColorName", { hex: color.hex }), color.hex);
+              await showToast(Toast.Style.Success, t("savedToPaletteToast"));
             }}
           />
         </ActionPanel>
@@ -166,15 +160,17 @@ export function ColorDetailView({ color }: { color: ColorConversionResult }) {
  * 调色板与屏幕取色主命令 (布局三：左 34% 参数工作台 + 右 66% 调色板与拾色队列)
  */
 export function ColorPickerCommand() {
+  useLocale();
   const [inputColor, setInputColor] = useState("#0A84FF");
   const [copyFormat, setCopyFormat] = useState<"hex" | "rgb" | "hsl" | "oklch" | "tailwind">("hex");
   const [wcagStandard, setWcagStandard] = useState<"aa" | "aaa">("aa");
   const [paletteGroup, setPaletteGroup] = useState<"all" | "recent" | "neutral" | "brand">("all");
   const [includeHashPrefix, setIncludeHashPrefix] = useState<boolean>(true);
   const isReal = isRealElectronHost();
-  const [palette, setPalette] = useState<SavedColorItem[]>(isReal ? [] : DEFAULT_PALETTE_ITEMS);
-  const [checkedIds, setCheckedIds] = useState<string[]>(isReal ? [] : DEFAULT_PALETTE_ITEMS.map((i) => i.id));
-  const [, setHistory] = useState<PickedColorResult[]>([]);
+  const initialDefaults = isReal ? [] : getDefaultPaletteItems();
+  const [palette, setPalette] = useState<SavedColorItem[]>(initialDefaults);
+  const [checkedIds, setCheckedIds] = useState<string[]>(initialDefaults.map((i) => i.id));
+  const [history, setHistory] = useState<PickedColorResult[]>([]);
   useNavigation();
 
   useEffect(() => {
@@ -184,8 +180,9 @@ export function ColorPickerCommand() {
         setCheckedIds(items.map((i) => i.id));
       } else {
         const isRealHost = isRealElectronHost();
-        setPalette(isRealHost ? [] : DEFAULT_PALETTE_ITEMS);
-        setCheckedIds(isRealHost ? [] : DEFAULT_PALETTE_ITEMS.map((i) => i.id));
+        const defaults = isRealHost ? [] : getDefaultPaletteItems();
+        setPalette(defaults);
+        setCheckedIds(defaults.map((i) => i.id));
       }
     });
 
@@ -209,64 +206,140 @@ export function ColorPickerCommand() {
       await Clipboard.copy(outStr);
       await showToast(
         Toast.Style.Success,
-        `取色成功: ${outStr}`,
-        picked.source === "native" ? "已通过原生屏幕拾色器拾取" : "高精度放大镜模拟取色"
+        t("pickSuccessTitle", { val: outStr }),
+        picked.source === "native" ? t("pickNativeDesc") : t("pickSimulatedDesc")
       );
     } catch (err: unknown) {
       if (err instanceof Error && err.name === "AbortError") return;
-      const msg = String(err instanceof Error ? err.message : err || "未知异常");
-      if (msg.includes("SCREEN_RECORDING") || msg.includes("TCC") || msg.includes("屏幕录制")) {
-        await showToast(
-          Toast.Style.Failure,
-          "需要 macOS 屏幕录制权限 (TCC)",
-          "请前往「系统设置 -> 隐私与安全性 -> 录屏与系统录音」授予 ZTools 权限"
-        );
+      const msg = String(err instanceof Error ? err.message : err || t("unknownErr"));
+      if (isScreenRecordingPermissionError(err)) {
+        await showToast(Toast.Style.Failure, t("tccPermTitle"), t("tccPermMsg"));
       } else {
-        await showToast(Toast.Style.Failure, "屏幕拾色失败", msg);
+        await showToast(Toast.Style.Failure, t("pickFailedTitle"), msg);
       }
     }
   };
 
   const handlePasteToActive = async () => {
     await Clipboard.paste(formattedTargetValue);
-    await showToast(Toast.Style.Success, `已将 ${formattedTargetValue} 回贴到当前前台应用`);
+    await showToast(Toast.Style.Success, t("pastedTargetToast", { val: formattedTargetValue }));
   };
 
   const handleSaveToPalette = async () => {
     const updated = await saveColorToPalette(`Color ${parsed.hex}`, parsed.hex);
     setPalette(updated);
     setCheckedIds(updated.map((i) => i.id));
-    await showToast(Toast.Style.Success, "已持久化收藏到调色板");
+    await showToast(Toast.Style.Success, t("savedPersistentToast"));
   };
 
   const handleClearPalette = async () => {
     await clearPalette();
     setPalette([]);
     setCheckedIds([]);
-    await showToast(Toast.Style.Success, "已清空调色板历史");
+    await showToast(Toast.Style.Success, t("clearedPaletteToast"));
   };
 
   const handleClearHistory = async () => {
     await clearColorHistory();
     setHistory([]);
-    await showToast(Toast.Style.Success, "已清空拾色历史");
+    await showToast(Toast.Style.Success, t("clearedHistoryToast"));
   };
 
   const handleRemoveColor = async (id: string) => {
     const updated = await removeFromPalette(id);
     setPalette(updated);
     setCheckedIds((prev) => prev.filter((cid) => cid !== id));
-    await showToast(Toast.Style.Success, "已从调色板移除");
+    await showToast(Toast.Style.Success, t("removedColorToast"));
   };
 
   const filteredPalette = palette.filter((item) => {
-    if (paletteGroup === "neutral") return item.savedAt.includes("灰") || parseColor(item.hex).hsl.s <= 20;
-    if (paletteGroup === "brand") return item.savedAt.includes("品牌") || item.savedAt.includes("语义") || parseColor(item.hex).hsl.s > 20;
-    if (paletteGroup === "recent") return item.savedAt !== "中性灰阶";
+    const isNeutralTag =
+      item.tag === "neutral" || item.savedAt === t("tagNeutral") || item.savedAt === "Neutral";
+    const isBrandTag =
+      item.tag === "brand" ||
+      item.tag === "semantic" ||
+      item.savedAt === t("tagBrand") ||
+      item.savedAt === t("tagSemantic") ||
+      item.savedAt === "Brand" ||
+      item.savedAt === "Semantic";
+    if (paletteGroup === "neutral") return isNeutralTag || parseColor(item.hex).hsl.s <= 20;
+    if (paletteGroup === "brand") return isBrandTag || parseColor(item.hex).hsl.s > 20;
+    if (paletteGroup === "recent") return !isNeutralTag;
     return true;
   });
 
-  const rightQueueItems = filteredPalette.map((item) => {
+  const historyQueueItems = history.map((item, idx) => {
+    const itemParsed = parseColor(item.hex);
+    const itemFormatted = formatColorByMode(itemParsed, copyFormat, includeHashPrefix);
+    const contrastRatio = Math.max(itemParsed.wcag.contrastOnWhite, itemParsed.wcag.contrastOnBlack);
+    const contrastProgress = Math.max(15, Math.min(100, Math.round((contrastRatio / 21) * 100)));
+    const histId = `hist_${idx}_${item.hex.replace(/^#/, "")}`;
+
+    return List.Item({
+      id: histId,
+      title: t("historyItemTitle", { val: itemFormatted }),
+      subtitle: t("itemSubtitle", { rgb: itemParsed.cssRgb, hsl: itemParsed.cssHsl, ratio: contrastRatio }),
+      icon: {
+        source: Icon.Clock
+      },
+      accessories: [
+        {
+          progress: {
+            value: contrastProgress
+          }
+        },
+        {
+          tag: {
+            value: t("tagRecentPick")
+          }
+        },
+        { text: itemFormatted }
+      ],
+      actions: (
+        <ActionPanel title={item.hex}>
+          <Action
+            title={t("actionCopyColorValue")}
+            icon={Icon.CopyClipboard}
+            onAction={async () => {
+              setInputColor(item.hex);
+              await Clipboard.copy(itemFormatted);
+              await showToast(Toast.Style.Success, t("copiedValueToast", { val: itemFormatted }));
+            }}
+          />
+          <Action
+            title={t("actionPasteToActive")}
+            icon={Icon.Pencil}
+            onAction={async () => {
+              await Clipboard.paste(itemFormatted);
+              await showToast(Toast.Style.Success, t("pastedValueToast", { val: itemFormatted }));
+            }}
+          />
+          <Action
+            title={t("actionBookmarkShort")}
+            icon={Icon.Star}
+            onAction={async () => {
+              const updated = await saveColorToPalette(`Color ${itemParsed.hex}`, itemParsed.hex);
+              setPalette(updated);
+              setCheckedIds(updated.map((i) => i.id));
+              await showToast(Toast.Style.Success, t("savedPersistentToast"));
+            }}
+          />
+          <Action.Push
+            title={t("actionViewColorDetail")}
+            icon={Icon.Eye}
+            target={() => <ColorDetailView color={itemParsed} />}
+          />
+          <Action
+            title={t("actionClearHistory")}
+            icon={Icon.Trash}
+            onAction={handleClearHistory}
+          />
+        </ActionPanel>
+      )
+    });
+  });
+
+  const paletteQueueItems = filteredPalette.map((item) => {
     const itemParsed = parseColor(item.hex);
     const itemFormatted = formatColorByMode(itemParsed, copyFormat, includeHashPrefix);
     const isChecked = checkedIds.includes(item.id);
@@ -276,7 +349,7 @@ export function ColorPickerCommand() {
     return List.Item({
       id: item.id,
       title: `${item.name} (${itemFormatted})`,
-      subtitle: `${itemParsed.cssRgb} · ${itemParsed.cssHsl} · 对比度 ${contrastRatio}:1`,
+      subtitle: t("itemSubtitle", { rgb: itemParsed.cssRgb, hsl: itemParsed.cssHsl, ratio: contrastRatio }),
       checkable: true,
       checked: isChecked,
       onCheckChange: (c) => {
@@ -305,34 +378,34 @@ export function ColorPickerCommand() {
       actions: (
         <ActionPanel title={item.name}>
           <Action
-            title="启动屏幕吸管取色 / 复制当前色值"
+            title={t("actionEyedropOrCopy")}
             icon={Icon.CopyClipboard}
             onAction={async () => {
               setInputColor(item.hex);
               await Clipboard.copy(itemFormatted);
-              await showToast(Toast.Style.Success, `已复制色值: ${itemFormatted}`);
+              await showToast(Toast.Style.Success, t("copiedValueToast", { val: itemFormatted }));
             }}
           />
           <Action
-            title="粘贴色值到当前活动窗口"
+            title={t("actionPasteToActive")}
             icon={Icon.Pencil}
             onAction={async () => {
               await Clipboard.paste(itemFormatted);
-              await showToast(Toast.Style.Success, `已粘贴色值: ${itemFormatted}`);
+              await showToast(Toast.Style.Success, t("pastedValueToast", { val: itemFormatted }));
             }}
           />
           <Action
-            title="启动屏幕吸管拾色器 (Screen Eyedropper)"
+            title={t("actionEyedropperFull")}
             icon={Icon.Brush}
             onAction={handlePickScreenColor}
           />
           <Action.Push
-            title="查看色彩详情"
+            title={t("actionViewColorDetail")}
             icon={Icon.Eye}
             target={() => <ColorDetailView color={itemParsed} />}
           />
           <Action
-            title="从调色板移除"
+            title={t("actionRemovePalette")}
             icon={Icon.Trash}
             onAction={() => handleRemoveColor(item.id)}
           />
@@ -341,32 +414,46 @@ export function ColorPickerCommand() {
     });
   });
 
+  const rightQueueItems =
+    paletteGroup === "recent"
+      ? historyQueueItems
+      : paletteGroup === "all"
+        ? [...historyQueueItems, ...paletteQueueItems]
+        : paletteQueueItems;
+
   return (
     <List
-      navigationTitle="调色板与色彩转换器"
+      navigationTitle={t("navTitle")}
       isShowingDetail={false}
-      searchBarPlaceholder="输入 Hex (#0A84FF)、RGB (rgb(10, 132, 255))、HSL (hsl(210, 100%, 52%)) 或拾色..."
+      searchBarPlaceholder={t("searchPlaceholder")}
       searchText={inputColor}
       onSearchTextChange={(val) => setInputColor(val)}
       searchBarAccessory={
         <List.Dropdown
-          tooltip="按色彩分组过滤调色板"
+          tooltip={t("groupFilterTooltip")}
           value={paletteGroup}
           onChange={(val) => setPaletteGroup(val as "all" | "recent" | "neutral" | "brand")}
         >
-          <List.Dropdown.Item title="色彩分组: 全部色彩" value="all" />
-          <List.Dropdown.Item title="色彩分组: 近期屏幕拾取" value="recent" />
-          <List.Dropdown.Item title="色彩分组: 极客中性灰阶" value="neutral" />
-          <List.Dropdown.Item title="色彩分组: 品牌语义色" value="brand" />
+          <List.Dropdown.Item title={t("groupAll")} value="all" />
+          <List.Dropdown.Item title={t("groupRecent")} value="recent" />
+          <List.Dropdown.Item title={t("groupNeutral")} value="neutral" />
+          <List.Dropdown.Item title={t("groupBrand")} value="brand" />
         </List.Dropdown>
       }
       filterBar={{
-        summaryText: `当前色值 ${formattedTargetValue} (${parsed.cssRgb}) · WCAG 对比度: 白字 ${parsed.wcag.contrastOnWhite}:1 (${parsed.wcag.whiteRating}) / 黑字 ${parsed.wcag.contrastOnBlack}:1 (${parsed.wcag.blackRating})`,
+        summaryText: t("summaryText", {
+          val: formattedTargetValue,
+          rgb: parsed.cssRgb,
+          white: parsed.wcag.contrastOnWhite,
+          whiteRating: parsed.wcag.whiteRating,
+          black: parsed.wcag.contrastOnBlack,
+          blackRating: parsed.wcag.blackRating
+        }),
         actions: [
           {
             id: "eyedropper",
-            label: "屏幕吸色 (Eyedropper)",
-            title: "屏幕吸色 (Eyedropper)",
+            label: t("eyedropperBtn"),
+            title: t("eyedropperBtn"),
             style: "primary",
             onAction: () => {
               void handlePickScreenColor();
@@ -374,8 +461,8 @@ export function ColorPickerCommand() {
           },
           {
             id: "save-palette",
-            label: "收藏当前颜色",
-            title: "收藏当前颜色",
+            label: t("savePaletteBtn"),
+            title: t("savePaletteBtn"),
             style: "secondary",
             onAction: () => {
               void handleSaveToPalette();
@@ -384,57 +471,61 @@ export function ColorPickerCommand() {
         ]
       }}
       workbenchPanel={{
-        title: "屏幕拾色与色彩换算工作台",
-        subtitle: `点击屏幕选点，Esc 取消 · WCAG ${wcagStandard.toUpperCase()} 校验`,
+        title: t("wbTitle"),
+        subtitle: t("wbSubtitle", { std: wcagStandard.toUpperCase() }),
         fields: [
           {
             id: "wb-copy-format",
-            label: "默认复制色彩格式",
+            label: t("wbCopyFormatLabel"),
             type: "select",
             value: copyFormat,
             onChange: (val) => setCopyFormat(val as "hex" | "rgb" | "hsl" | "oklch" | "tailwind"),
             options: [
-              { label: "HEX (#RRGGBB)", value: "hex" },
-              { label: "RGB (rgb())", value: "rgb" },
-              { label: "HSL (hsl())", value: "hsl" },
-              { label: "CSS OKLCH (广色域)", value: "oklch" },
-              { label: "Tailwind 类名 (bg-[#...])", value: "tailwind" }
+              { label: t("optHex"), value: "hex" },
+              { label: t("optRgb"), value: "rgb" },
+              { label: t("optHsl"), value: "hsl" },
+              { label: t("optOklch"), value: "oklch" },
+              { label: t("optTailwind"), value: "tailwind" }
             ]
           },
           {
             id: "wb-wcag-std",
-            label: "WCAG 无障碍对比度基准",
+            label: t("wbWcagLabel"),
             type: "select",
             value: wcagStandard,
             onChange: (val) => setWcagStandard(val as "aa" | "aaa"),
             options: [
-              { label: "AA 标准 (4.5:1 常规正文)", value: "aa" },
-              { label: "AAA 严苛 (7.0:1 增强对比)", value: "aaa" }
+              { label: t("optAa"), value: "aa" },
+              { label: t("optAaa"), value: "aaa" }
             ]
           },
           {
             id: "wb-hash-prefix",
-            label: "复制时附带 # 前缀",
+            label: t("wbHashLabel"),
             type: "toggle",
             value: includeHashPrefix,
             onChange: (val) => setIncludeHashPrefix(Boolean(val))
           }
         ],
         previewCard: {
-          title: "当前聚焦色值与无障碍评级",
+          title: t("wbCardTitle"),
           badge: `WCAG ${parsed.wcag.whiteRating}/${parsed.wcag.blackRating}`,
           subtitle: `${parsed.hex} · ${parsed.cssRgb} · ${parsed.cssHsl}`,
           metrics: [
-            { label: "当前 HEX", value: formattedTargetValue },
-            { label: "RGB / HSL", value: parsed.cssRgb },
-            { label: "白字对比度", value: `${parsed.wcag.contrastOnWhite}:1 (${parsed.wcag.whiteRating})` },
-            { label: "黑字对比度", value: `${parsed.wcag.contrastOnBlack}:1 (${parsed.wcag.blackRating})` }
+            { label: t("metricHex"), value: formattedTargetValue },
+            { label: t("metricRgbHsl"), value: parsed.cssRgb },
+            { label: t("metricWhiteContrast"), value: `${parsed.wcag.contrastOnWhite}:1 (${parsed.wcag.whiteRating})` },
+            { label: t("metricBlackContrast"), value: `${parsed.wcag.contrastOnBlack}:1 (${parsed.wcag.blackRating})` }
           ]
         }
       }}
       subList={{
-        title: "调色板与屏幕拾色历史队列 (按 ↵ 复制当前色值或启动屏幕吸管取色)",
-        subtitle: `${filteredPalette.length} 项色板记录 · 当前输出格式: ${copyFormat.toUpperCase()} (${formattedTargetValue})`,
+        title: t("subListTitle"),
+        subtitle: t("subListSubtitle", {
+          count: rightQueueItems.length,
+          fmt: copyFormat.toUpperCase(),
+          val: formattedTargetValue
+        }),
         checkable: filteredPalette.length > 0,
         checked:
           filteredPalette.length > 0 && filteredPalette.every((i) => checkedIds.includes(i.id))
@@ -445,118 +536,118 @@ export function ColorPickerCommand() {
         onCheckChange: (checked) => {
           setCheckedIds(checked ? filteredPalette.map((i) => i.id) : []);
         },
-        emptyText: "当前分组下暂无调色板色值",
+        emptyText: t("subListEmpty"),
         items: rightQueueItems
       }}
       actions={
-        <ActionPanel title="全局色彩操作">
-          <Action title="收藏当前色彩到调色板" icon={Icon.Star} onAction={handleSaveToPalette} />
-          <Action.CopyToClipboard title="复制 HEX 色值" content={parsed.hex} icon={Icon.CopyClipboard} />
-          <Action title="屏幕吸色 (Screen Eyedropper)" icon={Icon.Brush} onAction={handlePickScreenColor} />
-          <Action title="粘贴当前色到前台应用" icon={Icon.Pencil} onAction={handlePasteToActive} />
-          <Action.CopyToClipboard title="复制 RGB 代码" content={parsed.cssRgb} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 HSL 代码" content={parsed.cssHsl} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 HSV 代码" content={parsed.cssHsv} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 CMYK 代码" content={parsed.cssCmyk} icon={Icon.Code} />
-          <Action.CopyToClipboard title="复制 CSS 变量" content={parsed.cssVar} icon={Icon.Terminal} />
-          <Action title="清空调色板历史" icon={Icon.Trash} onAction={handleClearPalette} />
-          <Action title="清空拾色历史" icon={Icon.Trash} onAction={handleClearHistory} />
+        <ActionPanel title={t("globalActionsTitle")}>
+          <Action title={t("actionBookmarkCurrent")} icon={Icon.Star} onAction={handleSaveToPalette} />
+          <Action.CopyToClipboard title={t("copyHexValue")} content={parsed.hex} icon={Icon.CopyClipboard} />
+          <Action title={t("actionEyedropper")} icon={Icon.Brush} onAction={handlePickScreenColor} />
+          <Action title={t("actionPasteCurrent")} icon={Icon.Pencil} onAction={handlePasteToActive} />
+          <Action.CopyToClipboard title={t("copyRgbCode")} content={parsed.cssRgb} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyHslCode")} content={parsed.cssHsl} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyHsvCode")} content={parsed.cssHsv} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyCmykCode")} content={parsed.cssCmyk} icon={Icon.Code} />
+          <Action.CopyToClipboard title={t("copyCssVar")} content={parsed.cssVar} icon={Icon.Terminal} />
+          <Action title={t("actionClearPalette")} icon={Icon.Trash} onAction={handleClearPalette} />
+          <Action title={t("actionClearHistory")} icon={Icon.Trash} onAction={handleClearHistory} />
         </ActionPanel>
       }
     >
-      <List.Section title={`当前颜色换算 [${parsed.hex}]`}>
+      <List.Section title={t("sectionConvertTitle", { hex: parsed.hex })}>
         <List.Item
           id="fmt_hex"
           title={parsed.hex}
-          subtitle="十六进制 HEX 格式"
+          subtitle={t("subHex")}
           icon={Icon.Eye}
           accessories={[{ text: "HEX" }]}
           actions={
             <ActionPanel title={parsed.hex}>
               <Action.Push
-                title="查看颜色视觉与对比度详情"
+                title={t("actionViewVisualDetail")}
                 icon={Icon.Eye}
                 target={() => <ColorDetailView color={parsed} />}
               />
-              <Action.CopyToClipboard title="复制 HEX" content={parsed.hex} icon={Icon.CopyClipboard} />
-              <Action title="粘贴到前台活动应用" icon={Icon.Pencil} onAction={handlePasteToActive} />
-              <Action title="屏幕吸色 (Eyedropper)" icon={Icon.Brush} onAction={handlePickScreenColor} />
-              <Action title="收藏到调色板" icon={Icon.Star} onAction={handleSaveToPalette} />
+              <Action.CopyToClipboard title={t("actionCopyHexShort")} content={parsed.hex} icon={Icon.CopyClipboard} />
+              <Action title={t("actionPasteActiveShort")} icon={Icon.Pencil} onAction={handlePasteToActive} />
+              <Action title={t("eyedropperBtn")} icon={Icon.Brush} onAction={handlePickScreenColor} />
+              <Action title={t("actionBookmarkShort")} icon={Icon.Star} onAction={handleSaveToPalette} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_rgb"
           title={parsed.cssRgb}
-          subtitle="红绿蓝 RGB 格式"
+          subtitle={t("subRgb")}
           icon={Icon.Brush}
           accessories={[{ text: "RGB" }]}
           actions={
             <ActionPanel title={parsed.cssRgb}>
-              <Action.CopyToClipboard title="复制 RGB 代码" content={parsed.cssRgb} icon={Icon.CopyClipboard} />
-              <Action title="粘贴到前台活动应用" icon={Icon.Pencil} onAction={() => Clipboard.paste(parsed.cssRgb)} />
+              <Action.CopyToClipboard title={t("copyRgbCode")} content={parsed.cssRgb} icon={Icon.CopyClipboard} />
+              <Action title={t("actionPasteActiveShort")} icon={Icon.Pencil} onAction={() => Clipboard.paste(parsed.cssRgb)} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_hsl"
           title={parsed.cssHsl}
-          subtitle="色相/饱和度/明度 HSL 格式"
+          subtitle={t("subHsl")}
           icon={Icon.Circle}
           accessories={[{ text: "HSL" }]}
           actions={
             <ActionPanel title={parsed.cssHsl}>
-              <Action.CopyToClipboard title="复制 HSL 代码" content={parsed.cssHsl} icon={Icon.CopyClipboard} />
-              <Action title="粘贴到前台活动应用" icon={Icon.Pencil} onAction={() => Clipboard.paste(parsed.cssHsl)} />
+              <Action.CopyToClipboard title={t("copyHslCode")} content={parsed.cssHsl} icon={Icon.CopyClipboard} />
+              <Action title={t("actionPasteActiveShort")} icon={Icon.Pencil} onAction={() => Clipboard.paste(parsed.cssHsl)} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_hsv"
           title={parsed.cssHsv}
-          subtitle="色度学明度 HSV 格式"
+          subtitle={t("subHsv")}
           icon={Icon.Dot}
           accessories={[{ text: "HSV" }]}
           actions={
             <ActionPanel title={parsed.cssHsv}>
-              <Action.CopyToClipboard title="复制 HSV 代码" content={parsed.cssHsv} icon={Icon.CopyClipboard} />
+              <Action.CopyToClipboard title={t("copyHsvCode")} content={parsed.cssHsv} icon={Icon.CopyClipboard} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_cmyk"
           title={parsed.cssCmyk}
-          subtitle="印刷色彩 CMYK 格式"
+          subtitle={t("subCmyk")}
           icon={Icon.Document}
           accessories={[{ text: "CMYK" }]}
           actions={
             <ActionPanel title={parsed.cssCmyk}>
-              <Action.CopyToClipboard title="复制 CMYK 代码" content={parsed.cssCmyk} icon={Icon.CopyClipboard} />
+              <Action.CopyToClipboard title={t("copyCmykCode")} content={parsed.cssCmyk} icon={Icon.CopyClipboard} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_css_var"
           title={parsed.cssVar}
-          subtitle="CSS 变量定义"
+          subtitle={t("subCssVar")}
           icon={Icon.Terminal}
           accessories={[{ text: "CSS Var" }]}
           actions={
             <ActionPanel title={parsed.cssVar}>
-              <Action.CopyToClipboard title="复制 CSS 变量" content={parsed.cssVar} icon={Icon.CopyClipboard} />
+              <Action.CopyToClipboard title={t("copyCssVar")} content={parsed.cssVar} icon={Icon.CopyClipboard} />
             </ActionPanel>
           }
         />
         <List.Item
           id="fmt_wcag"
           title={`WCAG: White (${parsed.wcag.whiteRating}) / Black (${parsed.wcag.blackRating})`}
-          subtitle={`推荐前景色: ${parsed.wcag.recommendedText.toUpperCase()}`}
+          subtitle={t("wcagRecommendedSub", { color: parsed.wcag.recommendedText.toUpperCase() })}
           icon={Icon.Checkmark}
           accessories={[{ text: `${parsed.wcag.contrastOnWhite}:1 / ${parsed.wcag.contrastOnBlack}:1` }]}
           actions={
-            <ActionPanel title="无障碍对比度">
+            <ActionPanel title={t("wcagPanelTitle")}>
               <Action.Push
-                title="查看色彩合规详情"
+                title={t("actionViewCompliance")}
                 icon={Icon.Eye}
                 target={() => <ColorDetailView color={parsed} />}
               />
@@ -565,7 +656,50 @@ export function ColorPickerCommand() {
         />
       </List.Section>
 
-      <List.Section title={`已收藏调色板 (${filteredPalette.length})`}>
+      {history.length > 0 ? (
+        <List.Section title={t("sectionPickHistory", { count: history.length })}>
+          {history.map((item, idx) => {
+            const itemParsed = parseColor(item.hex);
+            const itemFormatted = formatColorByMode(itemParsed, copyFormat, includeHashPrefix);
+            return (
+              <List.Item
+                key={`history_sec_${idx}_${item.hex}`}
+                id={`history_sec_${idx}_${item.hex.replace(/^#/, "")}`}
+                title={itemFormatted}
+                subtitle={`${itemParsed.cssRgb} · ${itemParsed.cssHsl}`}
+                icon={Icon.Clock}
+                accessories={[{ tag: { value: t("tagRecentPick") } }, { text: item.hex }]}
+                actions={
+                  <ActionPanel title={item.hex}>
+                    <Action.CopyToClipboard
+                      title={t("actionCopyColorValue")}
+                      content={itemFormatted}
+                      icon={Icon.CopyClipboard}
+                    />
+                    <Action
+                      title={t("actionFillInput")}
+                      icon={Icon.Pencil}
+                      onAction={() => setInputColor(item.hex)}
+                    />
+                    <Action.Push
+                      title={t("actionViewColorDetail")}
+                      icon={Icon.Eye}
+                      target={() => <ColorDetailView color={itemParsed} />}
+                    />
+                    <Action
+                      title={t("actionClearHistory")}
+                      icon={Icon.Trash}
+                      onAction={handleClearHistory}
+                    />
+                  </ActionPanel>
+                }
+              />
+            );
+          })}
+        </List.Section>
+      ) : null}
+
+      <List.Section title={t("sectionSavedPalette", { count: filteredPalette.length })}>
         {filteredPalette.map((item) => (
           <List.Item
             key={item.id}
@@ -573,22 +707,33 @@ export function ColorPickerCommand() {
             title={item.name}
             subtitle={item.hex}
             icon={Icon.Star}
-            accessories={[{ text: item.savedAt }]}
+            accessories={[
+              {
+                text:
+                  item.tag === "brand"
+                    ? t("tagBrand")
+                    : item.tag === "semantic"
+                      ? t("tagSemantic")
+                      : item.tag === "neutral"
+                        ? t("tagNeutral")
+                        : item.savedAt
+              }
+            ]}
             actions={
               <ActionPanel title={item.name}>
                 <Action
-                  title="填入当前输入"
+                  title={t("actionFillInput")}
                   icon={Icon.Pencil}
                   onAction={() => setInputColor(item.hex)}
                 />
-                <Action.CopyToClipboard title="复制色值" content={item.hex} icon={Icon.CopyClipboard} />
+                <Action.CopyToClipboard title={t("actionCopyColorValue")} content={item.hex} icon={Icon.CopyClipboard} />
                 <Action.Push
-                  title="查看色彩详情"
+                  title={t("actionViewColorDetail")}
                   icon={Icon.Eye}
                   target={() => <ColorDetailView color={parseColor(item.hex)} />}
                 />
                 <Action
-                  title="从调色板移除"
+                  title={t("actionRemovePalette")}
                   icon={Icon.Trash}
                   onAction={() => handleRemoveColor(item.id)}
                 />

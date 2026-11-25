@@ -650,9 +650,9 @@ test('[故障注入] 宿主历史库读取失败：退回插件记录的同时�
   await tick(30)
   const summary = view.tree().props.filterBar.summaryText
   assert.match(summary, /客户端剪贴板历史读取失败/)
-  assert.match(summary, /Database is closed/)
+  assert.match(summary, /读取宿主剪贴板历史失败/)
   assert.ok(view.items().some((i) => i.props.title === 'LOCAL-ROW'))
-  assert.equal(getLastHostHistoryError(), 'Database is closed')
+  assert.equal(getLastHostHistoryError(), '读取宿主剪贴板历史失败')
   db.queryFault = null
   await getClipboardHistory()
   assert.equal(getLastHostHistoryError(), '', '恢复后清掉旧错误')

@@ -1,13 +1,16 @@
 // calendar 现行代码（日程管理，对接宿主 calendar_* 接口）的宿主集成与故障注入测试
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
   fetchCalendarEvents,
   createCalendarEvent,
   deleteCalendarEvent,
   exportCalendarIcs,
   buildCalendarIcsContent
-} from '../dist/index.js'
+} = await import('../dist/index.js')
 
 /** 宿主桩：按方法名返回 { success, data } 信封，未登记的方法视为宿主不支持 */
 function hostStub(handlers) {
@@ -96,7 +99,7 @@ test('导出 ICS：用宿主生成；宿主返回的不是日历格式或失败�
   const broken = hostStub({ calendar_export_ics: { success: true, data: '<html>error</html>' } })
   await assert.rejects(() => exportCalendarIcs(events, broken), /EXPORT_ICS_FAILED: 宿主返回的不是 ICS/)
   const locked = hostStub({ calendar_export_ics: { success: false, error: { code: 'INTERNAL_ERROR', message: 'database is locked' } } })
-  await assert.rejects(() => exportCalendarIcs(events, locked), /EXPORT_ICS_FAILED: database is locked/)
+  await assert.rejects(() => exportCalendarIcs(events, locked), /EXPORT_ICS_FAILED: 宿主内部错误/)
   // 本地生成（无宿主环境）也带完整时间
   assert.match(buildCalendarIcsContent(events), /DTSTART:\d{8}T\d{6}Z[\s\S]*SUMMARY:发布评审/)
 })

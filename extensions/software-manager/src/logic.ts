@@ -8,6 +8,7 @@
  * - AppData 目录只读列出，客户端目前不能把扫描到的目录移入回收站，插件也不提供删除
  */
 
+import { t } from './i18n.js'
 import {
   callHostTransport,
   getRealSystemPath,
@@ -18,8 +19,9 @@ import {
   scanRealDirectoryTree,
   showRealItemInFolder
 } from './native-ipc.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export const getNotInClientMessage = (): string => t('notInClient')
 
 export type SoftwareSmartCategoryId =
   | 'dev_geek'
@@ -38,56 +40,58 @@ export interface SoftwareSmartCategoryMeta {
   description: string
 }
 
-export const SOFTWARE_SMART_CATEGORIES: SoftwareSmartCategoryMeta[] = [
-  {
-    id: 'dev_geek',
-    name: '开发工具',
-    shortName: '开发工具',
-    description: 'IDE 编辑器、编译器、SDK、Git、容器虚拟化与终端工具'
-  },
-  {
-    id: 'browser_net',
-    name: '浏览器与通讯',
-    shortName: '浏览通讯',
-    description: '浏览器、即时通讯、远程控制与下载工具'
-  },
-  {
-    id: 'media_design',
-    name: '影音与设计',
-    shortName: '影音设计',
-    description: '音视频播放、剪辑转码、3D 建模与平面设计'
-  },
-  {
-    id: 'office_doc',
-    name: '办公与效率',
-    shortName: '办公效率',
-    description: 'Office/WPS 办公套件、PDF、笔记与解压缩工具'
-  },
-  {
-    id: 'game_platform',
-    name: '游戏与外设',
-    shortName: '游戏外设',
-    description: '游戏平台、外设驱动中心与游戏客户端'
-  },
-  {
-    id: 'security_driver',
-    name: '安全软件与驱动',
-    shortName: '安全驱动',
-    description: '显卡/声卡/网卡驱动、安全防护软件与芯片组组件'
-  },
-  {
-    id: 'runtime_system',
-    name: '运行库与系统组件',
-    shortName: '运行库',
-    description: 'Visual C++ 运行库、.NET、WebView2 等系统基础组件'
-  },
-  {
-    id: 'other',
-    name: '其他',
-    shortName: '其他',
-    description: '按名称无法归入以上分类的软件'
-  }
-]
+export function getSoftwareSmartCategories(): SoftwareSmartCategoryMeta[] {
+  return [
+    {
+      id: 'dev_geek',
+      name: t('catDevName'),
+      shortName: t('catDevShort'),
+      description: t('catDevDesc')
+    },
+    {
+      id: 'browser_net',
+      name: t('catBrowserName'),
+      shortName: t('catBrowserShort'),
+      description: t('catBrowserDesc')
+    },
+    {
+      id: 'media_design',
+      name: t('catMediaName'),
+      shortName: t('catMediaShort'),
+      description: t('catMediaDesc')
+    },
+    {
+      id: 'office_doc',
+      name: t('catOfficeName'),
+      shortName: t('catOfficeShort'),
+      description: t('catOfficeDesc')
+    },
+    {
+      id: 'game_platform',
+      name: t('catGameName'),
+      shortName: t('catGameShort'),
+      description: t('catGameDesc')
+    },
+    {
+      id: 'security_driver',
+      name: t('catSecurityName'),
+      shortName: t('catSecurityShort'),
+      description: t('catSecurityDesc')
+    },
+    {
+      id: 'runtime_system',
+      name: t('catRuntimeName'),
+      shortName: t('catRuntimeShort'),
+      description: t('catRuntimeDesc')
+    },
+    {
+      id: 'other',
+      name: t('catOtherName'),
+      shortName: t('catOtherShort'),
+      description: t('catOtherDesc')
+    }
+  ]
+}
 
 export interface SoftwareItem {
   id: string
@@ -145,7 +149,7 @@ export const FORBIDDEN_SOFTWARE_PATTERN = new RegExp(
   "^(?:Microsoft Windows|Windows Operating System|Windows Security)",
   'i'
 )
-export const FORBIDDEN_UNINSTALL_REASON = '这是 Windows 系统组件，不能在这里卸载'
+export const getForbiddenUninstallReason = (): string => t('forbiddenUninstallReason')
 
 /**
  * 按软件名称、发布商与安装位置归入分类；都匹配不上时归入「其他」
@@ -214,7 +218,8 @@ export function classifySoftwareSmartCategory(
 }
 
 export function getSmartCategoryMeta(id?: SoftwareSmartCategoryId): SoftwareSmartCategoryMeta {
-  return SOFTWARE_SMART_CATEGORIES.find((c) => c.id === id) || SOFTWARE_SMART_CATEGORIES[SOFTWARE_SMART_CATEGORIES.length - 1]
+  const categories = getSoftwareSmartCategories()
+  return categories.find((c) => c.id === id) || categories[categories.length - 1]
 }
 
 /**
@@ -325,7 +330,7 @@ function errorText(err: unknown): string {
  */
 export async function fetchSoftwareList(host?: unknown, forceRefresh = false): Promise<SoftwareListResult> {
   if (!hasClientHost(host)) {
-    return { ok: false, items: [], error: NOT_IN_CLIENT_MESSAGE }
+    return { ok: false, items: [], error: getNotInClientMessage() }
   }
   const res = await callHostTransport<Array<Record<string, unknown>>>(
     'applications_list',
@@ -333,10 +338,10 @@ export async function fetchSoftwareList(host?: unknown, forceRefresh = false): P
     host
   )
   if (!res.ok) {
-    return { ok: false, items: [], error: `读取已安装软件失败：${res.error || '客户端没有返回结果'}` }
+    return { ok: false, items: [], error: t('fetchListFailedWithReason', { reason: resolveErrorMessage(res, t('hostNoResult')) }) }
   }
   if (!Array.isArray(res.data)) {
-    return { ok: false, items: [], error: '读取已安装软件失败：客户端返回的格式无效' }
+    return { ok: false, items: [], error: t('fetchListInvalidFormat') }
   }
   const items = res.data
     .filter((rec) => rec && typeof rec === 'object')
@@ -393,7 +398,7 @@ export function findSimilarSoftware(folderName: string, softwareList: SoftwareIt
  */
 export async function probeAppDataDirs(softwareList: SoftwareItem[], host?: unknown): Promise<AppDataScanResult> {
   if (!hasClientHost(host)) {
-    return { ok: false, items: [], error: NOT_IN_CLIENT_MESSAGE }
+    return { ok: false, items: [], error: getNotInClientMessage() }
   }
   try {
     const [appData, home] = await Promise.all([getRealSystemPath('appData', host), getRealSystemPath('home', host)])
@@ -401,7 +406,7 @@ export async function probeAppDataDirs(softwareList: SoftwareItem[], host?: unkn
     if (appData) roots.push({ path: appData, scope: 'AppData\\Roaming' })
     if (home) roots.push({ path: `${home.replace(/[\\/]+$/, '')}\\AppData\\Local`, scope: 'AppData\\Local' })
     if (roots.length === 0) {
-      return { ok: false, items: [], error: '无法获取 AppData 路径' }
+      return { ok: false, items: [], error: t('cannotGetAppDataPath') }
     }
 
     const results: AppDataDirItem[] = []
@@ -432,7 +437,7 @@ export async function probeAppDataDirs(softwareList: SoftwareItem[], host?: unkn
     )
     return { ok: true, items: results.sort((a, b) => b.sizeBytes - a.sizeBytes) }
   } catch (err) {
-    return { ok: false, items: [], error: `扫描 AppData 失败：${errorText(err)}` }
+    return { ok: false, items: [], error: t('scanAppDataFailedWithReason', { reason: errorText(err) }) }
   }
 }
 
@@ -441,16 +446,16 @@ export async function probeAppDataDirs(softwareList: SoftwareItem[], host?: unkn
  */
 export async function uninstallSoftware(item: SoftwareItem, host?: unknown): Promise<{ ok: boolean; error?: string }> {
   if (!item || !item.name) {
-    return { ok: false, error: '没有选择软件' }
+    return { ok: false, error: t('noSoftwareSelected') }
   }
   if (FORBIDDEN_SOFTWARE_PATTERN.test(item.name)) {
-    return { ok: false, error: FORBIDDEN_UNINSTALL_REASON }
+    return { ok: false, error: getForbiddenUninstallReason() }
   }
   if (!item.uninstallString) {
-    return { ok: false, error: '系统登记里没有这个软件的卸载程序' }
+    return { ok: false, error: t('noUninstallerRegistered') }
   }
   if (!hasClientHost(host)) {
-    return { ok: false, error: NOT_IN_CLIENT_MESSAGE }
+    return { ok: false, error: getNotInClientMessage() }
   }
   const res = await callHostTransport<{ success?: boolean; message?: string; error?: string }>(
     'applications_uninstall',
@@ -458,10 +463,10 @@ export async function uninstallSoftware(item: SoftwareItem, host?: unknown): Pro
     host
   )
   if (!res.ok) {
-    return { ok: false, error: res.error || '启动卸载程序失败' }
+    return { ok: false, error: resolveErrorMessage(res, t('launchUninstallFailed')) }
   }
   if (res.data && typeof res.data === 'object' && res.data.success === false) {
-    return { ok: false, error: res.data.error || res.data.message || '启动卸载程序失败' }
+    return { ok: false, error: resolveErrorMessage(res.data, t('launchUninstallFailed')) }
   }
   return { ok: true }
 }

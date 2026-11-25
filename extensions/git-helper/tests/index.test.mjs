@@ -28,11 +28,33 @@ function fixture() {
   }
   return { root, git, shell, commits }
 }
+function clearReadOnlyTree(targetPath) {
+  const stat = fs.lstatSync(targetPath, { throwIfNoEntry: false })
+  if (!stat || stat.isSymbolicLink()) return
+  if (stat.isDirectory()) {
+    try { fs.chmodSync(targetPath, 0o700) } catch { /* 忽略单目录权限异常 */ }
+    for (const name of fs.readdirSync(targetPath)) clearReadOnlyTree(path.join(targetPath, name))
+    return
+  }
+  try { fs.chmodSync(targetPath, 0o666) } catch { /* 忽略单文件权限异常 */ }
+}
+function cleanupRoots() {
+  for (const root of roots.splice(0)) {
+    try {
+      if (process.platform === 'win32') clearReadOnlyTree(root)
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 })
+    } catch {
+      // 独立隔离每个临时仓库删除，避免单个句柄暂占中断其余清理
+    }
+  }
+}
+process.once('exit', cleanupRoots)
+
 async function open(component) { const view = await mount(component); views.push(view); await tick(); return view }
 test.beforeEach(() => host.reset())
 test.afterEach(() => {
   views.splice(0).forEach(view => view.unmount())
-  roots.splice(0).forEach(root => fs.rmSync(root, { recursive: true, force: true }))
+  cleanupRoots()
 })
 
 test('真实 Git：撤销只回退一次并保留恢复分支、暂存与未暂存内容', () => {
@@ -246,4 +268,46 @@ test('提交生成器用中性文案：分组标题不写内部规范说法，�
   await commit.run(commit.item('fix'), '仅复制提交说明')
   assert.equal(host.clipboard.text, 'fix(auth): 修复登录失败')
   assert.doesNotMatch(buildConventionalCommit({ type: 'fix', subject: '' }).message, /中文/)
+})
+
+test('扩充紧急自救指南至 15+ 条，覆盖 stash/detached/rebase/clean/unstage 等高频场景', async () => {
+  const { searchGitEmergencies } = await import('../dist/index.js')
+  assert.ok(GIT_EMERGENCY_DATABASE.length >= 15, `紧急自救指南数量不足: ${GIT_EMERGENCY_DATABASE.length}`)
+  for (const q of ['stash', 'detached', 'rebase', 'clean', 'unstage', 'cherry-pick']) {
+    const res = searchGitEmergencies(q)
+    assert.ok(res.length >= 1, `未检索到场景: ${q}`)
+  }
+})
+
+test('gitignore 交互修正：Enter 主动作是勾选/取消勾选，Ctrl+Enter 次动作是复制合并结果', async () => {
+  const ignore = await open(commands['gitignore-generator'])
+  const nodeActions = ignore.actions(ignore.item('Node'))
+  assert.equal(nodeActions[0].props.title, '勾选')
+  assert.equal(nodeActions[1].props.title, '复制合成后的 .gitignore 全文')
+  assert.deepEqual(nodeActions[1].props.shortcut, { modifiers: ['ctrl'], key: 'enter' })
+
+  const ideActions = ignore.actions(ignore.item('IDEs'))
+  assert.equal(ideActions[0].props.title, '取消勾选')
+  assert.equal(ideActions[1].props.title, '复制合成后的 .gitignore 全文')
+
+  // 顶栏（List 级 actions）也提供复制合并 .gitignore
+  assert.ok(ignore.actions(null).some((a) => a.props.title === '复制合成后的 .gitignore 全文'))
+})
+
+test('Conventional Commits 补齐 build/ci/style/revert 与 Breaking Change (!) 开关', async () => {
+  const { COMMIT_TYPES } = await import('../dist/index.js')
+  const types = COMMIT_TYPES.map((t) => t.type)
+  for (const required of ['build', 'ci', 'style', 'revert']) {
+    assert.ok(types.includes(required), `缺少提交类型: ${required}`)
+  }
+  const commit = await open(commands['git-commit-builder'])
+  commit.tree().props.onSearchTextChange('api:移除旧版 v1 接口'); await tick()
+  await commit.run(commit.item('feat'), '开启破坏性变更标记 (!)')
+  await tick()
+  await commit.run(commit.item('feat'), '复制完整 git commit 命令')
+  assert.equal(host.clipboard.text, "git commit -m 'feat(api)!: 移除旧版 v1 接口'")
+  await commit.run(commit.item('feat'), '关闭破坏性变更标记 (!)')
+  await tick()
+  await commit.run(commit.item('feat'), '仅复制提交说明')
+  assert.equal(host.clipboard.text, 'feat(api): 移除旧版 v1 接口')
 })

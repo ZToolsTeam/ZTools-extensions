@@ -1,9 +1,11 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
-import BoostCommand from '../dist/index.js'
-import * as boost from '../dist/logic.js'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { default: BoostCommand } = await import('../dist/index.js')
+const boost = await import('../dist/logic.js')
 
 const MB = 1024 * 1024
 const APPDATA = 'C:\\Users\\tester\\AppData\\Roaming'
@@ -85,16 +87,17 @@ function createHost(overrides = {}) {
 }
 
 test('不在客户端里运行时显示空状态，不显示示例数据', async () => {
+  const notInClient = boost.getNotInClientMessage()
   const snap = await boost.fetchBoostSnapshot()
   assert.deepEqual(snap.candidates, [])
-  assert.deepEqual(snap.errors, [boost.NOT_IN_CLIENT_MESSAGE])
+  assert.deepEqual(snap.errors, [notInClient])
   assert.equal(snap.totalMemoryBytes, 0, '读不到内存时不写 16 GB 之类的默认值')
 
   const view = BoostCommand()
   assert.equal(view.type, 'List')
-  assert.match(view.props.filterBar.summaryText, new RegExp(boost.NOT_IN_CLIENT_MESSAGE))
+  assert.match(view.props.filterBar.summaryText, new RegExp(notInClient))
   assert.equal(view.props.subList.items.length, 0)
-  assert.equal(view.props.subList.emptyText, boost.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(view.props.subList.emptyText, notInClient)
 })
 
 test('扫描：系统进程、Windows 目录下的进程与公共启动文件夹受保护，内存按客户端返回', async () => {
@@ -266,7 +269,7 @@ test('结束进程：旧版客户端接口失败时返回成功外壳也要识�
 
   const outside = await boost.terminateBoostProcess(8888, 'chrome.exe')
   assert.equal(outside.ok, false)
-  assert.equal(outside.error, boost.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(outside.error, boost.getNotInClientMessage())
 })
 
 test('定位：不在客户端里或客户端失败时返回 false', async () => {
@@ -276,4 +279,24 @@ test('定位：不在客户端里或客户端失败时返回 false', async () =>
     shell_open_path: async () => ({ success: false, error: { message: '未授权' } })
   }
   assert.equal(await boost.openBoostItemLocation('C:\\x.lnk', failing), false)
+})
+
+test('i18n 热切换：切换 zh-CN 与 en-US 后未在客户端提示与受保护原因实时更新', async () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhMsg = boost.getNotInClientMessage()
+    const zhForbidden = boost.getForbiddenReason()
+    assert.match(zhMsg, /[\u4e00-\u9fa5]/)
+
+    setRuntimeLocale('en-US')
+    const enMsg = boost.getNotInClientMessage()
+    const enForbidden = boost.getForbiddenReason()
+    assert.notEqual(enMsg, zhMsg)
+    assert.notEqual(enForbidden, zhForbidden)
+    assert.doesNotMatch(`${enMsg} ${enForbidden}`, /[\u4e00-\u9fa5]/)
+    const snapEn = await boost.fetchBoostSnapshot()
+    assert.deepEqual(snapEn.errors, [enMsg])
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

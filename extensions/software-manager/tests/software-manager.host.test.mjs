@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as softwareManager from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function createRealHostStub(handlers = {}) {
@@ -61,15 +64,16 @@ const APP_RECORDS = [
 ]
 
 test('software-manager: 不在客户端里运行时不返回示例软件，也不提供假成功的卸载', async () => {
+  const notInClient = softwareManager.getNotInClientMessage()
   const list = await softwareManager.fetchSoftwareList()
   assert.equal(list.ok, false)
   assert.equal(list.items.length, 0)
-  assert.equal(list.error, softwareManager.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(list.error, notInClient)
   assert.equal(typeof softwareManager.getMockSoftwareList, 'undefined')
   assert.equal(typeof softwareManager.invokeNativeCapability, 'undefined')
   const un = await softwareManager.uninstallSoftware(softwareManager.mapRecordToSoftwareItem(APP_RECORDS[0], 0))
   assert.equal(un.ok, false)
-  assert.equal(un.error, softwareManager.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(un.error, notInClient)
 })
 
 test('software-manager: 读不到软件清单时如实报错，不按 Program Files 目录名推测软件', async () => {

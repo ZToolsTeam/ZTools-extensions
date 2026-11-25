@@ -2,12 +2,16 @@
 // 覆盖：只显示客户端返回的进程；读取 / 启动失败如实报错；客户端成功但没有新进程时不报成功；不在客户端里运行时不显示示例数据
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  HOST_REQUIRED_MESSAGE,
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const {
+  getHostRequiredMessage,
+  getLaunchLimitNote,
   fetchWeChatMultiSnapshot,
   launchWechatAgain,
   filterWechatInstances
-} from '../dist/logic.js'
+} = await import('../dist/logic.js')
 
 const statusHost = (status) => ({
   dllplugin_call: async ({ plugin, func }) => {
@@ -62,14 +66,15 @@ test('[故障] 客户端读取进程失败或调用抛错时 ok 为 false 并带
 })
 
 test('[边界] 不在客户端里运行时不显示示例进程，启动也如实失败', async () => {
+  const hostRequired = getHostRequiredMessage()
   const snap = await fetchWeChatMultiSnapshot()
   assert.equal(snap.ok, false)
-  assert.equal(snap.error, HOST_REQUIRED_MESSAGE)
+  assert.equal(snap.error, hostRequired)
   assert.deepEqual(snap.instances, [])
 
   const launch = await launchWechatAgain()
   assert.equal(launch.ok, false)
-  assert.equal(launch.message, HOST_REQUIRED_MESSAGE)
+  assert.equal(launch.message, hostRequired)
 })
 
 test('再运行一次微信：只调用客户端 launchInstance，成功说法不含解除单实例限制', async () => {
@@ -117,4 +122,24 @@ test('按进程名或 PID 搜索', () => {
   assert.deepEqual(filterWechatInstances(items, '2048').map((i) => i.id), ['b'])
   assert.deepEqual(filterWechatInstances(items, 'wechat').map((i) => i.id), ['a'])
   assert.equal(filterWechatInstances(items, '').length, 2)
+})
+
+test('i18n 热切换：切换 zh-CN 与 en-US 时宿主提示与多开说明实时更新不冻结', async () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhHost = getHostRequiredMessage()
+    const zhNote = getLaunchLimitNote()
+    assert.match(zhHost, /[\u4e00-\u9fa5]/)
+
+    setRuntimeLocale('en-US')
+    const enHost = getHostRequiredMessage()
+    const enNote = getLaunchLimitNote()
+    assert.notEqual(enHost, zhHost)
+    assert.notEqual(enNote, zhNote)
+    assert.doesNotMatch(`${enHost} ${enNote}`, /[\u4e00-\u9fa5]/)
+    const snapEn = await fetchWeChatMultiSnapshot()
+    assert.equal(snapEn.error, enHost)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

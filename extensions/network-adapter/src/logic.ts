@@ -7,6 +7,7 @@
  */
 
 import { invokePluginService } from './native-ipc.js'
+import { t } from './i18n.js'
 
 export type AdapterCategory = 'physical' | 'virtual' | 'loopback'
 export type AdapterFilterMode = 'all' | 'physical' | 'virtual' | 'connected'
@@ -55,14 +56,15 @@ export interface NetworkAdapterSnapshot {
 export const HOST_PLUGIN_NAME = 'NetworkAdapterPlugin'
 
 /** 读取网卡列表失败时 error 的固定前缀 */
-export const ADAPTER_LIST_ERROR_PREFIX = '读取网卡列表失败'
+import { ADAPTER_LIST_ERROR_PREFIX } from './host-errors.zh-data.js'
+export { ADAPTER_LIST_ERROR_PREFIX }
 
 /** 把宿主返回的错误整理成用户能看懂的文字；宿主接口根本不存在时说明未连接客户端 */
 export function describeHostError(error: unknown, fallback: string): string {
   const text = typeof error === 'string' ? error.trim() : ''
   if (!text) return fallback
   if (text === 'NO_WINDOW_ENV' || text.startsWith('METHOD_NOT_AVAILABLE')) {
-    return '未连接 ZTools 客户端，无法调用网卡接口'
+    return t('errNotInClient')
   }
   return text
 }
@@ -149,14 +151,14 @@ const VIRTUAL_NAME_PATTERN = /vethernet|vmware|virtual|wsl|tun|tap|clash|meta/i
 const VIRTUAL_DESCRIPTION_PATTERN = /\b(?:hyper-v|vmware|virtualbox|virtual|wintun|tap-windows|wireguard|tunnel|wsl)\b/i
 
 function physicalTypeLabel(text: string): string {
-  if (/wi-?fi|wlan|wireless|802\.11|无线/i.test(text)) return '无线网卡'
-  if (/bluetooth|蓝牙/i.test(text)) return '蓝牙网卡'
-  if (/ethernet|以太网|gbe\b/i.test(text)) return '有线网卡'
-  return '物理网卡'
+  if (/wi-?fi|wlan|wireless|802\.11|无线/i.test(text)) return t('typeWireless')
+  if (/bluetooth|蓝牙/i.test(text)) return t('typeBluetooth')
+  if (/ethernet|以太网|gbe\b/i.test(text)) return t('typeEthernet')
+  return t('typePhysical')
 }
 
 function mapRawAdapter(raw: RawAdapter, i: number): NetworkAdapterItem {
-  const name = textOf(raw.name) || textOf(raw.alias) || `未命名接口 ${i + 1}`
+  const name = textOf(raw.name) || textOf(raw.alias) || t('unnamedAdapter', { index: i + 1 })
   const description = textOf(raw.description)
   const ipv4 = textOf(raw.ipv4) || textOf(raw.address)
   const isLoopback =
@@ -170,9 +172,9 @@ function mapRawAdapter(raw: RawAdapter, i: number): NetworkAdapterItem {
   const typeLabel =
     textOf(raw.typeLabel) ||
     (category === 'loopback'
-      ? '本机回环'
+      ? t('typeLoopback')
       : category === 'virtual'
-      ? '虚拟网卡'
+      ? t('typeVirtual')
       : physicalTypeLabel(`${name} ${description}`))
 
   return {
@@ -196,10 +198,11 @@ function mapRawAdapter(raw: RawAdapter, i: number): NetworkAdapterItem {
 
 /** 读取失败时的快照：不带任何网卡，主网卡字段全部为空 */
 export function createFailedSnapshot(error: string): NetworkAdapterSnapshot {
-  const detail = String(error || '').trim().replace(new RegExp(`^${ADAPTER_LIST_ERROR_PREFIX}[：:]\\s*`), '')
+  const prefix = t('adapterListErrorPrefix')
+  const detail = String(error || '').trim().replace(new RegExp(`^${prefix}[：:]\\s*`), '').replace(new RegExp(`^${ADAPTER_LIST_ERROR_PREFIX}[：:]\\s*`), '')
   return {
     ok: false,
-    error: `${ADAPTER_LIST_ERROR_PREFIX}：${detail || '客户端未返回原因'}`,
+    error: t('errPrefixWithDetail', { prefix, detail: detail || t('errNoHostReason') }),
     adapters: [],
     activeCount: 0,
     physicalCount: 0,
@@ -242,12 +245,12 @@ export function buildAdapterSnapshot(adapters: NetworkAdapterItem[]): NetworkAda
 export async function fetchNetworkAdapters(hostOverride?: unknown): Promise<NetworkAdapterSnapshot> {
   const res = await invokePluginService<unknown>(HOST_PLUGIN_NAME, 'getAdapters', {}, hostOverride)
   if (!res.ok) {
-    return createFailedSnapshot(describeHostError(res.error, '客户端未返回原因'))
+    return createFailedSnapshot(describeHostError(res.error, t('errNoHostReason')))
   }
   const data = res.data
   const rawList = Array.isArray(data) ? data : isRecord(data) && Array.isArray(data.adapters) ? data.adapters : null
   if (!rawList) {
-    return createFailedSnapshot('客户端返回的网卡数据格式无法识别')
+    return createFailedSnapshot(t('errInvalidAdapterFormat'))
   }
   return buildAdapterSnapshot(rawList.filter(isRecord).map(mapRawAdapter))
 }
@@ -270,18 +273,18 @@ export async function applyDnsPreset(
   const sDns = typeof secondaryDns === 'string' ? secondaryDns.trim() : ''
 
   if (!name) {
-    return { ok: false, adapterId: '', dnsServers: [], message: '目标网卡名称或 ID 不能为空' }
+    return { ok: false, adapterId: '', dnsServers: [], message: t('errTargetAdapterRequired') }
   }
   const isDhcp = pDns.toLowerCase() === 'dhcp' || pDns.toLowerCase() === 'auto'
   if (!isDhcp && !IPV4_REGEX.test(pDns)) {
-    return { ok: false, adapterId: name, dnsServers: [], message: `首选 DNS 地址格式不合法: ${pDns}` }
+    return { ok: false, adapterId: name, dnsServers: [], message: t('errInvalidPrimaryDns', { dns: pDns }) }
   }
   if (!isDhcp && sDns) {
     return {
       ok: false,
       adapterId: name,
       dnsServers: [],
-      message: '当前客户端一次只能设置一个 DNS 服务器，不支持同时设置备选 DNS'
+      message: t('errSecondaryDnsUnsupported')
     }
   }
 
@@ -297,25 +300,25 @@ export async function applyDnsPreset(
       ok: true,
       adapterId: name,
       dnsServers: isDhcp ? [] : [pDns],
-      message: isDhcp ? `已将网卡 [${name}] 的 DNS 恢复为自动获取` : `已将网卡 [${name}] 的 DNS 设为 ${pDns}`
+      message: isDhcp ? t('msgDnsRestored', { name }) : t('msgDnsSet', { name, dns: pDns })
     }
   }
   return {
     ok: false,
     adapterId: name,
     dnsServers: [],
-    message: `修改网卡 [${name}] 的 DNS 失败：${describeHostError(res.error, '客户端未返回原因')}`
+    message: t('errSetDnsFailed', { name, error: describeHostError(res.error, t('errNoHostReason')) })
   }
 }
 
 export async function flushSystemDnsCache(hostOverride?: unknown): Promise<{ ok: boolean; message: string }> {
   const res = await invokePluginService<unknown>(HOST_PLUGIN_NAME, 'flushDns', {}, hostOverride)
   if (res.ok) {
-    return { ok: true, message: '已刷新本机 DNS 解析缓存' }
+    return { ok: true, message: t('msgDnsFlushed') }
   }
   return {
     ok: false,
-    message: `刷新 DNS 解析缓存失败：${describeHostError(res.error, '客户端未返回原因')}`
+    message: t('errFlushDnsFailed', { error: describeHostError(res.error, t('errNoHostReason')) })
   }
 }
 
@@ -330,14 +333,14 @@ export function copyAdapterInfo(
   if (format === 'ipv4') return adapter.ipv4 || ''
   if (format === 'mac') return adapter.mac || ''
   if (format === 'json') return JSON.stringify(adapter, null, 2)
-  const unknown = '未识别'
+  const unknown = t('unknown')
   const parts = [
     adapter.name,
-    `IPv4: ${adapter.ipv4 || '未分配'}`,
-    `子网掩码: ${adapter.netmask || (adapter.ipv4 ? unknown : '-')}`,
-    `网关: ${adapter.gateway || '无'}`,
+    `IPv4: ${adapter.ipv4 || t('ipUnassigned')}`,
+    t('copySummaryNetmask', { value: adapter.netmask || (adapter.ipv4 ? unknown : '-') }),
+    t('copySummaryGateway', { value: adapter.gateway || t('noneWord') }),
     `MAC: ${adapter.mac || unknown}`,
-    `DNS: ${adapter.dnsServers.join(', ') || '未配置'}`
+    `DNS: ${adapter.dnsServers.join(', ') || t('dnsUnconfigured')}`
   ]
   return parts.join(' | ')
 }

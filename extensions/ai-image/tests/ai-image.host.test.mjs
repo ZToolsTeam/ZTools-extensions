@@ -1,7 +1,12 @@
-// 本插件现行代码的宿主集成测试（从 packages/declarative-ui/tests/real-layout3-plugins.test.mjs 按插件拆出，导入改为本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import * as aiImage from '../dist/index.js'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const aiImage = await import('../dist/index.js')
 
 async function withRealElectronWindow(handlers, fn) {
   const prevWindow = globalThis.window
@@ -84,22 +89,25 @@ function makeFile(filePath, sizeBytes = 500000) {
   }
 }
 
-test('ai-image: 真实宿主扫描与普通放大，输出信息取自客户端返回，参数如实传递', async () => {
+test('ai-image: 已移除挂载扫描接口，选择文件使用字符串过滤器并过滤 WebP，然后完成普通放大', async () => {
+  assert.equal(aiImage.fetchAiImageQueue, undefined, '应已删除挂载扫描函数 fetchAiImageQueue')
+
+  const pickedPaths = ['D:\\RealImages\\Sub\\photo.png', 'D:\\RealImages\\banner.webp', 'D:\\RealImages\\shot.jpg']
+  const sizeMap = {
+    'D:\\RealImages\\Sub\\photo.png': 500000,
+    'D:\\RealImages\\shot.jpg': 300000
+  }
+
   await withRealElectronWindow(
     {
-      system_get_path: ({ name }) => (name === 'pictures' ? 'D:\\RealImages' : ''),
-      system_search_files: ({ query }) => {
-        if (query === 'dir:D:\\RealImages') {
-          return {
-            files: [
-              { name: 'photo.png', path: 'D:\\RealImages\\Sub\\photo.png', is_dir: false, size: 500000, mtime: 1700000000 },
-              { name: 'banner.webp', path: 'D:\\RealImages\\banner.webp', is_dir: false, size: 900000, mtime: 1700000000 },
-              { name: 'shot.jpg', path: 'D:\\RealImages\\shot.jpg', is_dir: false, size: 300000, mtime: 1700000000 }
-            ]
-          }
-        }
-        return { files: [] }
+      window_show_open_dialog: params => {
+        assert.equal(params.filters, '图片文件|png;jpg;jpeg;bmp')
+        return { success: true, data: { canceled: false, filePaths: pickedPaths } }
       },
+      filesystem_get_file_size: ({ path: filePath }) => ({
+        success: true,
+        data: { success: true, size: sizeMap[filePath] ?? 0 }
+      }),
       filesystem_file_exists: () => existsReply(false),
       dllplugin_call: ({ plugin, func, params }) => {
         assert.equal(plugin, 'AiImagePlugin')
@@ -112,19 +120,20 @@ test('ai-image: 真实宿主扫描与普通放大，输出信息取自客户端�
       }
     },
     async calls => {
-      const queue = await aiImage.fetchAiImageQueue()
-      assert.equal(queue.error, undefined)
+      const importRes = await aiImage.selectAiImageFiles()
+      assert.equal(importRes.error, undefined)
+      assert.equal(importRes.ignored, 1, 'WebP 在导入阶段即被统一排除')
       assert.deepEqual(
-        queue.files.map(f => f.name),
-        ['photo.png', 'shot.jpg'],
-        '客户端读取不了的 WebP 不进入队列'
+        importRes.files.map(f => f.name),
+        ['photo.png', 'shot.jpg']
       )
-      const photo = queue.files[0]
-      assert.equal(photo.parentDir, 'D:\\RealImages\\Sub', '输出目录取图片真实所在目录，不是扫描根目录')
-      assert.equal(photo.width, 0, '扫描阶段没有分辨率信息，不编造')
+      const photo = aiImage.importedFileToAiImageItem(importRes.files[0])
+      assert.equal(photo.parentDir, 'D:\\RealImages\\Sub', '输出目录取图片真实所在目录')
+      assert.equal(photo.width, 0, '导入阶段没有分辨率信息，不编造')
       assert.equal(photo.height, 0)
       assert.equal(aiImage.estimateTargetResolution(photo.width, photo.height, '2x'), '未识别')
 
+      const callsBeforeBatch = calls.length
       const batchRes = await aiImage.executeAiImageBatch([photo], BASIC, undefined, FIXED_NOW)
       assert.equal(batchRes.ok, true)
       assert.equal(batchRes.processedCount, 1)
@@ -137,9 +146,63 @@ test('ai-image: 真实宿主扫描与普通放大，输出信息取自客户端�
         width: 2560,
         height: 1440
       })
-      assert.ok(!calls.some(c => c.channel === 'filesystem_get_file_size'), '不再用其它接口或原图大小补输出大小')
+      assert.ok(
+        !calls.slice(callsBeforeBatch).some(c => c.channel === 'filesystem_get_file_size'),
+        '处理输出大小直接取自客户端返回'
+      )
     }
   )
+})
+
+test('ai-image: 文件夹收集与路径展开支持递归、排除输出图与 WebP、带点目录与跳过受保护子目录', async () => {
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-ai-image-host-'))
+  try {
+    const dottedDir = path.join(tmpRoot, '2026.11_素材')
+    fs.mkdirSync(path.join(dottedDir, 'nested'), { recursive: true })
+    fs.mkdirSync(path.join(tmpRoot, 'Windows', 'System32'), { recursive: true })
+    fs.writeFileSync(path.join(dottedDir, 'a.png'), 'png')
+    fs.writeFileSync(path.join(dottedDir, 'nested', 'b.jpeg'), 'jpg')
+    fs.writeFileSync(path.join(dottedDir, 'ignore.webp'), 'webp')
+    fs.writeFileSync(path.join(dottedDir, `a_2x_${STAMP}.png`), 'out')
+    fs.writeFileSync(path.join(tmpRoot, 'Windows', 'System32', 'sys.png'), 'sys')
+
+    await withRealElectronWindow(
+      {
+        filesystem_get_directory_contents: ({ path: dir }) => {
+          const files = fs.readdirSync(dir, { withFileTypes: true }).map(ent => {
+            const st = fs.statSync(path.join(dir, ent.name))
+            return { name: ent.name, size: ent.isDirectory() ? 0 : st.size, isDirectory: ent.isDirectory(), lastModified: st.mtime.toISOString() }
+          })
+          return { success: true, data: { success: true, files } }
+        },
+        filesystem_directory_exists: ({ path: target }) => ({
+          success: true,
+          data: { success: true, exists: fs.existsSync(target) && fs.statSync(target).isDirectory() }
+        }),
+        filesystem_get_file_size: ({ path: filePath }) => ({
+          success: true,
+          data: { success: true, size: fs.statSync(filePath).size }
+        })
+      },
+      async () => {
+        const folderRes = await aiImage.collectAiImageFolderFiles(tmpRoot)
+        assert.equal(folderRes.error, undefined)
+        assert.deepEqual(
+          folderRes.files.map(f => f.name),
+          ['a.png', 'b.jpeg']
+        )
+        assert.equal(folderRes.ignored, 2, '忽略 webp 与本插件生成的输出文件')
+
+        const expandedLegacy = await aiImage.expandAiImageInputPaths([dottedDir])
+        assert.deepEqual(
+          expandedLegacy.files.map(f => f.name),
+          ['a.png', 'b.jpeg']
+        )
+      }
+    )
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true })
+  }
 })
 
 test('ai-image: 输出前避开已存在的同名文件，同一批次内也不重名，查询失败时仍用带时间的新文件名', async () => {
@@ -147,7 +210,7 @@ test('ai-image: 输出前避开已存在的同名文件，同一批次内也不�
   const requested = []
   await withRealElectronWindow(
     {
-      filesystem_file_exists: ({ path }) => existsReply(existing.has(path)),
+      filesystem_file_exists: ({ path: filePath }) => existsReply(existing.has(filePath)),
       dllplugin_call: ({ params }) => {
         requested.push(params.outputPath)
         return hostSuccess(params)
@@ -222,7 +285,7 @@ test('ai-image: 候选文件名全部已存在时不调用客户端，如实报�
   )
 })
 
-test('ai-image: 客户端报错或抛错时如实返回失败与原因', async () => {
+test('ai-image: 客户端报错、授权失效或抛错时如实翻译并汇报失败原因', async () => {
   await withRealElectronWindow(
     {
       dllplugin_call: () => {
@@ -234,8 +297,34 @@ test('ai-image: 客户端报错或抛错时如实返回失败与原因', async (
       assert.equal(failRes.ok, false)
       assert.equal(failRes.processedCount, 0)
       assert.equal(failRes.failedCount, 1)
-      assert.match(failRes.error, /VULKAN_DEVICE_LOST/)
+      assert.equal(failRes.error, '客户端图片处理失败')
+      assert.doesNotMatch(failRes.error, /VULKAN_DEVICE_LOST/)
       assert.deepEqual(failRes.outputs, [])
+
+      try {
+        setRuntimeLocale('en-US')
+        const enFailRes = await aiImage.executeAiImageBatch([makeFile('D:\\RealImages\\photo.png')], BASIC)
+        assert.equal(enFailRes.ok, false)
+        assert.equal(enFailRes.processedCount, 0)
+        assert.equal(enFailRes.failedCount, 1)
+        assert.match(enFailRes.error, /VULKAN_DEVICE_LOST/)
+        assert.deepEqual(enFailRes.outputs, [])
+      } finally {
+        setRuntimeLocale('zh-CN')
+      }
+    }
+  )
+
+  await withRealElectronWindow(
+    {
+      dllplugin_call: () => {
+        throw new Error('路径未由当前窗口授权')
+      }
+    },
+    async () => {
+      const authRes = await aiImage.executeAiImageBatch([makeFile('D:\\RealImages\\photo.png')], BASIC)
+      assert.equal(authRes.ok, false)
+      assert.match(authRes.error, /文件授权已过期或未授权/)
     }
   )
 
@@ -259,7 +348,7 @@ test('ai-image: 客户端报错或抛错时如实返回失败与原因', async (
   )
 })
 
-test('ai-image: 部分失败时成功与失败分别列出，不把整批报成成功', async () => {
+test('ai-image: 部分失败时成功与失败分别列出，shouldProcess 可跳过已移除条目', async () => {
   await withRealElectronWindow(
     {
       filesystem_file_exists: () => existsReply(false),
@@ -282,6 +371,17 @@ test('ai-image: 部分失败时成功与失败分别列出，不把整批报成�
       assert.equal(res.failures[0].inputPath, 'D:\\Img\\broken.jpg')
       assert.match(res.failures[0].error, /文件已损坏/)
       assert.match(res.error, /文件已损坏/)
+
+      const skipRes = await aiImage.executeAiImageBatch(
+        [makeFile('D:\\Img\\good.png'), makeFile('D:\\Img\\removed.png')],
+        BASIC,
+        undefined,
+        FIXED_NOW,
+        { shouldProcess: item => !item.name.startsWith('removed') }
+      )
+      assert.equal(skipRes.ok, true)
+      assert.equal(skipRes.processedCount, 1)
+      assert.equal(skipRes.outputs[0].inputPath, 'D:\\Img\\good.png')
     }
   )
 })
@@ -310,7 +410,7 @@ test('ai-image: AI 超分 / 去背景 / 人像修复不可用，选择后直接�
       }
     },
     async calls => {
-      const unavailable = aiImage.AI_IMAGE_ENGINES.filter(e => !e.available)
+      const unavailable = aiImage.getAiImageEngines().filter(e => !e.available)
       assert.deepEqual(
         unavailable.map(e => e.id),
         ['ai-super-resolution', 'ai-background-removal', 'ai-face-restoration']
@@ -360,11 +460,11 @@ test('ai-image: 受保护路径拦截', async () => {
   assert.match(traversal.error, /SECURITY_INTERCEPTED/)
 })
 
-test('ai-image: 没有客户端时不返回示例图片，也不报假成功', async () => {
+test('ai-image: 没有客户端时如实提示需要在 ZTools 客户端中使用，不返回假数据或假成功', async () => {
   assert.equal(globalThis.window, undefined)
-  const queue = await aiImage.fetchAiImageQueue()
-  assert.deepEqual(queue.files, [])
-  assert.match(queue.error, /HOST_UNAVAILABLE/)
+  const pickRes = await aiImage.selectAiImageFiles()
+  assert.deepEqual(pickRes.files, [])
+  assert.match(pickRes.error, /需要在 ZTools 客户端中使用/)
 
   const res = await aiImage.executeAiImageBatch([makeFile('D:\\Img\\photo.png')], BASIC)
   assert.equal(res.ok, false)
@@ -372,22 +472,7 @@ test('ai-image: 没有客户端时不返回示例图片，也不报假成功', a
   assert.match(res.error, /HOST_UNAVAILABLE/)
 })
 
-test('ai-image: 拿不到任何系统目录时如实报错', async () => {
-  await withRealElectronWindow(
-    {
-      system_get_path: () => {
-        throw new Error('NOT_SUPPORTED')
-      }
-    },
-    async () => {
-      const queue = await aiImage.fetchAiImageQueue()
-      assert.deepEqual(queue.files, [])
-      assert.match(queue.error, /SYSTEM_PATH_UNAVAILABLE/)
-    }
-  )
-})
-
-test('ai-image: 输出文件名规则（Windows / POSIX 路径、无扩展名、序号）', () => {
+test('ai-image: 输出文件名规则（Windows / POSIX 路径、无扩展名、序号）与输出文件识别', () => {
   assert.equal(
     aiImage.buildOutputPath('D:\\A\\b.c.jpg', '4x', 'jpg', STAMP),
     `D:\\A\\b.c_4x_${STAMP}.jpg`
@@ -396,4 +481,7 @@ test('ai-image: 输出文件名规则（Windows / POSIX 路径、无扩展名、
   assert.equal(aiImage.buildOutputPath('D:\\A\\noext', '2x', 'png', STAMP), `D:\\A\\noext_2x_${STAMP}.png`)
   assert.equal(aiImage.formatOutputStamp(FIXED_NOW), STAMP)
   assert.equal(aiImage.estimateTargetResolution(1280, 720, '4x'), '5120×2880')
+  assert.equal(aiImage.isAiImageOutputFile(`photo_2x_${STAMP}.png`), true)
+  assert.equal(aiImage.isAiImageOutputFile(`photo_4x_${STAMP}_2.jpg`), true)
+  assert.equal(aiImage.isAiImageOutputFile('photo_2x.png'), false)
 })

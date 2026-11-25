@@ -1,12 +1,15 @@
 import React, {
   Action, ActionPanel, Clipboard, Detail, Form, Icon, List, Toast, showToast,
-  useCallback, useEffect, useMemo, useNavigation, useRef, useState
+  useCallback, useEffect, useLocale, useMemo, useNavigation, useRef, useState
 } from '@ztools/declarative-ui'
 import type { WifiProfileInfo, WifiSecurityFilter, WifiSecurityType } from './types.js'
 import {
-  NOT_IN_CLIENT_MESSAGE, fetchSavedWifiProfiles, filterAndSortWifiProfiles, generateWifiQrString,
+  NOT_IN_CLIENT_ERROR_CODE,
+  fetchSavedWifiProfiles, filterAndSortWifiProfiles, generateWifiQrString,
   generateWifiQrSvgDataUrl, hasConnectionInfo, revealWifiPasswordFromHost
 } from './wifi-service.js'
+import { extractErrorCode } from './error-i18n.js'
+import { t } from './i18n.js'
 
 export * from './types.js'
 export * from './wifi-service.js'
@@ -21,34 +24,125 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+type SensitiveCopyResponse = {
+  success?: boolean
+  data?: { success?: boolean; clearAfterMs?: number }
+  error?: { code?: string; message?: string } | string
+}
+
+type SensitiveClipboardBridge = {
+  __ztoolsElectron?: {
+    transport?: {
+      methods?: {
+        clipboard_copy_text?: (request: {
+          messageId: string
+          params: { text: string; sensitive: boolean }
+          timeoutMs: number
+        }) => Promise<SensitiveCopyResponse>
+      }
+    }
+  }
+}
+
+let sensitiveCopySeq = 0
+
+function isUnsupportedSensitiveCopyError(code?: string, message?: string): boolean {
+  if (code === 'NOT_SUPPORTED' || code === 'METHOD_NOT_FOUND' || code === 'METHOD_NOT_AVAILABLE') {
+    return true
+  }
+  return typeof message === 'string' && /NOT_SUPPORTED|METHOD_NOT_FOUND|METHOD_NOT_AVAILABLE|is not a function/i.test(message)
+}
+
+async function copySensitiveText(text: string): Promise<{ sensitive: boolean; clearAfterMs?: number }> {
+  const method = (globalThis as unknown as SensitiveClipboardBridge).__ztoolsElectron?.transport?.methods?.clipboard_copy_text
+  if (typeof method === 'function') {
+    let response: SensitiveCopyResponse | undefined
+    let shouldFallback = false
+    try {
+      const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}_${++sensitiveCopySeq}`
+      response = await method({
+        messageId: `wifi_copy_${id}`,
+        params: { text, sensitive: true },
+        timeoutMs: 5000
+      })
+    } catch (error) {
+      const errCode = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string'
+        ? (error as { code: string }).code
+        : undefined
+      if (isUnsupportedSensitiveCopyError(errCode, errorMessage(error))) {
+        shouldFallback = true
+      } else {
+        throw error
+      }
+    }
+    if (!shouldFallback) {
+      if (response?.success === true && response.data?.success === true) {
+        const clearAfterMs = response.data.clearAfterMs
+        if (typeof clearAfterMs === 'number' && Number.isFinite(clearAfterMs) && clearAfterMs > 0) {
+          return { sensitive: true, clearAfterMs }
+        }
+        return { sensitive: false }
+      }
+      const errCode = response?.error && typeof response.error === 'object' && typeof response.error.code === 'string'
+        ? response.error.code
+        : undefined
+      const errMsg = response?.error && typeof response.error === 'object' && typeof response.error.message === 'string'
+        ? response.error.message
+        : typeof response?.error === 'string'
+          ? response.error
+          : undefined
+      if (!isUnsupportedSensitiveCopyError(errCode, errMsg)) {
+        throw new Error(errMsg || t('toastCopyFailed'))
+      }
+    }
+  }
+  await Clipboard.copy(text)
+  return { sensitive: false }
+}
+
 async function copyValue(value: string, title: string): Promise<void> {
   try {
     await Clipboard.copy(value)
     await showToast(Toast.Style.Success, title)
   } catch (error) {
-    await showToast(Toast.Style.Failure, '复制失败', errorMessage(error))
+    await showToast(Toast.Style.Failure, t('toastCopyFailed'), errorMessage(error))
+  }
+}
+
+async function copySensitiveValue(value: string, title: string): Promise<void> {
+  try {
+    const copied = await copySensitiveText(value)
+    const message = copied.sensitive
+      ? t('toastSensitiveAutoClear', { sec: Math.max(1, Math.round((copied.clearAfterMs ?? 30000) / 1000)) })
+      : t('toastSensitiveFallback')
+    await showToast(Toast.Style.Success, title, message)
+  } catch (error) {
+    await showToast(Toast.Style.Failure, t('toastCopyFailed'), errorMessage(error))
   }
 }
 
 function qrPreview(profile: WifiProfileInfo): { payload?: string; markdown: string } {
-  if (profile.isEnterprise) return { markdown: '企业认证网络不支持密码二维码。' }
-  if (profile.authType === 'Unknown') return { markdown: '系统未提供加密类型，生成二维码时请按路由器设置选择。' }
-  if (!profile.isOpenNetwork && !profile.password) return { markdown: '读取密码后可生成连网二维码。' }
+  if (profile.isEnterprise) return { markdown: t('qrEnterpriseMsg') }
+  if (profile.authType === 'Unknown') return { markdown: t('qrUnknownSecurityMsg') }
+  if (!profile.isOpenNetwork && !profile.password) return { markdown: t('qrNeedPasswordMsg') }
   try {
     const payload = generateWifiQrString(profile.ssid, profile.password, profile.authType)
-    return { payload, markdown: `![连网二维码](${generateWifiQrSvgDataUrl(profile)})\n\n${codeBlock(payload)}` }
+    return { payload, markdown: `![${t('qrImageAlt')}](${generateWifiQrSvgDataUrl(profile)})\n\n${codeBlock(payload)}` }
   } catch (error) {
     return { markdown: errorMessage(error) }
   }
 }
 
 function passwordDescription(profile: WifiProfileInfo): string {
-  if (profile.isOpenNetwork) return '开放网络，无需密码。'
-  if (profile.isEnterprise) return '企业认证网络没有可共享的预共享密码。'
-  return profile.password ? codeBlock(profile.password) : '尚未读取密码。'
+  if (profile.isOpenNetwork) return t('pwdOpenNetwork')
+  if (profile.isEnterprise) return t('pwdEnterpriseNetwork')
+  return profile.password ? codeBlock(profile.password) : t('pwdNotReadYet')
 }
 
 export function WifiQrForm({ profile, hostOverride }: { profile: WifiProfileInfo; hostOverride?: unknown }) {
+  useLocale()
   const [security, setSecurity] = useState('')
   const [busy, setBusy] = useState(false)
   const pending = useRef(false)
@@ -58,7 +152,7 @@ export function WifiQrForm({ profile, hostOverride }: { profile: WifiProfileInfo
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const generate = async () => {
     if (pending.current) return
-    if (!security) { await showToast(Toast.Style.Failure, '请选择网络实际使用的加密类型'); return }
+    if (!security) { await showToast(Toast.Style.Failure, t('toastSelectSecurity')); return }
     pending.current = true
     const selection = selectionRevision.current
     setBusy(true)
@@ -70,46 +164,49 @@ export function WifiQrForm({ profile, hostOverride }: { profile: WifiProfileInfo
       generateWifiQrString(resolved.ssid, password, authType)
       push(<WifiDetailView profile={resolved} hostOverride={hostOverride} />)
     } catch (error) {
-      if (mounted.current && selection === selectionRevision.current) await showToast(Toast.Style.Failure, '无法生成连网二维码', errorMessage(error))
+      if (mounted.current && selection === selectionRevision.current) await showToast(Toast.Style.Failure, t('toastQrFailed'), errorMessage(error))
     } finally {
       pending.current = false
       if (mounted.current) setBusy(false)
     }
   }
   return (
-    <Form navigationTitle="选择网络加密类型" isLoading={busy} actions={<ActionPanel><Action.SubmitForm title="生成连网二维码" onSubmit={generate} /></ActionPanel>}>
-      <Form.Description text="系统未提供此网络的加密类型，请按路由器设置选择。选择开放网络不会读取密码。" />
-      <Form.Dropdown id="security" title="加密类型" value={security} onChange={value => { selectionRevision.current++; setSecurity(value) }}>
-        <Form.Dropdown.Item value="" title="请选择" />
-        <Form.Dropdown.Item value="WPA2-Personal" title="WPA / WPA2 / WPA3 个人网络" />
+    <Form navigationTitle={t('formNavTitle')} isLoading={busy} actions={<ActionPanel><Action.SubmitForm title={t('formSubmitTitle')} onSubmit={generate} /></ActionPanel>}>
+      <Form.Description text={t('formDesc')} />
+      <Form.Dropdown id="security" title={t('formFieldSecurity')} value={security} onChange={value => { selectionRevision.current++; setSecurity(value) }}>
+        <Form.Dropdown.Item value="" title={t('formOptPlaceholder')} />
+        <Form.Dropdown.Item value="WPA2-Personal" title={t('formOptWpa')} />
         <Form.Dropdown.Item value="WEP" title="WEP" />
-        <Form.Dropdown.Item value="Open" title="开放网络（无需密码）" />
+        <Form.Dropdown.Item value="Open" title={t('formOptOpen')} />
       </Form.Dropdown>
     </Form>
   )
 }
 
 export function WifiDetailView({ profile, hostOverride }: { profile: WifiProfileInfo; hostOverride?: unknown }) {
+  useLocale()
   const { push } = useNavigation()
   const qr = qrPreview(profile)
   return <Detail
-    navigationTitle={`Wi-Fi 详情：${profile.ssid}`}
-    markdown={`### 密码\n\n${passwordDescription(profile)}\n\n### 连网二维码\n\n${qr.markdown}`}
+    navigationTitle={t('detailNavTitle', { ssid: profile.ssid })}
+    markdown={t('detailMarkdown', { password: passwordDescription(profile), qr: qr.markdown })}
     actions={<ActionPanel>
-      {profile.password && <Action title="复制 Wi-Fi 密码" icon={Icon.CopyClipboard} onAction={() => copyValue(profile.password, '已复制 Wi-Fi 密码')} />}
-      {qr.payload && <Action title="复制连网协议串" icon={Icon.QrCode} onAction={() => copyValue(qr.payload!, '已复制连网协议串')} />}
-      {profile.authType === 'Unknown' && !profile.isEnterprise && <Action title="生成连网二维码" icon={Icon.QrCode} onAction={() => push(<WifiQrForm profile={profile} hostOverride={hostOverride} />)} />}
-      <Action title="复制网络名称" icon={Icon.Text} onAction={() => copyValue(profile.ssid, '已复制网络名称')} />
+      {profile.password && <Action title={t('actionCopyPassword')} icon={Icon.CopyClipboard} onAction={() => copySensitiveValue(profile.password, t('toastCopiedPassword'))} />}
+      {qr.payload && <Action title={t('actionCopyQrPayload')} icon={Icon.QrCode} onAction={() => (profile.password ? copySensitiveValue(qr.payload!, t('toastCopiedQrPayload')) : copyValue(qr.payload!, t('toastCopiedQrPayload')))} />}
+      {profile.authType === 'Unknown' && !profile.isEnterprise && <Action title={t('actionGenerateQr')} icon={Icon.QrCode} onAction={() => push(<WifiQrForm profile={profile} hostOverride={hostOverride} />)} />}
+      <Action title={t('actionCopySsid')} icon={Icon.Text} onAction={() => copyValue(profile.ssid, t('toastCopiedSsid'))} />
     </ActionPanel>}
   />
 }
 
 export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOverride?: unknown }) {
+  const locale = useLocale()
   const [allProfiles, setAllProfiles] = useState<readonly WifiProfileInfo[]>([])
   const [searchText, setSearchText] = useState('')
   const [securityFilter, setSecurityFilter] = useState<WifiSecurityFilter>('all')
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
+  const [loadErrorCode, setLoadErrorCode] = useState('')
   const [readingPassword, setReadingPassword] = useState(false)
   const mounted = useRef(true)
   const revision = useRef(0)
@@ -121,16 +218,18 @@ export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOv
     const request = ++revision.current
     setIsLoading(true)
     setLoadError('')
+    setLoadErrorCode('')
     setAllProfiles([])
     try {
       const loaded = await fetchSavedWifiProfiles({ hostOverride })
       if (!mounted.current || request !== revision.current) return
       setAllProfiles(loaded)
-      if (notify) await showToast(Toast.Style.Success, `已读取 ${loaded.length} 个无线网络`)
+      if (notify) await showToast(Toast.Style.Success, t('toastLoadedProfiles', { count: loaded.length }))
     } catch (error) {
       if (mounted.current && request === revision.current) {
         setLoadError(errorMessage(error))
-        if (notify) await showToast(Toast.Style.Failure, '读取无线网络失败', errorMessage(error))
+        setLoadErrorCode(extractErrorCode(error))
+        if (notify) await showToast(Toast.Style.Failure, t('toastLoadProfilesFailed'), errorMessage(error))
       }
     } finally {
       if (mounted.current && request === revision.current) setIsLoading(false)
@@ -157,10 +256,10 @@ export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOv
       if (!mounted.current || request !== revision.current) return
       const resolved = { ...profile, password }
       setAllProfiles(current => current.map(item => item.id === profile.id ? resolved : item))
-      if (action === 'copy') await copyValue(password, '已复制 Wi-Fi 密码')
+      if (action === 'copy') await copySensitiveValue(password, t('toastCopiedPassword'))
       else push(<WifiDetailView profile={resolved} hostOverride={hostOverride} />)
     } catch (error) {
-      if (mounted.current && request === revision.current) await showToast(Toast.Style.Failure, '读取 Wi-Fi 密码失败', errorMessage(error))
+      if (mounted.current && request === revision.current) await showToast(Toast.Style.Failure, t('toastReadPasswordFailed'), errorMessage(error))
     } finally {
       pendingRead.current = false
       if (mounted.current) setReadingPassword(false)
@@ -172,34 +271,36 @@ export function WifiPasswordRevealCommand(props?: { featureCode?: string; hostOv
   // 全部未知时“开放网络 / 企业认证”筛选没有依据，不提供。部分未知时才在对应行标出，便于与已知行区分。
   const unknownCount = allProfiles.filter(profile => profile.authType === 'Unknown').length
   const allUnknown = allProfiles.length > 0 && unknownCount === allProfiles.length
-  const securityUnknownNote = !unknownCount ? '' : allUnknown ? ' · 系统未提供加密方式，生成二维码时需手动选择' : ` · 其中 ${unknownCount} 个未提供加密方式`
+  const securityUnknownNote = !unknownCount ? '' : allUnknown ? t('noteAllUnknown') : t('notePartialUnknown', { count: unknownCount })
   const activeFilter: WifiSecurityFilter = (securityFilter === 'connected' && !connectionKnown && !isLoading) || (allUnknown && (securityFilter === 'open' || securityFilter === 'enterprise')) ? 'all' : securityFilter
-  const profiles = useMemo(() => filterAndSortWifiProfiles(allProfiles, { query: searchText, securityFilter: activeFilter, sortBy: 'connected' }), [allProfiles, searchText, activeFilter])
+  const profiles = useMemo(() => filterAndSortWifiProfiles(allProfiles, { query: searchText, securityFilter: activeFilter, sortBy: 'connected' }), [allProfiles, searchText, activeFilter, locale])
+  const isNotInClientError = loadErrorCode === NOT_IN_CLIENT_ERROR_CODE
+  const notInClientText = t('notInClient')
   return <List
     isLoading={isLoading || readingPassword}
     isShowingDetail={false}
-    navigationTitle="Wi-Fi 密码查看"
-    searchBarPlaceholder="搜索已保存的无线网络…"
+    navigationTitle={t('navTitle')}
+    searchBarPlaceholder={t('searchPlaceholder')}
     onSearchTextChange={setSearchText}
     filterBar={{
-      summaryText: isLoading ? '正在读取无线网络…' : loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : loadError ? '读取失败，可重试' : readingPassword ? '正在读取密码，请留意系统授权提示…' : `已保存 ${allProfiles.length} 个网络${securityUnknownNote}`,
-      actions: [{ id: 'refresh', title: '重新读取', onAction: () => reload(true) }]
+      summaryText: isLoading ? t('summaryLoading') : isNotInClientError ? notInClientText : loadError ? t('summaryLoadFailed') : readingPassword ? t('summaryReadingPwd') : t('summarySavedCount', { count: allProfiles.length, note: securityUnknownNote }),
+      actions: [{ id: 'refresh', title: t('actionRefresh'), onAction: () => reload(true) }]
     }}
-    searchBarAccessory={<List.Dropdown tooltip="筛选网络" value={activeFilter} onChange={value => setSecurityFilter(value as WifiSecurityFilter)}>
-      <List.Dropdown.Item title="全部网络" value="all" />
-      {connectionKnown && <List.Dropdown.Item title="当前连接" value="connected" />}
-      {!allUnknown && <List.Dropdown.Item title="开放网络" value="open" />}
-      {!allUnknown && <List.Dropdown.Item title="企业认证" value="enterprise" />}
+    searchBarAccessory={<List.Dropdown tooltip={t('filterTooltip')} value={activeFilter} onChange={value => setSecurityFilter(value as WifiSecurityFilter)}>
+      <List.Dropdown.Item title={t('filterAll')} value="all" />
+      {connectionKnown && <List.Dropdown.Item title={t('filterConnected')} value="connected" />}
+      {!allUnknown && <List.Dropdown.Item title={t('filterOpen')} value="open" />}
+      {!allUnknown && <List.Dropdown.Item title={t('filterEnterprise')} value="enterprise" />}
     </List.Dropdown>}
   >
-    {loadError ? <List.Item id="load-error" title={loadError === NOT_IN_CLIENT_MESSAGE ? NOT_IN_CLIENT_MESSAGE : '无法读取无线网络'} subtitle={loadError === NOT_IN_CLIENT_MESSAGE ? '在 ZTools 中打开本插件后读取已保存的网络' : loadError} icon={Icon.ExclamationMark} /> : profiles.length === 0 ? <List.Item id="empty" title={isLoading ? '正在读取…' : allProfiles.length ? '没有符合筛选条件的网络' : '没有已保存的无线网络'} icon={Icon.Wifi} /> : profiles.map(profile => <List.Item
-      key={profile.id} id={profile.id} title={profile.ssid} subtitle={profile.profileName && profile.profileName !== profile.ssid ? `配置：${profile.profileName}` : undefined} icon={Icon.Wifi}
-      accessories={[...(profile.isConnected ? [{ text: '当前连接' }] : []), ...(profile.authType !== 'Unknown' ? [{ text: profile.authType }] : allUnknown ? [] : [{ text: '加密方式未知' }])]}
+    {loadError ? <List.Item id="load-error" title={isNotInClientError ? notInClientText : t('errLoadTitle')} subtitle={isNotInClientError ? t('errClientRequiredSub') : loadError} icon={Icon.ExclamationMark} /> : profiles.length === 0 ? <List.Item id="empty" title={isLoading ? t('emptyLoading') : allProfiles.length ? t('emptyNoMatch') : t('emptyNoProfiles')} icon={Icon.Wifi} /> : profiles.map(profile => <List.Item
+      key={profile.id} id={profile.id} title={profile.ssid} subtitle={profile.profileName && profile.profileName !== profile.ssid ? t('profileSubtitlePrefix', { name: profile.profileName }) : undefined} icon={Icon.Wifi}
+      accessories={[...(profile.isConnected ? [{ text: t('tagConnected') }] : []), ...(profile.authType !== 'Unknown' ? [{ text: profile.authType }] : allUnknown ? [] : [{ text: t('tagUnknownSecurity') }])]}
       actions={<ActionPanel>
-        {!profile.isOpenNetwork && !profile.isEnterprise && <Action title="复制 Wi-Fi 密码" icon={Icon.CopyClipboard} onAction={() => runProfileAction(profile, 'copy')} />}
-        <Action title="查看密码与二维码" icon={Icon.Eye} onAction={() => runProfileAction(profile, 'show')} />
-        {!profile.isEnterprise && profile.authType === 'Unknown' && <Action title="生成连网二维码" icon={Icon.QrCode} onAction={() => runProfileAction(profile, 'qr')} />}
-        <Action title="复制网络名称" icon={Icon.Text} onAction={() => copyValue(profile.ssid, '已复制网络名称')} />
+        {!profile.isOpenNetwork && !profile.isEnterprise && <Action title={t('actionCopyPassword')} icon={Icon.CopyClipboard} onAction={() => runProfileAction(profile, 'copy')} />}
+        <Action title={t('actionShowDetail')} icon={Icon.Eye} onAction={() => runProfileAction(profile, 'show')} />
+        {!profile.isEnterprise && profile.authType === 'Unknown' && <Action title={t('actionGenerateQr')} icon={Icon.QrCode} onAction={() => runProfileAction(profile, 'qr')} />}
+        <Action title={t('actionCopySsid')} icon={Icon.Text} onAction={() => copyValue(profile.ssid, t('toastCopiedSsid'))} />
       </ActionPanel>}
     />)}
   </List>

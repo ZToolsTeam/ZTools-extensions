@@ -1,9 +1,12 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import {
   executeWindowAction
 } from '../dist/window-actions.js'
+
+setRuntimeLocale('zh-CN')
 
 async function withSimulatedRealElectronWindow(methodsMap, fn) {
   const prevWindow = globalThis.window

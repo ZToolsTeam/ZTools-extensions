@@ -25,8 +25,9 @@ test('everything-file-search 声明式视图渲染与排序筛选', () => {
 
 test('不在客户端里运行时：不返回示例数据，搜索直接报「需要在 ZTools 客户端中使用」', async () => {
   assert.equal(mod.SAMPLE_FILES, undefined, '插件不能再导出示例文件')
-  await assert.rejects(mod.searchLocalFiles('md'), new RegExp(mod.NOT_IN_CLIENT_MESSAGE))
-  await assert.rejects(mod.searchLocalFiles(''), new RegExp(mod.NOT_IN_CLIENT_MESSAGE))
+  const notInClient = mod.getNotInClientMessage()
+  await assert.rejects(mod.searchLocalFiles('md'), new RegExp(notInClient))
+  await assert.rejects(mod.searchLocalFiles(''), new RegExp(notInClient))
 })
 
 test('everything-file-search 空路径、负数大小与空列表边界', () => {

@@ -1,4 +1,5 @@
 import { LocalStorage } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 
 const KEY = 'ztools_downloads_preferences_v2'
 const LEGACY_PINS = 'ztools_downloads_pinned_v1'
@@ -8,14 +9,14 @@ const empty = (): DownloadPreferences => ({ pins: [], directories: [] })
 
 function stringArray(value: unknown): string[] {
   if (!Array.isArray(value) || !value.every(item => typeof item === 'string' && item.length > 0 && !item.includes('\0'))) {
-    throw new Error('下载管理设置损坏，已保留原数据，请修复设置后重试。')
+    throw new Error(t('prefCorrupted'))
   }
   return [...new Set(value)]
 }
 
 function parse(value: unknown): DownloadPreferences {
   if (value === undefined) return empty()
-  if (!value || typeof value !== 'object' || !('pins' in value) || !('directories' in value)) throw new Error('下载管理设置格式无效，已停止写入。')
+  if (!value || typeof value !== 'object' || !('pins' in value) || !('directories' in value)) throw new Error(t('prefInvalidFormat'))
   return { pins: stringArray(value.pins), directories: stringArray(value.directories) }
 }
 
@@ -29,7 +30,7 @@ export async function readDownloadPreferences(): Promise<DownloadPreferences> {
   const migrated = { pins: pins === null ? [] : stringArray(JSON.parse(pins)), directories: directories === null ? [] : stringArray(JSON.parse(directories)) }
   if (await LocalStorage.compareAndSet(KEY, undefined, migrated)) return migrated
   const current = await LocalStorage.getItem(KEY)
-  if (current === undefined) throw new Error('设置迁移未确认成功，请重试；旧数据未删除。')
+  if (current === undefined) throw new Error(t('prefMigrationUnconfirmed'))
   return parse(current)
 }
 

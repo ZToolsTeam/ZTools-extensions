@@ -18,6 +18,21 @@ export declare const Clipboard: {
      */
     readText(): Promise<string>;
     /**
+     * 读取剪贴板中的文件路径列表（经宿主安全校验与授权后返回）
+     */
+    readFiles(): Promise<string[]>;
+    /**
+     * 读取剪贴板中的图片（支持 Base64 dataUrl 或宿主生成的临时缓存文件路径）
+     */
+    readImage(): Promise<{
+        image?: string;
+        useTempFile?: boolean;
+        tempFile?: string;
+        size?: number;
+        width?: number;
+        height?: number;
+    } | null>;
+    /**
      * 清空剪贴板
      */
     clear(): Promise<void>;

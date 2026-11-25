@@ -51,15 +51,14 @@ test('[异常] 历史里出现未知类型时标签退回“计算”而不是�
   view.unmount()
 })
 
-test('汇率来源条目使用中文标题', async () => {
-  const realFetch = globalThis.fetch
-  globalThis.fetch = async () => { throw new Error('offline') }
-  try {
+test('汇率看板动作面板保留中文汇率来源链接', async () => {
   const view = await mount(calcCurrency)
-  const src = view.item('currency-source')
-  assert.equal(src.props.title, '汇率来源：ExchangeRate-API')
+  const actions = view.actions()
+  const openSource = actions.find((a) => a.type === 'Action.OpenInBrowser')
+  assert.ok(openSource)
+  assert.equal(openSource.props.title, '打开汇率来源（ExchangeRate-API）')
+  assert.equal(openSource.props.url, 'https://www.exchangerate-api.com')
   view.unmount()
-  } finally { globalThis.fetch = realFetch }
 })
 
 test('calc-unit 示例行不再带与主动作重复的“换算”标签；主命令的混合示例仍按分类标注', async () => {

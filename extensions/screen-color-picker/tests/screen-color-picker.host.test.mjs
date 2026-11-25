@@ -6,6 +6,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as colorConverter from '../dist/converter.js'
+import ColorPickerCommand, { formatColorByMode } from '../dist/index.js'
+import { createHost, mount, tick } from '../../shared/test-harness.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SRC_EXAMPLES_DIR = path.resolve(__dirname, '../src')
@@ -89,4 +91,59 @@ test('color-picker: 结合 screen_get_cursor_pos 与 ColorPickerPlugin.pickScree
       await assert.rejects(() => colorConverter.pickScreenColor(), /GDI_GETPIXEL_FAILED/)
     }
   )
+})
+
+test('回归：OKLCH 采用真实 sRGB -> Linear RGB -> OKLab -> OKLCH 算法，不再用 HSL 近似', () => {
+  const red = colorConverter.parseColor('#FF0000')
+  const redOklch = colorConverter.rgbToOklch(red.rgb)
+  assert.equal(redOklch.css, 'oklch(62.8% 0.2577 29.23)')
+  assert.equal(formatColorByMode(red, 'oklch', true), 'oklch(62.8% 0.2577 29.23)')
+
+  const white = colorConverter.parseColor('#FFFFFF')
+  assert.equal(formatColorByMode(white, 'oklch', true), 'oklch(100% 0 none)')
+
+  const black = colorConverter.parseColor('#000000')
+  assert.equal(formatColorByMode(black, 'oklch', true), 'oklch(0% 0 none)')
+
+  const accent = colorConverter.parseColor('#0A84FF')
+  assert.match(formatColorByMode(accent, 'oklch', true), /^oklch\(\d+(?:\.\d+)?% 0\.\d+ \d+(?:\.\d+)?\)$/)
+  assert.notEqual(formatColorByMode(accent, 'oklch', true), 'oklch(0.52 0.240 210)')
+})
+
+test('回归：拾色历史 history 在界面中展示并支持一键复制', async () => {
+  const host = createHost()
+  await colorConverter.saveColorHistory({
+    hex: '#30D158',
+    rgb: { r: 48, g: 209, b: 88 },
+    hsl: { h: 135, s: 64, l: 50 },
+    hsv: { h: 135, s: 77, v: 82 },
+    x: 100,
+    y: 200,
+    source: 'native',
+    pickedAt: Date.now()
+  })
+
+  const view = await mount(ColorPickerCommand)
+  try {
+    await tick()
+    await tick()
+    const subItems = view.tree().props.subList.items
+    const histQueueItem = subItems.find((i) => String(i.props.id).startsWith('hist_'))
+    assert.ok(histQueueItem, '右侧队列应展示近期拾色历史项')
+    assert.match(histQueueItem.props.title, /#30D158/)
+
+    // 切换到“近期屏幕拾取”分组，仅展示拾色历史
+    await view.dropdown('recent')
+    const recentItems = view.tree().props.subList.items
+    assert.equal(recentItems.length, 1)
+    assert.match(recentItems[0].props.title, /#30D158/)
+
+    // 一键复制该拾色历史记录
+    const copyAction = recentItems[0].props.actions.children[0]
+    await copyAction.props.onAction()
+    assert.equal(host.clipboard.text, '#30D158')
+    assert.equal(host.lastToast().style, 'SUCCESS')
+  } finally {
+    view.unmount()
+  }
 })

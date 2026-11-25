@@ -11,7 +11,7 @@ import ProcessMonitorCommand, {
   normalizeProcessItem,
   terminateProcess,
   describeTerminateError,
-  FORBIDDEN_REASON
+  getForbiddenReason
 } from '../dist/index.js'
 
 const host = createHost()
@@ -245,7 +245,7 @@ test('pm-8 结束 launchd / WindowServer / loginwindow 直接拦截：不弹确�
     const t = host.lastToast()
     assert.equal(t.style, 'FAILURE', name)
     assert.match(t.title, new RegExp(`已拦截：${name}`))
-    assert.equal(t.message, FORBIDDEN_REASON)
+    assert.equal(t.message, getForbiddenReason())
     assert.equal(tagOf(itemByName(view, name)), '系统关键')
   }
   assert.equal(host.confirms.length, 0)
@@ -281,7 +281,7 @@ test('pm-8 绕过界面直接调用 terminateProcess 也会拦截（大小写不
   for (const [pid, name] of [[98, 'windowserver'], [979, 'LoginWindow'], [0, 'kernel_task'], [1, 'whatever'], [4, 'System'], [612, 'csrss.exe']]) {
     const res = await terminateProcess(pid, name, 'force')
     assert.equal(res.ok, false, `${pid} ${name}`)
-    assert.equal(res.error, FORBIDDEN_REASON)
+    assert.equal(res.error, getForbiddenReason())
   }
   assert.ok(!ipcMethods().includes('process_kill'))
   assert.equal(getTerminationRisk(1200, 'finder'), 'high-risk')

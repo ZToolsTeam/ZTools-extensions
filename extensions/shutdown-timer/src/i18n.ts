@@ -1,0 +1,100 @@
+import { createTranslator } from "@ztools/declarative-ui";
+
+const MESSAGES = {
+  "zh-CN": {
+      copyFailedTitle: "复制失败",
+      canceledTitle: "已取消",
+      actionFailedTitle: "{title}失败",
+      copyCancelCmdAction: "复制取消命令",
+      copiedCancelCmdTitle: "已复制取消命令",
+      copiedCancelCmdMessage: "在命令提示符中运行即可取消已设定的关机",
+      scheduleShutdownAction: "设定定时关机（需确认）",
+      copyEquivalentCmdAction: "复制等价命令",
+      copiedCmdTitle: "已复制命令",
+      sectionShutdown: "定时关机",
+      sectionImmediate: "立即执行",
+      sectionCancel: "取消关机计划",
+      searchPlaceholder: "搜索电源动作，如 关机、30、锁屏、取消",
+      confirmTag: "执行前确认",
+      copyCmdTag: "复制命令",
+      hostRequired: "需要在 ZTools 客户端中使用",
+      noCommandForAction: "该电源动作没有对应的命令: {action}",
+      unitHours: "{count} 小时",
+      unitMinutes: "{count} 分钟",
+      shutdownAfterTitle: "{label}后关机",
+      shutdownAfterSub: "倒计时 {seconds} 秒，到时会关闭所有程序",
+      lockNowTitle: "立即锁定屏幕",
+      lockNowSub: "锁定电脑，回来时需要重新登录",
+      sleepNowTitle: "立即睡眠",
+      sleepNowSub: "让电脑进入睡眠状态",
+      cancelTaskTitle: "取消已设定的关机计划",
+      cancelTaskSub: "插件不能直接取消，复制 {cmd} 后在命令提示符中运行",
+      shutdownConfirmMessage: "将在 {minutes} 分钟后（约 {targetTime}）关机。到时系统会关闭所有程序，未保存的内容可能丢失。插件不能取消已设定的计划，需要取消时在命令提示符中运行 {cmd}。",
+      hostReturnedFailure: "客户端返回失败",
+      cannotCancelDirectly: "插件不能直接取消关机计划，请在命令提示符中运行 {cmd}",
+      countdownRangeError: "倒计时必须在 1 秒到 24 小时之间",
+      confirmScheduleBtn: "设定关机",
+      cancelBtn: "取消",
+      canceledShutdownMsg: "已取消，未设定关机",
+      scheduledMsg: "已设定 {title}",
+      scheduledDetail: "预计 {targetTime} 关机，取消请在命令提示符中运行 {cmd}",
+      lockedMsg: "已锁定屏幕",
+      sleepSentMsg: "已发送睡眠指令",
+      existingPlanHint: "如果之前已经设定过关机计划，需要先运行 {cmd} 取消",
+      detailJoin: "{message}；{detail}"
+    },
+    "en-US": {
+      copyFailedTitle: "Copy failed",
+      canceledTitle: "Canceled",
+      actionFailedTitle: "{title} failed",
+      copyCancelCmdAction: "Copy Cancel Command",
+      copiedCancelCmdTitle: "Cancel command copied",
+      copiedCancelCmdMessage: "Run it in Command Prompt to cancel a scheduled shutdown",
+      scheduleShutdownAction: "Schedule Shutdown (Confirm)",
+      copyEquivalentCmdAction: "Copy Equivalent Command",
+      copiedCmdTitle: "Command copied",
+      sectionShutdown: "Scheduled Shutdown",
+      sectionImmediate: "Immediate Actions",
+      sectionCancel: "Cancel Scheduled Shutdown",
+      searchPlaceholder: "Search power actions, e.g. shutdown, 30, lock, cancel",
+      confirmTag: "Requires confirmation",
+      copyCmdTag: "Copy command",
+      hostRequired: "This plugin requires the ZTools desktop client",
+      noCommandForAction: "No CLI command for power action: {action}",
+      unitHours: "{count} hr",
+      unitMinutes: "{count} min",
+      shutdownAfterTitle: "Shut Down in {label}",
+      shutdownAfterSub: "Countdown {seconds}s; all running apps will be closed",
+      lockNowTitle: "Lock Screen Now",
+      lockNowSub: "Lock the computer; sign-in required upon return",
+      sleepNowTitle: "Sleep Now",
+      sleepNowSub: "Put the computer to sleep",
+      cancelTaskTitle: "Cancel Scheduled Shutdown",
+      cancelTaskSub: "Cannot cancel directly; copy {cmd} and run it in Command Prompt",
+      shutdownConfirmMessage: "Your computer will shut down in {minutes} [[minutes:minute|minutes]] (around {targetTime}). All running apps will close and unsaved work may be lost. To cancel later, run {cmd} in Command Prompt.",
+      hostReturnedFailure: "Host returned failure",
+      cannotCancelDirectly: "Cannot cancel scheduled shutdown directly; run {cmd} in Command Prompt",
+      countdownRangeError: "Countdown must be between 1 second and 24 hours",
+      confirmScheduleBtn: "Schedule Shutdown",
+      cancelBtn: "Cancel",
+      canceledShutdownMsg: "Canceled, shutdown not scheduled",
+      scheduledMsg: "Scheduled: {title}",
+      scheduledDetail: "Estimated shutdown at {targetTime}; run {cmd} in Command Prompt to cancel",
+      lockedMsg: "Screen locked",
+      sleepSentMsg: "Sleep command sent",
+      existingPlanHint: "If a shutdown is already scheduled, run {cmd} first to cancel it",
+      detailJoin: "{message}; {detail}"
+    }
+};
+
+export const DEFAULT_MESSAGES = MESSAGES["zh-CN"];
+const rawT = createTranslator(MESSAGES, { defaultLocale: "en-US" })
+export const t: typeof rawT = (key, params) => {
+  const out = rawT(key, params)
+  if (!out.includes('[[')) return out
+  return out.replace(/\[\[([A-Za-z0-9_.-]+):([^|\]]+)\|([^\]]+)\]\]/g, (_m, k: string, one: string, other: string) => {
+    const v = params?.[k]
+    const n = typeof v === 'number' ? v : Number(String(v ?? '').replace(/,/g, ''))
+    return n === 1 ? one : other
+  })
+}

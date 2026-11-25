@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
 import * as mod from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 // 测试专用的进程样本，只在测试里使用
 const FIXTURE_PROCESSES = [
@@ -25,7 +27,7 @@ function hostError(code, message, details) {
 test('不在客户端里运行时显示空状态，不显示示例进程', () => {
   const view = mod.default()
   assert.equal(view.type, 'List')
-  assert.equal(view.props.filterBar.summaryText, mod.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(view.props.filterBar.summaryText, mod.getNotInClientMessage())
   const section = view.children[0]
   assert.equal(section.children.length, 0)
   assert.equal(mod.SAMPLE_PROCESSES, undefined, '运行时代码不再导出示例数据')
@@ -100,11 +102,23 @@ test('读取进程：两路都失败时如实返回错误，不回退示例数�
   assert.equal(res.ok, false)
   assert.deepEqual(res.processes, [])
   assert.match(res.error, /读取进程列表失败/)
-  assert.match(res.error, /IPC_CHANNEL_BROKEN/)
+  assert.match(res.error, /读取进程快照失败/)
+  assert.doesNotMatch(res.error, /IPC_CHANNEL_BROKEN/)
+
+  try {
+    setRuntimeLocale('en-US')
+    const enRes = await mod.loadProcesses(host)
+    assert.equal(enRes.ok, false)
+    assert.deepEqual(enRes.processes, [])
+    assert.match(enRes.error, /Process operation failed/)
+    assert.match(enRes.error, /IPC_CHANNEL_BROKEN/)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 
   const outside = await mod.loadProcesses()
   assert.equal(outside.ok, false)
-  assert.equal(outside.error, mod.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(outside.error, mod.getNotInClientMessage())
 })
 
 test('结束进程：走客户端结束进程接口，传入模式、进程树与进程名校验', async () => {
@@ -179,11 +193,23 @@ test('结束进程：旧版客户端接口失败时返回成功外壳也要识�
   const broken = { dllplugin_call: async () => { throw new Error('IPC_CHANNEL_BROKEN') } }
   const brokenRes = await mod.terminateProcess({ pid: 99996, name: 'app.exe' }, 'force', false, broken)
   assert.equal(brokenRes.success, false)
-  assert.match(brokenRes.message, /IPC_CHANNEL_BROKEN/)
+  assert.equal(brokenRes.error, 'HOST_CALL_FAILED')
+  assert.equal(brokenRes.message, '调用客户端失败')
+  assert.doesNotMatch(brokenRes.message, /IPC_CHANNEL_BROKEN/)
+
+  try {
+    setRuntimeLocale('en-US')
+    const enBrokenRes = await mod.terminateProcess({ pid: 99996, name: 'app.exe' }, 'force', false, broken)
+    assert.equal(enBrokenRes.success, false)
+    assert.equal(enBrokenRes.error, 'HOST_CALL_FAILED')
+    assert.match(enBrokenRes.message, /IPC_CHANNEL_BROKEN/)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 
   const outside = await mod.terminateProcess({ pid: 99995, name: 'app.exe' }, 'force')
   assert.equal(outside.success, false)
-  assert.equal(outside.message, mod.NOT_IN_CLIENT_MESSAGE)
+  assert.equal(outside.message, mod.getNotInClientMessage())
 })
 
 test('系统关键进程直接拒绝，不调用客户端', async () => {

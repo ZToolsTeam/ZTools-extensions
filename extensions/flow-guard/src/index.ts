@@ -9,23 +9,27 @@ import {
   useEffect,
   showToast,
   Toast,
-  confirmAlert
+  confirmAlert,
+  useLocale
 } from '@ztools/declarative-ui'
+import { t } from './i18n.js'
 import { isRealElectronHost } from './native-ipc.js'
 import {
   ProcessNetworkGroup,
-  FORBIDDEN_REASON,
-  NOT_IN_CLIENT_MESSAGE,
+  getForbiddenReason,
+  getNotInClientMessage,
   fetchFlowGuardSnapshot,
   terminateNetworkProcess,
   openNetworkProcessLocation
 } from './logic.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './logic.js'
 
 type FlowDropdownFilter = 'all' | 'public' | 'lan' | 'listening' | 'processes' | 'tcp' | 'udp'
 
 export default function FlowGuardCommand() {
+  useLocale()
   const [searchText, setSearchText] = useState('')
   const [dropdownFilter, setDropdownFilter] = useState<FlowDropdownFilter>('all')
   const [focusPid, setFocusPid] = useState<number>(0)
@@ -37,8 +41,9 @@ export default function FlowGuardCommand() {
   const [totalPublic, setTotalPublic] = useState(0)
   const [totalLan, setTotalLan] = useState(0)
   const [totalLoopback, setTotalLoopback] = useState(0)
-  const [isLoading, setIsLoading] = useState(() => isRealElectronHost())
-  const [loadError, setLoadError] = useState(() => (isRealElectronHost() ? '' : NOT_IN_CLIENT_MESSAGE))
+  const inClient = isRealElectronHost()
+  const [isLoading, setIsLoading] = useState(() => inClient)
+  const [loadError, setLoadError] = useState('')
 
   async function refreshConnections(showIndicator = false) {
     if (showIndicator) setIsLoading(true)
@@ -56,7 +61,7 @@ export default function FlowGuardCommand() {
         setTotalLan(0)
         setTotalLoopback(0)
         if (showIndicator) {
-          showToast({ style: Toast.Style.Failure, title: '刷新失败', message: snap.error })
+          showToast({ style: Toast.Style.Failure, title: t('toastRefreshFailed'), message: snap.error })
         }
         return
       }
@@ -71,8 +76,12 @@ export default function FlowGuardCommand() {
       if (showIndicator) {
         showToast({
           style: Toast.Style.Success,
-          title: '连接列表已刷新',
-          message: `${snap.groups.length} 个联网进程 · ${snap.totalPublic} 条公网连接 · ${snap.totalEndpoints} 个连接和端口`
+          title: t('toastRefreshedTitle'),
+          message: t('toastRefreshedMsg', {
+            procs: snap.groups.length,
+            publicCount: snap.totalPublic,
+            endpoints: snap.totalEndpoints
+          })
         })
       }
     } finally {
@@ -88,19 +97,17 @@ export default function FlowGuardCommand() {
   async function handleKillProcess(group: ProcessNetworkGroup) {
     if (group.isProtected) {
       await confirmAlert({
-        title: `核心网络服务保护 [${group.processName}]`,
-        message: `PID: ${group.pid}\n\n${FORBIDDEN_REASON}`,
-        primaryAction: { title: '我知道了', style: 'default' }
+        title: t('alertProtectedTitle', { name: group.processName }),
+        message: `PID: ${group.pid}\n\n${getForbiddenReason()}`,
+        primaryAction: { title: t('alertAck'), style: 'default' }
       })
       return
     }
 
     const confirmed = await confirmAlert({
-      title: `强制结束进程 ${group.processName}？`,
-      message:
-        `这会强制结束整个进程（PID ${group.pid}），而不是只断开某一条连接：它的 ${group.endpoints.length} 个连接和监听端口都会关闭，进程里未保存的内容会丢失。\n\n` +
-        '插件不会阻止它再次联网，程序被重新打开或自动重启后会照常联网。',
-      primaryAction: { title: '强制结束进程', style: 'destructive' }
+      title: t('confirmKillTitle', { name: group.processName }),
+      message: t('confirmKillMsg', { pid: group.pid, count: group.endpoints.length }),
+      primaryAction: { title: t('confirmKillBtn'), style: 'destructive' }
     })
     if (!confirmed) return
 
@@ -108,15 +115,15 @@ export default function FlowGuardCommand() {
     if (!res.ok) {
       showToast({
         style: Toast.Style.Failure,
-        title: '结束进程失败',
-        message: res.error || '结束进程失败'
+        title: t('errTerminateFailed'),
+        message: resolveErrorMessage(res, t('errTerminateFailed'))
       })
       return
     }
 
     showToast({
       style: Toast.Style.Success,
-      title: res.alreadyExited ? '进程已经退出' : '已结束进程',
+      title: res.alreadyExited ? t('toastAlreadyExited') : t('toastKilled'),
       message: `${group.processName} (PID: ${group.pid})`
     })
     void refreshConnections(false)
@@ -125,7 +132,7 @@ export default function FlowGuardCommand() {
   async function handleOpenLocation(processPath: string) {
     const ok = await openNetworkProcessLocation(processPath)
     if (!ok) {
-      showToast({ style: Toast.Style.Failure, title: '无法在资源管理器中定位', message: processPath })
+      showToast({ style: Toast.Style.Failure, title: t('toastRevealFailed'), message: processPath })
     }
   }
 
@@ -178,36 +185,48 @@ export default function FlowGuardCommand() {
 
   const maxGroupEndpoints = Math.max(1, ...groups.map((g) => g.endpoints.length))
 
+  const displayLoadError = loadError || (inClient ? '' : getNotInClientMessage())
+
   return List({
-    searchBarPlaceholder: '搜索联网进程名称、PID、本地端口或远端服务器 IP...',
+    searchBarPlaceholder: t('searchPlaceholder'),
     onSearchTextChange: setSearchText,
     isShowingDetail: false,
     isLoading,
     searchBarAccessory: List.Dropdown({
-      tooltip: '选择网络连接筛选视图',
+      tooltip: t('dropdownTooltip'),
       value: dropdownFilter,
       onChange: (val: string) => setDropdownFilter(val as FlowDropdownFilter),
       children: [
-        List.Dropdown.Item({ title: '全部活动连接 (All Connections)', value: 'all' }),
-        List.Dropdown.Item({ title: '仅看公网外联 (Public)', value: 'public' }),
-        List.Dropdown.Item({ title: '局域网连接 (LAN)', value: 'lan' }),
-        List.Dropdown.Item({ title: '本机监听端口 (LISTEN)', value: 'listening' }),
-        List.Dropdown.Item({ title: '仅看 TCP 协议连接 (TCP Only)', value: 'tcp' }),
-        List.Dropdown.Item({ title: '仅看 UDP 协议端点 (UDP Only)', value: 'udp' }),
-        List.Dropdown.Item({ title: '按进程聚合视图 (By Process)', value: 'processes' })
+        List.Dropdown.Item({ title: t('filterAll'), value: 'all' }),
+        List.Dropdown.Item({ title: t('filterPublic'), value: 'public' }),
+        List.Dropdown.Item({ title: t('filterLan'), value: 'lan' }),
+        List.Dropdown.Item({ title: t('filterListening'), value: 'listening' }),
+        List.Dropdown.Item({ title: t('filterTcp'), value: 'tcp' }),
+        List.Dropdown.Item({ title: t('filterUdp'), value: 'udp' }),
+        List.Dropdown.Item({ title: t('filterProcesses'), value: 'processes' })
       ]
     }),
     filterBar: {
-      summaryText: loadError
-        ? loadError
-        : `连接和端口 ${totalEndpoints} 个 (TCP ${totalEndpoints - totalUdp} / UDP ${totalUdp}) · 公网 ${totalPublic} 条 (已建立 ${totalEstablished}) · 监听端口 ${totalListening} 个 · 局域网 ${totalLan} / 回环 ${totalLoopback} · 联网进程 ${groups.length} 个`,
+      summaryText: displayLoadError
+        ? displayLoadError
+        : t('summaryText', {
+            total: totalEndpoints,
+            tcp: totalEndpoints - totalUdp,
+            udp: totalUdp,
+            publicCount: totalPublic,
+            established: totalEstablished,
+            listening: totalListening,
+            lan: totalLan,
+            loopback: totalLoopback,
+            procs: groups.length
+          }),
       actions: [
         ...(focusPid > 0
           ? [
               {
                 id: 'clear-focus-pid',
-                label: `退出进程过滤 (PID:${focusPid})`,
-                title: `退出进程过滤 (PID:${focusPid})`,
+                label: t('btnExitFocusPid', { pid: focusPid }),
+                title: t('btnExitFocusPid', { pid: focusPid }),
                 style: 'secondary' as const,
                 onAction: () => {
                   setFocusPid(0)
@@ -217,8 +236,8 @@ export default function FlowGuardCommand() {
           : []),
         {
           id: 'refresh-net',
-          label: '刷新连接',
-          title: '刷新连接',
+          label: t('btnRefreshConn'),
+          title: t('btnRefreshConn'),
           style: 'secondary',
           onAction: () => void refreshConnections(true)
         }
@@ -228,20 +247,25 @@ export default function FlowGuardCommand() {
       dropdownFilter === 'processes'
         ? [
             List.Section({
-              title: `联网进程聚合视图 (${filteredGroups.length})`,
+              title: t('secProcAggregate', { count: filteredGroups.length }),
               children: filteredGroups.map((g) => {
                 const firstEp = g.endpoints[0]
                 const epSummary = firstEp
                   ? `${firstEp.protocol} ${firstEp.localAddress}:${firstEp.localPort} -> ${firstEp.remoteAddress}:${firstEp.remotePort}`
-                  : g.processPath || '本机网络服务'
+                  : g.processPath || t('localNetService')
                 const ratio = Math.min(100, Math.max(5, Math.round((g.endpoints.length / maxGroupEndpoints) * 100)))
                 const scopeTag =
-                  g.publicCount > 0 ? '公网外联' : g.listeningCount > 0 ? '监听端口' : '局域网'
+                  g.publicCount > 0 ? t('scopePublic') : g.listeningCount > 0 ? t('scopeListening') : t('scopeLan')
 
                 return List.Item({
                   id: `net-proc-${g.pid}`,
                   title: `${g.processName} (PID: ${g.pid})`,
-                  subtitle: `${epSummary} · 公网 ${g.publicCount} / 局域网 ${g.lanCount} / 监听 ${g.listeningCount}`,
+                  subtitle: t('procSubtitle', {
+                    summary: epSummary,
+                    pub: g.publicCount,
+                    lan: g.lanCount,
+                    listen: g.listeningCount
+                  }),
                   icon: g.isProtected ? Icon.Shield : Icon.Globe,
                   accessories: [
                     { progress: { value: ratio } },
@@ -257,7 +281,7 @@ export default function FlowGuardCommand() {
                     title: `${g.processName} (PID: ${g.pid})`,
                     children: [
                       Action({
-                        title: `查看该进程全部连接 (${g.endpoints.length})`,
+                        title: t('actionViewProcConns', { count: g.endpoints.length }),
                         icon: Icon.MagnifyingGlass,
                         onAction: () => {
                           setFocusPid(g.pid)
@@ -265,7 +289,7 @@ export default function FlowGuardCommand() {
                         }
                       }),
                       Action({
-                        title: '强制结束该进程（断开它的全部连接）',
+                        title: t('actionKillProcess'),
                         icon: Icon.XMarkCircle,
                         style: 'destructive',
                         shortcut: { modifiers: ['ctrl'], key: 'return' },
@@ -274,7 +298,7 @@ export default function FlowGuardCommand() {
                       ...(g.processPath
                         ? [
                             Action({
-                              title: '在资源管理器中定位程序',
+                              title: t('actionRevealExe'),
                               icon: Icon.Folder,
                               shortcut: { modifiers: ['ctrl'], key: 'o' },
                               onAction: () => handleOpenLocation(g.processPath)
@@ -282,7 +306,7 @@ export default function FlowGuardCommand() {
                           ]
                         : []),
                       Action({
-                        title: '复制连接审计明细',
+                        title: t('actionCopyAudit'),
                         icon: Icon.Clipboard,
                         shortcut: { modifiers: ['ctrl'], key: 'c' },
                         onAction: async () => {
@@ -295,13 +319,13 @@ export default function FlowGuardCommand() {
                           await Clipboard.copy(text)
                           showToast({
                             style: Toast.Style.Success,
-                            title: '已复制连接明细',
-                            message: `${g.endpoints.length} 条记录`
+                            title: t('toastCopiedAudit'),
+                            message: t('toastCopiedAuditMsg', { count: g.endpoints.length })
                           })
                         }
                       }),
                       Action({
-                        title: '刷新连接',
+                        title: t('btnRefreshConn'),
                         icon: Icon.ArrowClockwise,
                         shortcut: { modifiers: ['ctrl'], key: 'r' },
                         onAction: () => refreshConnections(true)
@@ -314,16 +338,16 @@ export default function FlowGuardCommand() {
           ]
         : [
             List.Section({
-              title: `活动套接字连接明细 (${allEndpoints.length})`,
+              title: t('secEndpointDetails', { count: allEndpoints.length }),
               children: allEndpoints.slice(0, 120).map((ep, idx) => {
                 const scopeLabel =
                   ep.remoteScope === 'public'
-                    ? '公网外联'
+                    ? t('scopePublic')
                     : ep.remoteScope === 'lan'
-                    ? '局域网'
+                    ? t('scopeLan')
                     : ep.remoteScope === 'loopback'
-                    ? '本机回环'
-                    : '监听端口'
+                    ? t('scopeLoopback')
+                    : t('scopeListening')
                 const ratio = Math.min(100, Math.max(6, Math.round((ep.groupCount / maxGroupEndpoints) * 100)))
 
                 return List.Item({
@@ -340,24 +364,24 @@ export default function FlowGuardCommand() {
                     title: `${ep.processName} (${ep.localPort})`,
                     children: [
                       Action({
-                        title: '强制结束该进程（断开它的全部连接）',
+                        title: t('actionKillProcess'),
                         icon: Icon.XMarkCircle,
                         style: 'destructive',
                         onAction: () => handleKillProcess(ep.groupRef)
                       }),
                       Action({
-                        title: '复制五元组连接信息',
+                        title: t('actionCopyTuple'),
                         icon: Icon.Clipboard,
                         shortcut: { modifiers: ['ctrl'], key: 'c' },
                         onAction: async () => {
                           await Clipboard.copy(
                             `${ep.processName} (PID:${ep.pid}) ${ep.protocol} ${ep.localAddress}:${ep.localPort} -> ${ep.remoteAddress}:${ep.remotePort} [${ep.state}]`
                           )
-                          showToast({ style: Toast.Style.Success, title: '已复制五元组信息' })
+                          showToast({ style: Toast.Style.Success, title: t('toastCopiedTuple') })
                         }
                       }),
                       Action({
-                        title: '仅筛选该进程连接',
+                        title: t('actionFilterByProc'),
                         icon: Icon.MagnifyingGlass,
                         onAction: () => {
                           setFocusPid(ep.pid)
@@ -366,7 +390,7 @@ export default function FlowGuardCommand() {
                       ...(ep.processPath
                         ? [
                             Action({
-                              title: '在资源管理器中定位程序',
+                              title: t('actionRevealExe'),
                               icon: Icon.Folder,
                               shortcut: { modifiers: ['ctrl'], key: 'o' },
                               onAction: () => handleOpenLocation(ep.processPath)
@@ -374,7 +398,7 @@ export default function FlowGuardCommand() {
                           ]
                         : []),
                       Action({
-                        title: '刷新连接',
+                        title: t('btnRefreshConn'),
                         icon: Icon.ArrowClockwise,
                         shortcut: { modifiers: ['ctrl'], key: 'r' },
                         onAction: () => refreshConnections(true)

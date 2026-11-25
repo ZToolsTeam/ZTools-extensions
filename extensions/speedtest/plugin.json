@@ -1,7 +1,7 @@
 {
   "id": "speedtest",
   "name": "网络测速",
-  "version": "1.1.8",
+  "version": "1.1.9",
   "description": "测量上下行吞吐量，检测默认网关与国内、国际节点连接；Mac 使用系统网络测速工具",
   "author": "ZTools Team",
   "entry": "dist/index.js",
@@ -9,6 +9,10 @@
   "category": [
     "网络工具",
     "系统工具"
+  ],
+  "categoryId": [
+    "network",
+    "system"
   ],
   "permissions": [
     "network",
@@ -48,5 +52,53 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Network Speed Test",
+      "description": "Measure upload and download throughput and check connectivity to default gateway, domestic, and global hosts (uses Apple networkQuality on macOS).",
+      "keywords": [
+        "speedtest",
+        "bandwidth",
+        "ping",
+        "latency",
+        "network",
+        "throughput"
+      ],
+      "features": {
+        "speedtest-full": {
+          "explain": "Measure real upload/download throughput, latency, and responsiveness",
+          "cmds": [
+            "speedtest",
+            "speed test",
+            "bandwidth test",
+            "network speed"
+          ]
+        },
+        "speedtest-ping-check": {
+          "explain": "Check connectivity and latency to gateway, domestic sites, GitHub, and Cloudflare",
+          "cmds": [
+            "ping test",
+            "network check",
+            "latency check",
+            "diagnose network"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

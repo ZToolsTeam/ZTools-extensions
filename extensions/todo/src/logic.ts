@@ -1,6 +1,30 @@
+import { getLocale } from "@ztools/declarative-ui";
+
 /**
  * ZTools 极简待办事项业务逻辑 (纯函数)
  */
+
+const TODO_LOGIC_MESSAGES: Record<string, {
+  titleRequired: string;
+  uuidUnavailable: string;
+  corruptData: string;
+}> = {
+  "zh-CN": {
+    titleRequired: "待办事项标题不能为空",
+    uuidUnavailable: "无法生成唯一标识，请重启客户端后重试",
+    corruptData: "已保存的待办数据损坏，为保护原数据已暂停修改"
+  },
+  "en-US": {
+    titleRequired: "Todo title cannot be empty",
+    uuidUnavailable: "Unable to generate unique ID; please restart the client and try again",
+    corruptData: "Saved todo data is corrupted; modifications are paused to protect original data"
+  }
+};
+
+function todoLogicStrings() {
+  const locale = getLocale();
+  return TODO_LOGIC_MESSAGES[locale] ?? TODO_LOGIC_MESSAGES["en-US"];
+}
 
 export type TodoPriority = "high" | "medium" | "low";
 export type TodoFilter = "all" | "active" | "completed";
@@ -15,12 +39,13 @@ export interface TodoItem {
 }
 
 export function createTodo(title: string, priority: TodoPriority = "medium"): TodoItem {
+  const s = todoLogicStrings();
   const trimmed = (title || "").trim();
   if (!trimmed) {
-    throw new Error("待办事项标题不能为空");
+    throw new Error(s.titleRequired);
   }
   if (typeof globalThis.crypto?.randomUUID !== 'function') {
-    throw new Error('无法生成唯一标识，请重启客户端后重试')
+    throw new Error(s.uuidUnavailable)
   }
   return {
     id: "todo_" + Date.now().toString(36) + "_" + globalThis.crypto.randomUUID(),
@@ -39,6 +64,30 @@ export function toggleTodoStatus(todos: TodoItem[], id: string): TodoItem[] {
         ...item,
         completed: nextCompleted,
         completedAt: nextCompleted ? Date.now() : undefined
+      };
+    }
+    return item;
+  });
+}
+
+export function updateTodoItem(
+  todos: TodoItem[],
+  id: string,
+  updates: { title: string; priority: TodoPriority }
+): TodoItem[] {
+  const s = todoLogicStrings();
+  const trimmed = (updates.title || "").trim();
+  if (!trimmed) {
+    throw new Error(s.titleRequired);
+  }
+  const priority: TodoPriority =
+    updates.priority === "high" || updates.priority === "low" ? updates.priority : "medium";
+  return todos.map((item) => {
+    if (item.id === id) {
+      return {
+        ...item,
+        title: trimmed,
+        priority
       };
     }
     return item;
@@ -146,7 +195,7 @@ export function sanitizeStoredTodos(raw: unknown): TodoItem[] {
 export class CorruptTodosError extends Error {
   readonly raw: unknown;
   constructor(raw: unknown) {
-    super("已保存的待办数据损坏，为保护原数据已暂停修改");
+    super(todoLogicStrings().corruptData);
     this.name = "CorruptTodosError";
     this.raw = raw;
   }
@@ -170,5 +219,5 @@ export function formatListDate(timestamp: number, now: number = Date.now()): str
   if (!Number.isFinite(timestamp) || timestamp <= 0) return "";
   const date = new Date(timestamp);
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
-  return date.toLocaleDateString([], sameYear ? { month: "2-digit", day: "2-digit" } : { year: "numeric", month: "2-digit", day: "2-digit" });
+  return date.toLocaleDateString(getLocale(), sameYear ? { month: "2-digit", day: "2-digit" } : { year: "numeric", month: "2-digit", day: "2-digit" });
 }

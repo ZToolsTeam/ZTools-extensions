@@ -1,9 +1,13 @@
 {
   "id": "table-converter",
   "name": "表格互转",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "description": "离线转换 Excel 复制文本/TSV/CSV、JSON 数组、Markdown、HTML 文字表格与 SQLite INSERT，保留长数字和 JSON 类型，回车复制",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -62,6 +66,71 @@
         "csv转insert",
         "生成sql"
       ]
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Table Format Converter",
+      "description": "Convert offline between Excel/TSV/CSV, JSON arrays, Markdown tables, HTML tables, and SQLite INSERT statements while preserving long numbers and JSON types.",
+      "keywords": [
+        "table",
+        "csv",
+        "tsv",
+        "excel",
+        "markdown",
+        "json",
+        "sql",
+        "converter"
+      ],
+      "features": {
+        "table-auto": {
+          "explain": "Auto-detect clipboard table data and convert to Markdown, JSON, SQL, or HTML",
+          "cmds": [
+            "table",
+            "table convert",
+            "excel to markdown",
+            "csv to json"
+          ]
+        },
+        "table-to-markdown": {
+          "explain": "Convert clipboard Excel, TSV, or CSV data into aligned Markdown tables",
+          "cmds": [
+            "to markdown table",
+            "excel to md",
+            "csv2md"
+          ]
+        },
+        "table-to-json": {
+          "explain": "Convert clipboard tabular data into structured JSON object arrays",
+          "cmds": [
+            "table to json",
+            "csv to json",
+            "csv2json"
+          ]
+        },
+        "table-to-sql": {
+          "explain": "Generate batch SQL INSERT INTO statements from tabular data",
+          "cmds": [
+            "table to sql",
+            "csv to sql",
+            "generate sql insert"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

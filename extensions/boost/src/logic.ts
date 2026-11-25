@@ -14,14 +14,18 @@ import {
   showRealItemInFolder,
   trashRealItem
 } from './native-ipc.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export { formatBytes } from './native-ipc.js'
 
 type DynamicBridge = ReturnType<typeof JSON.parse>
 
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export function getNotInClientMessage(): string {
+  return t('notInClient')
+}
 
-export type StartupScope = '用户启动文件夹' | '公共启动文件夹' | '常驻进程（按名称判断）'
+export type StartupScope = string
 
 export interface BoostCandidateItem {
   id: string
@@ -45,7 +49,7 @@ export interface BoostSnapshot {
   memoryUsagePercent: number
   startupItemCount: number
   candidates: BoostCandidateItem[]
-  /** 部分数据读取失败的原因；不在客户端里时只有一条 NOT_IN_CLIENT_MESSAGE */
+  /** 部分数据读取失败的原因；不在客户端里时只有一条 getNotInClientMessage() */
   errors: string[]
 }
 
@@ -53,8 +57,9 @@ export const FORBIDDEN_TARGET_PATTERN = new RegExp(
   '^(?:Windows Defender|SecurityHealth|lsass|csrss|svchost|wininit|System|explorer|dwm|ZTools|electron)(?:\\.exe)?$',
   'i'
 )
-export const FORBIDDEN_REASON = '系统核心进程或 ZTools 自身进程受保护，不能结束'
-const COMMON_STARTUP_REASON = '公共启动文件夹里的项目对所有用户生效，插件不能移除，请在系统设置中管理'
+export function getForbiddenReason(): string {
+  return t('forbiddenReason')
+}
 
 const HIGH_MEMORY_PROCESS_BYTES = 300 * 1024 * 1024
 const HIGH_MEMORY_RESIDENT_BYTES = 150 * 1024 * 1024
@@ -109,7 +114,7 @@ async function loadProcesses(hostOverride?: DynamicBridge): Promise<{ list: RawP
   if (basicRows && basicRows.length > 0) {
     return { list: basicRows.map(toRawProcess).filter((p): p is RawProcess => p !== null) }
   }
-  return { list: [], error: `读取进程列表失败：${basic.ok ? '列表为空' : basic.error || '未知错误'}` }
+  return { list: [], error: t('errReadProcList', { detail: basic.ok ? t('errListEmpty') : resolveErrorMessage(basic, t('errUnknown')) }) }
 }
 
 function processProtection(p: RawProcess): string | undefined {
@@ -121,7 +126,7 @@ function processProtection(p: RawProcess): string | undefined {
     FORBIDDEN_TARGET_PATTERN.test(baseName) ||
     /^c:\\windows\\/i.test(p.path)
   ) {
-    return FORBIDDEN_REASON
+    return t('forbiddenReason')
   }
   return undefined
 }
@@ -137,12 +142,12 @@ async function scanStartupItems(
   const items: BoostCandidateItem[] = []
   // 读不到当前用户的 AppData 时不猜测路径，避免读到其他用户的启动文件夹
   const appData = await getRealSystemPath('appData', hostOverride)
-  if (!appData) errors.push('读取当前用户的“启动”文件夹位置失败')
+  if (!appData) errors.push(t('errReadAppData'))
   const userStartup = appData ? `${appData}\\Microsoft\\Windows\\Start Menu\\Programs\\Startup` : ''
   const commonStartup = 'C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\StartUp'
-  const folders: Array<{ dir: string; scope: StartupScope }> = [
-    { dir: userStartup, scope: '用户启动文件夹' },
-    { dir: commonStartup, scope: '公共启动文件夹' }
+  const folders: Array<{ dir: string; scope: string; isCommon: boolean }> = [
+    { dir: userStartup, scope: t('scopeUserStartup'), isCommon: false },
+    { dir: commonStartup, scope: t('scopeCommonStartup'), isCommon: true }
   ]
 
   for (const f of folders) {
@@ -150,20 +155,20 @@ async function scanStartupItems(
     const entries = await readRealDirectory(f.dir, hostOverride)
     for (const entry of entries) {
       if (entry.isDirectory || entry.name.toLowerCase() === 'desktop.ini') continue
-      const isCommon = f.scope === '公共启动文件夹'
+      const isCommon = f.isCommon
       items.push({
-        id: `boost-startup-file-${f.scope}-${entry.name}`,
+        id: `boost-startup-file-${isCommon ? 'common' : 'user'}-${entry.name}`,
         type: 'startup_item',
-        name: `[开机启动] ${entry.name.replace(/\.(?:lnk|url|bat|cmd)$/i, '')}`,
+        name: t('startupFilePrefix', { name: entry.name.replace(/\.(?:lnk|url|bat|cmd)$/i, '') }),
         path: entry.path || `${f.dir}\\${entry.name}`,
         memoryOrSizeBytes: entry.sizeBytes > 0 ? entry.sizeBytes : 0,
         isProtected: isCommon,
-        ...(isCommon ? { lockedReason: COMMON_STARTUP_REASON } : {}),
+        ...(isCommon ? { lockedReason: t('commonStartupReason') } : {}),
         startupScope: f.scope,
         isHighMemory: false,
         recommendation: isCommon
-          ? `位于${f.scope}，${COMMON_STARTUP_REASON}`
-          : `位于${f.scope}，登录 Windows 时自动打开；移入回收站后不再随开机打开，可从回收站还原`
+          ? t('startupFileCommonRec', { scope: f.scope, reason: t('commonStartupReason') })
+          : t('startupFileUserRec', { scope: f.scope })
       })
     }
   }
@@ -179,14 +184,14 @@ async function scanStartupItems(
         id: `boost-startup-proc-${p.pid}`,
         type: 'startup_item',
         pid: p.pid,
-        name: `[自启常驻] ${p.name}`,
+        name: t('startupProcPrefix', { name: p.name }),
         path: p.path,
         memoryOrSizeBytes: p.memoryBytes,
         isProtected: Boolean(protection),
         ...(protection ? { lockedReason: protection } : {}),
-        startupScope: '常驻进程（按名称判断）',
+        startupScope: t('scopeResidentProc'),
         isHighMemory: p.memoryBytes > HIGH_MEMORY_RESIDENT_BYTES,
-        recommendation: `名称属于常见自启软件，当前占用 ${formatBytes(p.memoryBytes)}；结束进程只影响本次运行，不会取消它的开机启动`
+        recommendation: t('startupProcRec', { size: formatBytes(p.memoryBytes) })
       })
     }
   }
@@ -199,7 +204,7 @@ async function scanStartupItems(
  */
 export async function fetchBoostSnapshot(hostOverride?: DynamicBridge): Promise<BoostSnapshot> {
   if (!hostOverride && !isRealElectronHost()) {
-    return emptySnapshot([NOT_IN_CLIENT_MESSAGE])
+    return emptySnapshot([t('notInClient')])
   }
 
   const errors: string[] = []
@@ -213,7 +218,7 @@ export async function fetchBoostSnapshot(hostOverride?: DynamicBridge): Promise<
   const total = memRes.ok ? Number(memRes.data?.total) : NaN
   const used = memRes.ok ? Number(memRes.data?.used) : NaN
   const memoryKnown = Number.isFinite(total) && total > 0 && Number.isFinite(used) && used >= 0
-  if (!memoryKnown) errors.push(`读取内存占用失败：${memRes.ok ? '客户端返回的数据无效' : memRes.error || '未知错误'}`)
+  if (!memoryKnown) errors.push(t('errReadMemory', { detail: memRes.ok ? t('errInvalidHostData') : resolveErrorMessage(memRes, t('errUnknown')) }))
   const totalMemoryBytes = memoryKnown ? total : 0
   const usedMemoryBytes = memoryKnown ? used : 0
   const memoryUsagePercent = memoryKnown ? Math.round((used / total) * 1000) / 10 : 0
@@ -233,9 +238,7 @@ export async function fetchBoostSnapshot(hostOverride?: DynamicBridge): Promise<
       isProtected: Boolean(protection),
       ...(protection ? { lockedReason: protection } : {}),
       isHighMemory,
-      recommendation: protection
-        ? '系统核心或 ZTools 自身进程，受保护'
-        : '结束进程会释放它占用的内存，进程里未保存的内容会丢失'
+      recommendation: protection ? t('procProtectedRec') : t('procKillRec')
     })
   }
 
@@ -253,16 +256,16 @@ export async function fetchBoostSnapshot(hostOverride?: DynamicBridge): Promise<
       candidates.push({
         id: `boost-temp-${i}-${fName}`,
         type: 'temp_cache',
-        name: `[临时文件] ${fName}`,
+        name: t('tempFilePrefix', { name: fName }),
         path: entry.path,
         memoryOrSizeBytes: sz,
         isProtected: false,
         isHighMemory: false,
-        recommendation: '临时文件夹里的文件，可能仍在被程序使用；移入回收站后可还原'
+        recommendation: t('tempFileRec')
       })
     }
   } else {
-    errors.push('读取临时文件夹位置失败')
+    errors.push(t('errReadTempDir'))
   }
 
   return {
@@ -278,19 +281,19 @@ export async function fetchBoostSnapshot(hostOverride?: DynamicBridge): Promise<
 function describeTerminateFailure(code: string, rawMessage: string): string {
   switch (code) {
     case 'PROCESS_PROTECTED':
-      return rawMessage || '该进程受保护，不能结束'
+      return rawMessage || t('errProcProtected')
     case 'PROCESS_ACCESS_DENIED':
-      return '没有权限结束该进程：它可能属于系统或其他用户，需要以管理员身份运行 ZTools'
+      return t('errProcAccessDenied')
     case 'PROCESS_IDENTITY_MISMATCH':
-      return '该 PID 已不是列表里的进程（可能已退出并被复用），为避免误结束未执行，请重新扫描'
+      return t('errProcMismatch')
     case 'PROCESS_TERMINATE_TIMEOUT':
-      return '进程没有在限定时间内退出'
+      return t('errProcTimeout')
     case 'PLUGIN_PERMISSION_REQUIRED':
-      return '插件没有获得结束进程的权限，请更新插件'
+      return t('errPluginPermRequired')
     case 'PLUGIN_IDENTITY_REQUIRED':
-      return '无法确认插件身份，请关闭后重新打开插件再试'
+      return t('errPluginIdentityRequired')
     default:
-      return rawMessage || '结束进程失败'
+      return rawMessage || t('errTerminateFailed')
   }
 }
 
@@ -303,11 +306,11 @@ async function legacyTerminate(pid: number, hostOverride?: DynamicBridge): Promi
   )
   if (!res.ok) {
     const notInClient = res.error === 'NO_WINDOW_ENV' || String(res.error || '').startsWith('METHOD_NOT_AVAILABLE')
-    return { ok: false, error: notInClient ? NOT_IN_CLIENT_MESSAGE : res.error || '调用客户端失败' }
+    return { ok: false, error: notInClient ? t('notInClient') : resolveErrorMessage(res, t('errHostCallFailed')) }
   }
   if (res.data?.error) return { ok: false, error: String(res.data.error) }
   if (res.data?.terminated === true) return { ok: true }
-  return { ok: false, error: '客户端没有确认进程已结束，请重新扫描查看' }
+  return { ok: false, error: t('errHostUnconfirmedKill') }
 }
 
 /**
@@ -318,10 +321,10 @@ export async function terminateBoostProcess(
   name: string,
   hostOverride?: DynamicBridge
 ): Promise<{ ok: boolean; error?: string; alreadyExited?: boolean }> {
-  const processName = name.replace(/^\[自启常驻\]\s*/i, '')
+  const processName = name.replace(/^\[(?:自启常驻|Auto-Start)\]\s*/i, '')
   const baseName = processName.replace(/\.exe$/i, '')
   if (!Number.isInteger(pid) || pid <= 4 || FORBIDDEN_TARGET_PATTERN.test(processName) || FORBIDDEN_TARGET_PATTERN.test(baseName)) {
-    return { ok: false, error: FORBIDDEN_REASON }
+    return { ok: false, error: t('forbiddenReason') }
   }
   if (typeof hostTerminateProcess === 'function') {
     // 列表里没拿到进程名时（显示为 PID-<pid>）不做名称校验，避免误拒
@@ -369,10 +372,10 @@ export function describeBoostPlan(items: BoostCandidateItem[]): string {
   const startupFileCount = items.filter(i => i.type === 'startup_item' && i.pid === undefined).length
   const tempCount = items.filter(i => i.type === 'temp_cache').length
   const parts: string[] = []
-  if (processCount > 0) parts.push(`强制结束 ${processCount} 个进程（进程里未保存的内容会丢失）`)
-  if (startupFileCount > 0) parts.push(`把 ${startupFileCount} 个“启动”文件夹里的项目移入回收站（之后不再随开机打开）`)
-  if (tempCount > 0) parts.push(`把 ${tempCount} 个临时文件移入回收站`)
-  return `将${parts.join('；')}。没有勾选的项目不会处理。`
+  if (processCount > 0) parts.push(t('planKillProcs', { count: processCount }))
+  if (startupFileCount > 0) parts.push(t('planTrashStartup', { count: startupFileCount }))
+  if (tempCount > 0) parts.push(t('planTrashTemp', { count: tempCount }))
+  return t('planSummary', { parts: parts.join(t('planJoinSep')) })
 }
 
 /**
@@ -382,7 +385,7 @@ export async function executeBoostItems(items: BoostCandidateItem[], hostOverrid
   const result: BoostExecutionResult = { succeeded: [], failed: [], handledBytes: 0 }
   for (const item of items) {
     if (item.isProtected) {
-      result.failed.push({ item, error: item.lockedReason || FORBIDDEN_REASON })
+      result.failed.push({ item, error: item.lockedReason || t('forbiddenReason') })
       continue
     }
     const res =
@@ -394,7 +397,7 @@ export async function executeBoostItems(items: BoostCandidateItem[], hostOverrid
       result.handledBytes += item.memoryOrSizeBytes
     } else {
       const notInClient = res.error === 'NO_WINDOW_ENV' || String(res.error || '').startsWith('METHOD_NOT_AVAILABLE')
-      result.failed.push({ item, error: notInClient ? NOT_IN_CLIENT_MESSAGE : res.error || '处理失败' })
+      result.failed.push({ item, error: notInClient ? t('notInClient') : resolveErrorMessage(res, t('errProcessFailed')) })
     }
   }
   return result
@@ -411,9 +414,9 @@ export async function confirmAndExecuteBoost(
   const items = selectActionableItems(candidates, checkedIds)
   if (items.length === 0) return null
   const confirmed = await confirmAlert({
-    title: `处理已勾选的 ${items.length} 个项目？`,
+    title: t('confirmBatchTitle', { count: items.length }),
     message: describeBoostPlan(items),
-    primaryAction: { title: '确认处理', style: 'destructive' }
+    primaryAction: { title: t('confirmBatchAction'), style: 'destructive' }
   })
   if (!confirmed) return null
   return executeBoostItems(items, hostOverride)

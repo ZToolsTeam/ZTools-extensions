@@ -10,9 +10,14 @@ import { Cache, createScopedCacheClass } from "../api/cache.js";
 // 探测是否处于标准 React 运行时环境
 function getHooks() {
     try {
-        const req = typeof globalThis.require === "function" ? globalThis.require : null;
-        const react = globalThis.React || (req ? req("react") : null);
-        if (react && typeof react.useState === "function") {
+        const g = globalThis;
+        const req = typeof g.require === "function" ? g.require : null;
+        const react = (g.React || (req ? req("react") : null));
+        if (react &&
+            typeof react.useState === "function" &&
+            typeof react.useEffect === "function" &&
+            typeof react.useCallback === "function" &&
+            typeof react.useRef === "function") {
             return {
                 useState: react.useState,
                 useEffect: react.useEffect,
@@ -21,7 +26,10 @@ function getHooks() {
             };
         }
     }
-    catch { }
+    catch (err) {
+        // 非标准 React 环境或宿主未注入 require("react")，回落到声明式微运行时 hooks
+        void err;
+    }
     return {
         useState: microUseState,
         useEffect: microUseEffect,
@@ -47,7 +55,8 @@ export function usePromise(fn, args, options) {
         setIsLoading(true);
         setError(undefined);
         try {
-            const result = await fnRef.current(...(args || []));
+            const callArgs = (args || []);
+            const result = await fnRef.current(...callArgs);
             setData(result);
             setIsLoading(false);
             options?.onData?.(result);
@@ -112,31 +121,35 @@ export function useCachedPromise(fn, args, options) {
     return useCachedPromiseWith(internalPromiseCache, fn, args, options);
 }
 function useCachedPromiseWith(cache, fn, args, options) {
+    const hooks = getHooks();
     const cacheKey = `${fn.name || "anon"}:${JSON.stringify(args || [])}`;
-    // 尝试命中缓存初始化
+    const initializedRef = hooks.useRef(false);
+    // 仅首次渲染读取并反序列化缓存，避免后续每次重渲染重复同步 JSON.parse
     let cachedData = options?.initialData;
-    const rawCached = cache.get(cacheKey);
-    if (rawCached !== undefined) {
-        try {
-            cachedData = JSON.parse(rawCached);
+    if (!initializedRef.current) {
+        initializedRef.current = true;
+        const rawCached = cache.get(cacheKey);
+        if (rawCached !== undefined) {
+            try {
+                cachedData = JSON.parse(rawCached);
+            }
+            catch (err) {
+                // 缓存 JSON 损坏时安全回落 initialData
+                void err;
+            }
         }
-        catch { }
     }
-    const result = usePromise(async (...callArgs) => {
-        const res = await fn(...callArgs);
-        try {
-            cache.set(cacheKey, JSON.stringify(res));
-        }
-        catch { }
-        return res;
-    }, args, {
+    const result = usePromise(fn, args, {
         ...options,
         initialData: cachedData,
         onData: (data) => {
             try {
                 cache.set(cacheKey, JSON.stringify(data));
             }
-            catch { }
+            catch (err) {
+                // 不可序列化数据跳过写入缓存，不影响本次结果展示
+                void err;
+            }
             options?.onData?.(data);
         }
     });
@@ -168,22 +181,29 @@ export function useCachedState(key, initialValue, options) {
 function useCachedStateWith(defaultCache, key, initialValue, options) {
     const hooks = getHooks();
     const cache = options?.cache || defaultCache;
-    let startVal = initialValue;
-    const raw = cache.get(key);
-    if (raw !== undefined) {
-        try {
-            startVal = JSON.parse(raw);
+    const [state, setState] = hooks.useState(() => {
+        const raw = cache.get(key);
+        if (raw !== undefined) {
+            try {
+                return JSON.parse(raw);
+            }
+            catch (err) {
+                // 缓存 JSON 损坏时安全回落 initialValue
+                void err;
+            }
         }
-        catch { }
-    }
-    const [state, setState] = hooks.useState(startVal);
+        return initialValue;
+    });
     const setCachedState = hooks.useCallback((newValOrFn) => {
         setState((prev) => {
             const next = typeof newValOrFn === "function" ? newValOrFn(prev) : newValOrFn;
             try {
                 cache.set(key, JSON.stringify(next));
             }
-            catch { }
+            catch (err) {
+                // 不可序列化状态跳过缓存持久化
+                void err;
+            }
             return next;
         });
     }, [key]);

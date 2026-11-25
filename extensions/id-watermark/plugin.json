@@ -1,9 +1,17 @@
 {
   "id": "id-watermark",
   "name": "防盗水印",
-  "version": "1.0.8",
+  "version": "1.0.11",
   "description": "本地为 JPG、PNG、WebP 图片添加斜向文字水印，保留原图，另存 PNG 新副本或复制图片",
   "author": "ZTools Team",
+  "category": [
+    "图像媒体",
+    "安全隐私"
+  ],
+  "categoryId": [
+    "media",
+    "security"
+  ],
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -48,5 +56,51 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.4"
+  "minAppVersion": "1.1.8.4",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "ID Watermark",
+      "description": "Add diagonal text watermarks locally to JPG, PNG, and WebP images without modifying originals; save as PNG copies or copy directly to clipboard.",
+      "keywords": [
+        "watermark",
+        "id card",
+        "privacy",
+        "image",
+        "protect",
+        "stamp"
+      ],
+      "features": {
+        "id-watermark-workbench": {
+          "explain": "Select an image and watermark purpose to save a watermarked copy",
+          "cmds": [
+            "watermark",
+            "id watermark",
+            "add watermark",
+            "protect image"
+          ]
+        },
+        "id-watermark-clipboard-fast": {
+          "explain": "Watermark an image from the clipboard and copy the result on Enter",
+          "cmds": [
+            "quick watermark",
+            "clipboard watermark"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

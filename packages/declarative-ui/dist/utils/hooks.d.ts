@@ -17,24 +17,24 @@ export interface UsePromiseResult<T> {
     error: Error | undefined;
     isLoading: boolean;
     revalidate: () => Promise<T | undefined>;
-    mutate: (asyncUpdate?: Promise<any> | ((currentData: T | undefined) => Promise<T> | T), options?: {
+    mutate: (asyncUpdate?: Promise<T> | ((currentData: T | undefined) => Promise<T> | T), options?: {
         shouldRevalidate?: boolean;
     }) => Promise<T | undefined>;
 }
-export declare function usePromise<T, TArgs extends any[] = any[]>(fn: (...args: TArgs) => Promise<T>, args?: TArgs, options?: UsePromiseOptions<T>): UsePromiseResult<T>;
+export declare function usePromise<T, TArgs extends unknown[] = unknown[]>(fn: (...args: TArgs) => Promise<T>, args?: TArgs, options?: UsePromiseOptions<T>): UsePromiseResult<T>;
 export interface UseCachedPromiseOptions<T> extends UsePromiseOptions<T> {
     keepPreviousData?: boolean;
 }
-export declare function useCachedPromise<T, TArgs extends any[] = any[]>(fn: (...args: TArgs) => Promise<T>, args?: TArgs, options?: UseCachedPromiseOptions<T>): UsePromiseResult<T>;
+export declare function useCachedPromise<T, TArgs extends unknown[] = unknown[]>(fn: (...args: TArgs) => Promise<T>, args?: TArgs, options?: UseCachedPromiseOptions<T>): UsePromiseResult<T>;
 export interface UseFetchOptions<T> {
     headers?: Record<string, string>;
     method?: string;
-    body?: any;
+    body?: unknown;
     execute?: boolean;
     initialData?: T;
     parseResponse?: (response: Response) => Promise<T>;
 }
-export declare function useFetch<T = any>(url: string | (() => string), options?: UseFetchOptions<T>): UsePromiseResult<T>;
+export declare function useFetch<T = unknown>(url: string | (() => string), options?: UseFetchOptions<T>): UsePromiseResult<T>;
 export declare function useCachedState<T>(key: string, initialValue: T, options?: {
     cache?: Cache;
 }): [T, (val: T | ((prev: T) => T)) => void];

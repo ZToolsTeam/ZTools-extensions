@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, mountPushed, tick } from '../../shared/test-harness.mjs'
 import Command from '../dist/index.js'
 import { fetchSavedWifiProfiles, generateWifiQrString, generateWifiQrSvgDataUrl, parseNetshWlanProfiles, parseWindowsWlanProfileDetail } from '../dist/wifi-service.js'
@@ -320,4 +321,91 @@ test('[macOS] 全部网络都没有加密方式时只在状态条说明一次，
   assert.ok(!options.includes('open') && !options.includes('enterprise'))
   const first = view.items()[0]
   assert.ok(view.actions(first).some(action => action.props.title === '生成连网二维码'))
+})
+
+test('i18n 热切换回归：非客户端态由稳定错误码 NOT_IN_CLIENT 驱动，切英文后无中文残留且不误判为普通加载失败', async () => {
+  const saved = globalThis.__ztoolsElectron
+  delete globalThis.__ztoolsElectron
+  try {
+    setRuntimeLocale('zh-CN')
+    const view = await open()
+    await tick()
+    assert.equal(view.item('load-error').props.title, '需要在 ZTools 客户端中使用')
+    assert.equal(view.tree().props.filterBar.summaryText, '需要在 ZTools 客户端中使用')
+
+    setRuntimeLocale('en-US')
+    await tick()
+    assert.equal(view.item('load-error').props.title, 'Must be used inside ZTools client')
+    assert.equal(view.tree().props.filterBar.summaryText, 'Must be used inside ZTools client')
+    assert.ok(!/[\u4e00-\u9fa5]/.test(view.text()), `en-US 不应残留中文: ${view.text()}`)
+  } finally {
+    setRuntimeLocale('zh-CN')
+    globalThis.__ztoolsElectron = saved
+  }
+})
+
+test('[敏感剪贴板] 复制 Wi-Fi 密码与含密协议串走 clipboard_copy_text(sensitive: true)，SSID 走普通复制', async () => {
+  host.ipc.clipboard_copy_text = async () => ({ success: true, clearAfterMs: 30000 })
+  const view = await open()
+
+  // 1. 列表 Enter 主动作复制密码走敏感剪贴板
+  await view.run(view.items()[0], '复制 Wi-Fi 密码')
+  const sensitiveCalls = () => host.ipcCalls.filter(([method]) => method === 'clipboard_copy_text')
+  assert.equal(sensitiveCalls().length, 1)
+  assert.deepEqual(sensitiveCalls()[0][1], { text: ' synthetic password ', sensitive: true })
+  assert.equal(host.clipboard.text, '', '走宿主敏感剪贴板时不写普通 Clipboard.copy')
+  assert.equal(host.lastToast().title, '已复制 Wi-Fi 密码')
+  assert.match(host.lastToast().message, /30 秒后自动清除/)
+
+  // 2. 详情页复制密码与含密码连网协议串均走敏感剪贴板
+  await view.run(view.items()[0], '查看密码与二维码')
+  const detail = await child()
+  await detail.run(null, '复制 Wi-Fi 密码')
+  assert.equal(sensitiveCalls().length, 2)
+  assert.deepEqual(sensitiveCalls()[1][1], { text: ' synthetic password ', sensitive: true })
+  await detail.run(null, '复制连网协议串')
+  assert.equal(sensitiveCalls().length, 3)
+  assert.deepEqual(sensitiveCalls()[2][1], { text: 'WIFI:T:WPA;S: test network ;P: synthetic password ;;', sensitive: true })
+
+  // 3. 切英文验证 Toast i18n
+  setRuntimeLocale('en-US')
+  await tick()
+  await detail.run(null, 'Copy Wi-Fi Password')
+  assert.equal(host.lastToast().title, 'Wi-Fi password copied')
+  assert.match(host.lastToast().message, /30s/)
+  setRuntimeLocale('zh-CN')
+  await tick()
+
+  // 4. 复制网络名称走普通 Clipboard.copy，不走敏感剪贴板
+  const beforeSsid = sensitiveCalls().length
+  await detail.run(null, '复制网络名称')
+  assert.equal(sensitiveCalls().length, beforeSsid)
+  assert.equal(host.clipboard.text, ' test network ')
+})
+
+test('[敏感剪贴板降级与异常] 旧宿主优雅降级 Clipboard.copy，明确权限失败不降级并提示失败', async () => {
+  const view = await open()
+
+  // 1. 未注册 clipboard_copy_text（NOT_SUPPORTED）-> 优雅降级 Clipboard.copy 并提示手动清空
+  await view.run(view.items()[0], '复制 Wi-Fi 密码')
+  assert.equal(host.clipboard.text, ' synthetic password ')
+  assert.equal(host.lastToast().title, '已复制 Wi-Fi 密码')
+  assert.match(host.lastToast().message, /手动清空/)
+
+  // 2. 旧宿主成功但未确认 clearAfterMs -> 不重复调用 Clipboard.copy，提示手动清空
+  host.clipboard.text = ''
+  host.ipc.clipboard_copy_text = async () => ({ success: true })
+  await view.run(view.items()[0], '复制 Wi-Fi 密码')
+  assert.equal(host.clipboard.text, '')
+  assert.match(host.lastToast().message, /手动清空/)
+
+  // 3. 宿主明确权限失败 -> 不降级写普通剪贴板，弹失败 Toast
+  host.clipboard.text = ''
+  host.ipc.clipboard_copy_text = async () => {
+    throw Object.assign(new Error('剪贴板不可用'), { code: 'PERMISSION_DENIED' })
+  }
+  await view.run(view.items()[0], '复制 Wi-Fi 密码')
+  assert.equal(host.clipboard.text, '')
+  assert.equal(host.lastToast().title, '复制失败')
+  assert.match(host.lastToast().message, /剪贴板不可用/)
 })

@@ -46,3 +46,56 @@ test('保存取消不写文件，写失败不提示成功；小结果仍可复�
     assert.match(host.lastToast().message, /磁盘已满/)
   } finally { view.unmount() }
 })
+
+test('粘贴 Base64 / Data URL 还原并保存为图片文件：二进制 PNG 走 base64 写入，SVG 走 UTF-8 文本写入，取消与失败如实处理', async () => {
+  const PNG_B64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const SVG_TEXT = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><circle cx="8" cy="8" r="6"/></svg>'
+  const SVG_B64 = Buffer.from(SVG_TEXT, 'utf8').toString('base64')
+
+  const view = await mount(Command)
+  try {
+    // 1. 粘贴 PNG Data URL → 保存为 .png
+    await view.pasteText(`data:image/png;base64,${PNG_B64}`)
+    const saveItem = view.item('export-image-file')
+    let dialogParams
+    let written
+    host.ipc.window_show_save_dialog = async params => {
+      dialogParams = params
+      return { canceled: false, filePath: '/out/restored.png' }
+    }
+    host.ipc.filesystem_write_file = async params => {
+      written = params
+      return { success: true }
+    }
+    await view.run(saveItem, '还原并保存为图片文件…')
+    assert.equal(dialogParams.defaultName, 'restored-image.png')
+    assert.equal(dialogParams.filters, 'PNG 图片|png')
+    assert.deepEqual(written, { path: '/out/restored.png', content: PNG_B64, encoding: 'base64' })
+    assert.equal(host.lastToast().title, '已还原并保存图片')
+    assert.equal(host.lastToast().message, '/out/restored.png')
+
+    // 2. 粘贴 SVG Base64 → 保存为 .svg（解码后的真实 UTF-8 文本）
+    await view.pasteText(`data:image/svg+xml;base64,${SVG_B64}`)
+    host.ipc.window_show_save_dialog = async params => {
+      dialogParams = params
+      return { canceled: false, filePath: '/out/icon.svg' }
+    }
+    await view.run(view.item('export-image-file'), '还原并保存为图片文件…')
+    assert.equal(dialogParams.defaultName, 'restored-image.svg')
+    assert.equal(dialogParams.filters, 'SVG 图片|svg')
+    assert.deepEqual(written, { path: '/out/icon.svg', content: SVG_TEXT, encoding: 'utf8' })
+
+    // 3. 取消保存不写文件；写入失败如实提示
+    host.toasts.length = 0
+    host.ipc.window_show_save_dialog = async () => ({ canceled: true })
+    host.ipc.filesystem_write_file = async () => assert.fail('取消不应写入图片文件')
+    await view.run(view.item('export-image-file'), '还原并保存为图片文件…')
+    assert.equal(host.toasts.length, 0)
+
+    host.ipc.window_show_save_dialog = async () => ({ canceled: false, filePath: '/readonly/icon.svg' })
+    host.ipc.filesystem_write_file = async () => { throw new Error('拒绝访问') }
+    await view.run(view.item('export-image-file'), '还原并保存为图片文件…')
+    assert.equal(host.lastToast().title, '保存图片失败')
+    assert.match(host.lastToast().message, /拒绝访问/)
+  } finally { view.unmount() }
+})

@@ -14,10 +14,20 @@ test('真实截图正常显示；成功空扫描保持空集，不把照片当�
 })
 test('扫描失败或载荷损坏不能回退普通照片、不能伪装成功空列表',async()=>{
  const host=createHost();const manager=new ScreenshotsManager()
- host.ipc.screenshots_scan=()=>{throw new Error('permission denied')}
- // 报宿主 screenshots_scan 的真实原因，不能被回退调用的错误（如「未实现 screenshots_search」）覆盖
- await assert.rejects(manager.loadScreenshots(true),/permission denied/)
+ // 宿主带标准权限错误码时，zh-CN 返回中文标准原因，不能被回退调用或载荷无效文案覆盖
+ host.ipc.screenshots_scan=()=>{throw Object.assign(new Error('permission denied'),{code:'PERMISSION_DENIED'})}
+ await assert.rejects(manager.loadScreenshots(true),/权限不足/)
  assert.ok(!host.ipcCalls.some(([m])=>m==='screenshots_search'))
+ // 无结构化错误码的纯英文异常：zh-CN 拦截纯英文裸露并回退“截图扫描失败”（而非误报“结果无效”），en-US 透传原文
+ host.ipc.screenshots_scan=()=>{throw new Error('permission denied')}
+ await assert.rejects(manager.loadScreenshots(true),/截图扫描失败/)
+ assert.ok(!host.ipcCalls.some(([m])=>m==='screenshots_search'))
+ host.setLocale('en-US')
+ try{
+  await assert.rejects(manager.loadScreenshots(true),/permission denied/)
+ }finally{
+  host.setLocale('zh-CN')
+ }
  host.ipc.screenshots_scan=()=>({unexpected:[]})
  await assert.rejects(manager.loadScreenshots(true),/结果无效/)
  assert.ok(!host.ipcCalls.some(([m])=>m==='system_search_files'))

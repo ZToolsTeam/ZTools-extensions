@@ -214,11 +214,11 @@ test('executeQQCleanup：只处理传入路径，空列表、受保护路径与�
 })
 
 test('pickDefaultCheckedPaths 与分组默认值：聊天媒体、收藏表情、接收文件、登录会话默认不勾选', () => {
-  const rules = logic.OFFICIAL_QQ_GROUP_RULES
+  const rules = logic.getOfficialQQGroupRules()
   for (const id of [201, 204, 205, 206, 212, 213]) {
     assert.equal(rules.find(r => r.groupId === id).defaultChecked, false, `分组 ${id} 应默认不勾选`)
   }
-  assert.equal(logic.FORBIDDEN_REASON.includes('硬件'), false)
+  assert.equal(logic.getForbiddenReason().includes('硬件'), false)
   const categories = rules.map(r => ({ groupId: r.groupId, checked: r.defaultChecked }))
   const visible = [
     { path: 'log', groupId: 203, isProtected: false },
@@ -235,9 +235,23 @@ test('classifyQQFilePath：无法识别用途的文件标记为未识别，不�
   const cache = logic.classifyQQFilePath(`${TF}\\10001\\AppWebCache\\a.bin`)
   assert.equal(cache.groupId, 202)
   assert.equal(cache.unrecognized, undefined)
-  const categories = logic.OFFICIAL_QQ_GROUP_RULES.map(r => ({ groupId: r.groupId, checked: r.defaultChecked }))
+  const categories = logic.getOfficialQQGroupRules().map(r => ({ groupId: r.groupId, checked: r.defaultChecked }))
   assert.deepEqual(
     logic.pickDefaultCheckedPaths([{ path: 'u', groupId: 202, isProtected: false, unrecognized: true }], categories),
     []
   )
+})
+
+test('安全红线：文件行 Enter 主动作定位文件，不误触全局批量清理', async () => {
+  const host = createHost()
+  installQQHost(host, buildFixture())
+  const view = await mount(QQCleanerCommand)
+  await waitFor(view, loaded)
+  const item = subItems(view)[0]
+  const actions = view.actions(item)
+  assert.equal(actions[0].props.title, '在资源管理器定位', '文件行第 1 项必须为安全定位')
+  const batchAct = cleanAction(view, item)
+  assert.ok(batchAct && batchAct.props.shortcut, '批量清理退至次动作并带快捷键')
+  const topClean = view.tree().props.filterBar.actions.find(a => a.id === 'qq-act-clean')
+  assert.ok(topClean && topClean.disabled === false)
 })

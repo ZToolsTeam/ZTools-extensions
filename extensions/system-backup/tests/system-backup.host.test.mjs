@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as backup from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 const item = (id, extra = {}) => ({ id, name: id, path: `C:\\Users\\tester\\${id}`, category: 'dev_terminal', categoryName: '终端', sizeBytes: 12, lastModified: '', statusTag: '', ...extra })
 const vault = 'C:\\Users\\tester\\Documents\\ZToolsBackups'
@@ -58,10 +61,10 @@ test('解压显示真实输出目录，失败时保留可检查的输出目录',
   assert.equal(result.outputDir, output)
   assert.match(result.message, /快照已解压到/)
   assert.doesNotMatch(result.message, /原子|还原/)
-  const failed = await backup.extractBackupSnapshot(`${vault}\\actual.zip`, host(() => ({ ok: false, success: false, targetDir: output, error: 'duplicate entry' })))
+  const failed = await backup.extractBackupSnapshot(`${vault}\\actual.zip`, host(() => ({ ok: false, success: false, targetDir: output, error: '归档包含重复条目' })))
   assert.equal(failed.ok, false)
   assert.equal(failed.outputDir, output)
-  assert.equal(failed.message, 'duplicate entry')
+  assert.equal(failed.message, '归档包含重复条目')
 })
 
 test('最新快照按真实时间选择，忽略配置项和未知时间，不依赖文件名或列表顺序', () => {
@@ -90,10 +93,10 @@ test('读取真实快照时间，保留零字节配置，不生成演示快照',
 test('配置读取被拒绝时返回错误，不能冒充扫描成功且没有配置', async () => {
   const bridge = host(() => ({ success: true, backups: [] }), {
     system_get_path: () => 'C:\\Users\\tester',
-    filesystem_get_file_size: () => { throw new Error('PERMISSION_DENIED') }
+    filesystem_get_file_size: () => { throw Object.assign(new Error('PERMISSION_DENIED'), { code: 'PERMISSION_DENIED' }) }
   })
   const result = await backup.fetchSystemBackupSnapshot(bridge)
-  assert.match(result.error, /PERMISSION_DENIED/)
+  assert.match(result.error, /权限不足/)
   assert.deepEqual(result.items, [])
 })
 
@@ -107,4 +110,28 @@ test('未勾选配置不会自动把可见项目全部备份，打开目录使�
     return { success: true }
   } })
   assert.equal(await backup.openExtractedDirectory(directory, bridge), true)
+})
+
+test('删除历史快照：安全移入回收站，拦截系统保护目录并透传宿主失败', async () => {
+  const trashed = []
+  const bridge = host(() => { throw new Error('不应调用归档服务') }, {
+    shell_trash_item: params => {
+      trashed.push(params.fullPath)
+      return { success: true }
+    }
+  })
+  const okRes = await backup.deleteBackupSnapshot(`${vault}\\mine.zip`, bridge)
+  assert.equal(okRes.ok, true)
+  assert.deepEqual(trashed, [`${vault}\\mine.zip`])
+
+  const blocked = await backup.deleteBackupSnapshot('C:\\Windows\\System32\\hosts', bridge)
+  assert.equal(blocked.ok, false)
+  assert.equal(trashed.length, 1)
+
+  const failBridge = host(() => ({}), {
+    shell_trash_item: () => { throw new Error('文件正被占用') }
+  })
+  const failRes = await backup.deleteBackupSnapshot(`${vault}\\mine.zip`, failBridge)
+  assert.equal(failRes.ok, false)
+  assert.match(failRes.message, /文件正被占用/)
 })

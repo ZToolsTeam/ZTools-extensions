@@ -3,9 +3,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import { getDeclarativeBridge } from '@ztools/declarative-ui'
-import DiskAnalyzerCommand from '../dist/index.js'
-import { OFFICIAL_FILE_TYPE_GROUPS, FORBIDDEN_TARGET_PATTERN, deleteDiskFileItem } from '../dist/logic.js'
+import { getDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const { default: DiskAnalyzerCommand, buildGroupMarkdown } = await import('../dist/index.js')
+const { getOfficialFileTypeGroups, FORBIDDEN_TARGET_PATTERN, deleteDiskFileItem } = await import('../dist/logic.js')
 
 const host = createHost()
 const MB = 1024 * 1024
@@ -114,7 +116,7 @@ test('分类名称：左栏 10 大分类、右侧行标签、范围标题与分�
   const groupItems = view.items().filter((it) => String(it.props.id).startsWith('group-'))
   assert.ok(groupItems.length >= 4, '至少识别出视频 / 压缩包 / 其他 / 系统等分类')
   for (const it of groupItems) {
-    const meta = OFFICIAL_FILE_TYPE_GROUPS.find((g) => `group-${g.groupId}` === it.props.id)
+    const meta = getOfficialFileTypeGroups().find((g) => `group-${g.groupId}` === it.props.id)
     assert.equal(it.props.title, meta.name, `分类 ${it.props.id} 名称不能为空`)
   }
 
@@ -153,11 +155,15 @@ test('macOS 系统保护：/usr /bin /sbin /System /Library /private/etc /privat
   }
   assert.ok(!view.tree().props.filterBar.summaryText.includes('已勾选'), '受保护文件强行勾选无效')
 
-  // /usr/local、~/Library/Caches、/private/var/folders 下的用户文件仍可清理
+  // /usr/local、~/Library/Caches、/private/var/folders 下的用户文件仍可清理，但 Enter 主动作保持安全定位，删除退至次动作 + 快捷键
   for (const p of CLEANABLE_SYSTEM_SIBLINGS) {
     const row = findRow(view, p)
     assert.equal(row.props.checkable, true, `${p} 可勾选`)
-    assert.equal(actionTitles(view, row)[0], '移入废纸篓清理')
+    const rowActions = view.actions(row)
+    assert.equal(rowActions[0].props.title, '在访达中定位', `${p} 主动作必须为安全定位，防止 Enter 误删`)
+    const trashAct = rowActions.find((a) => a.props.title === '移入废纸篓清理')
+    assert.ok(trashAct, `${p} 次动作中应保留移入废纸篓清理`)
+    assert.ok(trashAct.props.shortcut, `${p} 移入废纸篓清理应配置快捷键`)
   }
 
   // 表头全选：只勾可清理文件
@@ -348,4 +354,70 @@ test('批量清理：进行中提示在成功、全部失败与宿主异常时�
   assert.equal(toastLog.at(-1).style, 'SUCCESS')
   assert.equal(subRows(view).some((r) => r.props.title === 'user-000.mp4'), false, '清理成功的文件从列表移除')
   view.unmount()
+})
+
+test('i18n en-US: alertBatchTitle 占位符与调用匹配无 {trash} 残留，renderGroupMarkdown 输出纯英文详情', async () => {
+  installMacHost({ userCount: 4 })
+  host.setLocale('en-US')
+  const view = await mountLoaded()
+  try {
+    // 1. 验证 buildGroupMarkdown（renderGroupMarkdown 的实现）在英文下输出完整英文且无中文/原始占位符残留
+    const mdAll = buildGroupMarkdown(
+      {
+        groupId: 1,
+        name: 'Videos',
+        shortName: 'Videos',
+        color: '#a855f7',
+        description: '',
+        fileCount: 2,
+        totalSizeBytes: 5 * 1024 * 1024,
+        sharePercent: 60,
+        topExtensions: [
+          { extension: '.mp4', groupId: 1, categoryLabel: 'Videos', fileCount: 2, totalSizeBytes: 5 * 1024 * 1024, sharePercent: 100 }
+        ]
+      },
+      'ALL'
+    )
+    assert.match(mdAll, /### Category Profile \(All Volumes\)/)
+    assert.match(mdAll, /### Top Extensions/)
+    assert.match(mdAll, /`\.mp4`/)
+    assert.ok(!/[\u4e00-\u9fa5]|\{[a-z]+\}/i.test(mdAll), `en-US group markdown should not contain CJK or raw placeholders: ${mdAll}`)
+
+    const mdDriveEmpty = buildGroupMarkdown(
+      { groupId: 1, name: 'Videos', shortName: 'Videos', color: '#a855f7', description: '', fileCount: 0, totalSizeBytes: 0, sharePercent: 0, topExtensions: [] },
+      'C:'
+    )
+    assert.match(mdDriveEmpty, /### Category Profile \(C: Volume\)/)
+    assert.match(mdDriveEmpty, /- No files/)
+    assert.ok(!/[\u4e00-\u9fa5]|\{[a-z]+\}/i.test(mdDriveEmpty))
+
+    // 2. 验证批量清理弹窗标题在 en-US 下正确插值 count，不含未替换的 {trash}
+    const targetRow = findRow(view, `${HOME}/Downloads/user-000.mp4`)
+    targetRow.props.onCheckChange(true)
+    await tick()
+    host.setConfirm(false)
+    const batchAction = view.actions(findRow(view, `${HOME}/Downloads/user-000.mp4`)).find((a) => a.props.title.startsWith('Clean '))
+    assert.ok(batchAction, 'en-US 下应存在英文批量清理动作')
+    await view.run(findRow(view, `${HOME}/Downloads/user-000.mp4`), batchAction.props.title)
+    const confirm = host.confirms.at(-1)
+    assert.equal(confirm.title, 'Clean up 1 checked file(s)?')
+    assert.ok(!/\{[a-z]+\}|[\u4e00-\u9fa5]/i.test(`${confirm.title} ${confirm.message}`), `en-US confirm dialog should not contain CJK or raw placeholders: ${JSON.stringify(confirm)}`)
+  } finally {
+    host.setLocale('zh-CN')
+    view.unmount()
+  }
+})
+
+test('非真实宿主环境初始列表为空，不残留硬编码假样本数据', async () => {
+  const saved = globalThis.__ztoolsElectron
+  delete globalThis.__ztoolsElectron
+  try {
+    const view = await mount(DiskAnalyzerCommand)
+    await tick(10)
+    assert.equal(subRows(view).length, 0, '非真实宿主不应展示假样本文件')
+    assert.doesNotMatch(view.text(), /Windows11_x64_zh-cn\.iso|init-disk-sample-1/)
+    view.unmount()
+  } finally {
+    globalThis.__ztoolsElectron = saved
+  }
 })

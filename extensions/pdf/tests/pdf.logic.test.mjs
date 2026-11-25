@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import * as pdf from '../dist/index.js'
+
+setRuntimeLocale('zh-CN')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -192,7 +195,7 @@ test('客户端失败如实记为失败；部分成功时按失败提示并给�
   const s2 = pdf.describeBatchResult(r2)
   assert.equal(s2.ok, false)
   assert.equal(s2.title, '导出失败（1 个）')
-  assert.match(s2.message, /IPC_CLOSED/)
+  assert.match(s2.message, /a\.pdf：PDF 处理失败/)
 })
 
 test('客户端报告成功却没有输出路径 / 文字为空白 / 文字为乱码：都不能算成功', async () => {
@@ -248,40 +251,68 @@ test('源路径不能推导输出位置或被安全规则拦截：记为失败�
   assert.equal(dllCalls().length, 0)
 })
 
-test('扫描：只列出 PDF，所在目录取文件真实目录，不估算页数；拿不到任何系统目录时报错', async () => {
-  const host = {
-    system_get_path: ({ name }) => (name === 'documents' ? 'D:\\Docs' : ''),
-    system_search_files: ({ query }) => {
-      if (query === 'dir:D:\\Docs') {
-        return {
-          files: [
-            { name: 'big.pdf', path: 'D:\\Docs\\Reports\\big.pdf', is_dir: false, size: 900000, mtime: 1700000000 },
-            { name: 'spec.docx', path: 'D:\\Docs\\spec.docx', is_dir: false, size: 800000, mtime: 1700000000 },
-            { name: 'photo.png', path: 'D:\\Docs\\photo.png', is_dir: false, size: 700000, mtime: 1700000000 },
-            { name: 'small.PDF', path: 'D:\\Docs\\small.PDF', is_dir: false, size: 1000, mtime: 1700000000 },
-            { name: 'empty.pdf', path: 'D:\\Docs\\empty.pdf', is_dir: false, size: 0, mtime: 1700000000 }
-          ]
-        }
-      }
-      return { files: [] }
-    }
-  }
-  const ws = await pdf.fetchRealPdfWorkspace(host)
-  assert.deepEqual(ws.files.map(f => f.name), ['big.pdf', 'small.PDF'])
-  assert.equal(ws.files[0].parentDir, 'D:\\Docs\\Reports')
-  assert.equal(ws.files[1].docType, 'pdf')
-  assert.equal('estimatedPages' in ws.files[0], false)
+test('导入规则与授权过期翻译：只允许 .pdf，拦截受保护路径，大小未知保留 null，授权失效友好提示', async () => {
+  assert.deepEqual(pdf.INPUT_PDF_EXTENSIONS, ['.pdf'])
+  assert.equal(pdf.PDF_IMPORT_SUPPORTED_TEXT, 'PDF')
+  assert.deepEqual(pdf.PDF_IMPORT_RULES.extensions, ['.pdf'])
 
-  await assert.rejects(
-    () => pdf.fetchRealPdfWorkspace({ system_get_path: () => { throw new Error('IPC down') } }),
-    /SYSTEM_PATHS_UNAVAILABLE/
-  )
+  const doc = pdf.toPdfDocItem({
+    path: 'D:\\Docs\\Reports\\big.PDF',
+    name: 'big.PDF',
+    parentDir: 'D:\\Docs\\Reports',
+    extension: '.pdf',
+    sizeBytes: null,
+    lastModifiedMs: null
+  })
+  assert.equal(doc.docType, 'pdf')
+  assert.equal(doc.parentDir, 'D:\\Docs\\Reports')
+  assert.equal(doc.sizeBytes, null)
+
+  // 授权过期时输出检查与原生调用都会翻译为用户可读的提示
+  const expiredExists = makeHost({
+    exists: () => ({ success: false, error: { code: 'EXPIRED', message: '路径未由当前窗口授权' } })
+  })
+  const rExpired1 = await pdf.runPdfTool('pdf-to-txt', [pdfFile('D:\\Docs\\a.pdf')], expiredExists.host)
+  assert.match(rExpired1.failed[0].error, /文件授权已过期或未授权/)
+
+  const expiredDll = makeHost({
+    dll: () => {
+      throw new Error('路径未由当前窗口授权')
+    }
+  })
+  const rExpired2 = await pdf.runPdfTool('pdf-to-txt', [pdfFile('D:\\Docs\\a.pdf')], expiredDll.host)
+  assert.match(rExpired2.failed[0].error, /文件授权已过期或未授权/)
 })
 
-test('源码不含需求编号、示例假数据与估算页数', () => {
+test('源码不含需求编号、示例假数据、估算页数与自动扫盘函数', () => {
   for (const file of ['logic.ts', 'index.ts']) {
     const src = fs.readFileSync(path.resolve(__dirname, '../src', file), 'utf8')
     assert.doesNotMatch(src, /PRD\s*\d/, file)
     assert.doesNotMatch(src, /estimatedPages|INITIAL_SAMPLE|D:\\\\Workspace/, file)
+    assert.doesNotMatch(src, /fetchRealPdfWorkspace|scanLocalPdfQueue|SCAN_EXT_REGEX|getRealSystemPath|scanRealDirectoryTree/, file)
+  }
+})
+
+test('i18n: PDF 限制说明与受保护路径报错通过函数动态跟随 locale 切换', () => {
+  assert.match(pdf.getForbiddenReason(), /目录穿越/)
+  assert.match(pdf.getUnavailableFeaturesNote(), /格式互转/)
+  assert.match(pdf.getTextExtractionLimitNote(), /未压缩/)
+
+  setRuntimeLocale('en-US')
+  try {
+    const texts = [
+      pdf.getForbiddenReason(),
+      pdf.getUnavailableFeaturesNote(),
+      pdf.getTextExtractionLimitNote(),
+      ...pdf.getPdfToolboxModes().map(m => `${m.title} ${m.subtitle} ${m.tag} ${m.unsupportedReason || ''}`)
+    ]
+    for (const txt of texts) {
+      assert.ok(txt.length > 0 && !/[\u4e00-\u9fa5]/.test(txt), `en-US pdf text should not contain CJK: ${txt}`)
+    }
+    assert.match(pdf.getForbiddenReason(), /directory traversal/i)
+    assert.match(pdf.getUnavailableFeaturesNote(), /Format conversion/i)
+    assert.match(pdf.getTextExtractionLimitNote(), /uncompressed plain text/i)
+  } finally {
+    setRuntimeLocale('zh-CN')
   }
 })

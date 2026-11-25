@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
-import Command, { BusinessForm, commands, inspectImageHeader, renderWatermarkOnImage, pickImage, outputImage, readClipboardImage, resolveTemplate } from '../dist/index.js'
+import Command, { BusinessForm, commands, getPresetWatermarkTemplates, inspectImageHeader, renderWatermarkOnImage, pickImage, outputImage, readClipboardImage, resolveTemplate } from '../dist/index.js'
 
 test('初始无假图片；三号布局只有选图和读取剪贴板两个全局动作', async () => {
   const host = createHost(), view = await mount(Command, host)
@@ -96,4 +97,91 @@ test('未选图时 Enter 主动作：工作台为“选择原图…”，剪贴�
   const fast = await mount(commands['id-watermark-clipboard-fast'], host2)
   try { await tick(); assert.deepEqual(fast.actions(null).map(a => a.props.title), ['读取剪贴板图片', '选择原图…']) }
   finally { fast.unmount() }
+})
+
+test('支持通过 plugin_files_dropped（旧宿主回退）拖入原图文件加载，非支持格式提示错误', async () => {
+  const listeners = new Map()
+  const host = createHost()
+  const previousBitmap = globalThis.createImageBitmap, previousCanvas = globalThis.OffscreenCanvas
+  globalThis.createImageBitmap = async () => ({ width: 1, height: 1, close() {} })
+  globalThis.OffscreenCanvas = class {}
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const pngBytesLen = Buffer.from(pngB64, 'base64').length
+  host.ipc.filesystem_read_file = async () => ({ success: true, content: pngB64, size: pngBytesLen })
+  const view = await mount(Command, host)
+  try {
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/doc.pdf'] } })
+    await tick()
+    assert.match(host.lastToast().title, /JPG、PNG 或 WebP/)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/idcard.png'] } })
+    await tick()
+    assert.equal(view.items().length, 1)
+    assert.equal(view.items()[0].props.title, 'idcard.png')
+  } finally {
+    view.unmount()
+    globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+    delete globalThis.window.ztools
+    globalThis.createImageBitmap = previousBitmap
+    globalThis.OffscreenCanvas = previousCanvas
+  }
+})
+
+test('支持通过 createCompatFileInputProps 粘贴图片文件或截图位图加载为底图', async () => {
+  const host = createHost()
+  const previousBitmap = globalThis.createImageBitmap, previousCanvas = globalThis.OffscreenCanvas
+  globalThis.createImageBitmap = async () => ({ width: 1, height: 1, close() {} })
+  globalThis.OffscreenCanvas = class {}
+  const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const pngBytesLen = Buffer.from(pngB64, 'base64').length
+  host.ipc.filesystem_read_file = async () => ({ success: true, content: pngB64, size: pngBytesLen })
+  const view = await mount(Command, host)
+  try {
+    await view.pasteFiles(['/Users/me/doc.pdf'])
+    assert.equal(host.lastToast().title, '文件格式不匹配')
+
+    await view.pasteFiles(['/Users/me/pasted_id.png'])
+    await tick()
+    assert.equal(view.items().length, 1)
+    assert.equal(view.items()[0].props.title, 'pasted_id.png')
+  } finally {
+    view.unmount()
+    globalThis.createImageBitmap = previousBitmap
+    globalThis.OffscreenCanvas = previousCanvas
+  }
+})
+
+test('i18n: tplRentalRaw 与 tplEnterpriseRaw 在中英文下占位符均为 {business}/{date} 并正确插值', () => {
+  try {
+    setRuntimeLocale('zh-CN')
+    const zhTemplates = getPresetWatermarkTemplates('某公司测试', '2026.10.26')
+    const zhRental = zhTemplates.find(item => item.id === 'tpl-rental')
+    const zhEnterprise = zhTemplates.find(item => item.id === 'tpl-enterprise')
+    assert.match(zhRental.rawText, /\{business\}/)
+    assert.match(zhRental.rawText, /\{date\}/)
+    assert.match(zhEnterprise.rawText, /\{business\}/)
+    assert.match(zhEnterprise.rawText, /\{date\}/)
+    assert.equal(zhRental.resolvedText, '仅供 某公司测试 租赁备案使用 挪作他用承担法律责任 2026.10.26')
+    assert.equal(zhEnterprise.resolvedText, '仅供办理 某公司测试 资质审查使用 复制伪造无效 2026.10.26')
+
+    setRuntimeLocale('en-US')
+    const enTemplates = getPresetWatermarkTemplates('Acme Corp', '2026.10.26')
+    const enRental = enTemplates.find(item => item.id === 'tpl-rental')
+    const enEnterprise = enTemplates.find(item => item.id === 'tpl-enterprise')
+    assert.equal(enRental.resolvedText, 'FOR Acme Corp LEASE REGISTRATION ONLY 2026.10.26')
+    assert.equal(enEnterprise.resolvedText, 'FOR Acme Corp QUALIFICATION REVIEW ONLY 2026.10.26')
+    assert.ok(!/[\u4e00-\u9fa5]|\{/.test(enRental.resolvedText + enEnterprise.resolvedText))
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })

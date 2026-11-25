@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createHost, mount, mountPushed } from '../../shared/test-harness.mjs'
-import QuicklinksCommand, { commands, getQuicklinks, saveQuicklinks, DEFAULT_QUICKLINKS } from '../dist/index.js'
+import QuicklinksCommand, { commands, getQuicklinks, saveQuicklinks, getDefaultQuicklinks } from '../dist/index.js'
 
 const key = 'ztools:quicklinks:data'
 function setup() {
@@ -76,7 +76,7 @@ test('搜索与网址组快捷入口按类型筛选，切换类型清理旧查�
       assert.ok(view.items().length > 0)
       await view.search('无结果'); await view.dropdown('all')
       assert.equal(view.tree().props.searchText, '')
-      assert.equal(view.items().length, DEFAULT_QUICKLINKS.length)
+      assert.equal(view.items().length, getDefaultQuicklinks().length)
     } finally { view.unmount() }
   }
 })
@@ -217,20 +217,21 @@ test('恢复默认需确认；保存失败提示失败且不显示成功', async
     assert.equal(data.get(key), before); assert.equal(host.lastToast().style, 'FAILURE')
     assert.deepEqual(view.items().map((i) => i.props.id), ['mine'])
     fault.write = false; await reset(); await new Promise((r) => setTimeout(r, 0))
-    assert.equal(view.items().length, DEFAULT_QUICKLINKS.length); assert.equal(host.lastToast().style, 'SUCCESS')
+    assert.equal(view.items().length, getDefaultQuicklinks().length); assert.equal(host.lastToast().style, 'SUCCESS')
   } finally { view.unmount() }
 })
 
 test('默认预设不含维护者内部网址；搜索预设与命令说明列出的平台一致', async () => {
-  const text = JSON.stringify(DEFAULT_QUICKLINKS)
+  const defaults = getDefaultQuicklinks()
+  const text = JSON.stringify(defaults)
   assert.doesNotMatch(text, /ZToolsTeam|ztools\.cn|catalog\.json/i)
   const manifest = JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../plugin.json', import.meta.url), 'utf8'))
   const explain = manifest.features.find((f) => f.code === 'quicklinks-search-engines').explain
-  const titles = DEFAULT_QUICKLINKS.filter((i) => i.category === 'search').map((i) => i.title).join(' ')
+  const titles = defaults.filter((i) => i.category === 'search').map((i) => i.title).join(' ')
   for (const [mention, title] of [['知乎', '知乎'], ['GitHub', 'GitHub'], ['B站', '哔哩哔哩'], ['谷歌', '谷歌'], ['小红书', '小红书']]) {
     if (explain.includes(mention)) assert.match(titles, new RegExp(title), `说明提到 ${mention} 但没有对应预设`)
   }
-  for (const item of DEFAULT_QUICKLINKS) assert.doesNotMatch(item.title, /\([A-Za-z]/, item.title)
+  for (const item of defaults) assert.doesNotMatch(item.title, /\([A-Za-z]/, item.title)
 })
 
 test('已有用户数据不会被新的默认预设改写', async () => {
@@ -268,5 +269,49 @@ test('新建表单可创建网址组：逐行校验，保存后归入网址组�
     const { launchQuicklink } = await import('../dist/quicklinks-storage.js')
     await launchQuicklink(group, '', (u) => { opened.push(u) })
     assert.deepEqual(opened, group.urls)
+  } finally { view.unmount() }
+})
+
+test('回归：主视图支持导出 JSON 到剪贴板与挂载 ImportQuicklinksForm 导入 JSON 闭环', async () => {
+  const { host } = setup()
+  const view = await mount(QuicklinksCommand)
+  try {
+    // 1. 导出全部为 JSON
+    await view.run(view.item('ql-1'), '导出全部为 JSON')
+    const exported = JSON.parse(host.clipboard.text)
+    assert.ok(Array.isArray(exported) && exported.length === getDefaultQuicklinks().length)
+    assert.equal(host.lastToast().style, 'SUCCESS')
+
+    // 2. 通过主视图动作打开 ImportQuicklinksForm 导入 JSON
+    await view.run(view.item('ql-1'), '导入 JSON')
+    const form = await mountPushed(host)
+    try {
+      assert.equal(form.tree().type, 'Form')
+      // 非法 JSON 拒绝导入且不关闭表单
+      await form.fill('json', '{broken')
+      await form.run(null, '确认导入')
+      assert.equal(host.lastToast().style, 'FAILURE')
+      assert.equal(host.pushed.length, 1)
+
+      // 合法 JSON（含单个链接和网址组）导入并合并到现有列表
+      const toImport = [
+        { id: 'imp-1', title: '导入单链', link: 'https://example.org/?q={query}', alias: 'imp' },
+        { id: 'imp-grp', title: '导入网址组', link: 'https://a.example/', isGroup: true, urls: ['https://a.example/', 'https://b.example/'] }
+      ]
+      await form.fill('json', JSON.stringify(toImport))
+      await form.run(null, '确认导入')
+      assert.equal(host.pushed.length, 0)
+      assert.equal(host.lastToast().style, 'SUCCESS')
+    } finally { form.unmount() }
+
+    const all = await getQuicklinks()
+    const importedSingle = all.find((i) => i.id === 'imp-1')
+    const importedGroup = all.find((i) => i.id === 'imp-grp')
+    assert.equal(importedSingle?.category, 'search')
+    assert.equal(importedGroup?.isGroup, true)
+    assert.equal(importedGroup?.category, 'group')
+    assert.deepEqual(importedGroup?.urls, ['https://a.example/', 'https://b.example/'])
+    assert.ok(view.item('imp-1'))
+    assert.ok(view.item('imp-grp'))
   } finally { view.unmount() }
 })

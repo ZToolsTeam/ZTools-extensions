@@ -118,8 +118,13 @@ test('宿主结果不完整、异常和旧客户端均失败，不回退旧 DLL'
   host.ipc.folder_sync = async () => ({ success: true })
   await assert.rejects(compareFolderTrees(options, new AbortController().signal), /完整/)
   await assert.rejects(executeFolderSync(plan.planId, ['x'], new AbortController().signal), /完整/)
+  const savedMethods = globalThis.__ztoolsElectron.transport.methods
   globalThis.__ztoolsElectron.transport.methods = {}
-  await assert.rejects(compareFolderTrees(options, new AbortController().signal), /升级/)
+  try {
+    await assert.rejects(compareFolderTrees(options, new AbortController().signal), /升级/)
+  } finally {
+    globalThis.__ztoolsElectron.transport.methods = savedMethods
+  }
 })
 test('镜像模式只在 macOS 显示，Windows 不提供宿主不支持的选项', async () => {
   const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
@@ -133,5 +138,52 @@ test('镜像模式只在 macOS 显示，Windows 不提供宿主不支持的选�
     assert.deepEqual(await modes('MacIntel'), ['incremental', 'two-way', 'mirror'])
   } finally {
     if (descriptor) Object.defineProperty(globalThis, 'navigator', descriptor); else delete globalThis.navigator
+  }
+})
+test('Ctrl+V 粘贴文件夹：支持单目录依次填充源与目标、按 targetFieldId 定向填充及双目录同时粘贴', async () => {
+  const view = await open()
+  const fieldVal = id => view.tree().props.workbenchPanel.fields.find(f => f.id === id).value
+  await view.pasteFiles(['/paste/src-one'])
+  assert.equal(fieldVal('source'), '/paste/src-one')
+  assert.equal(fieldVal('target'), '未选择')
+
+  await view.pasteFiles(['/paste/dst-one'])
+  assert.equal(fieldVal('source'), '/paste/src-one')
+  assert.equal(fieldVal('target'), '/paste/dst-one')
+
+  await view.pasteFiles(['/paste/dst-override'], { targetFieldId: 'target' })
+  assert.equal(fieldVal('target'), '/paste/dst-override')
+
+  await view.pasteFiles(['/paste/src-override'], { targetFieldId: 'source' })
+  assert.equal(fieldVal('source'), '/paste/src-override')
+
+  await view.pasteFiles(['/paste/batch-src', '/paste/batch-dst'])
+  assert.equal(fieldVal('source'), '/paste/batch-src')
+  assert.equal(fieldVal('target'), '/paste/batch-dst')
+})
+test('执行同步前强制二次确认（含同步方向与新增/覆盖/删除计数），用户取消绝不执行且保留计划', async () => {
+  const view = await open(); await compare(view)
+  // 额外勾选删除项 old.txt，验证新增/覆盖/删除计数准确
+  rows(view)[1].props.onCheckChange(true); await tick()
+  host.setConfirm(false)
+  await primary(view); await tick()
+  assert.equal(host.confirms.length, 1)
+  assert.match(host.confirms[0].title, /确认执行目录同步（共 2 项）/)
+  assert.match(host.confirms[0].message, /\/fixture\/source → \/fixture\/target/)
+  assert.match(host.confirms[0].message, /新增 1 项 · 覆盖 0 项 · 删除（移入废纸篓） 1 项/)
+  assert.equal(host.ipcCalls.filter(([m, p]) => m === 'folder_sync' && p.action === 'execute').length, 0, '取消确认后绝不能调用 execute')
+  assert.equal(rows(view).length, 3, '取消确认后保留当前比对清单')
+
+  // 英文 i18n 下确认弹窗完整无中文与占位符残留
+  host.setLocale('en-US')
+  try {
+    await tick()
+    await primary(view); await tick()
+    const enConfirm = host.confirms.at(-1)
+    assert.match(enConfirm.title, /Confirm Folder Sync \(2 item\(s\)\)\?/)
+    assert.match(enConfirm.message, /Add 1 · Overwrite 0 · Delete \(Trash\) 1/)
+    assert.ok(!/[\u4e00-\u9fa5]|\{[a-z]+\}/i.test(`${enConfirm.title} ${enConfirm.message}`))
+  } finally {
+    host.setLocale('zh-CN')
   }
 })

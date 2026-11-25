@@ -27,10 +27,11 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { scanPluginSecurity } from './scan-plugin-security.mjs'
+import { checkSinglePluginI18n } from './check-i18n-public.mjs'
 import { describePlatforms, getManifestPlatforms } from '../packages/ztools-plugins-spec/src/validator.js'
 
 const SHARED_DIR = 'shared'
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'create-plugin', SHARED_DIR, 'scripts', 'packages'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', SHARED_DIR, 'scripts', 'packages'])
 
 /** 比较 x.y.z（忽略预发布后缀）；无法解析返回 null */
 export function compareVersions(a, b) {
@@ -236,6 +237,19 @@ export async function verifyChangedPlugins({ root = process.cwd(), base = null, 
       r.errors.push(`[${v.rule}] ${v.file}:${v.line} ${v.message}`)
     }
     if (scan.requiresTwoManReview) r.notes.push(`需重点审核: ${scan.twoManReviewReasons.join('; ')}`)
+
+    // 多语言基础完整性校验（仅对已含 i18n 或 src/i18n.ts 的插件，或官方插件执行严格检查）
+    const hasI18nConfig = Boolean(manifest.i18n) || fs.existsSync(path.join(root, dir, 'src', 'i18n.ts'))
+    if (hasI18nConfig) {
+      const i18nCheck = checkSinglePluginI18n(path.join(root, dir), {
+        requireI18nTs: fs.existsSync(path.join(root, dir, 'src', 'i18n.ts')),
+        checkEnUsNoChinese: true,
+        checkScreenshots: true
+      })
+      for (const err of i18nCheck.errors) {
+        r.errors.push(`[i18n/${err.code}] ${err.message}`)
+      }
+    }
 
     const testsDir = path.join(root, dir, 'tests')
     const tests = fs.existsSync(testsDir) ? fs.readdirSync(testsDir).filter((f) => f.endsWith('.test.mjs')).map((f) => `tests/${f}`) : []

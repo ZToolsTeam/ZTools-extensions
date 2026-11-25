@@ -21,7 +21,17 @@ import crypto from 'node:crypto'
 import zlib from 'node:zlib'
 import { fileURLToPath } from 'node:url'
 import { scanPluginSecurity } from './scan-plugin-security.mjs'
-import { getManifestPlatforms, validateStoreCatalog, OFFICIAL_PLUGIN_IDS, inspectScreenshotFile, SCREENSHOT_PATH_REGEX, SCREENSHOT_LIMITS } from '../packages/ztools-plugins-spec/src/validator.js'
+import {
+  getManifestPlatforms,
+  validateStoreCatalog,
+  OFFICIAL_PLUGIN_IDS,
+  inspectScreenshotFile,
+  SCREENSHOT_PATH_REGEX,
+  SCREENSHOT_LIMITS,
+  LOCALE_TAG_REGEX,
+  normalizeCategoryId,
+  resolveCategoryLabel
+} from '../packages/ztools-plugins-spec/src/validator.js'
 import { resolvePluginMinAppVersion } from '../packages/ztools-plugins-spec/src/host-requirements.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -133,50 +143,194 @@ export function createZipArchiveFromDirectory(sourceDir, filterFn = null) {
 }
 
 /**
- * 读取 plugin.json 声明的截图并逐张复核（与清单校验同一套规则：screenshots/ 下的 PNG、≤ 1 MB、尺寸范围）。
+ * 读取 plugin.json 声明的截图（含 i18n.<locale>.screenshots）并逐张复核
+ * （与清单校验同一套规则：screenshots/ 下的 PNG、≤ 1 MB、尺寸范围）。
  * 跳过扫描（--skip-scan）时也要复核：目录里的截图地址会直接展示在客户端与官网。
- * @returns {{ errors: string[], items: Array<{ index: number, path: string, title: string, width: number, height: number, data: Buffer, hash: string }> }}
+ * @returns {{
+ *   errors: string[],
+ *   items: Array<{ index: number, path: string, title: string, width: number, height: number, data: Buffer, hash: string }>,
+ *   i18nItems: Record<string, Array<{ index: number, path: string, title: string, width: number, height: number, data: Buffer, hash: string }>>
+ * }}
  */
 export function collectPluginScreenshots(pluginDir, manifest) {
-  const list = manifest?.screenshots
-  if (list === undefined) return { errors: [], items: [] }
-  if (!Array.isArray(list)) return { errors: ['screenshots 必须为数组'], items: [] }
-  if (list.length > SCREENSHOT_LIMITS.maxCount) return { errors: [`screenshots 最多 ${SCREENSHOT_LIMITS.maxCount} 张`], items: [] }
   const errors = []
   const items = []
-  const seen = new Set()
-  for (const [index, shot] of list.entries()) {
-    const rel = shot?.path
-    if (typeof rel !== 'string' || !SCREENSHOT_PATH_REGEX.test(rel) || seen.has(rel)) {
-      errors.push(`screenshots[${index}].path 不合法或重复: ${JSON.stringify(rel)}`)
-      continue
+  const i18nItems = {}
+
+  function collectList(list, label, pathKey, target) {
+    if (list === undefined) return
+    if (!Array.isArray(list)) {
+      errors.push(`${label} 必须为数组`)
+      return
     }
-    seen.add(rel)
-    const info = inspectScreenshotFile(pluginDir, rel)
-    if (!info.ok) {
-      errors.push(info.error)
-      continue
+    if (list.length > SCREENSHOT_LIMITS.maxCount) {
+      errors.push(`${label} 最多 ${SCREENSHOT_LIMITS.maxCount} 张`)
+      return
     }
-    const data = fs.readFileSync(path.join(pluginDir, rel))
-    items.push({
-      index,
-      path: rel,
-      title: typeof shot.title === 'string' ? shot.title.trim() : '',
-      width: info.width,
-      height: info.height,
-      data,
-      hash: crypto.createHash('sha256').update(data).digest('hex')
-    })
+    const seen = new Set()
+    for (const [index, shot] of list.entries()) {
+      const rel = pathKey === 'file' ? (shot?.file ?? shot?.path) : shot?.path
+      if (typeof rel !== 'string' || !SCREENSHOT_PATH_REGEX.test(rel) || seen.has(rel)) {
+        errors.push(`${label}[${index}].${pathKey} 不合法或重复: ${JSON.stringify(rel)}`)
+        continue
+      }
+      seen.add(rel)
+      const info = inspectScreenshotFile(pluginDir, rel)
+      if (!info.ok) {
+        errors.push(`${label === 'screenshots' ? '' : `${label}[${index}]: `}${info.error}`)
+        continue
+      }
+      const data = fs.readFileSync(path.join(pluginDir, rel))
+      target.push({
+        index,
+        path: rel,
+        title: typeof shot.title === 'string' ? shot.title.trim() : '',
+        width: info.width,
+        height: info.height,
+        data,
+        hash: crypto.createHash('sha256').update(data).digest('hex')
+      })
+    }
   }
-  return { errors, items }
+
+  collectList(manifest?.screenshots, 'screenshots', 'path', items)
+
+  if (manifest?.i18n && typeof manifest.i18n === 'object' && !Array.isArray(manifest.i18n)) {
+    for (const [locale, entry] of Object.entries(manifest.i18n)) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+      if (entry.screenshots === undefined) continue
+      if (!LOCALE_TAG_REGEX.test(locale)) {
+        errors.push(`i18n["${locale}"] 语言标签格式不合法`)
+        continue
+      }
+      const localeShots = []
+      collectList(entry.screenshots, `i18n["${locale}"].screenshots`, 'file', localeShots)
+      if (localeShots.length > 0) {
+        i18nItems[locale] = localeShots
+      }
+    }
+  }
+
+  return { errors, items, i18nItems }
 }
 
 /**
- * 截图在 CDN 上的相对路径（相对插件目录 <作者>/<id>/）：screenshots/<版本>/<序号>-<内容哈希前 8 位>.png。
+ * 截图在 CDN 上的相对路径（相对插件目录 <作者>/<id>/）：
+ * - 默认截图：screenshots/<版本>/<序号>-<内容哈希前 8 位>.png
+ * - 多语言截图：screenshots/<版本>/<locale>/<序号>-<内容哈希前 8 位>.png
  * 带版本号与内容哈希，与安装包一样长期强缓存；同一版本里换了图也会得到新地址，不会被旧缓存挡住。
  */
-export function screenshotCdnName(version, index, hash) {
-  return `screenshots/${version}/${String(index + 1).padStart(2, '0')}-${hash.slice(0, 8)}.png`
+export function screenshotCdnName(version, index, hash, locale = null) {
+  const filename = `${String(index + 1).padStart(2, '0')}-${hash.slice(0, 8)}.png`
+  if (locale) {
+    return `screenshots/${version}/${locale}/${filename}`
+  }
+  return `screenshots/${version}/${filename}`
+}
+
+/**
+ * 解析目录中的分类字段：
+ * - category：保留中文标准分类数组（向后兼容老客户端）
+ * - categoryId：标准英文 slug（支持单字符串或数组，优先使用 manifest.categoryId，否则由 category 归一化推导）
+ */
+export function resolveCatalogCategories(manifest) {
+  const rawCategoryId = manifest?.categoryId
+  const rawCategory = manifest?.category
+
+  const explicitIdList = typeof rawCategoryId === 'string'
+    ? [rawCategoryId]
+    : (Array.isArray(rawCategoryId) ? rawCategoryId : [])
+
+  const normalizedExplicitIds = Array.from(
+    new Set(explicitIdList.map((v) => normalizeCategoryId(v)).filter(Boolean))
+  )
+
+  const rawCategoryList = Array.isArray(rawCategory)
+    ? rawCategory
+    : (typeof rawCategory === 'string' && rawCategory.trim() ? [rawCategory] : [])
+
+  const normalizedFromCategory = Array.from(
+    new Set(rawCategoryList.map((v) => normalizeCategoryId(v)).filter(Boolean))
+  )
+
+  const slugList = normalizedExplicitIds.length > 0 ? normalizedExplicitIds : normalizedFromCategory
+
+  const category = rawCategoryList.length > 0
+    ? Array.from(
+      new Set(
+        rawCategoryList
+          .map((cat) => resolveCategoryLabel(cat) || (typeof cat === 'string' ? cat.trim() : ''))
+          .filter(Boolean)
+      )
+    )
+    : slugList.map((id) => resolveCategoryLabel(id)).filter(Boolean)
+
+  let categoryId
+  if (typeof rawCategoryId === 'string' && slugList.length === 1) {
+    categoryId = slugList[0]
+  } else if (slugList.length > 0) {
+    categoryId = slugList
+  }
+
+  return { category, categoryId }
+}
+
+/**
+ * 构建写入 catalog.json / plugins.json 的 i18n 对象，透传合法多语言文本并替换为 CDN 截图 URL
+ */
+export function buildCatalogI18n(manifest, i18nScreenshotsByLocale = {}, { revokedOnly = false } = {}) {
+  const rawI18n = manifest?.i18n
+  if (!rawI18n || typeof rawI18n !== 'object' || Array.isArray(rawI18n)) {
+    return undefined
+  }
+  const result = {}
+  for (const [locale, entry] of Object.entries(rawI18n)) {
+    if (!LOCALE_TAG_REGEX.test(locale)) continue
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const out = {}
+    if (typeof entry.name === 'string' && entry.name.trim()) {
+      out.name = entry.name.trim()
+    }
+    if (typeof entry.description === 'string' && entry.description.trim()) {
+      out.description = entry.description.trim()
+    }
+    if (typeof entry.revokedReason === 'string' && entry.revokedReason.trim()) {
+      out.revokedReason = entry.revokedReason.trim()
+    }
+    if (!revokedOnly) {
+      if (Array.isArray(entry.keywords)) {
+        const kws = entry.keywords.filter((k) => typeof k === 'string' && k.trim()).map((k) => k.trim())
+        if (kws.length > 0) out.keywords = kws
+      }
+      if (entry.features && typeof entry.features === 'object' && !Array.isArray(entry.features)) {
+        const featuresOut = {}
+        for (const [code, feat] of Object.entries(entry.features)) {
+          if (!code.trim() || !feat || typeof feat !== 'object' || Array.isArray(feat)) continue
+          const featOut = {}
+          if (typeof feat.explain === 'string' && feat.explain.trim()) {
+            featOut.explain = feat.explain.trim()
+          }
+          if (Array.isArray(feat.cmds)) {
+            featOut.cmds = feat.cmds
+          }
+          if (Object.keys(featOut).length > 0) {
+            featuresOut[code] = featOut
+          }
+        }
+        if (Object.keys(featuresOut).length > 0) {
+          out.features = featuresOut
+        }
+      }
+      const localeShots = i18nScreenshotsByLocale[locale]
+      if (Array.isArray(localeShots) && localeShots.length > 0) {
+        out.screenshots = localeShots
+      }
+    }
+    if (Object.keys(out).length > 0) {
+      result[locale] = out
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined
 }
 
 /**
@@ -326,6 +480,10 @@ export async function buildPluginsRelease(options = {}) {
       const reason = typeof manifest.revokedReason === 'string' && manifest.revokedReason.trim()
         ? manifest.revokedReason.trim()
         : '该插件已被官方下架禁用'
+      const defaultLocale = typeof manifest.defaultLocale === 'string' && LOCALE_TAG_REGEX.test(manifest.defaultLocale)
+        ? manifest.defaultLocale
+        : undefined
+      const revokedI18n = buildCatalogI18n(manifest, {}, { revokedOnly: true })
       console.warn(`⛔ [${pluginId}] 已下架，只写入下架记录: ${reason}`)
       catalogList.push({
         id: manifest.id || pluginId,
@@ -334,9 +492,12 @@ export async function buildPluginsRelease(options = {}) {
         version,
         description: manifest.description || '',
         author: manifest.author,
+        ...(defaultLocale ? { defaultLocale } : {}),
         revoked: true,
+        revokedCode: 'OFFICIAL_REVOKED',
         revokedReason: reason,
         revoked_reason: reason,
+        ...(revokedI18n ? { i18n: revokedI18n } : {}),
         publishedAt: new Date().toISOString()
       })
       continue
@@ -415,7 +576,7 @@ export async function buildPluginsRelease(options = {}) {
       iconUrl = `${cdnBaseUrl}/${relPrefix}/${iconTargetName}`
     }
 
-    // 5. 截图随版本上传到 CDN（不进安装包），目录里只写地址、说明与尺寸
+    // 5. 截图随版本上传到 CDN（不进安装包），目录里只写地址、说明与尺寸（同步覆盖多语言截图）
     const screenshots = shotResult.items.map((shot) => {
       const cdnName = screenshotCdnName(version, shot.index, shot.hash)
       const target = path.join(pluginOutputDir, ...cdnName.split('/'))
@@ -423,7 +584,21 @@ export async function buildPluginsRelease(options = {}) {
       fs.writeFileSync(target, shot.data)
       return { url: `${cdnBaseUrl}/${relPrefix}/${cdnName}`, title: shot.title, width: shot.width, height: shot.height }
     })
-    if (screenshots.length) console.log(`🖼  已附带 ${screenshots.length} 张截图`)
+    const i18nScreenshotsByLocale = {}
+    let i18nScreenshotCount = 0
+    for (const [locale, localeShots] of Object.entries(shotResult.i18nItems || {})) {
+      i18nScreenshotsByLocale[locale] = localeShots.map((shot) => {
+        const cdnName = screenshotCdnName(version, shot.index, shot.hash, locale)
+        const target = path.join(pluginOutputDir, ...cdnName.split('/'))
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.writeFileSync(target, shot.data)
+        i18nScreenshotCount++
+        return { url: `${cdnBaseUrl}/${relPrefix}/${cdnName}`, title: shot.title, width: shot.width, height: shot.height }
+      })
+    }
+    if (screenshots.length || i18nScreenshotCount) {
+      console.log(`🖼  已附带 ${screenshots.length} 张默认截图${i18nScreenshotCount ? `、${i18nScreenshotCount} 张多语言截图` : ''}`)
+    }
 
     const twoManReviewStatus = (scanResult && scanResult.requiresTwoManReview)
       ? { required: true, reasons: scanResult.twoManReviewReasons, status: 'pending' }
@@ -438,6 +613,12 @@ export async function buildPluginsRelease(options = {}) {
       console.log(`ℹ 最低客户端版本 ${minAppVersion}${requiredHostApis.length ? `（用到 ${requiredHostApis.join('、')}）` : ''}`)
     }
 
+    const { category, categoryId } = resolveCatalogCategories(manifest)
+    const defaultLocale = typeof manifest.defaultLocale === 'string' && LOCALE_TAG_REGEX.test(manifest.defaultLocale)
+      ? manifest.defaultLocale
+      : undefined
+    const catalogI18n = buildCatalogI18n(manifest, i18nScreenshotsByLocale)
+
     const pluginMetadata = {
       id: manifest.id,
       pluginId: manifest.id,
@@ -445,7 +626,10 @@ export async function buildPluginsRelease(options = {}) {
       version: manifest.version,
       description: manifest.description,
       author: manifest.author,
-      category: manifest.category || [],
+      // 保留中文分类数组兼容老客户端；新客户端优先按标准英文 slug categoryId 归类与本地化渲染
+      category,
+      ...(categoryId !== undefined ? { categoryId } : {}),
+      ...(defaultLocale ? { defaultLocale } : {}),
       keywords: manifest.keywords || [],
       permissions: manifest.permissions || [],
       icon: iconUrl,
@@ -459,11 +643,14 @@ export async function buildPluginsRelease(options = {}) {
       // 便于客户端与市场直接展示：'windows' / 'macos' 的子集
       platforms: getManifestPlatforms(manifest),
       nativeComponents: Array.isArray(manifest.nativeComponents) ? manifest.nativeComponents : [],
+      // 新客户端应直接依据 is_official 布尔值按当前语言本地化渲染官方徽章；
+      // official_badge 仅保留用于向后兼容老客户端，不应被新客户端作为文案真源依赖
       is_official: isOfficial,
       official_badge: isOfficial ? '官方自营' : '',
       window: manifest.window,
       features: manifest.features || [],
       ...(screenshots.length ? { screenshots } : {}),
+      ...(catalogI18n ? { i18n: catalogI18n } : {}),
       downloadUrl,
       sha256,
       checksum: sha256,

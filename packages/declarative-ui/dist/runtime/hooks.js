@@ -1,4 +1,5 @@
 import { currentInstance, isEvaluatingChildElement } from "./context.js";
+import { DEFAULT_LOCALE, createTranslator, getLocale, onLocaleChange, resolveLocale } from "./locale.js";
 function areDepsEqual(prevDeps, nextDeps) {
     if (!prevDeps || !nextDeps)
         return false;
@@ -35,11 +36,16 @@ function useStateSlot(initial) {
         hooks[index] = {
             type: "state",
             value: initial(),
-            setter
+            setter: setter
         };
     }
     const currentHook = hooks[index];
-    return { value: currentHook.value, setter: currentHook.setter, index, created };
+    return {
+        value: currentHook.value,
+        setter: currentHook.setter,
+        index,
+        created
+    };
 }
 /**
  * 声明式微状态 Hook: useState
@@ -182,4 +188,96 @@ export function useRef(initialValue) {
         return ref;
     }
     return hooks[index].value;
+}
+/**
+ * 声明式语言 Hook: useLocale
+ * 订阅运行时语言变更，语言切换时自动触发组件重绘，卸载时成对清理监听器。
+ */
+export function useLocale() {
+    const [locale, setLocale] = useState(() => getLocale());
+    useEffect(() => {
+        const latest = getLocale();
+        setLocale((prev) => (prev === latest ? prev : latest));
+        return onLocaleChange((nextLocale) => {
+            setLocale(nextLocale);
+        });
+    }, []);
+    return locale;
+}
+const INTL_FORMATTER_CACHE_LIMIT = 64;
+const numberFormatCache = new Map();
+const dateTimeFormatCache = new Map();
+function buildIntlCacheKey(locale, options) {
+    if (!options)
+        return locale;
+    const keys = Object.keys(options).sort();
+    if (keys.length === 0)
+        return locale;
+    let key = locale;
+    for (const k of keys) {
+        const v = options[k];
+        if (v !== undefined) {
+            key += `|${k}=${String(v)}`;
+        }
+    }
+    return key;
+}
+function getCachedNumberFormat(locale, formatOptions) {
+    const key = buildIntlCacheKey(locale, formatOptions);
+    let formatter = numberFormatCache.get(key);
+    if (!formatter) {
+        formatter = new Intl.NumberFormat(locale, formatOptions);
+        if (numberFormatCache.size >= INTL_FORMATTER_CACHE_LIMIT) {
+            const oldestKey = numberFormatCache.keys().next().value;
+            if (oldestKey !== undefined)
+                numberFormatCache.delete(oldestKey);
+        }
+        numberFormatCache.set(key, formatter);
+    }
+    return formatter;
+}
+function getCachedDateTimeFormat(locale, formatOptions) {
+    const key = buildIntlCacheKey(locale, formatOptions);
+    let formatter = dateTimeFormatCache.get(key);
+    if (!formatter) {
+        formatter = new Intl.DateTimeFormat(locale, formatOptions);
+        if (dateTimeFormatCache.size >= INTL_FORMATTER_CACHE_LIMIT) {
+            const oldestKey = dateTimeFormatCache.keys().next().value;
+            if (oldestKey !== undefined)
+                dateTimeFormatCache.delete(oldestKey);
+        }
+        dateTimeFormatCache.set(key, formatter);
+    }
+    return formatter;
+}
+/**
+ * 声明式多语言组合 Hook: useI18n
+ * 组合 useLocale() 与 createTranslator()，并提供绑定当前响应式 locale 的 Intl 数字/日期格式化函数。
+ */
+export function useI18n(messages, options) {
+    const rawLocale = useLocale();
+    const locale = resolveLocale(rawLocale, DEFAULT_LOCALE);
+    const defaultLocale = options?.defaultLocale;
+    return useMemo(() => {
+        const t = createTranslator(messages, defaultLocale !== undefined ? { defaultLocale } : undefined);
+        const formatNumber = (value, formatOptions) => {
+            if (typeof value !== "number" || !Number.isFinite(value)) {
+                return String(value);
+            }
+            return getCachedNumberFormat(locale, formatOptions).format(value);
+        };
+        const formatDate = (value, formatOptions) => {
+            const date = value instanceof Date ? value : new Date(value);
+            if (Number.isNaN(date.getTime())) {
+                return "";
+            }
+            return getCachedDateTimeFormat(locale, formatOptions).format(date);
+        };
+        return {
+            locale,
+            t,
+            formatNumber,
+            formatDate
+        };
+    }, [locale, messages, defaultLocale]);
 }

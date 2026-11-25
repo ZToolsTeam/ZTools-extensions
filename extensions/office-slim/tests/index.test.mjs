@@ -103,7 +103,49 @@ test('未选文档时 Enter 主动作为“选择文档…”，执行后读取�
   await view.run(null, '选择文档…'); assert.ok(view.item('document')); assert.equal(writes().length, 0)
 })
 test('旧客户端明确提示升级，不回退到 DLL', async () => {
+  const savedMethods = globalThis.__ztoolsElectron.transport.methods
   globalThis.__ztoolsElectron.transport.methods = {}
   const view = await open(); await pick(view)
   assert.match(host.lastToast().title, /升级/); assert.equal(host.ipcCalls.length, 0)
+  globalThis.__ztoolsElectron.transport.methods = savedMethods
+})
+
+test('支持通过 plugin_files_dropped 拖入 Office 文档进行检查，非支持扩展名报错', async () => {
+  const listeners = new Map()
+  const prevFeatures = globalThis.window.__ztoolsDeclarativeFeatures
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  try {
+    const view = await open()
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/tmp/文档.pdf'] } })
+    await tick()
+    assert.match(host.lastToast().title, /Office 文档/)
+    assert.equal(view.items().length, 0)
+
+    listeners.get('plugin_files_dropped')({ payload: { files: [input.path] } })
+    await tick()
+    assert.ok(view.item('document'))
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = prevFeatures
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 pasteFiles 粘贴 Office 文档直接分析可瘦身内容', async () => {
+  const view = await open()
+  await view.pasteFiles(['/tmp/文档.pdf'])
+  assert.match(host.lastToast().title, /格式不匹配/)
+  assert.equal(view.items().length, 0)
+
+  await view.pasteFiles([input.path])
+  assert.ok(view.item('document'))
+  assert.match(view.text(), /测试\.docx/)
 })

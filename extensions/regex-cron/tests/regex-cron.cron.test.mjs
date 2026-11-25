@@ -1,7 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import { parseAndExplainCron } from '../dist/regex-cron-service.js'
+
+setRuntimeLocale('zh-CN')
 
 const base = new Date(2026, 9, 25, 0, 0, 0)
 

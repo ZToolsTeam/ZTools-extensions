@@ -2,13 +2,14 @@
   "id": "cleaner",
   "name": "垃圾清理",
   "description": "扫描临时文件、浏览器缓存、开发工具缓存与崩溃转储等位置，把勾选的文件移入回收站，也可以清空回收站",
-  "version": "2.0.11",
+  "version": "2.0.12",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
     "系统工具"
   ],
+  "categoryId": "system",
   "permissions": [
     "fs",
     "system",
@@ -25,5 +26,30 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "System Cleaner",
+      "description": "Scan temporary files, browser caches, developer caches, and crash dumps. Move selected files to the Recycle Bin or empty the Recycle Bin.",
+      "keywords": [
+        "cleaner",
+        "junk",
+        "cache",
+        "temp files",
+        "recycle bin",
+        "disk cleanup"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

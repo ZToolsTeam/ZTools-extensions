@@ -1,4 +1,102 @@
+import { getLocale } from '@ztools/declarative-ui'
+
 type DynamicBridge = ReturnType<typeof JSON.parse>
+
+const NATIVE_IPC_MESSAGES: Record<string, {
+  ipcCallFailed: string
+  ipcInnerFailed: string
+  scanIncomplete: string
+  dirReadFailed: (details: string, moreCount: number) => string
+  dirEntrySep: string
+  dirErrorColon: string
+  deepScanUnavailable: string
+  pathEmpty: string
+  invalidMethodEmpty: string
+  invalidMethodFormat: string
+  invalidParamsObject: string
+  paramTooLong: (key: string) => string
+  paramOutOfRange: (key: string) => string
+  methodParamEmpty: string
+  invalidMethodType: string
+  malformedDllResponse: string
+  unknownDllError: string
+  hostIpcFailed: (pluginName: string, method: string) => string
+  hostUnavailable: (pluginName: string, method: string) => string
+  callFailed: string
+  movedToTrash: string
+  deleteFailed: string
+  revealedInFolder: string
+  revealFailed: string
+  opened: string
+  openFailed: string
+  pluginCallNotReady: string
+}> = {
+  'zh-CN': {
+    ipcCallFailed: 'IPC 调用返回失败',
+    ipcInnerFailed: 'IPC 内部调用失败',
+    scanIncomplete: '扫描结果不完整',
+    dirReadFailed: (details, moreCount) =>
+      `目录读取失败或不完整：${details}${moreCount > 0 ? `；另有 ${moreCount} 个目录` : ''}`,
+    dirEntrySep: '；',
+    dirErrorColon: '：',
+    deepScanUnavailable: '深度扫描不可用，仅列出一级目录，结果不完整',
+    pathEmpty: '路径不能为空',
+    invalidMethodEmpty: 'INVALID_METHOD: 调用方法名不能为空',
+    invalidMethodFormat: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长',
+    invalidParamsObject: 'INVALID_PARAMS: 参数必须为非空对象',
+    paramTooLong: (key) => `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制`,
+    paramOutOfRange: (key) => `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数`,
+    methodParamEmpty: 'method 参数不能为空',
+    invalidMethodType: 'INVALID_METHOD: method 不能为空且必须为字符串',
+    malformedDllResponse: 'MALFORMED_DLL_RESPONSE: 原生组件返回了损坏的 JSON 数据',
+    unknownDllError: '原生组件返回未知错误',
+    hostIpcFailed: (pluginName, method) => `HOST_IPC_FAILED: ${pluginName}.${method} 调用失败`,
+    hostUnavailable: (pluginName, method) => `HOST_UNAVAILABLE: ${pluginName}.${method} 宿主接口未就绪`,
+    callFailed: '调用失败',
+    movedToTrash: '已移入回收站',
+    deleteFailed: '删除失败',
+    revealedInFolder: '已定位文件',
+    revealFailed: '定位失败',
+    opened: '已打开',
+    openFailed: '打开失败',
+    pluginCallNotReady: '插件调用未就绪'
+  },
+  'en-US': {
+    ipcCallFailed: 'IPC call failed',
+    ipcInnerFailed: 'Internal IPC call failed',
+    scanIncomplete: 'Incomplete scan results',
+    dirReadFailed: (details, moreCount) =>
+      `Directory read failed or incomplete: ${details}${moreCount > 0 ? `; and ${moreCount} more` : ''}`,
+    dirEntrySep: '; ',
+    dirErrorColon: ': ',
+    deepScanUnavailable: 'Deep scan unavailable; only top-level directory listed (incomplete)',
+    pathEmpty: 'Path cannot be empty',
+    invalidMethodEmpty: 'INVALID_METHOD: Method name cannot be empty',
+    invalidMethodFormat: 'INVALID_METHOD_FORMAT: Method name contains invalid characters or is too long',
+    invalidParamsObject: 'INVALID_PARAMS: Parameters must be a non-null object',
+    paramTooLong: (key) => `PARAM_TOO_LONG: Parameter "${key}" exceeds maximum length`,
+    paramOutOfRange: (key) => `PARAM_OUT_OF_RANGE: Numeric parameter "${key}" is out of range or non-finite`,
+    methodParamEmpty: 'Method parameter cannot be empty',
+    invalidMethodType: 'INVALID_METHOD: Method must be a non-empty string',
+    malformedDllResponse: 'MALFORMED_DLL_RESPONSE: Native component returned malformed JSON',
+    unknownDllError: 'Native component returned an unknown error',
+    hostIpcFailed: (pluginName, method) => `HOST_IPC_FAILED: ${pluginName}.${method} call failed`,
+    hostUnavailable: (pluginName, method) => `HOST_UNAVAILABLE: ${pluginName}.${method} host interface not ready`,
+    callFailed: 'Call failed',
+    movedToTrash: 'Moved to Trash',
+    deleteFailed: 'Delete failed',
+    revealedInFolder: 'Revealed in folder',
+    revealFailed: 'Failed to reveal item',
+    opened: 'Opened',
+    openFailed: 'Failed to open',
+    pluginCallNotReady: 'Plugin invocation not ready'
+  }
+}
+
+function ipcStrings() {
+  const locale = getLocale()
+  return NATIVE_IPC_MESSAGES[locale] ?? NATIVE_IPC_MESSAGES['en-US']
+}
 /**
  * ZTools 真实宿主 IPC 与系统能力桥接层 (Real Host IPC Bridge)
  *
@@ -100,9 +198,35 @@ function normalizeMethodResult(method: string, payload: DynamicBridge): DynamicB
   return payload
 }
 
-function unwrapTransportResponse(method: string, raw: DynamicBridge): { ok: boolean; data?: DynamicBridge; error?: string } {
+function extractIpcErrorMeta(errObj: DynamicBridge): {
+  errorCode?: string
+  errorDetails?: Record<string, unknown>
+} {
+  if (!errObj || typeof errObj !== 'object') return {}
+  const errorCode =
+    typeof errObj.errorCode === 'string' && errObj.errorCode.trim()
+      ? errObj.errorCode.trim()
+      : typeof errObj.code === 'string' && errObj.code.trim()
+        ? errObj.code.trim()
+        : undefined
+  const rawDetails =
+    errObj.errorDetails && typeof errObj.errorDetails === 'object' && !Array.isArray(errObj.errorDetails)
+      ? (errObj.errorDetails as Record<string, unknown>)
+      : errObj.details && typeof errObj.details === 'object' && !Array.isArray(errObj.details)
+        ? (errObj.details as Record<string, unknown>)
+        : undefined
+  return {
+    ...(errorCode ? { errorCode } : {}),
+    ...(rawDetails ? { errorDetails: rawDetails } : {})
+  }
+}
+
+function unwrapTransportResponse(
+  method: string,
+  raw: DynamicBridge
+): { ok: boolean; data?: DynamicBridge; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> } {
   if (raw === null || raw === undefined) {
-    return { ok: false, error: 'EMPTY_IPC_RESPONSE' }
+    return { ok: false, error: 'EMPTY_IPC_RESPONSE', errorCode: 'EMPTY_IPC_RESPONSE' }
   }
   if (typeof raw !== 'object') {
     return { ok: true, data: raw }
@@ -112,8 +236,8 @@ function unwrapTransportResponse(method: string, raw: DynamicBridge): { ok: bool
     const errMsg =
       typeof errObj === 'object' && errObj !== null
         ? String(errObj.message || errObj.code || JSON.stringify(errObj))
-        : String(errObj || 'IPC 调用返回失败')
-    return { ok: false, error: errMsg }
+        : String(errObj || ipcStrings().ipcCallFailed)
+    return { ok: false, error: errMsg, ...extractIpcErrorMeta(raw), ...extractIpcErrorMeta(errObj) }
   }
 
   const firstLayer = 'data' in raw && raw.data !== undefined ? raw.data : raw
@@ -123,8 +247,8 @@ function unwrapTransportResponse(method: string, raw: DynamicBridge): { ok: bool
       const errMsg =
         typeof errObj === 'object' && errObj !== null
           ? String(errObj.message || errObj.code || JSON.stringify(errObj))
-          : String(errObj || 'IPC 内部调用失败')
-      return { ok: false, error: errMsg }
+          : String(errObj || ipcStrings().ipcInnerFailed)
+      return { ok: false, error: errMsg, ...extractIpcErrorMeta(firstLayer), ...extractIpcErrorMeta(errObj) }
     }
     if ('data' in firstLayer && firstLayer.data !== undefined) {
       return { ok: true, data: normalizeMethodResult(method, firstLayer.data) }
@@ -141,7 +265,7 @@ export async function callHostTransport<T = DynamicBridge>(
   method: string,
   params: Record<string, unknown> = {},
   hostOverride?: DynamicBridge
-): Promise<{ ok: boolean; data?: T; error?: string }> {
+): Promise<{ ok: boolean; data?: T; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }> {
   const normalizedParams = normalizeMethodParams(method, params)
 
   // 1. 测试注入的 hostOverride 优先
@@ -150,24 +274,24 @@ export async function callHostTransport<T = DynamicBridge>(
       try {
         const res = await hostOverride[method](normalizedParams)
         const unwrapped = unwrapTransportResponse(method, res)
-        return unwrapped as { ok: boolean; data?: T; error?: string }
+        return unwrapped as { ok: boolean; data?: T; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }
       } catch (err: DynamicBridge) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+        return { ok: false, error: err instanceof Error ? err.message : String(err), ...extractIpcErrorMeta(err) }
       }
     }
     if (typeof hostOverride?.transport?.call === 'function') {
       try {
         const res = await hostOverride.transport.call(method, normalizedParams)
         const unwrapped = unwrapTransportResponse(method, res)
-        return unwrapped as { ok: boolean; data?: T; error?: string }
+        return unwrapped as { ok: boolean; data?: T; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }
       } catch (err: DynamicBridge) {
-        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+        return { ok: false, error: err instanceof Error ? err.message : String(err), ...extractIpcErrorMeta(err) }
       }
     }
   }
 
   if (typeof window === 'undefined') {
-    return { ok: false, error: 'NO_WINDOW_ENV' }
+    return { ok: false, error: 'NO_WINDOW_ENV', errorCode: 'NO_WINDOW_ENV' }
   }
 
   const w = window as DynamicBridge
@@ -178,22 +302,22 @@ export async function callHostTransport<T = DynamicBridge>(
     try {
       const messageId = nextMessageId(method.replace(/[^A-Za-z0-9_]/g, '_').slice(0, 24))
       const raw = await fn({ messageId, params: normalizedParams })
-      return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string }
+      return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }
     } catch (err: DynamicBridge) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: err instanceof Error ? err.message : String(err), ...extractIpcErrorMeta(err) }
     }
   }
 
   if (typeof w.ztools?.transport?.call === 'function') {
     try {
       const raw = await w.ztools.transport.call(method, normalizedParams)
-      return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string }
+      return unwrapTransportResponse(method, raw) as { ok: boolean; data?: T; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }
     } catch (err: DynamicBridge) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      return { ok: false, error: err instanceof Error ? err.message : String(err), ...extractIpcErrorMeta(err) }
     }
   }
 
-  return { ok: false, error: `METHOD_NOT_AVAILABLE: ${method}` }
+  return { ok: false, error: `METHOD_NOT_AVAILABLE: ${method}`, errorCode: 'METHOD_NOT_AVAILABLE' }
 }
 
 export interface RealDiskDriveInfo {
@@ -491,15 +615,16 @@ export function createDirectoryScanner(hostOverride?: DynamicBridge) {
   return {
     async scan(dir: string, options: number | ScanDirectoryTreeOptions = 160) {
       const result = await scanRealDirectoryTree(dir, options, hostOverride)
-      const error = result.error || (result.truncated || result.approximate ? '扫描结果不完整' : '')
+      const error = result.error || (result.truncated || result.approximate ? ipcStrings().scanIncomplete : '')
       if (error) failures.set(dir, error)
       else failures.delete(dir)
       return result
     },
     get error(): string | undefined {
       if (!failures.size) return undefined
-      const details = [...failures].slice(0, 3).map(([dir, error]) => `${dir}：${error}`).join('；')
-      return `目录读取失败或不完整：${details}${failures.size > 3 ? `；另有 ${failures.size - 3} 个目录` : ''}`
+      const s = ipcStrings()
+      const details = [...failures].slice(0, 3).map(([dir, error]) => `${dir}${s.dirErrorColon}${error}`).join(s.dirEntrySep)
+      return s.dirReadFailed(details, Math.max(0, failures.size - 3))
     }
   }
 }
@@ -620,7 +745,7 @@ async function scanDirectoryTreeWithError(
       const incomplete = listing.entries.some(entry => entry.isDir) || listing.entries.length >= safeLimit
       return {
         scan: makeScanResult(files, files.filter(file => !file.isDir).length, totalBytes, [], { approximate: incomplete }),
-        ...(incomplete ? { error: res.error || '深度扫描不可用，仅列出一级目录，结果不完整' } : {})
+        ...(incomplete ? { error: res.error || ipcStrings().deepScanUnavailable } : {})
       }
     }
     return listing.ok ? { scan: empty } : { scan: empty, error: listing.error || 'DIRECTORY_READ_FAILED' }
@@ -890,10 +1015,15 @@ export async function openRealPath(
 export async function trashRealItem(
   fullPath: string,
   hostOverride?: DynamicBridge
-): Promise<{ ok: boolean; error?: string }> {
-  if (!fullPath) return { ok: false, error: '路径不能为空' }
+): Promise<{ ok: boolean; error?: string; errorCode?: string; errorDetails?: Record<string, unknown> }> {
+  if (!fullPath) return { ok: false, error: ipcStrings().pathEmpty }
   const res = await callHostTransport('shell_trash_item', { fullPath }, hostOverride)
-  return { ok: res.ok, error: res.error }
+  return {
+    ok: res.ok,
+    error: res.error,
+    ...(!res.ok && res.errorCode ? { errorCode: res.errorCode } : {}),
+    ...(!res.ok && res.errorDetails ? { errorDetails: res.errorDetails } : {})
+  }
 }
 
 export interface NativeInvocationResult<T = DynamicBridge> {
@@ -902,6 +1032,8 @@ export interface NativeInvocationResult<T = DynamicBridge> {
   message: string
   data?: T
   error?: string
+  errorCode?: string
+  errorDetails?: Record<string, unknown>
 }
 
 export interface DllCapabilityResponse<T = DynamicBridge> {
@@ -910,6 +1042,8 @@ export interface DllCapabilityResponse<T = DynamicBridge> {
   data: T | null
   message?: string
   error?: string
+  errorCode?: string
+  errorDetails?: Record<string, unknown>
   pluginName: string
   method: string
   fromFallback?: boolean
@@ -926,7 +1060,7 @@ export interface CapabilityActionItem {
 }
 
 export type PluginInvocationResult = Pick<
-  DllCapabilityResponse<unknown>, 'ok' | 'pluginName' | 'method' | 'error' | 'fromFallback'
+  DllCapabilityResponse<unknown>, 'ok' | 'pluginName' | 'method' | 'error' | 'errorCode' | 'errorDetails' | 'fromFallback'
 > & { data?: unknown }
 
 /** 多个原生能力插件共用的参数边界校验；保护目标由各插件按自身业务提供。 */
@@ -936,28 +1070,29 @@ export function validateNativeCapabilityPayload(
   forbiddenPattern: RegExp,
   forbiddenReason: string
 ): { valid: boolean; error?: string } {
+  const s = ipcStrings()
   if (typeof method !== 'string' || method.trim().length === 0) {
-    return { valid: false, error: 'INVALID_METHOD: 调用方法名不能为空' }
+    return { valid: false, error: s.invalidMethodEmpty }
   }
   if (method.length > 128 || !/^[A-Za-z0-9_]+$/.test(method.trim())) {
-    return { valid: false, error: 'INVALID_METHOD_FORMAT: 方法名包含非法字符或超长' }
+    return { valid: false, error: s.invalidMethodFormat }
   }
   if (params === null || params === undefined || typeof params !== 'object' || Array.isArray(params)) {
-    return { valid: false, error: 'INVALID_PARAMS: 参数必须为非空对象' }
+    return { valid: false, error: s.invalidParamsObject }
   }
 
   const record = params as Record<string, unknown>
   for (const [key, val] of Object.entries(record)) {
     if (typeof val === 'string') {
       if (val.length > 4096) {
-        return { valid: false, error: `PARAM_TOO_LONG: 参数 ${key} 超过最大长度限制` }
+        return { valid: false, error: s.paramTooLong(key) }
       }
       if (forbiddenPattern.test(val)) {
         return { valid: false, error: `SECURITY_INTERCEPTED: ${forbiddenReason}` }
       }
     } else if (typeof val === 'number') {
       if (!Number.isFinite(val) || val < -1000 || val > 100_000_000) {
-        return { valid: false, error: `PARAM_OUT_OF_RANGE: 数值参数 ${key} 越界或非有限数` }
+        return { valid: false, error: s.paramOutOfRange(key) }
       }
     }
   }
@@ -972,13 +1107,14 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
   hostBridge?: DynamicBridge,
   offlineFallback?: () => T | Promise<T>
 ): Promise<DllCapabilityResponse<T>> {
+  const s = ipcStrings()
   if (!method || typeof method !== 'string' || method.trim().length === 0) {
     return {
       ok: false,
       code: -1,
       data: null,
-      message: 'method 参数不能为空',
-      error: 'INVALID_METHOD: method 不能为空且必须为字符串',
+      message: s.methodParamEmpty,
+      error: s.invalidMethodType,
       pluginName,
       method: String(method || '')
     }
@@ -992,7 +1128,7 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
       try {
         parsed = JSON.parse(raw)
       } catch {
-        throw new Error('MALFORMED_DLL_RESPONSE: 原生组件返回了损坏的 JSON 数据')
+        throw new Error(s.malformedDllResponse)
       }
     }
     if (parsed && typeof parsed === 'object') {
@@ -1004,19 +1140,23 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
           data: null,
           message: errMsg,
           error: errMsg,
+          ...extractIpcErrorMeta(parsed),
+          ...extractIpcErrorMeta(parsed.error),
           pluginName,
           method: trimmedMethod,
           fromFallback: false
         }
       }
       if ('ok' in parsed && parsed.ok === false) {
-        const errMsg = `DLL_ERROR: ${String(parsed.error || parsed.message || '原生组件返回未知错误')}`
+        const errMsg = `DLL_ERROR: ${String(parsed.error || parsed.message || s.unknownDllError)}`
         return {
           ok: false,
           code: typeof parsed.code === 'number' ? parsed.code : -1,
           data: null,
           message: errMsg,
           error: errMsg,
+          ...extractIpcErrorMeta(parsed),
+          ...extractIpcErrorMeta(parsed.error),
           pluginName,
           method: trimmedMethod,
           fromFallback: false
@@ -1055,6 +1195,7 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
       data: null,
       message: errMsg,
       error: errMsg,
+      ...extractIpcErrorMeta(err),
       pluginName,
       method: trimmedMethod,
       fromFallback: false
@@ -1111,13 +1252,15 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
     isExplicitTransportFailure
   ) {
     const errMsg =
-      ipcRes.error || `HOST_IPC_FAILED: ${pluginName}.${trimmedMethod} 调用失败`
+      ipcRes.error || s.hostIpcFailed(pluginName, trimmedMethod)
     return {
       ok: false,
       code: -1,
       data: null,
       message: errMsg,
       error: errMsg,
+      ...(ipcRes.errorCode ? { errorCode: ipcRes.errorCode } : {}),
+      ...(ipcRes.errorDetails ? { errorDetails: ipcRes.errorDetails } : {}),
       pluginName,
       method: trimmedMethod,
       fromFallback: false
@@ -1136,13 +1279,15 @@ export async function invokeDllPluginCapability<T = DynamicBridge>(
     }
   }
 
-  const unavailableMsg = `HOST_UNAVAILABLE: ${pluginName}.${trimmedMethod} 宿主接口未就绪`
+  const unavailableMsg = s.hostUnavailable(pluginName, trimmedMethod)
   return {
     ok: false,
     code: -1,
     data: null,
     message: unavailableMsg,
     error: unavailableMsg,
+    ...(ipcRes.errorCode ? { errorCode: ipcRes.errorCode } : {}),
+    ...(ipcRes.errorDetails ? { errorDetails: ipcRes.errorDetails } : {}),
     pluginName,
     method: trimmedMethod,
     fromFallback: true
@@ -1317,9 +1462,11 @@ export async function invokeHostCapability<T = DynamicBridge>(
     return {
       ok: mockRes.ok,
       code: mockRes.ok ? 0 : -1,
-      message: mockRes.ok ? 'OK' : mockRes.error || '调用失败',
+      message: mockRes.ok ? 'OK' : mockRes.error || ipcStrings().callFailed,
       data: mockRes.data,
-      error: mockRes.error
+      error: mockRes.error,
+      ...(!mockRes.ok && mockRes.errorCode ? { errorCode: mockRes.errorCode } : {}),
+      ...(!mockRes.ok && mockRes.errorDetails ? { errorDetails: mockRes.errorDetails } : {})
     }
   }
 
@@ -1346,17 +1493,31 @@ export async function invokeHostCapability<T = DynamicBridge>(
   if (capability === 'filesystem.deleteItem') {
     const targetPath = String(params.path || params.fullPath || '')
     const tr = await trashRealItem(targetPath, hostOverride)
+    const s = ipcStrings()
     return {
       ok: tr.ok,
       code: tr.ok ? 0 : -1,
-      message: tr.ok ? '已移入回收站' : tr.error || '删除失败',
-      error: tr.error
+      message: tr.ok ? s.movedToTrash : tr.error || s.deleteFailed,
+      error: tr.error,
+      ...(!tr.ok && tr.errorCode ? { errorCode: tr.errorCode } : {}),
+      ...(!tr.ok && tr.errorDetails ? { errorDetails: tr.errorDetails } : {})
     }
   }
   if (capability === 'system.showItemInFolder') {
     const targetPath = String(params.path || params.fullPath || '')
-    const ok = await showRealItemInFolder(targetPath, hostOverride)
-    return { ok, code: ok ? 0 : -1, message: ok ? '已定位文件' : '定位失败' }
+    const s = ipcStrings()
+    if (!targetPath) {
+      return { ok: false, code: -1, message: s.revealFailed }
+    }
+    const res = await callHostTransport('shell_show_item_in_folder', { fullPath: targetPath }, hostOverride)
+    return {
+      ok: res.ok,
+      code: res.ok ? 0 : -1,
+      message: res.ok ? s.revealedInFolder : res.error || s.revealFailed,
+      ...(!res.ok && res.error ? { error: res.error } : {}),
+      ...(!res.ok && res.errorCode ? { errorCode: res.errorCode } : {}),
+      ...(!res.ok && res.errorDetails ? { errorDetails: res.errorDetails } : {})
+    }
   }
   if (capability === 'filesystem.openItem' || capability === 'system.openUrl') {
     const target = String(params.path || params.url || params.fullPath || '')
@@ -1366,12 +1527,15 @@ export async function invokeHostCapability<T = DynamicBridge>(
       capability === 'system.openUrl' ? { url: target } : { fullPath: target },
       hostOverride
     )
+    const s = ipcStrings()
     return {
       ok: res.ok,
       code: res.ok ? 0 : -1,
-      message: res.ok ? '已打开' : res.error || '打开失败',
+      message: res.ok ? s.opened : res.error || s.openFailed,
       data: res.data,
-      error: res.error
+      error: res.error,
+      ...(!res.ok && res.errorCode ? { errorCode: res.errorCode } : {}),
+      ...(!res.ok && res.errorDetails ? { errorDetails: res.errorDetails } : {})
     }
   }
 
@@ -1402,9 +1566,11 @@ export async function invokeHostCapability<T = DynamicBridge>(
   return {
     ok: res.ok,
     code: res.ok ? 0 : -1,
-    message: res.ok ? 'OK' : res.error || '调用失败',
+    message: res.ok ? 'OK' : res.error || ipcStrings().callFailed,
     data: res.data,
-    error: res.error
+    error: res.error,
+    ...(!res.ok && res.errorCode ? { errorCode: res.errorCode } : {}),
+    ...(!res.ok && res.errorDetails ? { errorDetails: res.errorDetails } : {})
   }
 }
 
@@ -1414,6 +1580,7 @@ export async function invokePluginService<T = DynamicBridge>(
   params: Record<string, unknown> = {},
   hostOverride?: DynamicBridge
 ): Promise<NativeInvocationResult<T>> {
+  const s = ipcStrings()
   // 1. 若测试注入了专门拦截 plugin_invoke 的 mock，支持调用
   if (hostOverride && typeof hostOverride.plugin_invoke === 'function') {
     const mockRes = await callHostTransport<T>(
@@ -1424,9 +1591,11 @@ export async function invokePluginService<T = DynamicBridge>(
     return {
       ok: mockRes.ok,
       code: mockRes.ok ? 0 : -1,
-      message: mockRes.ok ? 'OK' : mockRes.error || '插件调用未就绪',
+      message: mockRes.ok ? 'OK' : mockRes.error || s.pluginCallNotReady,
       data: mockRes.data,
-      error: mockRes.error
+      error: mockRes.error,
+      ...(!mockRes.ok && mockRes.errorCode ? { errorCode: mockRes.errorCode } : {}),
+      ...(!mockRes.ok && mockRes.errorDetails ? { errorDetails: mockRes.errorDetails } : {})
     }
   }
 
@@ -1443,7 +1612,8 @@ export async function invokePluginService<T = DynamicBridge>(
         ok: false,
         code: -1,
         message: inner.error,
-        error: inner.error
+        error: inner.error,
+        ...extractIpcErrorMeta(inner)
       }
     }
     return {
@@ -1480,8 +1650,10 @@ export async function invokePluginService<T = DynamicBridge>(
         return {
           ok: false,
           code: -1,
-          message: String(raw.error || '调用失败'),
-          error: String(raw.error || '调用失败')
+          message: String(raw.error || s.callFailed),
+          error: String(raw.error || s.callFailed),
+          ...extractIpcErrorMeta(raw),
+          ...extractIpcErrorMeta(raw.error)
         }
       }
       const data = raw && typeof raw === 'object' && 'data' in raw ? raw.data : raw
@@ -1491,7 +1663,8 @@ export async function invokePluginService<T = DynamicBridge>(
         ok: false,
         code: -1,
         message: err instanceof Error ? err.message : String(err),
-        error: err instanceof Error ? err.message : String(err)
+        error: err instanceof Error ? err.message : String(err),
+        ...extractIpcErrorMeta(err)
       }
     }
   }
@@ -1499,8 +1672,10 @@ export async function invokePluginService<T = DynamicBridge>(
   return {
     ok: false,
     code: -1,
-    message: dllRes.error || '插件调用未就绪',
-    error: dllRes.error || '插件调用未就绪'
+    message: dllRes.error || s.pluginCallNotReady,
+    error: dllRes.error || s.pluginCallNotReady,
+    ...(dllRes.errorCode ? { errorCode: dllRes.errorCode } : {}),
+    ...(dllRes.errorDetails ? { errorDetails: dllRes.errorDetails } : {})
   }
 }
 

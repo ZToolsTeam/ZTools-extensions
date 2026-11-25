@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { setDeclarativeBridge } from '@ztools/declarative-ui'
+import { setDeclarativeBridge, setRuntimeLocale } from '@ztools/declarative-ui'
+setRuntimeLocale('zh-CN')
 import {
   CANCEL_COMMAND,
-  HOST_REQUIRED_MESSAGE,
+  getHostRequiredMessage,
   MAX_SHUTDOWN_SECONDS,
   calculateTargetTime,
   executePowerAction,
@@ -100,14 +101,15 @@ test('[故障] 定时关机：客户端报错时如实返回原因并提示可�
 })
 
 test('[故障] 不在客户端里运行、客户端不支持该方法时提示需要在客户端中使用', async () => {
+  const hostRequired = getHostRequiredMessage()
   const noHost = await executePowerAction(preset('immediate-lock'), { transport: null })
   assert.equal(noHost.ok, false)
-  assert.equal(noHost.message, HOST_REQUIRED_MESSAGE)
+  assert.equal(noHost.message, hostRequired)
 
   const unsupported = Object.assign(new Error('宿主未提供 system_sleep'), { code: 'HOST_FEATURE_UNAVAILABLE' })
   const res = await executePowerAction(preset('immediate-sleep'), { transport: fakeTransport(unsupported) })
   assert.equal(res.ok, false)
-  assert.equal(res.message, HOST_REQUIRED_MESSAGE)
+  assert.equal(res.message, hostRequired)
 })
 
 test('锁屏、睡眠调用对应的客户端方法，不弹确认', async () => {

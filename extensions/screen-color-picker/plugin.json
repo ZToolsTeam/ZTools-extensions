@@ -2,7 +2,7 @@
   "id": "screen-color-picker",
   "name": "屏幕取色",
   "description": "鼠标跟随像素级放大镜取色器，一键拾取屏幕任意位置颜色并复制 HEX / RGB / HSL 色值",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "minAppVersion": "1.1.8.7",
   "author": "ZTools Team",
   "entry": "dist/index.js",
@@ -10,6 +10,10 @@
   "category": [
     "开发工具",
     "图像媒体"
+  ],
+  "categoryId": [
+    "developer",
+    "media"
   ],
   "permissions": [
     "screen",
@@ -23,6 +27,34 @@
       "platform": "windows",
       "runtime": "electron",
       "arch": "any"
+    }
+  ],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Screen Color Picker",
+      "description": "Pixel-level magnifying eyedropper that follows your cursor to pick any color on screen and copy HEX, RGB, or HSL values.",
+      "keywords": [
+        "eyedropper",
+        "color picker",
+        "screen color",
+        "hex",
+        "rgb",
+        "hsl"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
     }
   ]
 }

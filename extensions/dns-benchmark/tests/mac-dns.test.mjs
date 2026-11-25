@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import DnsCommand, { MacDnsCommand, commands } from '../dist/index.js'
 import { probeServers, listServices, changeDns } from '../dist/mac-dns-service.js'
 import { createHost, mount, tick } from '../../shared/test-harness.mjs'
@@ -75,7 +76,10 @@ test('解析失败的地址在提示里给出系统返回的原因；处理中�
   host.ipc.dns_benchmark = async p => p.action === 'list' ? { success: true, services: [service] } : { success: true, domain: 'example.com', results: p.servers.map(server => ({ server, milliseconds: null, answers: [], error: 'queryA ETIMEOUT example.com' })) }
   const v = await open()
   const failed = v.item('223.5.5.5').props.accessories[0]
-  assert.equal(failed.text, '解析失败'); assert.match(failed.tooltip, /ETIMEOUT/)
+  assert.equal(failed.text, '解析失败')
+  assert.match(failed.tooltip, /DNS 解析超时/)
+  assert.match(failed.tooltip, /ETIMEOUT/)
+  assert.notEqual(failed.tooltip, '未返回原因')
   const pending = deferred()
   host.ipc.dns_benchmark = async p => p.action === 'reset' ? pending.promise : { success: true }
   const resetting = v.item('automatic').props.actions.children[0].props.onAction(); await tick()
@@ -83,6 +87,38 @@ test('解析失败的地址在提示里给出系统返回的原因；处理中�
   assert.match(host.lastToast().title, /尚未完成/)
   assert.ok(!host.ipcCalls.some(([, p]) => p.action === 'flush'))
   pending.resolve({ success: true, service: { ...service, servers: [], backup } }); await resetting
+})
+test('解析失败提示区分空原因、已知错误码、未知英文与中英文双语模式', async () => {
+  host.ipc.dns_benchmark = async p => p.action === 'list'
+    ? { success: true, services: [service] }
+    : {
+        success: true,
+        domain: 'example.com',
+        results: p.servers.map(server => {
+          if (server === '223.5.5.5') return { server, milliseconds: null, answers: [], error: '' }
+          if (server === '119.29.29.29') return { server, milliseconds: null, answers: [], error: 'custom socket failure' }
+          if (server === '114.114.114.114') return { server, milliseconds: null, answers: [], error: '上游服务器无响应' }
+          return { server, milliseconds: null, answers: [], error: 'queryA ETIMEOUT example.com' }
+        })
+      }
+  const vZh = await open()
+  assert.equal(vZh.item('223.5.5.5').props.accessories[0].tooltip, '未返回原因')
+  assert.equal(vZh.item('119.29.29.29').props.accessories[0].tooltip, 'DNS 解析失败')
+  assert.equal(vZh.item('114.114.114.114').props.accessories[0].tooltip, '上游服务器无响应')
+  assert.match(vZh.item('1.1.1.1').props.accessories[0].tooltip, /DNS 解析超时.*ETIMEOUT/)
+
+  try {
+    setRuntimeLocale('en-US')
+    const vEn = await open()
+    assert.equal(vEn.item('223.5.5.5').props.accessories[0].tooltip, 'No reason given')
+    assert.equal(vEn.item('119.29.29.29').props.accessories[0].tooltip, 'custom socket failure')
+    assert.equal(vEn.item('114.114.114.114').props.accessories[0].tooltip, 'DNS resolution failed')
+    const enTimeoutTip = vEn.item('1.1.1.1').props.accessories[0].tooltip
+    assert.match(enTimeoutTip, /ETIMEOUT/)
+    assert.equal(/[\u4e00-\u9fa5]/.test(enTimeoutTip), false)
+  } finally {
+    setRuntimeLocale('zh-CN')
+  }
 })
 test('空网络、旧客户端、无效协议均明确报错，不生成 WLAN 或默认地址', async () => {
   host.ipc.dns_benchmark = async () => ({ success: true, services: [] })

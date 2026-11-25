@@ -1,15 +1,15 @@
 {
   "id": "folder-sync",
   "name": "目录同步",
-  "version": "1.0.8",
+  "version": "1.0.10",
   "description": "比对普通文件内容后增量或双向同步，覆盖前保留校验备份；macOS 另支持镜像模式，把目标独有文件移入废纸篓（单文件最大 2 GiB）",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "category": [
-    "文件管理",
-    "效率工具"
+    "文件管理"
   ],
+  "categoryId": "files",
   "permissions": [
     "fs",
     "dialog",
@@ -52,5 +52,51 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Folder Sync",
+      "description": "Compare file contents for incremental or two-way folder sync with verified backups before overwriting. On macOS, also supports mirror mode moving extra files to Trash (max 2 GiB/file).",
+      "keywords": [
+        "folder sync",
+        "directory sync",
+        "backup",
+        "incremental",
+        "compare folders"
+      ],
+      "features": {
+        "folder-sync-workbench": {
+          "explain": "Compare source and target folders and run incremental or two-way sync",
+          "cmds": [
+            "folder sync",
+            "directory sync",
+            "sync folders",
+            "incremental backup"
+          ]
+        },
+        "folder-sync-compare": {
+          "explain": "Compare two folders to list added, modified, and missing files",
+          "cmds": [
+            "compare folders",
+            "folder diff",
+            "directory compare"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

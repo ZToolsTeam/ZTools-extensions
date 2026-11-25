@@ -7,16 +7,19 @@ import React, {
   Toast,
   showToast,
   useEffect,
+  useLocale,
   useMemo,
   useState
 } from '@ztools/declarative-ui'
-import { HIGH_CONFLICT_HOTKEY_PRESETS } from './cheatsheet-data.js'
+import { getHighConflictPresets } from './cheatsheet-data.js'
 import {
   filterCheatsheetItems,
   parseAndNormalizeHotkeyCombo,
   probeGlobalHotkeys
 } from './hotkey-service.js'
+import { t } from './i18n.js'
 import type { HotkeyModeFilter, HotkeyProbeResultItem } from './types.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
 export * from './types.js'
 export * from './cheatsheet-data.js'
@@ -28,6 +31,7 @@ export interface HotkeyRadarCommandProps {
 }
 
 export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
+  const locale = useLocale()
   const initialMode: HotkeyModeFilter =
     props.featureCode === 'hotkey-cheatsheet' ? 'sheet:all' : 'conflict'
   const [modeFilter, setModeFilter] = useState<HotkeyModeFilter>(initialMode)
@@ -40,7 +44,7 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
     setIsLoading(true)
     try {
       const results = await probeGlobalHotkeys(
-        HIGH_CONFLICT_HOTKEY_PRESETS,
+        getHighConflictPresets(),
         customCombo,
         props.hostOverride
       )
@@ -50,7 +54,7 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
     } catch (error) {
       setProbedKeys([])
       setProbeError(error instanceof Error ? error.message : String(error))
-      await showToast({ style: Toast.Style.Failure, title: '热键检测未完成', message: error instanceof Error ? error.message : String(error) })
+      await showToast({ style: Toast.Style.Failure, title: t('winToastProbeFailed'), message: error instanceof Error ? error.message : String(error) })
       return false
     } finally {
       setIsLoading(false)
@@ -59,12 +63,12 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
 
   useEffect(() => {
     void reloadConflictScan()
-  }, [])
+  }, [locale])
 
   const parsedCustomCombo = useMemo(() => {
     if (!searchText.includes('+')) return null
     return parseAndNormalizeHotkeyCombo(searchText)
-  }, [searchText])
+  }, [searchText, locale])
 
   const filteredConflictItems = useMemo(() => {
     const q = searchText.trim().toLowerCase()
@@ -86,7 +90,7 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
   const filteredSheetItems = useMemo(() => {
     if (!modeFilter.startsWith('sheet:')) return []
     return filterCheatsheetItems(modeFilter, searchText)
-  }, [modeFilter, searchText])
+  }, [modeFilter, searchText, locale])
 
   const occupiedCount = useMemo(
     () => probedKeys.filter((k) => k.isOccupied).length,
@@ -98,72 +102,71 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
     if (!parsed.valid) {
       await showToast({
         style: Toast.Style.Failure,
-        title: parsed.error || '快捷键格式无效'
+        title: resolveErrorMessage(parsed, t('winInvalidComboToast'))
       })
       return
     }
     if (!(await reloadConflictScan(parsed.normalized))) return
     await showToast({
       style: Toast.Style.Success,
-      title: `已完成组合键 ${parsed.normalized} 实时占用探测`
+      title: t('winProbedSingleToast', { combo: parsed.normalized })
     })
   }
 
-
   const isConflictMode = modeFilter.startsWith('conflict')
   const summaryText = isConflictMode
-    ? `已检测 ${probedKeys.length} 组高频全局热键 · 发现 ${occupiedCount} 组已被后台程序抢占`
-    : `快捷键速查库 · 当前匹配 ${filteredSheetItems.length} 条高频生产力快捷键`
+    ? t('winSummaryConflict', { total: probedKeys.length, occupied: occupiedCount })
+    : t('winSummarySheet', { count: filteredSheetItems.length })
 
   return (
     <List
-      navigationTitle="热键冲突侦测与快捷键速查"
+      navigationTitle={t('winNavTitle')}
       isLoading={isLoading}
       searchText={searchText}
       onSearchTextChange={setSearchText}
-      searchBarPlaceholder="输入要测试的组合键（如 Ctrl+Alt+A）或搜索功能名（如 冻结窗格、分屏）..."
+      searchBarPlaceholder={t('winSearchPlaceholder')}
       searchBarAccessory={
         <List.Dropdown
           value={modeFilter}
           onChange={(val) => setModeFilter(val as HotkeyModeFilter)}
-          tooltip="切换冲突侦测或快捷键速查"
+          tooltip={t('winDropdownTooltip')}
         >
-          <List.Dropdown.Section title="热键冲突排查">
+          <List.Dropdown.Section title={t('winDdSecConflict')}>
             <List.Dropdown.Item
-              title="全局热键冲突侦测雷达"
+              title={t('winDdAllConflict')}
               value="conflict"
               icon={Icon.Terminal}
             />
             <List.Dropdown.Item
-              title="仅看当前已被占用的冲突热键"
+              title={t('winDdOccupiedOnly')}
               value="conflict:occupied"
               icon={Icon.ExclamationMark}
             />
           </List.Dropdown.Section>
-          <List.Dropdown.Section title="高频快捷键速查字典">
-            <List.Dropdown.Item title="全部高频快捷键速查" value="sheet:all" icon={Icon.Document} />
+          <List.Dropdown.Section title={t('winDdSecSheet')}>
+            <List.Dropdown.Item title={t('winDdAllSheet')} value="sheet:all" icon={Icon.Document} />
             <List.Dropdown.Item
-              title="Windows / macOS 系统级"
+              title={t('winDdOs')}
               value="sheet:os"
               icon={Icon.Desktop}
             />
             <List.Dropdown.Item
-              title="VS Code 极客开发"
+              title={t('winDdVscode')}
               value="sheet:vscode"
               icon={Icon.Code}
             />
             <List.Dropdown.Item
-              title="Excel 职场办公"
+              title={t('winDdExcel')}
               value="sheet:excel"
               icon={Icon.Document}
             />
             <List.Dropdown.Item
-              title="Photoshop 设计"
+              title={t('winDdPs')}
               value="sheet:ps"
               icon={Icon.Image}
             />
             <List.Dropdown.Item
-              title="Chrome / Edge 浏览器"
+              title={t('winDdBrowser')}
               value="sheet:browser"
               icon={Icon.Globe}
             />
@@ -175,14 +178,14 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
         actions: [
           {
             id: 'rescan',
-            title: '重新扫描占用',
+            title: t('winBtnRescan'),
             onAction: () => {
               void reloadConflictScan(parsedCustomCombo?.valid ? parsedCustomCombo.normalized : undefined)
             }
           },
           {
             id: 'switch-sheet',
-            title: isConflictMode ? '切至快捷键速查库' : '切至热键冲突雷达',
+            title: isConflictMode ? t('winBtnToSheet') : t('winBtnToConflict'),
             onAction: () => {
               setModeFilter(isConflictMode ? 'sheet:all' : 'conflict')
             }
@@ -192,25 +195,25 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
     >
       {isConflictMode ? (
         <List.Section
-          title="全局热键实时冲突探测结果"
-          subtitle="非侵入式瞬间探测并立即释放锁，已被占用的冲突热键置顶标红"
+          title={t('winSecConflict')}
+          subtitle={t('winSecConflictSub')}
         >
           {parsedCustomCombo && parsedCustomCombo.valid && (
             <List.Item
               id={`probe-custom-${parsedCustomCombo.normalized}`}
-              title={`立即实时探测组合键: ${parsedCustomCombo.normalized}`}
-              subtitle="按 Enter 调用系统 RegisterHotKey 探测该组合键是否空闲"
+              title={t('winCustomProbeTitle', { combo: parsedCustomCombo.normalized })}
+              subtitle={t('winCustomProbeSub')}
               icon={Icon.Terminal}
-              accessories={[{ tag: '实时探测' }]}
+              accessories={[{ tag: t('winCustomProbeTag') }]}
               actions={
                 <ActionPanel>
                   <Action
-                    title={`探测 ${parsedCustomCombo.normalized} 占用状态`}
+                    title={t('winCustomProbeAction', { combo: parsedCustomCombo.normalized })}
                     icon={Icon.ArrowClockwise}
                     onAction={() => handleProbeSingleKey(parsedCustomCombo.normalized)}
                   />
                   <Action.CopyToClipboard
-                    title="复制快捷键组合"
+                    title={t('winCopyComboAction')}
                     content={parsedCustomCombo.normalized}
                   />
                 </ActionPanel>
@@ -221,11 +224,11 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
             <List.Item
               id="probe-error"
               icon={Icon.ExclamationMark}
-              title="热键检测未完成，无法判断是否空闲"
+              title={t('winProbeErrorTitle')}
               subtitle={probeError}
               actions={
                 <ActionPanel>
-                  <Action title="重新检测" icon={Icon.ArrowClockwise} onAction={() => { void reloadConflictScan() }} />
+                  <Action title={t('winProbeErrorRetry')} icon={Icon.ArrowClockwise} onAction={() => { void reloadConflictScan() }} />
                 </ActionPanel>
               }
             />
@@ -241,7 +244,7 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
                 item.isOccupied
                   ? {
                       tag: {
-                        value: `已被占用 (${item.suspectApp || '后台进程'})`,
+                        value: t('winOccupiedTag', { app: item.suspectApp || t('winBackgroundProcess') }),
                         color: Color.Red
                       }
                     }
@@ -250,9 +253,9 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
               ]}
               actions={
                 <ActionPanel>
-                  <Action.CopyToClipboard title="复制快捷键组合" content={item.keyCombo} />
+                  <Action.CopyToClipboard title={t('winCopyComboAction')} content={item.keyCombo} />
                   <Action
-                    title="重新测试此组合键状态"
+                    title={t('winReprobeAction')}
                     icon={Icon.ArrowClockwise}
                     onAction={() => handleProbeSingleKey(item.keyCombo)}
                   />
@@ -263,8 +266,8 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
         </List.Section>
       ) : (
         <List.Section
-          title="五大常用软件高频快捷键离线速查字典"
-          subtitle={`匹配 ${filteredSheetItems.length} 条生产力快捷键`}
+          title={t('winSecSheet')}
+          subtitle={t('winSecSheetSub', { count: filteredSheetItems.length })}
         >
           {filteredSheetItems.map((sheet) => (
             <List.Item
@@ -275,13 +278,13 @@ export function HotkeyRadarCommand(props: HotkeyRadarCommandProps = {}) {
               icon={Icon.Terminal}
               accessories={[
                 { tag: sheet.categoryLabel },
-                sheet.macKeyCombo ? { text: `macOS: ${sheet.macKeyCombo}` } : { text: '通用热键' }
+                sheet.macKeyCombo ? { text: `macOS: ${sheet.macKeyCombo}` } : { text: t('winGenericHotkey') }
               ]}
               actions={
                 <ActionPanel>
-                  <Action.CopyToClipboard title="复制快捷键组合" content={sheet.keyCombo} />
+                  <Action.CopyToClipboard title={t('winCopyComboAction')} content={sheet.keyCombo} />
                   <Action
-                    title="探测此快捷键是否被后台软件抢占"
+                    title={t('winProbeSheetAction')}
                     icon={Icon.ExclamationMark}
                     onAction={() => {
                       setModeFilter('conflict')

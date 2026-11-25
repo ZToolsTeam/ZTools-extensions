@@ -83,3 +83,60 @@ test('解析：识别格式与大小，拒绝非法与超大输入', () => {
   assert.equal(parseBase64Image('A'.repeat(16 * 1024 * 1024 + 4)).valid, false)
   assert.equal(encodeSvgOrTextToBase64('<svg xmlns="http://www.w3.org/2000/svg"/>').mimeType, 'image/svg+xml')
 })
+
+
+test('支持通过 plugin_files_dropped（旧宿主回退）拖入图片文件转成 Base64，非图片报错提示', async () => {
+  const listeners = new Map()
+  globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+  globalThis.window.ztools = {
+    events: {
+      on(event, cb) {
+        listeners.set(event, cb)
+        return () => listeners.delete(event)
+      }
+    }
+  }
+  try {
+    host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 70 })
+    host.ipc.filesystem_read_file = async () => ({ success: true, content: PNG_B64, size: 70 })
+    const view = await mount(Base64ImageCommand)
+    assert.equal(typeof listeners.get('plugin_files_dropped'), 'function')
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/doc.pdf'] } })
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(host.lastToast().title, '读取拖入的图片失败')
+
+    listeners.get('plugin_files_dropped')({ payload: { files: ['/Users/me/dropped.png'] } })
+    await new Promise(r => setTimeout(r, 20))
+    const dataUri = view.item('export-datauri')
+    assert.equal(dataUri.props.subtitle.startsWith('data:image/png;base64,iVBOR'), true)
+    view.unmount()
+    assert.equal(listeners.has('plugin_files_dropped'), false)
+  } finally {
+    globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+    delete globalThis.window.ztools
+  }
+})
+
+test('支持通过 createCompatFileInputProps 粘贴图片文件与 Base64 文本，非支持扩展名由宿主拦截提示', async () => {
+  host.ipc.filesystem_get_file_size = async () => ({ success: true, size: 70 })
+  host.ipc.filesystem_read_file = async (p) => {
+    assert.equal(p.path, '/Users/me/pasted.png')
+    return { success: true, content: PNG_B64, size: 70 }
+  }
+  const view = await mount(Base64ImageCommand)
+  try {
+    await view.pasteFiles(['/Users/me/doc.pdf'])
+    assert.equal(host.lastToast().title, '文件格式不匹配')
+
+    await view.pasteFiles(['/Users/me/pasted.png'])
+    await new Promise(r => setTimeout(r, 20))
+    const dataUri = view.item('export-datauri')
+    assert.equal(dataUri.props.subtitle.startsWith('data:image/png;base64,iVBOR'), true)
+
+    await view.pasteText(`  data:image/png;base64,${PNG_B64}  `)
+    assert.equal(view.tree().props.searchText, `data:image/png;base64,${PNG_B64}`)
+  } finally {
+    view.unmount()
+  }
+})

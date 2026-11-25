@@ -1,9 +1,13 @@
 {
   "id": "lan-scanner",
   "name": "局域网扫描",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "探测局域网设备与常见 TCP 端口，支持 MAC 收藏及 Wake-on-LAN 广播唤醒；每次分段扫描最多 256 个地址",
   "author": "ZTools Team",
+  "category": [
+    "网络工具"
+  ],
+  "categoryId": "network",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "nativeComponents": [],
@@ -50,5 +54,53 @@
       ]
     }
   ],
-  "minAppVersion": "1.1.8.5"
+  "minAppVersion": "1.1.8.5",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "LAN Scanner & WoL",
+      "description": "Scan local network devices and common TCP ports (up to 256 addresses per scan), save favorite MAC addresses, and send Wake-on-LAN magic packets.",
+      "keywords": [
+        "lan",
+        "ip scanner",
+        "network",
+        "ports",
+        "wol",
+        "wake on lan"
+      ],
+      "features": {
+        "lan-scan-all": {
+          "explain": "Scan active hosts and common TCP ports on the selected subnet",
+          "cmds": [
+            "lan",
+            "ip scanner",
+            "lan scan",
+            "network scan"
+          ]
+        },
+        "lan-wake-on-lan": {
+          "explain": "Send a Wake-on-LAN magic packet to a saved host or MAC address",
+          "cmds": [
+            "wol",
+            "wakeonlan",
+            "wake on lan",
+            "remote wake"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

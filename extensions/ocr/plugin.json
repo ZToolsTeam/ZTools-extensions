@@ -1,8 +1,8 @@
 {
   "id": "ocr",
   "name": "文字识别",
-  "description": "框选屏幕、剪贴板或图片里的文字，用系统自带的文字识别（OCR）在本机识别简体中文、英文、日文、韩文，结果直接复制",
-  "version": "3.0.2",
+  "description": "框选屏幕、剪贴板或图片里的文字，在本机离线识别（OCR）简体中文、英文、日文、韩文，结果直接复制",
+  "version": "3.0.8",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
@@ -10,10 +10,13 @@
   "category": [
     "办公效率"
   ],
+  "categoryId": "productivity",
   "permissions": [
     "clipboard",
     "screen",
     "dialog",
+    "fs",
+    "shell",
     "notification"
   ],
   "requireAdmin": false,
@@ -67,5 +70,60 @@
       "arch": "any"
     }
   ],
-  "minAppVersion": "1.1.8.9"
+  "minAppVersion": "1.1.8.9",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Offline Text OCR",
+      "description": "Capture screen regions, clipboard images, or image files for offline OCR recognizing Simplified Chinese, English, Japanese, and Korean text with automatic copy.",
+      "keywords": [
+        "ocr",
+        "text recognition",
+        "screenshot",
+        "extract text",
+        "offline"
+      ],
+      "features": {
+        "ocr-region": {
+          "explain": "Select a screen region to recognize text and copy to clipboard",
+          "cmds": [
+            "ocr region",
+            "screenshot ocr",
+            "capture text",
+            "screen ocr"
+          ]
+        },
+        "ocr-clipboard": {
+          "explain": "Recognize text from the current clipboard image and copy",
+          "cmds": [
+            "clipboard ocr",
+            "paste ocr",
+            "image clipboard text"
+          ]
+        },
+        "ocr-workbench": {
+          "explain": "Batch add images for offline OCR and copy recognized results",
+          "cmds": [
+            "ocr",
+            "text ocr",
+            "image to text",
+            "extract text"
+          ]
+        }
+      },
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
+  ]
 }

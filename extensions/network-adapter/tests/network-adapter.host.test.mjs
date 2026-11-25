@@ -1,6 +1,7 @@
 // 本插件的宿主集成测试（导入本插件的 dist/）
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
 import {
   fetchNetworkAdapters,
   applyDnsPreset,
@@ -8,6 +9,8 @@ import {
   prefixLengthToNetmask,
   pickPrimaryAdapter
 } from '../dist/logic.js'
+
+setRuntimeLocale('zh-CN')
 
 /**
  * 按客户端内置网卡服务的真实行为模拟 dllplugin_call：

@@ -320,3 +320,29 @@ test('光标位置仅取模板中的第一个宏，插入的宏内容不被再�
   assert.deepEqual(resolveMacroTemplate('{cursor}{clipboard}', '$$'), { text: '$$', cursorOffsetFromEnd: 2 })
   assert.deepEqual(resolveMacroTemplate('{unknown}/{date}/{time}/{datetime}', '', { fixedDate: '2026-11-02', fixedTime: '10:20:30' }), { text: '{unknown}/2026-11-02/10:20:30/2026-11-02 10:20:30', cursorOffsetFromEnd: 0 })
 })
+
+test('回归：分类筛选下拉框包含默认分类 general，可单独筛出通用短语', async () => {
+  const { setRuntimeLocale } = await import('@ztools/declarative-ui')
+  const host = createHost()
+  seed(host, [fixture('通用条', 'general'), fixture('发票条', 'invoice'), fixture('代码条', 'code')])
+  setRuntimeLocale('zh-CN')
+  const view = await mount(Snippets)
+  try {
+    const dropdown = view.tree().props.searchBarAccessory
+    const values = dropdown.children.map((c) => c.props.value)
+    assert.ok(values.includes('general'), `下拉框应包含 general 选项，实际为: ${values.join(', ')}`)
+    const generalOption = dropdown.children.find((c) => c.props.value === 'general')
+    assert.equal(generalOption.props.title, '通用短语')
+
+    await view.dropdown('general')
+    assert.deepEqual(view.items().map((i) => i.props.id), ['通用条'])
+
+    setRuntimeLocale('en-US')
+    await tick()
+    const enGeneral = view.tree().props.searchBarAccessory.children.find((c) => c.props.value === 'general')
+    assert.equal(enGeneral.props.title, 'General')
+  } finally {
+    setRuntimeLocale('zh-CN')
+    view.unmount()
+  }
+})

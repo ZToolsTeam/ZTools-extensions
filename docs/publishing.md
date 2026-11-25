@@ -1,3 +1,5 @@
+[English](en/publishing.md) | **简体中文**
+
 # 发布规则
 
 本文说明插件目录怎么组织、清单字段怎么写、改动时版本号怎么升、平台怎么声明，以及草稿和下架怎么处理。字段的完整定义以 [`plugin.schema.json`](../packages/ztools-plugins-spec/plugin.schema.json) 为准。
@@ -33,6 +35,7 @@ extensions/<id>/
 | `version` | 版本号，`主.次.修订` 三段数字（如 `1.2.0`），可带 `-beta.1` 这类后缀。改动规则见 [版本号](#版本号) |
 | `description` | 一句话说明插件做什么，不超过 500 个字符 |
 | `author` | 插件作者。官方插件统一写 `ZTools Team`；社区插件推荐写作者的 GitHub 用户名，团队作品可写实际团队名称，不加 `ZTools Community` 前后缀。支持字符串或 `{ "name": "…", "email": "…", "url": "…" }`，详见下方[作者署名](#作者署名) |
+| `category` | 插件市场分类数组（填 1–2 项，主分类在前），可选值：`办公效率`、`系统工具`、`文件管理`、`图像媒体`、`开发工具`、`网络工具`、`安全隐私` |
 | `entry` | 编译后的入口，通常是 `dist/index.js`。必须是插件目录内的相对路径 |
 | `icon` | 图标文件的相对路径，如 `icon.svg` |
 | `permissions` | 用到的权限，见 [API 参考 · 权限](api.md#权限)；不用任何权限写 `[]` |
@@ -44,6 +47,9 @@ extensions/<id>/
 | 字段 | 说明 |
 | --- | --- |
 | `mode` | `view`（默认，有界面）或 `no-view`（无界面命令，执行完给出结果提示），只有这两种取值 |
+| `defaultLocale` | 清单默认语言标签（BCP-47，如 `"zh-CN"` / `"en-US"`） |
+| `categoryId` | 标准英文分类 slug（单字符串如 `"productivity"`，或 1–2 项数组如 `["files", "productivity"]`） |
+| `i18n` | 多语言元数据对象（按 BCP-47 locale 键声明 `name`、`description`、`keywords`、`revokedReason`、`features`、`screenshots`），详见 [API 参考 · 国际化（i18n）](api.md#国际化i18n) |
 | `features` | 一个插件提供多个命令时使用。每项 `{ "code": "…", "explain": "命令名称" }`，可选 `mode`、`icon`、`alias`。入口模块按 `code` 导出对应的函数，见 [API 参考 · 写法](api.md#写法) |
 | `alias` | 短别名，在搜索框输入它可以直接找到插件，不超过 32 个字符 |
 | `keywords` | 额外的搜索关键字数组 |
@@ -52,7 +58,7 @@ extensions/<id>/
 | `minAppVersion` | 最低客户端版本，见 [最低客户端版本](#最低客户端版本) |
 | `screenshots` | 插件详情页展示的截图，见 [截图](#截图) |
 
-Schema 里还有其他字段（如 `homepage`、`license`、`category`）。没有列在上表的字段，客户端不一定会用到，写之前先确认它确实生效。
+Schema 里还有其他字段（如 `homepage`、`license`）。没有列在上表的字段，客户端不一定会用到，写之前先确认它确实生效。
 
 ## 作者署名
 
@@ -121,6 +127,7 @@ Schema 里还有其他字段（如 `homepage`、`license`、`category`）。没�
 ```
 
 - 文件放在插件目录的 `screenshots/` 下，`path` 写相对路径，不能用绝对路径或 `..`；
+- 如需按语言提供不同界面的截图，可在 `i18n.<locale>.screenshots` 中声明（例如 `screenshots/en-US/01.png`）。注意字段名区别：**顶层 `screenshots` 使用 `path`，`i18n.<locale>.screenshots` 使用 `file`**（如 `{ "file": "screenshots/en-US/01.png", "title": "Main View" }`）；
 - 只接受 PNG（按文件头检查，改扩展名不算），每张不超过 1 MB，宽 640–2560、高 400–1600 像素；
 - `title` 是一句话说明，不超过 60 个字符，可以不写；
 - 内容要求：当前版本的真实界面、亮色主题，不含个人信息、真实账号、本机路径或其他隐私数据，示例数据用虚构内容。

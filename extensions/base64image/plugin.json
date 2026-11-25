@@ -1,13 +1,15 @@
 {
   "id": "base64image",
   "name": "图片 Base64",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "图片文件或截图与 Base64 编码双向互转，支持一键复制 Data URL 或还原预览图片",
   "author": "ZTools Team",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
-    "clipboard"
+    "clipboard",
+    "dialog",
+    "fs"
   ],
   "targets": [
     {
@@ -34,5 +36,31 @@
   ],
   "category": [
     "开发工具"
+  ],
+  "categoryId": "developer",
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Image Base64 Converter",
+      "description": "Convert images or screenshots to and from Base64 strings, with one-click Data URL copy and image preview restoration.",
+      "keywords": [
+        "base64",
+        "image",
+        "dataurl",
+        "encode",
+        "decode",
+        "converter"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/02-action-panel.png"
+    }
   ]
 }

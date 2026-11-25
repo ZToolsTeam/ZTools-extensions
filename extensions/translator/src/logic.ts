@@ -5,10 +5,15 @@
  * - 方向固定为中英互译：输入含中文时译为英语，其余译为中文
  * - 变量命名：把英文（原文或译文）转成 camelCase / snake_case / CONSTANT_CASE
  */
+import { getLocale } from '@ztools/declarative-ui'
 
 import { callHostTransport, isRealElectronHost } from './native-ipc.js'
+import { t } from './i18n.js'
+import { resolveErrorMessage } from './error-i18n.js'
 
-export const NOT_IN_CLIENT_MESSAGE = '需要在 ZTools 客户端中使用'
+export function getNotInClientMessage(): string {
+  return t('notInClient')
+}
 
 export interface TranslationResult {
   originalText: string
@@ -32,16 +37,15 @@ export type TranslateOutcome =
   | { ok: true; result: TranslationResult }
   | { ok: false; error: string }
 
-const LANGUAGE_NAMES: Record<string, string> = {
-  'zh-CN': '中文',
-  en: '英语',
-  ja: '日语',
-  ko: '韩语',
-  ru: '俄语'
-}
-
 export function languageName(code: string): string {
-  return LANGUAGE_NAMES[code] || code
+  switch (code) {
+    case 'zh-CN': return t('langZh')
+    case 'en': return t('langEn')
+    case 'ja': return t('langJa')
+    case 'ko': return t('langKo')
+    case 'ru': return t('langRu')
+    default: return code
+  }
 }
 
 export function detectLanguageLocal(text: string): string {
@@ -96,21 +100,21 @@ export function buildDirectNamingResult(text: string): TranslationResult | null 
     translatedText: clean,
     sourceLanguage: 'en',
     targetLanguage: 'en',
-    engineLabel: '原文已是英文，未翻译'
+    engineLabel: t('engineDirectNaming')
   }
 }
 
 function engineLabelOf(engine: unknown): string {
-  if (engine === 'offline') return '客户端离线词库'
-  if (engine === 'web') return '在线翻译'
-  if (engine === 'ai') return 'AI 翻译'
-  return '客户端翻译接口'
+  if (engine === 'offline') return t('engineOffline')
+  if (engine === 'web') return t('engineWeb')
+  if (engine === 'ai') return t('engineAi')
+  return t('engineDefault')
 }
 
 export async function translateTextWithHost(text: string, hostOverride?: unknown): Promise<TranslateOutcome> {
   const clean = String(text ?? '').trim()
-  if (!clean) return { ok: false, error: '翻译内容不能为空' }
-  if (!hostOverride && !isRealElectronHost()) return { ok: false, error: NOT_IN_CLIENT_MESSAGE }
+  if (!clean) return { ok: false, error: t('errEmptyText') }
+  if (!hostOverride && !isRealElectronHost()) return { ok: false, error: t('notInClient') }
 
   const { sourceLanguage, targetLanguage } = resolveLanguagePair(clean)
   const ipcRes = await callHostTransport<{
@@ -121,10 +125,10 @@ export async function translateTextWithHost(text: string, hostOverride?: unknown
     engine?: unknown
   }>('translator_translate', { text: clean, sourceLanguage, targetLanguage }, hostOverride)
 
-  if (!ipcRes.ok) return { ok: false, error: ipcRes.error || '翻译接口调用失败' }
+  if (!ipcRes.ok) return { ok: false, error: resolveErrorMessage(ipcRes, t('errTranslateIpcFailed')) }
   const data = ipcRes.data
   const translated = data && typeof data.translatedText === 'string' ? data.translatedText.trim() : ''
-  if (!translated) return { ok: false, error: '客户端返回的翻译结果格式无法识别' }
+  if (!translated) return { ok: false, error: t('errInvalidTranslateResult') }
 
   return {
     ok: true,
@@ -145,15 +149,15 @@ export interface HistoryFetchOutcome {
 }
 
 export async function fetchTranslationHistoryFromHost(hostOverride?: unknown): Promise<HistoryFetchOutcome> {
-  if (!hostOverride && !isRealElectronHost()) return { ok: false, items: [], error: NOT_IN_CLIENT_MESSAGE }
+  if (!hostOverride && !isRealElectronHost()) return { ok: false, items: [], error: t('notInClient') }
   const res = await callHostTransport<{ items?: Array<Record<string, unknown>> }>(
     'translator_get_history',
     {},
     hostOverride
   )
-  if (!res.ok) return { ok: false, items: [], error: res.error || '读取翻译记录失败' }
+  if (!res.ok) return { ok: false, items: [], error: resolveErrorMessage(res, t('errReadHistoryFailed')) }
   if (!res.data || !Array.isArray(res.data.items)) {
-    return { ok: false, items: [], error: '客户端返回的翻译记录格式无法识别' }
+    return { ok: false, items: [], error: t('errInvalidHistoryFormat') }
   }
   const items = res.data.items
     .filter((item) => typeof item?.originalText === 'string' && typeof item?.translatedText === 'string')
@@ -166,7 +170,7 @@ export async function fetchTranslationHistoryFromHost(hostOverride?: unknown): P
       targetLanguage: String(item.targetLanguage ?? ''),
       timestampText:
         typeof item.timestamp === 'number'
-          ? new Date(item.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+          ? new Date(item.timestamp).toLocaleTimeString(getLocale(), { hour: '2-digit', minute: '2-digit' })
           : ''
     }))
   return { ok: true, items }
@@ -177,7 +181,7 @@ export async function fetchTranslationHistoryFromHost(hostOverride?: unknown): P
  * 所以在原因后面说明词库收录有限。
  */
 export function describeTranslateError(error: string): string {
-  const reason = String(error || '').trim() || '未知原因'
-  if (reason === NOT_IN_CLIENT_MESSAGE || reason === '翻译内容不能为空') return reason
-  return `客户端返回：${reason}。当前只查客户端内置的少量中英词条，未收录的内容无法翻译`
+  const reason = String(error || '').trim() || t('errUnknownReason')
+  if (reason === t('notInClient') || reason === t('errEmptyText')) return reason
+  return t('errDescribeFormat', { reason })
 }

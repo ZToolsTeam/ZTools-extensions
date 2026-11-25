@@ -9,7 +9,7 @@ const password = 'audit-only-passphrase'
 let host
 test.beforeEach(() => { host = createHost() })
 
-function field(view, id) {
+function findField(view, id) {
   function visit(value) {
     if (!value || typeof value !== 'object') return undefined
     if (value.props?.id === id) return value
@@ -18,13 +18,19 @@ function field(view, id) {
       if (found) return found
     }
   }
-  const found = visit(view.tree())
+  return visit(view.tree())
+}
+
+function field(view, id) {
+  const found = findField(view, id)
   assert.ok(found, `缺少表单字段 ${id}`)
   return found
 }
 
-async function fillPassword(view, value = password) {
+async function fillPassword(view, value = password, confirmValue = value) {
   field(view, 'masterPassword').props.onChange(value)
+  const confirmField = findField(view, 'confirmMasterPassword')
+  if (confirmField) confirmField.props.onChange(confirmValue)
   await tick()
 }
 
@@ -150,5 +156,32 @@ test('兼容有效对象形式的旧加密信封，解锁时不改写存储格�
     await view.run(null, '解锁保险箱')
     assert.equal(host.lastToast().title, '保险箱已解锁')
     assert.equal(host.storage.get(key), original)
+  } finally { view.unmount() }
+})
+
+test('新建保险箱强制二次确认主密码：两次不一致直接阻断提交且不写入存储', async () => {
+  const view = await mount(Vault)
+  try {
+    assert.ok(findField(view, 'confirmMasterPassword'), '新建表单必须包含确认主密码输入框')
+
+    // 未填确认密码时阻断
+    await fillPassword(view, password, '')
+    await view.run(null, '设置主密码并创建保险箱')
+    assert.equal(host.storage.has(key), false)
+    assert.equal(host.lastToast().style, 'FAILURE')
+    assert.match(host.lastToast().title, /两次主密码不一致/)
+    assert.match(field(view, 'confirmMasterPassword').props.error || '', /不一致/)
+
+    // 确认密码输错时阻断
+    await fillPassword(view, password, `${password}-typo`)
+    await view.run(null, '设置主密码并创建保险箱')
+    assert.equal(host.storage.has(key), false)
+    assert.equal(host.lastToast().style, 'FAILURE')
+
+    // 两次一致时放行初始化
+    await fillPassword(view, password, password)
+    await view.run(null, '设置主密码并创建保险箱')
+    assert.equal(host.storage.has(key), true)
+    assert.equal(host.lastToast().title, '加密保险箱初始化完成')
   } finally { view.unmount() }
 })

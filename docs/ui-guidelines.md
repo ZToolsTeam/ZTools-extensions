@@ -1,3 +1,5 @@
+[English](en/ui-guidelines.md) | **简体中文**
+
 # 界面规范
 
 ZTools 是「呼出即用、用完即走」的效率工具：用户按下快捷键，几秒内找到目标、按一下回车就走。插件界面要服务这个目标，而不是做成功能齐全的后台管理页面。
@@ -29,6 +31,7 @@ ZTools 是「呼出即用、用完即走」的效率工具：用户按下快捷�
 | `Esc` | 关闭动作面板 → 返回上一页 → 清空搜索 → 退出插件 |
 | `Space` | 搜索框为空或焦点在列表上时，勾选 / 取消勾选当前行（可勾选列表） |
 | `←` / `→` | 布局二里在左侧导航和右侧明细之间切换（焦点不在输入框时） |
+| `⌘/Ctrl+V` | 在声明了 `onFileInput` 的视图中直接粘贴剪贴板文件或截图（焦点在非空输入框粘贴纯文本时除外） |
 
 本文写作 `⌘/Ctrl` 的按键，在 macOS 上是 `⌘`，在 Windows 上是 `Ctrl`。给动作声明快捷键时也一样：`shortcut: { modifiers: ["cmd"], key: "r" }` 在 macOS 上对应 `⌘R`，在 Windows 上对应 `Ctrl+R`，写 `"ctrl"` 效果相同。
 
@@ -224,7 +227,18 @@ export default async function Command() {
 | 搜索框右侧的筛选 / 排序 / 数据源切换 | `searchBarAccessory={<List.Dropdown value={...} onChange={...}>…</List.Dropdown>}` |
 | 第 2 层单行状态条 | `filterBar={{ summaryText: "一句话摘要", actions: [{ id: "rescan", title: "重新扫描", onAction }] }}`，`actions` 最多 2 个；轻量插件不传 |
 | 列表行右侧信息 | `accessories={[{ progress: 0.65 }, { tag: "镜像" }, { text: "8.0 GB" }]}`，不传 `color`；只有高危告警（如超过 90%）可以传 `color: Color.Red` |
-| 底部操作栏 | 在选中项（或 `subList` 明细行）的 `actions` 里放 `<ActionPanel>`：第 1 个 `Action` 是主动作（`Enter`），第 2 个是次动作（`⌘/Ctrl+Enter`），其余进动作面板（`⌘/Ctrl+K`） |
+| 底部操作栏 | 在选中项（或 `subList` 明细行）的 `actions` 里放 `<ActionPanel>`：第 1 个直达 `Action` 是主动作（`Enter`），第 2 个默认是次动作（`⌘/Ctrl+Enter`），其余进动作面板（`⌘/Ctrl+K`）；如果动作列表里已显式声明 `{ modifiers: ["ctrl"], key: "return" }`，则 `⌘/Ctrl+Enter` 归该显式动作，底栏与动作面板保持完全一致 |
+
+### 快捷键规范与宿主保留热键
+
+1. **统一使用 `"ctrl"` 表示主修饰键**：跨平台插件请在 `Action.shortcut.modifiers` 中统一写 `"ctrl"`（在 macOS 上会自动映射并展示为 `⌘`，Windows 上为 `Ctrl`），避免在同一插件里混用 `"cmd"` 与 `"ctrl"`。需要绑定单键空格触发预览等场景可直接写 `shortcut="space"`。
+2. **严禁占用宿主保留热键**：以下热键由客户端全局或当前壳层优先消费，请勿在 `Action.shortcut` 中声明（重复声明会被渲染器屏蔽且扫描器会给出 `UI_RESERVED_SHORTCUT` 提示）：
+   - `Ctrl/⌘+,`：打开客户端设置
+   - `Ctrl/⌘+U`：切换窗口模式 / 展开完整工作台
+   - `Ctrl/⌘+Shift+P`：弹出当前插件为独立常驻窗口
+   - `Ctrl/⌘+K`：打开 / 关闭动作面板
+   - `Esc`：关闭弹窗、返回上一级或清空搜索框
+3. **避免同面板重复声明**：同一 `ActionPanel` 内不要给多个动作绑定完全相同的快捷键；重复时仅首个动作有效。
 
 SDK 类型里还能看到下面这些属性和组件，它们是历史遗留，**不要使用**，扫描器会给出提示：
 
@@ -258,6 +272,7 @@ SDK 类型里还能看到下面这些属性和组件，它们是历史遗留，*
 | `UI_DISTRIBUTION_BAR` | 提示 | 用了 `DistributionBar` / `distributionBar` | 原则 2、5，自检第 2 条 | 去掉比例条，用导航节点的 `accessories` 表达 |
 | `UI_RAINBOW_COLOR` | 提示 | `color` / `tintColor` 用了 `Color.Blue`、`Green`、`Orange`、`Purple`、`Yellow`、`Magenta` | 原则 5、自检第 5 条 | 去掉颜色；只有高危告警可用 `Color.Red` |
 | `UI_DUPLICATE_FILTER` | 提示 | 同一文件里既有 `searchBarAccessory`，又有 `filterBar.groups` | 原则 2、自检第 3 条 | 只保留一个筛选入口 |
+| `UI_RESERVED_SHORTCUT` | 提示 | 源码 `Action.shortcut` 声明了宿主保留热键（`Ctrl+Shift+P`、`Ctrl+,`、`Ctrl+U`、`Ctrl+K`、`Escape`） | 快捷键规范 | 避让宿主保留键，改用其他不冲突的快捷键 |
 | `DISALLOWED_STYLE_FILE` | 错误 | 插件目录里有 `.css` / `.less` / `.scss` / `.sass` / `.styl` 文件 | 自检第 1 条 | 删除样式文件，界面只用组件描述 |
 | `DISALLOWED_INLINE_STYLE` | 错误 | HTML 文件里有 `<style>` 标签或 `style="..."` 属性 | 自检第 1 条 | 不用 HTML，改用组件 |
 | `DISALLOWED_DOM_STYLE_INJECTION` | 错误 | 代码里用 `document.createElement('style' / 'link')`、改元素的 `style`，或用 `innerHTML` 注入 `<style>` | 自检第 1 条 | 删掉这些代码，样式交给客户端 |

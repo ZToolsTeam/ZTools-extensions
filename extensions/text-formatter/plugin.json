@@ -1,9 +1,13 @@
 {
   "id": "text-formatter",
   "name": "文本排版",
-  "version": "1.0.6",
+  "version": "1.0.8",
   "description": "中英文混排自动加空格、中英标点互转、全半角转换、大小写转换与清除多余空行空白",
   "author": "ZTools Team",
+  "category": [
+    "办公效率"
+  ],
+  "categoryId": "productivity",
   "entry": "dist/index.js",
   "icon": "icon.svg",
   "permissions": [
@@ -23,5 +27,36 @@
       "arch": "any"
     }
   ],
-  "nativeComponents": []
+  "nativeComponents": [],
+  "defaultLocale": "zh-CN",
+  "i18n": {
+    "en-US": {
+      "name": "Text Formatter",
+      "description": "Auto-space CJK and Latin text, convert punctuation and full/half-width characters, transform letter casing, and clean extra blank lines or whitespace.",
+      "keywords": [
+        "text",
+        "format",
+        "typography",
+        "case",
+        "whitespace",
+        "punctuation"
+      ],
+      "screenshots": [
+        {
+          "file": "screenshots/en-US/01.png"
+        }
+      ]
+    }
+  },
+  "screenshots": [
+    {
+      "path": "screenshots/01-overview.png"
+    },
+    {
+      "path": "screenshots/02-action-panel.png"
+    },
+    {
+      "path": "screenshots/03-interactive.png"
+    }
+  ]
 }

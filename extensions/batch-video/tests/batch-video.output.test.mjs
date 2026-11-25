@@ -4,7 +4,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as batchVideo from '../dist/index.js'
+import { setRuntimeLocale } from '@ztools/declarative-ui'
+
+setRuntimeLocale('zh-CN')
+const batchVideo = await import('../dist/index.js')
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const BATCH_TAG = '20261028120000'
@@ -315,35 +318,15 @@ test('未连接客户端时处理失败，不会报成功', async () => {
   }
 })
 
-test('扫描：parentDir 是文件实际所在目录，不列入本插件的输出文件与非视频文件，不含体积估算', async () => {
-  await withHost(
-    {
-      extraMethods: {
-        system_get_path: async envelope => (envelope.params.name === 'videos' ? 'D:\\Media\\Videos' : ''),
-        system_search_files: async envelope => {
-          if (envelope.params.query !== 'dir:D:\\Media\\Videos') return { files: [] }
-          return {
-            files: [
-              { name: 'trip.mp4', path: 'D:\\Media\\Videos\\Trips\\trip.mp4', is_dir: false, size: 9000, mtime: 1700000000 },
-              { name: 'trip_ztools.mp4', path: 'D:\\Media\\Videos\\Trips\\trip_ztools.mp4', is_dir: false, size: 8000, mtime: 1700000000 },
-              { name: `talk_ztools_${BATCH_TAG}_2.mkv`, path: `D:\\Media\\Videos\\talk_ztools_${BATCH_TAG}_2.mkv`, is_dir: false, size: 7000, mtime: 1700000000 },
-              { name: 'my_ztools_demo.mov', path: 'D:\\Media\\Videos\\my_ztools_demo.mov', is_dir: false, size: 6000, mtime: 1700000000 },
-              { name: 'notes.txt', path: 'D:\\Media\\Videos\\notes.txt', is_dir: false, size: 5000, mtime: 1700000000 },
-              { name: 'empty.mp4', path: 'D:\\Media\\Videos\\empty.mp4', is_dir: false, size: 0, mtime: 1700000000 }
-            ],
-            total_matches: 6
-          }
-        }
-      }
-    },
-    async () => {
-      const ws = await batchVideo.fetchRealVideoWorkspace()
-      assert.deepEqual(ws.files.map(f => f.name), ['trip.mp4', 'my_ztools_demo.mov'])
-      assert.equal(ws.files[0].parentDir, 'D:\\Media\\Videos\\Trips')
-      assert.equal(ws.files[1].parentDir, 'D:\\Media\\Videos')
-      assert.equal('estimatedCompressedBytes' in ws.files[0], false)
-    }
+test('导入规则：支持 9 种视频扩展名，排除本插件 _ztools 输出文件、.gif 与系统保护路径', async () => {
+  assert.deepEqual(
+    [...batchVideo.INPUT_VIDEO_EXTENSIONS],
+    ['.mp4', '.mkv', '.mov', '.avi', '.flv', '.webm', '.wmv', '.ts', '.m4v']
   )
+  assert.equal(batchVideo.VIDEO_IMPORT_RULES.excludeFile?.('trip_ztools.mp4', 'D:\\v\\trip_ztools.mp4'), true)
+  assert.equal(batchVideo.VIDEO_IMPORT_RULES.excludeFile?.(`talk_ztools_${BATCH_TAG}_2.mkv`, `D:\\v\\talk_ztools_${BATCH_TAG}_2.mkv`), true)
+  assert.equal(batchVideo.VIDEO_IMPORT_RULES.excludeFile?.('my_ztools_demo.mov', 'D:\\v\\my_ztools_demo.mov'), false)
+  assert.equal(batchVideo.VIDEO_IMPORT_RULES.forbiddenPath?.test('C:\\Windows\\System32\\a.mp4'), true)
 })
 
 test('等效 ffmpeg 命令带 -n，目标已存在时不覆盖', () => {
@@ -374,18 +357,19 @@ function collectStrings(node, out = []) {
   return out
 }
 
-test('界面：不显示体积估算与宿主不支持的编码选项，未连接客户端时注明示例文件', () => {
+test('界面：不显示体积估算与假示例文件，未连接客户端时初始为空并如实提示', () => {
   const prevWindow = globalThis.window
   delete globalThis.window
   try {
     const view = batchVideo.BatchVideoCommand()
     assert.equal(view.type, 'List')
     const text = collectStrings(view).join('\n')
-    for (const banned of ['预计', '节省', 'NVENC', 'CRF', 'HEVC', 'GPU', '画幅裁剪', '水印', '倍速']) {
+    for (const banned of ['预计', '节省', 'NVENC', 'CRF', 'HEVC', 'GPU', '画幅裁剪', '水印', '倍速', 'Product_Launch_4K']) {
       assert.equal(text.includes(banned), false, `界面不应出现「${banned}」`)
     }
-    assert.match(text, /示例文件/)
     const props = view.props || {}
+    assert.equal(props.subList.items.length, 0)
+    assert.match(props.subList.emptyText, /需要在 ZTools 客户端中使用/)
     const fieldIds = (props.workbenchPanel?.fields || []).map(f => f.id)
     assert.deepEqual(fieldIds, ['wb-format', 'wb-codec', 'wb-outdir', 'wb-limit'])
     const formatField = props.workbenchPanel.fields[0]
@@ -400,4 +384,194 @@ test('清单：标为草稿并写明原因，描述不再声称压缩与调分�
   assert.equal(manifest.draft, true)
   assert.ok(typeof manifest.draftReason === 'string' && manifest.draftReason.length > 20)
   assert.equal(/压缩|分辨率/.test(manifest.description), false)
+  assert.ok(manifest.permissions.includes('dialog'))
+})
+
+test('batch-video UI：挂载零扫盘、选择文件/文件夹、拖入文件夹（含回退）、移除清空与处理中防护', async () => {
+  const os = await import('node:os')
+  const { createHost, installDirectoryHost, mount, tick } = await import('../../shared/test-harness.mjs')
+  const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ztools-batch-video-'))
+  const write = (rel, content) => {
+    const p = path.join(tmpRoot, rel)
+    fs.mkdirSync(path.dirname(p), { recursive: true })
+    fs.writeFileSync(p, content)
+    return p
+  }
+
+  try {
+    const clipA = write('clip_a.mp4', 'aaa')
+    write('sub/clip_b.mkv', 'bbb')
+    write('sub/clip_a_ztools.mp4', 'derived')
+    write('sub/anim.gif', 'gif')
+    write('readme.txt', 'txt')
+    const subDir = path.join(tmpRoot, 'sub')
+
+    const host = createHost()
+    await installDirectoryHost(host, { authorized: [tmpRoot] })
+    host.ipc.filesystem_get_file_size = async ({ path: p }) => ({
+      success: true,
+      size: fs.existsSync(p) ? fs.statSync(p).size : 2048000
+    })
+
+    const view = await mount(batchVideo.BatchVideoCommand, host)
+    await tick(10)
+
+    const banned = new Set([
+      'system_get_path',
+      'system_list_common_folders',
+      'system_search_files',
+      'filesystem_get_directory_contents',
+      'dllplugin_call'
+    ])
+    assert.deepEqual(host.ipcCalls.filter(([m]) => banned.has(m)), [])
+    assert.equal(view.tree().props.subList.items.length, 0)
+    const fbActions = view.tree().props.filterBar.props?.actions ?? view.tree().props.filterBar.actions
+    assert.deepEqual(
+      fbActions.map(a => ({ id: a.id, label: a.label })),
+      [
+        { id: 'pick-files', label: '选择文件' },
+        { id: 'pick-folder', label: '选择文件夹' }
+      ]
+    )
+
+    // 选择文件取消 & 报错翻译 & 成功导入（验证 filters 为字符串）
+    host.ipc.window_show_open_dialog = async () => ({ canceled: true })
+    await fbActions.find(a => a.id === 'pick-files').onAction()
+    await tick(10)
+    assert.equal(host.toasts.length, 0)
+
+    let openParams = null
+    host.ipc.window_show_open_dialog = async params => {
+      openParams = params
+      return { canceled: false, filePaths: [clipA] }
+    }
+    await fbActions.find(a => a.id === 'pick-files').onAction()
+    await tick(10)
+    assert.equal(openParams.filters, '视频文件|mp4;mkv;mov;avi;flv;webm;wmv;ts;m4v')
+    assert.deepEqual(view.tree().props.subList.items.map(i => i.props.title), ['clip_a.mp4'])
+
+    // 选择文件夹（整盘确认 + 递归收集 + 排除 _ztools 与 .gif + 去重 clip_a.mp4）
+    host.setConfirm(false)
+    host.ipc.window_show_select_folder_dialog = async () => ({ canceled: false, folderPath: 'D:\\' })
+    await fbActions.find(a => a.id === 'pick-folder').onAction()
+    await tick(10)
+    assert.equal(host.confirms.length, 1)
+
+    host.setConfirm(true)
+    host.ipc.window_show_select_folder_dialog = async () => ({ canceled: false, folderPath: tmpRoot })
+    await fbActions.find(a => a.id === 'pick-folder').onAction()
+    await tick(15)
+    assert.deepEqual(view.tree().props.subList.items.map(i => i.props.title), ['clip_a.mp4', 'clip_b.mkv'])
+
+    // 拖入文件夹（新版带 directories 与去重）
+    await view.dropFiles([subDir], { directories: [subDir] })
+    await tick(10)
+    assert.equal(host.lastToast()?.title, '这些文件已在列表中')
+
+    // 粘贴导入未知大小文件显示「大小未识别」
+    host.ipc.filesystem_get_file_size = async () => {
+      throw new Error('路径未由当前窗口授权')
+    }
+    await view.pasteFiles(['D:\\Videos\\pasted.mov'])
+    await tick(15)
+    const pasted = view.item(it => it.props.title === 'pasted.mov')
+    assert.ok(pasted.props.accessories.some(a => a.text === '大小未识别'))
+
+    // 从列表移除不碰磁盘
+    await view.run(pasted, '从列表移除')
+    assert.equal(view.tree().props.subList.items.length, 2)
+    assert.equal(host.ipcCalls.some(([m]) => /trash|delete|unlink/i.test(m)), false)
+
+    // 处理中移除尚未开始的 clip_b.mkv、拒绝清空列表、跳过已移除项不调宿主
+    let releaseFirst
+    const firstGate = new Promise(r => (releaseFirst = r))
+    const dllFiles = []
+    host.ipc.filesystem_file_exists = async () => ({ success: true, exists: false })
+    host.ipc.dllplugin_call = async ({ params }) => {
+      dllFiles.push(params.files[0])
+      if (params.files[0] === clipA) await firstGate
+      return {
+        ok: true,
+        success: true,
+        processedCount: 1,
+        outputPath: params.outputPath,
+        outputBytes: 1024,
+        results: [{ sourcePath: params.files[0], outputPath: params.outputPath, outputBytes: 1024 }],
+        errors: []
+      }
+    }
+    const batchPromise = view.run(view.tree().props.subList.items[0], '开始处理已选视频 (2 个)')
+    await tick(5)
+    assert.equal(
+      view.actions(view.tree().props.subList.items[0]).some(a => a.props.title === '从列表移除'),
+      false
+    )
+    await view.run(view.tree().props.subList.items[1], '清空列表')
+    assert.equal(host.lastToast()?.title, '正在处理，完成后再清空')
+    await view.run(view.tree().props.subList.items[1], '从列表移除')
+    assert.equal(view.tree().props.subList.items.length, 1)
+    releaseFirst()
+    await batchPromise
+    await tick(10)
+    assert.deepEqual(dllFiles, [clipA])
+    assert.equal(view.tree().props.subList.items.length, 1)
+
+    // 清空列表 + 导入进行中清空丢弃结果
+    await view.run(view.tree().props.subList.items[0], '清空列表')
+    assert.equal(view.tree().props.subList.items.length, 0)
+
+    let releaseImport
+    const importGate = new Promise(r => (releaseImport = r))
+    host.ipc.window_show_select_folder_dialog = async () => ({ canceled: false, folderPath: 'D:\\PendingVid' })
+    host.ipc.filesystem_get_directory_contents = async () => {
+      await importGate
+      return { success: true, files: [{ name: 'late.mp4', size: 1024, isDirectory: false }] }
+    }
+    await view.pasteFiles([clipA])
+    await tick(10)
+    const toastBefore = host.toasts.length
+    const pendingTask = fbActions.find(a => a.id === 'pick-folder').onAction()
+    await tick(5)
+    await view.run(view.tree().props.subList.items[0], '清空列表')
+    releaseImport()
+    await pendingTask
+    await tick(10)
+    assert.equal(view.tree().props.subList.items.length, 0)
+    assert.equal(host.toasts.length, toastBefore)
+    view.unmount()
+
+    // 旧版客户端 plugin_files_dropped 回退（含文件夹展开）
+    const legacyHost = createHost()
+    await installDirectoryHost(legacyHost, { authorized: [tmpRoot] })
+    legacyHost.ipc.filesystem_directory_exists = async ({ path: p }) => ({
+      success: true,
+      exists: p.toLowerCase() === subDir.toLowerCase()
+    })
+    let droppedListener = null
+    globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: false }
+    globalThis.window.ztools = {
+      ...(globalThis.window.ztools || {}),
+      events: {
+        on(event, cb) {
+          if (event === 'plugin_files_dropped') droppedListener = cb
+          return () => {
+            if (droppedListener === cb) droppedListener = null
+          }
+        }
+      }
+    }
+    const legacyView = await mount(batchVideo.BatchVideoCommand, legacyHost)
+    try {
+      assert.equal(typeof droppedListener, 'function')
+      droppedListener({ payload: { files: [subDir] } })
+      await tick(20)
+      assert.deepEqual(legacyView.tree().props.subList.items.map(i => i.props.title), ['clip_b.mkv'])
+    } finally {
+      legacyView.unmount()
+      globalThis.window.__ztoolsDeclarativeFeatures = { fileInput: true }
+    }
+    assert.equal(droppedListener, null)
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true })
+  }
 })

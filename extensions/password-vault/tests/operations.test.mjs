@@ -56,9 +56,18 @@ test('另一窗口修改后，旧窗口删除或保存不得覆盖新密文，�
 test('延迟CAS期间拒绝锁定与重复保存，写完再解锁读取完整结果', async () => {
   const v = await open(); await globalAction(v, 'new-entry'); const f = await form()
   await f.fill('title', '延迟提交'); await f.fill('secretPlain', 'delayed-fixture')
-  const original = getDeclarativeBridge().storageCompareAndSet; let resume, started = false, writes = 0
-  getDeclarativeBridge().storageCompareAndSet = async (...args) => { writes++; started = true; await new Promise(r => { resume = r }); return original(...args) }
-  const pending = save(f); for (let n = 0; n < 100 && !started; n++) await tick(1)
+  const original = getDeclarativeBridge().storageCompareAndSet; let resume, markStarted, started = false, writes = 0
+  const casStarted = new Promise(r => { markStarted = r })
+  getDeclarativeBridge().storageCompareAndSet = async (...args) => { writes++; started = true; markStarted(); await new Promise(r => { resume = r }); return original(...args) }
+  const pending = save(f)
+  let timer
+  try {
+    await Promise.race([
+      casStarted,
+      pending.then(() => { if (!started) throw new Error('保存已完成但未进入 CAS') }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('等待进入 CAS 超时')), 15000) })
+    ])
+  } finally { clearTimeout(timer) }
   assert.ok(started); await save(f); await globalAction(v, 'lock-vault'); assert.match(host.lastToast().title, /正在保存/)
   resume(); await pending; assert.equal(writes, 1); assert.equal((await read()).length, 2)
   await globalAction(v, 'lock-vault'); const reopened = await open(); assert.equal(reopened.items().length, 2)
@@ -144,4 +153,29 @@ test('备注默认不在列表明文显示，显示明文后才出现；显示�
   await reveal.props.onAction(); await tick()
   assert.ok(shown().includes('recovery-code-fixture')); assert.ok(shown().includes('note-secret-fixture'))
   await v.search('recovery'); assert.equal(v.items().length, 1)
+})
+
+test('导出加密备份 JSON：仅导出加密信封密文，绝不含明文，且可正常解密还原', async () => {
+  const v = await open()
+  await v.run(v.item(originalEntry.id), '导出加密备份 JSON')
+  assert.equal(host.lastToast().style, 'SUCCESS')
+  assert.match(host.lastToast().title, /已复制加密备份 JSON/)
+
+  const exportedText = host.clipboard.text
+  assert.ok(!exportedText.includes(originalEntry.secretPlain), '备份 JSON 严禁包含明文密码')
+  assert.ok(!exportedText.includes(originalEntry.username), '备份 JSON 严禁包含明文用户名')
+  assert.ok(!exportedText.includes(password), '备份 JSON 严禁包含主密码')
+
+  const parsed = JSON.parse(exportedText)
+  assert.deepEqual(Object.keys(parsed).sort(), ['cipherTextBase64', 'ivBase64', 'kdfIterations', 'saltBase64', 'version'])
+  const restored = await decryptVaultEntries(password, parsed)
+  assert.deepEqual(restored, [originalEntry])
+
+  // 锁定后的解锁界面也支持导出密文备份
+  await globalAction(v, 'lock-vault')
+  host.clipboard.text = ''
+  await v.run(null, '导出加密备份 JSON')
+  assert.equal(host.lastToast().style, 'SUCCESS')
+  const lockedParsed = JSON.parse(host.clipboard.text)
+  assert.deepEqual(await decryptVaultEntries(password, lockedParsed), [originalEntry])
 })
